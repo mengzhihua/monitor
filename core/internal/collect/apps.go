@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -206,6 +207,9 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			name, err := p.NameWithContext(ctx)
 			if err != nil || name == "" {
 				continue // gone or not readable
+			}
+			if runtime.GOOS == "windows" {
+				name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
 			}
 			st = &pidState{name: name}
 			st.cmdline, _ = p.CmdlineWithContext(ctx)
