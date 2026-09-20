@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -187,7 +189,7 @@ func TestTokenAndAllowFrom(t *testing.T) {
 	if _, resp, err := websocket.DefaultDialer.Dial(wsURL, nil); err == nil || resp == nil || resp.StatusCode != 401 {
 		t.Fatalf("ws without token should be 401, got %v %v", resp, err)
 	}
-	d := websocket.Dialer{Subprotocols: []string{"monitor", "bearer.secret"}}
+	d := websocket.Dialer{Subprotocols: []string{"monitor", "bearer." + base64.RawURLEncoding.EncodeToString([]byte("secret"))}}
 	ws, _, err := d.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("ws with subprotocol token: %v", err)
@@ -236,4 +238,92 @@ func TestLiveWebSocket(t *testing.T) {
 		t.Fatalf("same-origin ws: %v", err)
 	}
 	ws2.Close()
+}
+
+func TestAlarmsAPIAndLivePush(t *testing.T) {
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "id", Hostname: "test", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Units: "MiB",
+		Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	rules, err := health.ParseRules([]byte(`
+alarms:
+  - name: ram_in_use
+    on: system.ram
+    lookup: average -10s percentage of used
+    units: '%'
+    every: 1s
+    warn: '$this > 80'
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := health.New(reg, db, health.Options{Rules: rules, Hostname: "test", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched := collect.NewScheduler(reg, nil, []string{"none"}, nil)
+	srv, err := New(reg, db, sched, Options{Health: eng, StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(eng.Close)
+	eng.SetOnEvent(srv.PublishAlarm)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/api/v1/live?charts=none", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	now := time.Now()
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 90, "free": 10})
+	eng.Tick(now.Add(time.Second))
+
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var push struct {
+		Alarm health.LogEntry `json:"alarm"`
+	}
+	if err := ws.ReadJSON(&push); err != nil {
+		t.Fatal(err)
+	}
+	if push.Alarm.Name != "ram_in_use" || push.Alarm.Status != health.StatusWarning {
+		t.Fatalf("ws alarm = %+v", push.Alarm)
+	}
+
+	var al struct {
+		Summary health.Summary          `json:"summary"`
+		Alarms  map[string]health.Alarm `json:"alarms"`
+	}
+	getJSON(t, ts.URL+"/api/v1/alarms", &al)
+	if al.Summary.Warning != 1 || al.Alarms["system.ram.ram_in_use"].Status != health.StatusWarning {
+		t.Fatalf("alarms = %+v", al)
+	}
+	var log []health.LogEntry
+	getJSON(t, ts.URL+"/api/v1/alarm_log", &log)
+	if len(log) != 1 || log[0].Status != health.StatusWarning {
+		t.Fatalf("alarm_log = %+v", log)
+	}
+	getJSON(t, ts.URL+"/api/v1/alarm_log?after="+fmt.Sprint(log[0].UniqueID), &log)
+	if len(log) != 0 {
+		t.Fatalf("alarm_log after = %+v", log)
+	}
+	var info struct {
+		Alarms health.Summary `json:"alarms"`
+	}
+	getJSON(t, ts.URL+"/api/v1/info", &info)
+	if info.Alarms.Warning != 1 {
+		t.Fatalf("info.alarms = %+v", info.Alarms)
+	}
+	var rs []map[string]any
+	getJSON(t, ts.URL+"/api/v1/alarm_rules", &rs)
+	if len(rs) != 1 {
+		t.Fatalf("alarm_rules = %v", rs)
+	}
 }

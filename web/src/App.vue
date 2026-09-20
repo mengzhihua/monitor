@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Chart, Info } from './api'
+import type { Alarm, AlarmLogEntry, Chart, Info } from './api'
 import { ApiError, api, auth } from './api'
 import { live } from './live'
 import MetricChart from './components/MetricChart.vue'
+import AlarmsPanel from './components/AlarmsPanel.vue'
 
 const info = ref<Info | null>(null)
 const charts = ref<Chart[]>([])
@@ -14,6 +15,14 @@ const connected = ref(false)
 const windowSec = ref(300)
 const filter = ref('')
 const activeSection = ref('')
+const alarms = ref<Alarm[]>([])
+const alarmLog = ref<AlarmLogEntry[]>([])
+const showAlarms = ref(false)
+const healthOn = computed(() => info.value?.alarms != null)
+const raised = computed(() => ({
+  warning: alarms.value.filter((a) => a.status === 'WARNING').length,
+  critical: alarms.value.filter((a) => a.status === 'CRITICAL').length,
+}))
 
 const windows = [
   { label: '1 分钟', v: 60 },
@@ -54,6 +63,7 @@ async function refresh() {
     })
     error.value = ''
     needToken.value = false
+    await refreshAlarms()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
@@ -61,6 +71,26 @@ async function refresh() {
       return
     }
     error.value = String(e)
+  }
+}
+
+async function refreshAlarms() {
+  if (!healthOn.value) return
+  try {
+    const [a, l] = await Promise.all([api.alarms(), api.alarmLog()])
+    alarms.value = Object.values(a.alarms)
+    alarmLog.value = l
+  } catch { /* transient; the next refresh retries */ }
+}
+
+/** Apply a live transition without waiting for the next poll. */
+function onAlarmEvent(e: AlarmLogEntry) {
+  if (!alarmLog.value.some((x) => x.unique_id === e.unique_id)) alarmLog.value = [...alarmLog.value, e].slice(-1000)
+  const a = alarms.value.find((x) => x.id === e.alarm_id || (x.chart === e.chart && x.name === e.name))
+  if (a) {
+    a.status = e.status; a.value = e.value; a.last_updated = e.when; a.last_status_change = e.when
+  } else {
+    void refreshAlarms()
   }
 }
 
@@ -80,6 +110,7 @@ let timer = 0
 onMounted(async () => {
   auth.fromURL()
   live.onState = (up) => (connected.value = up)
+  live.onAlarm = onAlarmEvent
   await refresh()
   if (!needToken.value) live.start()
   timer = window.setInterval(refresh, 30000)
@@ -97,6 +128,10 @@ onBeforeUnmount(() => clearInterval(timer))
       <span>{{ info.charts_count }} charts</span>
       <span>{{ info.metrics_count }} metrics</span>
       <span>up {{ fmtUptime(info.uptime) }}</span>
+      <button v-if="healthOn" class="alarms-btn" :class="{ crit: raised.critical, warn: !raised.critical && raised.warning, open: showAlarms }"
+        @click="showAlarms = !showAlarms" title="告警">
+        ⚠ <b v-if="raised.critical">{{ raised.critical }}</b><b v-else-if="raised.warning">{{ raised.warning }}</b><span v-else>0</span>
+      </button>
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
     </div>
     <div class="controls">
@@ -122,6 +157,7 @@ onBeforeUnmount(() => clearInterval(timer))
 
     <main>
       <div v-if="error" class="banner">{{ error }}</div>
+      <AlarmsPanel v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" @close="showAlarms = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>此 Agent 已启用访问令牌（web.token），请输入后继续。</p>
         <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />
@@ -145,6 +181,10 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; pa
 .host { color: #94a3b8; font-weight: 400; font-size: 13px; margin-left: 10px; }
 .meta { display: flex; gap: 14px; color: #94a3b8; font-size: 12px; flex: 1; }
 .dot.on { color: #22c55e; } .dot.off { color: #ef4444; }
+.alarms-btn { background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 12px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+.alarms-btn.warn { background: #78350f; color: #fde68a; border-color: #b45309; }
+.alarms-btn.crit { background: #7f1d1d; color: #fecaca; border-color: #b91c1c; }
+.alarms-btn.open { outline: 1px solid #94a3b8; }
 .controls { display: flex; gap: 8px; margin-left: auto; }
 input, select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 13px; }
 .layout { display: flex; }

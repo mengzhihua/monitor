@@ -1,4 +1,4 @@
-import type { LiveMsg } from './api'
+import type { AlarmLogEntry, LiveAlarmMsg, LiveMsg } from './api'
 import { api } from './api'
 
 type Handler = (m: LiveMsg) => void
@@ -13,6 +13,7 @@ class Live {
 
   connected = false
   onState: ((up: boolean) => void) | null = null
+  onAlarm: ((e: AlarmLogEntry) => void) | null = null
 
   start() {
     if (this.ws) return
@@ -20,7 +21,8 @@ class Live {
     this.ws = ws
     ws.onopen = () => { this.retry = 1000; this.connected = true; this.onState?.(true); this.flush() }
     ws.onmessage = (e) => {
-      const m = JSON.parse(e.data) as LiveMsg
+      const m = JSON.parse(e.data) as LiveMsg | LiveAlarmMsg
+      if ('alarm' in m) { this.onAlarm?.(m.alarm); return }
       this.handlers.get(m.chart)?.forEach((h) => h(m))
     }
     ws.onclose = () => {

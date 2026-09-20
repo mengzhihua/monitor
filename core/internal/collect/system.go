@@ -99,7 +99,16 @@ func (c *cpuCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 
 // ---- load ----
 
-type loadCollector struct{ lastLoad time.Time }
+type loadCollector struct {
+	lastLoad time.Time
+	every    time.Duration
+}
+
+// loadEvery is how often load averages are sampled: the kernel only refreshes
+// them every 5 seconds, and a chart cannot tick faster than the scheduler.
+func loadEvery(reg *registry.Registry) int {
+	return max(5, reg.Host.UpdateEvery)
+}
 
 func (c *loadCollector) Name() string { return "load" }
 
@@ -107,8 +116,9 @@ func (c *loadCollector) Init(reg *registry.Registry) error {
 	if _, err := load.Avg(); err != nil {
 		return err
 	}
+	c.every = time.Duration(loadEvery(reg)) * time.Second
 	reg.AddChart(&registry.Chart{ID: "system.load", Family: "load", Title: "System load average", Units: "load",
-		Priority: 200, Plugin: "system", Module: "load", UpdateEvery: 5,
+		Priority: 200, Plugin: "system", Module: "load", UpdateEvery: loadEvery(reg),
 		Dimensions: []*registry.Dimension{{ID: "load1"}, {ID: "load5"}, {ID: "load15"}}})
 	if m, err := load.Misc(); err == nil && m != nil && (m.ProcsTotal > 0 || m.ProcsRunning > 0) {
 		reg.AddChart(&registry.Chart{ID: "system.processes", Family: "processes", Title: "System processes", Units: "processes",
@@ -122,7 +132,7 @@ func (c *loadCollector) Init(reg *registry.Registry) error {
 }
 
 func (c *loadCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	if now.Sub(c.lastLoad) >= 5*time.Second {
+	if now.Sub(c.lastLoad) >= c.every {
 		a, err := load.AvgWithContext(ctx)
 		if err != nil {
 			return err

@@ -3,6 +3,7 @@ package api
 
 import (
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -10,7 +11,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -31,6 +32,7 @@ type Options struct {
 	StartedAt time.Time
 	AllowFrom []string
 	Token     string
+	Health    *health.Engine // nil = alarms API disabled
 	Logger    *slog.Logger
 }
 
@@ -78,6 +80,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/allmetrics", s.handleAllMetrics)
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
 	m.HandleFunc("GET /api/v1/live", s.live.handle)
+	m.HandleFunc("GET /api/v1/alarms", s.handleAlarms)
+	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
+	m.HandleFunc("GET /api/v1/alarm_rules", s.handleAlarmRules)
 	m.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		s.writePrometheus(w)
 	})
@@ -126,9 +131,10 @@ func requestToken(r *http.Request) string {
 	}
 	for _, p := range websocket.Subprotocols(r) {
 		if strings.HasPrefix(p, wsTokenProto) {
-			// percent-encoded so the token fits the subprotocol token grammar
-			if tok, err := url.QueryUnescape(strings.TrimPrefix(p, wsTokenProto)); err == nil {
-				return tok
+			// base64url (no padding) keeps any token inside the subprotocol
+			// token grammar (RFC 7230 tchar)
+			if tok, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(p, wsTokenProto)); err == nil {
+				return string(tok)
 			}
 			return ""
 		}
@@ -180,6 +186,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"charts_count":  len(charts),
 		"metrics_count": dims,
 		"collectors":    s.sched.Status(),
+		"alarms":        s.alarmSummary(),
 		"db": map[string]any{
 			"tiers": 1, "dir": s.db.Dir(),
 		},
@@ -421,4 +428,11 @@ func (s *Server) writePrometheus(w http.ResponseWriter) {
 
 func (s *Server) handleCollectors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"available": collect.Available(), "status": s.sched.Status()})
+}
+
+func (s *Server) alarmSummary() any {
+	if s.opt.Health == nil {
+		return nil
+	}
+	return s.opt.Health.Summary()
 }
