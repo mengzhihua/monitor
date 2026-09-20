@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Chart, Info } from './api'
-import { api } from './api'
+import { ApiError, api, auth } from './api'
 import { live } from './live'
 import MetricChart from './components/MetricChart.vue'
 
 const info = ref<Info | null>(null)
 const charts = ref<Chart[]>([])
 const error = ref('')
+const needToken = ref(false)
+const tokenInput = ref('')
 const connected = ref(false)
 const windowSec = ref(300)
 const filter = ref('')
@@ -51,9 +53,22 @@ async function refresh() {
       return x
     })
     error.value = ''
+    needToken.value = false
   } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      needToken.value = true
+      error.value = ''
+      return
+    }
     error.value = String(e)
   }
+}
+
+async function submitToken() {
+  auth.token = tokenInput.value.trim()
+  tokenInput.value = ''
+  await refresh()
+  if (!needToken.value) live.restart()
 }
 
 function fmtUptime(s: number) {
@@ -63,9 +78,10 @@ function fmtUptime(s: number) {
 
 let timer = 0
 onMounted(async () => {
+  auth.fromURL()
   live.onState = (up) => (connected.value = up)
-  live.start()
   await refresh()
+  if (!needToken.value) live.start()
   timer = window.setInterval(refresh, 30000)
 })
 onBeforeUnmount(() => clearInterval(timer))
@@ -106,25 +122,30 @@ onBeforeUnmount(() => clearInterval(timer))
 
     <main>
       <div v-if="error" class="banner">{{ error }}</div>
+      <form v-if="needToken" class="token" @submit.prevent="submitToken">
+        <p>此 Agent 已启用访问令牌（web.token），请输入后继续。</p>
+        <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />
+        <button type="submit">进入</button>
+      </form>
       <section v-for="s in sections" :key="s.name" :id="s.name">
         <h2>{{ s.name }}</h2>
         <div class="grid">
           <MetricChart v-for="c in s.charts" :key="c.id" :chart="c" :window="windowSec" />
         </div>
       </section>
-      <p v-if="!charts.length && !error" class="empty">等待数据…</p>
+      <p v-if="!charts.length && !error && !needToken" class="empty">等待数据…</p>
     </main>
   </div>
 </template>
 
 <style scoped>
-header { display: flex; align-items: center; gap: 24px; padding: 10px 16px; background: #0b1120; border-bottom: 1px solid #1e293b; position: sticky; top: 0; z-index: 10; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 16px; background: #0b1120; border-bottom: 1px solid #1e293b; position: sticky; top: 0; z-index: 10; }
 .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
 .logo { color: #22c55e; }
 .host { color: #94a3b8; font-weight: 400; font-size: 13px; margin-left: 10px; }
 .meta { display: flex; gap: 14px; color: #94a3b8; font-size: 12px; flex: 1; }
 .dot.on { color: #22c55e; } .dot.off { color: #ef4444; }
-.controls { display: flex; gap: 8px; }
+.controls { display: flex; gap: 8px; margin-left: auto; }
 input, select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 13px; }
 .layout { display: flex; }
 nav { width: 180px; flex: none; position: sticky; top: 49px; height: calc(100vh - 49px); overflow: auto; padding: 12px 8px; border-right: 1px solid #1e293b; }
@@ -137,7 +158,16 @@ nav small, .col small { color: #64748b; }
 .col.bad { color: #f87171; }
 main { flex: 1; padding: 12px 16px; min-width: 0; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; margin: 18px 0 8px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 12px; }
 .banner { background: #7f1d1d; color: #fecaca; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
 .empty { color: #64748b; }
+.token { max-width: 420px; margin: 40px auto; padding: 20px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; display: flex; flex-direction: column; gap: 10px; }
+.token p { margin: 0; color: #cbd5e1; font-size: 13px; }
+.token button { background: #22c55e; color: #052e16; border: 0; border-radius: 6px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+@media (max-width: 760px) {
+  nav { display: none; }
+  header { position: static; }
+  .meta { flex-basis: 100%; }
+  main { padding: 8px; }
+}
 </style>

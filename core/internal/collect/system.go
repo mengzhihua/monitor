@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -64,8 +65,14 @@ func (c *cpuCollector) Init(reg *registry.Registry) error {
 }
 
 func cpuRaw(t cpu.TimesStat) map[string]float64 {
+	user, nice := t.User, t.Nice
+	if runtime.GOOS == "linux" {
+		// /proc/stat already folds guest time into user and nice.
+		user = max(user-t.Guest, 0)
+		nice = max(nice-t.GuestNice, 0)
+	}
 	return map[string]float64{
-		"user": t.User, "system": t.System, "nice": t.Nice, "iowait": t.Iowait, "irq": t.Irq,
+		"user": user, "system": t.System, "nice": nice, "iowait": t.Iowait, "irq": t.Irq,
 		"softirq": t.Softirq, "steal": t.Steal, "guest": t.Guest, "guest_nice": t.GuestNice, "idle": t.Idle,
 	}
 }
@@ -92,7 +99,7 @@ func (c *cpuCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 
 // ---- load ----
 
-type loadCollector struct{}
+type loadCollector struct{ lastLoad time.Time }
 
 func (c *loadCollector) Name() string { return "load" }
 
@@ -115,11 +122,12 @@ func (c *loadCollector) Init(reg *registry.Registry) error {
 }
 
 func (c *loadCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	if now.Unix()%5 == 0 {
+	if now.Sub(c.lastLoad) >= 5*time.Second {
 		a, err := load.AvgWithContext(ctx)
 		if err != nil {
 			return err
 		}
+		c.lastLoad = now
 		_ = reg.Collect("system.load", now, map[string]float64{"load1": a.Load1, "load5": a.Load5, "load15": a.Load15})
 	}
 	if _, ok := reg.Chart("system.processes"); ok {
@@ -274,7 +282,8 @@ func mountID(mp string) string {
 	if mp == "/" {
 		return "_"
 	}
-	r := strings.NewReplacer("/", "_", "\\", "_", ":", "", " ", "_")
+	// Escape literal underscores first so "/srv/a_b" and "/srv/a/b" stay distinct.
+	r := strings.NewReplacer("_", "__", "/", "_", "\\", "_", ":", "", " ", "_")
 	return strings.Trim(r.Replace(mp), "_")
 }
 

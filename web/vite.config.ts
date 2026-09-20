@@ -10,7 +10,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: 'http://127.0.0.1:19999', ws: true },
+      '/api': { target: 'http://127.0.0.1:19999', ws: true, changeOrigin: true },
       '/metrics': 'http://127.0.0.1:19999',
     },
   },

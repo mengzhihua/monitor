@@ -36,6 +36,8 @@ function fmt(v: number | null | undefined) {
 }
 
 const stacked = () => props.chart.chart_type === 'stacked'
+/** Collection period in seconds; charts like system.load sample every 5s. */
+const step = () => Math.max(1, props.chart.update_every || 1)
 
 /** Series index in uPlot → dimension index. Stacked charts are drawn as
  *  cumulative sums in reverse order so the largest area is painted first. */
@@ -97,7 +99,9 @@ async function load() {
   error.value = ''
   dims = visibleDims()
   try {
-    const d = await api.data(props.chart.id, -props.window)
+    // One bucket per collection period, otherwise slow charts come back as
+    // mostly-null 1s rows and uPlot draws nothing between isolated samples.
+    const d = await api.data(props.chart.id, -props.window, 0, Math.ceil(props.window / step()))
     times = d.result.data.map((r) => r[0] as number)
     const idx = new Map(d.dimension_ids.map((id, i) => [id, i + 1]))
     raw = dims.map((id) => {
@@ -127,10 +131,9 @@ function render() {
 
 function onLive(t: number, v: Record<string, number>) {
   if (times.length && t <= times[times.length - 1]!) return
-  // fill gaps with nulls so uPlot breaks the line
-  const lastT = times.length ? times[times.length - 1]! : t - 1
-  for (let s = lastT + 1; s < t && s > t - 60; s++) {
-    times.push(s)
+  // a missed collection period becomes a single null so uPlot breaks the line
+  if (times.length && t - times[times.length - 1]! > 2 * step()) {
+    times.push(t - step())
     raw.forEach((r) => r.push(null))
   }
   times.push(t)

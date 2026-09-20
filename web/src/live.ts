@@ -16,7 +16,7 @@ class Live {
 
   start() {
     if (this.ws) return
-    const ws = new WebSocket(api.liveURL([...this.wanted]))
+    const ws = new WebSocket(api.liveURL([...this.wanted]), api.liveProtocols())
     this.ws = ws
     ws.onopen = () => { this.retry = 1000; this.connected = true; this.onState?.(true); this.flush() }
     ws.onmessage = (e) => {
@@ -29,6 +29,14 @@ class Live {
       this.retry = Math.min(this.retry * 2, 15000)
     }
     ws.onerror = () => ws.close()
+  }
+
+  /** Drop the current socket (e.g. after credentials change) and reconnect now. */
+  restart() {
+    const ws = this.ws
+    if (!ws) { this.start(); return }
+    ws.onclose = () => { this.ws = null; this.connected = false; this.onState?.(false); this.start() }
+    ws.close()
   }
 
   subscribe(chart: string, h: Handler) {

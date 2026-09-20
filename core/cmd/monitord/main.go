@@ -116,7 +116,11 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go sched.Run(ctx)
+	schedDone := make(chan struct{})
+	go func() {
+		defer close(schedDone)
+		sched.Run(ctx)
+	}()
 
 	errc := make(chan error, 1)
 	go func() {
@@ -126,21 +130,27 @@ func run() error {
 		}
 	}()
 
+	var runErr error
 	select {
 	case <-ctx.Done():
 		log.Info("shutting down")
-	case err := <-errc:
+	case runErr = <-errc:
 		stop()
-		log.Error("web server failed", "err", err)
+		log.Error("web server failed", "err", runErr)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
+	select {
+	case <-schedDone:
+	case <-shutdownCtx.Done():
+		log.Warn("collectors did not stop in time")
+	}
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)
 	}
-	return nil
+	return runErr
 }
 
 func hostIdentity(cfg *config.Config) (*registry.Host, error) {

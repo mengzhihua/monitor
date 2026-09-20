@@ -127,9 +127,42 @@ func TestInfoChartsData(t *testing.T) {
 	if !strings.Contains(sb.String(), `monitor_system_ram{chart="system.ram",family="ram",dimension="used",instance="test"} 109`) {
 		t.Fatalf("prometheus output:\n%s", sb.String())
 	}
+	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatal("API must not advertise wildcard CORS")
+	}
 
 	if resp := getJSON(t, ts.URL+"/", nil); resp.StatusCode != 200 {
 		t.Fatalf("ui status = %d", resp.StatusCode)
+	}
+}
+
+func TestPrometheusMetadataOncePerFamily(t *testing.T) {
+	ts, reg := newTestServer(t, Options{})
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("cpu.cpu%d", i)
+		reg.AddChart(&registry.Chart{ID: id, Context: "cpu.cpu", Family: "utilization", Title: "Core", Units: "%",
+			Dimensions: []*registry.Dimension{{ID: "user"}}})
+		_ = reg.Collect(id, time.Now(), map[string]float64{"user": float64(i)})
+	}
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sb strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		sb.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if n := strings.Count(sb.String(), "# TYPE monitor_cpu_cpu gauge"); n != 1 {
+		t.Fatalf("TYPE emitted %d times:\n%s", n, sb.String())
+	}
+	if n := strings.Count(sb.String(), "monitor_cpu_cpu{"); n != 3 {
+		t.Fatalf("samples = %d:\n%s", n, sb.String())
 	}
 }
 
@@ -144,6 +177,25 @@ func TestTokenAndAllowFrom(t *testing.T) {
 	if resp := getJSON(t, ts.URL+"/", nil); resp.StatusCode != 200 {
 		t.Fatalf("ui should not need a token, status = %d", resp.StatusCode)
 	}
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/info", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("bearer status = %v %v", resp, err)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/live"
+	if _, resp, err := websocket.DefaultDialer.Dial(wsURL, nil); err == nil || resp == nil || resp.StatusCode != 401 {
+		t.Fatalf("ws without token should be 401, got %v %v", resp, err)
+	}
+	d := websocket.Dialer{Subprotocols: []string{"monitor", "bearer.secret"}}
+	ws, _, err := d.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws with subprotocol token: %v", err)
+	}
+	if ws.Subprotocol() != "monitor" {
+		t.Fatalf("selected subprotocol = %q", ws.Subprotocol())
+	}
+	ws.Close()
 
 	ts2, _ := newTestServer(t, Options{AllowFrom: []string{"10.0.0.0/8"}})
 	if resp := getJSON(t, ts2.URL+"/api/v1/info", nil); resp.StatusCode != 403 {
@@ -172,4 +224,16 @@ func TestLiveWebSocket(t *testing.T) {
 	if msg.Chart != "system.ram" || msg.Values["used"] != 1 || msg.Values["free"] != 2 {
 		t.Fatalf("live msg = %+v", msg)
 	}
+
+	// browsers on other sites must not be able to open the feed
+	hdr := http.Header{"Origin": {"http://evil.example"}}
+	if _, resp, err := websocket.DefaultDialer.Dial(url, hdr); err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin ws should be rejected, got %v %v", resp, err)
+	}
+	same := http.Header{"Origin": {ts.URL}}
+	ws2, _, err := websocket.DefaultDialer.Dial(url, same)
+	if err != nil {
+		t.Fatalf("same-origin ws: %v", err)
+	}
+	ws2.Close()
 }
