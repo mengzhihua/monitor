@@ -310,25 +310,28 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		}
 		tier, auto = n, false
 	}
-	var series [][]tsdb.Bucket
-	for {
-		series = series[:0]
-		empty := true
-		for _, d := range dims {
-			bs, err := s.db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+	if auto {
+		for ; tier > 0; tier-- {
+			covered := true
+			for _, d := range dims {
+				if !s.db.TierCovers(registry.SeriesID(c.ID, d.ID), tier, after) {
+					covered = false
+					break
+				}
 			}
-			if len(bs) > 0 {
-				empty = false
+			if covered {
+				break
 			}
-			series = append(series, bs)
 		}
-		if !auto || !empty || tier == 0 {
-			break
+	}
+	series := make([][]tsdb.Bucket, 0, len(dims))
+	for _, d := range dims {
+		bs, err := s.db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		tier--
+		series = append(series, bs)
 	}
 	every, _ := s.db.TierEvery(tier)
 	res := tsdb.AggregateBuckets(series, every, after, before, points, group)

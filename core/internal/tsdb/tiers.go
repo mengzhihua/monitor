@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -115,13 +116,26 @@ func (t *tier) get(id string) *tierSeries {
 	return t.series[id]
 }
 
+// openFile holds the bucket that was still accumulating when the store was
+// closed, so a restart inside a minute/hour keeps folding into it instead of
+// sealing a partial bucket.
+const openFile = "open.bkt"
+
 func (t *tier) load() (int, error) {
 	n := 0
+	var opens []string
 	err := filepath.WalkDir(t.dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".blk") {
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() == openFile {
+			opens = append(opens, path)
+			return nil
+		}
+		if !strings.HasSuffix(path, ".blk") {
 			return nil
 		}
 		id, meta, err := readHeader(path)
@@ -139,7 +153,58 @@ func (t *tier) load() (int, error) {
 	for _, sr := range t.series {
 		sort.Slice(sr.blocks, func(i, j int) bool { return sr.blocks[i].start < sr.blocks[j].start })
 	}
+	for _, path := range opens {
+		if id, b, ok := readOpen(path); ok {
+			sr := t.getOrCreate(id)
+			if last, has := sr.lastPersistedLocked(); !has || b.TS > last {
+				sr.open = &b
+			}
+		}
+		_ = os.Remove(path)
+	}
 	return n, nil
+}
+
+func readOpen(path string) (string, Bucket, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", Bucket{}, false
+	}
+	defer f.Close()
+	id, meta, dataLen, err := parseHeader(f)
+	if err != nil || meta.count != 1 {
+		return "", Bucket{}, false
+	}
+	data := make([]byte, dataLen)
+	if _, err := io.ReadFull(f, data); err != nil {
+		return "", Bucket{}, false
+	}
+	bs, err := decodeBuckets(data, 1)
+	if err != nil {
+		return "", Bucket{}, false
+	}
+	return id, bs[0], true
+}
+
+// saveOpen persists (or clears) the accumulating bucket of a series.
+func (t *tier) saveOpen(sr *tierSeries) error {
+	sr.mu.Lock()
+	var b *Bucket
+	if sr.open != nil {
+		cp := *sr.open
+		b = &cp
+	}
+	sr.mu.Unlock()
+	path := filepath.Join(t.seriesDir(sr.id), openFile)
+	if b == nil {
+		err := os.Remove(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	_, err := writeBlockFile(path, sr.id, b.TS, b.TS, 1, encodeBuckets([]Bucket{*b}))
+	return err
 }
 
 // append folds one raw sample; returns true when a block should be flushed.
@@ -180,16 +245,6 @@ func (sr *tierSeries) lastPersistedLocked() (int64, bool) {
 		return sr.blocks[n-1].end, true
 	}
 	return 0, false
-}
-
-// seal moves the open bucket into done so it is persisted by the next flush.
-func (t *tier) seal(sr *tierSeries) {
-	sr.mu.Lock()
-	if sr.open != nil {
-		sr.done = append(sr.done, *sr.open)
-		sr.open = nil
-	}
-	sr.mu.Unlock()
 }
 
 func (t *tier) flush(sr *tierSeries) error {
@@ -299,6 +354,25 @@ func (t *tier) query(id string, after, before int64) ([]Bucket, error) {
 		}
 	}
 	return append(out, mem...), nil
+}
+
+// first returns the start of the oldest bucket held for a series.
+func (t *tier) first(id string) (int64, bool) {
+	sr := t.get(id)
+	if sr == nil {
+		return 0, false
+	}
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	switch {
+	case len(sr.blocks) > 0:
+		return sr.blocks[0].start, true
+	case len(sr.done) > 0:
+		return sr.done[0].TS, true
+	case sr.open != nil:
+		return sr.open.TS, true
+	}
+	return 0, false
 }
 
 func (t *tier) info() TierInfo {
@@ -461,19 +535,37 @@ func (s *Store) QueryTier(id string, tier int, after, before int64) ([]Bucket, e
 	return s.tiers[tier-1].query(id, after, before)
 }
 
-// QueryAuto plans a tier for the request and falls back to finer tiers when
-// the planned one holds nothing for the range (e.g. a fresh install). It
-// returns the buckets and the tier actually used.
-func (s *Store) QueryAuto(id string, after, before int64, points int) ([]Bucket, int, error) {
-	for tier := s.PlanTier(after, before, points); ; tier-- {
-		bs, err := s.QueryTier(id, tier, after, before)
-		if err != nil {
-			return nil, 0, err
-		}
-		if len(bs) > 0 || tier == 0 {
-			return bs, tier, nil
-		}
+// TierCovers reports whether a tier reaches as far back into [after, ...] as
+// the raw data does. A tier that was enabled after tier0 already held
+// history (or one that is still empty) has no rollups for the older
+// samples, so answering from it would truncate the range rather than just
+// lower its resolution.
+func (s *Store) TierCovers(id string, tier int, after int64) bool {
+	if tier <= 0 || tier > len(s.tiers) {
+		return true
 	}
+	rawFirst, _, ok := s.Bounds(id)
+	if !ok {
+		return true
+	}
+	want := max(rawFirst, after)
+	first, ok := s.tiers[tier-1].first(id)
+	return ok && first <= want
+}
+
+// QueryAuto plans a tier for the request and falls back to finer tiers while
+// the planned one does not cover the range (fresh install, tier added after
+// the fact). It returns the buckets and the tier actually used.
+func (s *Store) QueryAuto(id string, after, before int64, points int) ([]Bucket, int, error) {
+	tier := s.PlanTier(after, before, points)
+	for tier > 0 && !s.TierCovers(id, tier, after) {
+		tier--
+	}
+	bs, err := s.QueryTier(id, tier, after, before)
+	if err != nil {
+		return nil, 0, err
+	}
+	return bs, tier, nil
 }
 
 // AggregateBuckets is Aggregate over pre-rolled buckets. min/max/sum are
