@@ -97,6 +97,9 @@ func TestParseLookupDelayRepeat(t *testing.T) {
 	if err != nil || r.Warning != 30*time.Minute || r.Critical != 10*time.Minute {
 		t.Fatalf("repeat = %+v %v", r, err)
 	}
+	if _, err := ParseRepeat("warning 30m critical"); err == nil {
+		t.Fatal("dangling repeat keyword must be rejected")
+	}
 	if d, _ := parseDuration("2d"); d != 48*time.Hour {
 		t.Fatalf("2d = %v", d)
 	}
@@ -575,5 +578,35 @@ func TestEmailHeaderInjection(t *testing.T) {
 	}
 	if err := (&EmailNotifier{Server: addr, From: "a@x", To: []string{"b@x\r\nRCPT TO:<evil@x>"}}).Notify(context.Background(), LogEntry{Name: "x"}); err == nil {
 		t.Fatal("recipient with line break must be rejected")
+	}
+}
+
+func TestEngineNoDataGapKeepsNotifiedStatus(t *testing.T) {
+	n := &memNotifier{}
+	e, reg := newTestEngine(t, ramRule, n)
+	now := time.Unix(1_700_000_000, 0)
+	feed := func(used, free float64) {
+		_ = reg.Collect("system.ram", now, map[string]float64{"used": used, "free": free})
+		now = now.Add(time.Second)
+		e.Tick(now)
+	}
+	feed(90, 10) // WARNING, notified
+	waitDelivered(t, e, 1)
+	now = now.Add(5 * time.Minute) // lookup window empty → UNDEFINED
+	e.Tick(now)
+	if a := e.Alarms()[0]; a.Status != StatusUndefined {
+		t.Fatalf("status = %v, want UNDEFINED", a.Status)
+	}
+	feed(10, 90) // data back, CLEAR → recovery must be reported
+	waitDelivered(t, e, 2)
+	if n.seen[1].Status != StatusClear || n.seen[1].OldStatus != StatusWarning {
+		t.Fatalf("recovery = %+v", n.seen[1])
+	}
+	now = now.Add(5 * time.Minute)
+	e.Tick(now)  // UNDEFINED again
+	feed(10, 90) // CLEAR again: nothing new for notifiers
+	time.Sleep(20 * time.Millisecond)
+	if n.count() != 2 {
+		t.Fatalf("notifications = %+v", n.seen)
 	}
 }

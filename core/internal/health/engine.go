@@ -500,15 +500,20 @@ func (e *Engine) transition(a *Alarm, entry LogEntry, now time.Time) {
 
 	// Transitions into UNINITIALIZED/UNDEFINED, a CLEAR when nothing raised
 	// was ever reported, and a return to the last reported status are logged
-	// but never notified; a rule that starts out raised is.
+	// but never notified; a rule that starts out raised is. A no-data gap
+	// keeps notifiedSt so the eventual CLEAR (or re-raise) is judged against
+	// what notifiers last heard.
 	e.mu.Lock()
-	silent := entry.Status <= StatusUndefined ||
+	noData := entry.Status <= StatusUndefined
+	silent := noData ||
 		(entry.Status == StatusClear && a.notifiedSt <= StatusClear) ||
 		entry.Status == a.notifiedSt
 	if silent {
 		a.pending = nil
 		a.DelayUpTo = 0
-		a.notifiedSt = entry.Status
+		if !noData {
+			a.notifiedSt = entry.Status
+		}
 		e.mu.Unlock()
 		e.record(entry, false)
 		return
