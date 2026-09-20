@@ -81,11 +81,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	tiers := tsdb.DefaultTiers()
+	if cfg.DB.Tiers < 1 || cfg.DB.Tiers > len(tiers)+1 {
+		return fmt.Errorf("db.tiers must be between 1 and %d", len(tiers)+1)
+	}
+	tiers = tiers[:cfg.DB.Tiers-1]
+	for i, ret := range []time.Duration{cfg.DB.Tier1Retention, cfg.DB.Tier2Retention} {
+		if i < len(tiers) {
+			tiers[i].Retention = ret
+		}
+	}
 	db, err := tsdb.Open(tsdb.Options{
 		Dir:           filepath.Join(cfg.Global.DataDir, "db"),
 		Retention:     cfg.DB.Tier0Retention,
 		RetentionSize: retSize,
 		Checkpoint:    cfg.DB.Checkpoint,
+		Tiers:         tiers,
 		Logger:        log.With("component", "tsdb"),
 	})
 	if err != nil {

@@ -122,7 +122,7 @@ func TestCorruptHeaderRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	var blk string
-	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, _ error) error {
+	_ = filepath.WalkDir(filepath.Join(dir, "tier0"), func(p string, d os.DirEntry, _ error) error {
 		if !d.IsDir() && strings.HasSuffix(p, ".blk") {
 			blk = p
 		}
@@ -193,5 +193,130 @@ func TestAggregate(t *testing.T) {
 	res = Aggregate([][]Point{pts}, 100, 106, 3, GroupMax)
 	if len(res.Times) != 3 || res.Values[0][1] != 7 || !math.IsNaN(res.Values[0][2]) {
 		t.Fatalf("expected NaN for empty bucket, got %v (times %v)", res.Values[0], res.Times)
+	}
+}
+
+func TestTiersRollupReloadAndPlan(t *testing.T) {
+	dir := t.TempDir()
+	tiers := []TierSpec{{Every: 60, BlockSize: 3}, {Every: 3600, BlockSize: 2}}
+	s, err := Open(Options{Dir: dir, BlockSize: 500, Tiers: tiers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(1_700_000_000) - 1_700_000_000%3600 // hour aligned
+	// 2.5 hours of 1s samples: value = second within the minute
+	n := int64(9000)
+	for i := int64(0); i < n; i++ {
+		s.Append("a|x", start+i, float64(i%60))
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir, BlockSize: 500, Tiers: tiers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	b1, err := s.QueryTier("a|x", 1, start, start+n-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b1) != 150 {
+		t.Fatalf("tier1 buckets = %d, want 150", len(b1))
+	}
+	for i, b := range b1 {
+		if b.TS != start+int64(i)*60 || b.Count != 60 || b.Min != 0 || b.Max != 59 || b.Sum != 1770 || b.Last != 59 {
+			t.Fatalf("bucket %d = %+v", i, b)
+		}
+	}
+	b2, err := s.QueryTier("a|x", 2, start, start+n-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b2) != 3 || b2[0].Count != 3600 || b2[2].Count != 1800 || b2[1].Avg() != 29.5 {
+		t.Fatalf("tier2 = %+v", b2)
+	}
+
+	// planner: 1 day / 20 points → tier2; 10 min / 10 points → tier1; 1 min / 60 → tier0
+	if tier := s.PlanTier(0, 86400, 20); tier != 2 {
+		t.Fatalf("plan 1d/20 = %d", tier)
+	}
+	if tier := s.PlanTier(0, 600, 10); tier != 1 {
+		t.Fatalf("plan 10m/10 = %d", tier)
+	}
+	if tier := s.PlanTier(0, 60, 60); tier != 0 {
+		t.Fatalf("plan 1m/60 = %d", tier)
+	}
+	// auto: tier2 has data for the range → used; aggregation of average is exact
+	bs, tier, err := s.QueryAuto("a|x", start, start+7200, 2)
+	if err != nil || tier != 2 {
+		t.Fatalf("auto tier = %d err %v", tier, err)
+	}
+	res := AggregateBuckets([][]Bucket{bs}, 3600, start, start+7200, 2, GroupAverage)
+	if len(res.Values[0]) != 2 || res.Values[0][0] != 29.5 || res.Values[0][1] != 29.5 {
+		t.Fatalf("avg = %v", res.Values[0])
+	}
+	res = AggregateBuckets([][]Bucket{b1[:2]}, 60, start, start+120, 1, GroupMax)
+	if res.Values[0][0] != 59 {
+		t.Fatalf("max = %v", res.Values[0])
+	}
+	// fallback: a series only present since a few seconds has no tier1 data yet
+	s.Append("b|y", start+100_000, 1)
+	bs, tier, err = s.QueryAuto("b|y", start+99_000, start+100_001, 5)
+	if err != nil || tier != 1 || len(bs) != 1 || bs[0].Count != 1 {
+		t.Fatalf("open bucket visible: tier=%d %+v %v", tier, bs, err)
+	}
+	infos := s.Tiers()
+	if len(infos) != 3 || infos[1].Every != 60 || infos[1].Series != 2 || infos[1].Blocks == 0 || infos[2].Every != 3600 {
+		t.Fatalf("tiers = %+v", infos)
+	}
+}
+
+func TestBucketBlockRoundTrip(t *testing.T) {
+	in := []Bucket{{TS: 60, Min: -1.5, Max: 9, Sum: 20.25, Last: 3, Count: 7}, {TS: 120, Min: 2, Max: 2, Sum: 2, Last: 2, Count: 1}}
+	out, err := decodeBuckets(encodeBuckets(in), len(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range in {
+		if in[i] != out[i] {
+			t.Fatalf("bucket %d: %+v != %+v", i, in[i], out[i])
+		}
+	}
+	if _, err := decodeBuckets(encodeBuckets(in)[:10], len(in)); err == nil {
+		t.Fatal("truncated payload accepted")
+	}
+}
+
+func TestTierRetentionDropsOldBlocks(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), Tiers: []TierSpec{{Every: 60, BlockSize: 2, Retention: time.Hour}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	old := time.Now().Add(-3 * time.Hour).Unix()
+	for i := int64(0); i < 300; i++ { // 5 old minutes → 2 full blocks + 1 done/open
+		s.Append("x", old+i, 1)
+	}
+	now := time.Now().Unix() - 120
+	for i := int64(0); i < 180; i++ {
+		s.Append("x", now+i, 1)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	s.tiers[0].enforceRetention(time.Now())
+	bs, err := s.QueryTier("x", 1, 0, time.Now().Unix()+60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range bs {
+		if b.TS < now-60 {
+			t.Fatalf("old bucket survived: %+v", b)
+		}
+	}
+	if len(bs) < 3 {
+		t.Fatalf("recent buckets missing: %+v", bs)
 	}
 }

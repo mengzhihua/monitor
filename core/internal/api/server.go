@@ -188,7 +188,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"collectors":    s.sched.Status(),
 		"alarms":        s.alarmSummary(),
 		"db": map[string]any{
-			"tiers": 1, "dir": s.db.Dir(),
+			"tiers": s.db.Tiers(), "dir": s.db.Dir(),
 		},
 	})
 }
@@ -280,8 +280,8 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	opts := q.Get("options")
 	showHidden := strings.Contains(opts, "all-dimensions")
 
+	var dims []*registry.Dimension
 	var ids, names []string
-	var series [][]tsdb.Point
 	for _, d := range c.Dims() {
 		if d.Hidden && !showHidden && len(want) == 0 {
 			continue
@@ -289,16 +289,45 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		if len(want) > 0 && !want[d.ID] && !want[d.Name] {
 			continue
 		}
-		pts, err := s.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		dims = append(dims, d)
 		ids = append(ids, d.ID)
 		names = append(names, d.Name)
-		series = append(series, pts)
 	}
-	res := tsdb.Aggregate(series, after, before, points, group)
+
+	// tier: ""/"auto" lets the planner pick by range/points (falling back to
+	// finer tiers while the planned one has nothing for this chart); a digit
+	// forces that tier.
+	tier, auto := s.db.PlanTier(after, before, points), true
+	if tq := q.Get("tier"); tq != "" && tq != "auto" {
+		n, err := strconv.Atoi(tq)
+		if _, ok := s.db.TierEvery(n); err != nil || !ok {
+			http.Error(w, "unknown tier", http.StatusBadRequest)
+			return
+		}
+		tier, auto = n, false
+	}
+	var series [][]tsdb.Bucket
+	for {
+		series = series[:0]
+		empty := true
+		for _, d := range dims {
+			bs, err := s.db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if len(bs) > 0 {
+				empty = false
+			}
+			series = append(series, bs)
+		}
+		if !auto || !empty || tier == 0 {
+			break
+		}
+		tier--
+	}
+	every, _ := s.db.TierEvery(tier)
+	res := tsdb.AggregateBuckets(series, every, after, before, points, group)
 
 	// result.data rows: [time, dim1, dim2, ...]; NaN → null
 	rows := make([][]any, 0, len(res.Times))
@@ -345,6 +374,7 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		"chart_type":        c.Type,
 		"update_every":      c.UpdateEvery,
 		"view_update_every": res.Step,
+		"tier":              tier,
 		"after":             res.After,
 		"before":            res.Before,
 		"points":            len(rows),

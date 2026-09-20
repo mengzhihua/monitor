@@ -24,6 +24,9 @@ type Config struct {
 		Tier0Retention     time.Duration `yaml:"tier0_retention"`
 		Tier0RetentionSize string        `yaml:"tier0_retention_size"`
 		Checkpoint         time.Duration `yaml:"checkpoint"`
+		Tiers              int           `yaml:"tiers"` // 1..3: tier0 only, +1m rollups, +1h rollups
+		Tier1Retention     time.Duration `yaml:"tier1_retention"`
+		Tier2Retention     time.Duration `yaml:"tier2_retention"`
 	} `yaml:"db"`
 	Web struct {
 		Listen    string   `yaml:"listen"`
@@ -83,6 +86,9 @@ func Default() *Config {
 	c.DB.Tier0Retention = 14 * 24 * time.Hour
 	c.DB.Tier0RetentionSize = "1GiB"
 	c.DB.Checkpoint = 10 * time.Minute
+	c.DB.Tiers = 3
+	c.DB.Tier1Retention = 90 * 24 * time.Hour
+	c.DB.Tier2Retention = 2 * 365 * 24 * time.Hour
 	c.Web.Listen = ":19999"
 	c.Health.Dir = "health.d"
 	c.Health.LogKeep = 1000

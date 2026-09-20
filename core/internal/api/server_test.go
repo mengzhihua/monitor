@@ -327,3 +327,49 @@ alarms:
 		t.Fatalf("alarm_rules = %v", rs)
 	}
 }
+
+func TestDataTierSelection(t *testing.T) {
+	ts, reg := newTestServer(t, Options{Version: "test"})
+	now := time.Now().Truncate(time.Hour)
+	// 3 hours of per-second samples, constant 10 → every tier averages to 10
+	for i := 0; i < 3*3600; i += 5 {
+		_ = reg.Collect("system.ram", now.Add(time.Duration(i-3*3600)*time.Second), map[string]float64{"used": 10, "free": 90})
+	}
+	var data struct {
+		Tier   int `json:"tier"`
+		Points int `json:"points"`
+		Result struct {
+			Data [][]*float64 `json:"data"`
+		} `json:"result"`
+	}
+	after, before := now.Unix()-3*3600, now.Unix()
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&points=3", after, before), &data)
+	if data.Tier != 2 || data.Points < 3 {
+		t.Fatalf("auto tier = %+v", data)
+	}
+	for _, row := range data.Result.Data {
+		if row[1] == nil || *row[1] != 10 {
+			t.Fatalf("tier2 row = %v", row)
+		}
+	}
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&points=180", after, before), &data)
+	if data.Tier != 1 {
+		t.Fatalf("auto tier for 1m step = %d", data.Tier)
+	}
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&points=3&tier=0", after, before), &data)
+	if data.Tier != 0 {
+		t.Fatalf("forced tier = %d", data.Tier)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/data?chart=system.ram&tier=9", nil); resp.StatusCode != 400 {
+		t.Fatalf("bad tier status = %d", resp.StatusCode)
+	}
+	var info struct {
+		DB struct {
+			Tiers []tsdb.TierInfo `json:"tiers"`
+		} `json:"db"`
+	}
+	getJSON(t, ts.URL+"/api/v1/info", &info)
+	if len(info.DB.Tiers) != 3 || info.DB.Tiers[1].Every != 60 || info.DB.Tiers[2].Every != 3600 {
+		t.Fatalf("info tiers = %+v", info.DB.Tiers)
+	}
+}
