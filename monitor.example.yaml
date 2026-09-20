@@ -1,0 +1,23 @@
+# monitord configuration. Copy to monitor.yaml (or pass -config <path>).
+# Every key is optional; the values below are the defaults.
+
+mode: agent            # agent | hub (hub: M3)
+
+global:
+  hostname: ""         # empty = OS hostname
+  update_every: 1      # seconds between collections (1 = per-second, like Netdata)
+  data_dir: ./data     # TSDB + metadata live here
+
+db:
+  tier0_retention: 336h        # 14 days of per-second data
+  tier0_retention_size: 1GiB   # or delete oldest blocks beyond this size
+  checkpoint: 10m              # flush in-memory samples to disk this often
+
+web:
+  listen: ":19999"
+  allow_from: []       # CIDRs allowed to reach the API/UI, e.g. ["10.0.0.0/8", "127.0.0.1"]
+  token: ""            # if set, /api and /metrics require ?token= or "Authorization: Bearer"
+
+collectors:
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime
+  disabled: []         # e.g. ["diskspace"]

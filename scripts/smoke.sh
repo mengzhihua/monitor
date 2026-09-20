@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Starts monitord, waits a few seconds, checks the API answers with real data.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+BIN=${BIN:-core/bin/monitord}
+[[ -x "$BIN" || -x "$BIN.exe" ]] || { echo "binary $BIN not found (run make core)"; exit 1; }
+[[ -x "$BIN" ]] || BIN="$BIN.exe"
+
+PORT=${PORT:-19998}
+DATA=$(mktemp -d)
+"$BIN" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
+PID=$!
+trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$DATA"' EXIT
+
+for i in $(seq 1 30); do
+  curl -sf "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break
+  sleep 0.5
+done
+sleep 4
+
+fail() { echo "SMOKE FAIL: $*"; exit 1; }
+
+info=$(curl -sf "http://127.0.0.1:$PORT/api/v1/info") || fail "info"
+echo "$info" | grep -q '"charts_count":[1-9]' || fail "no charts: $info"
+
+charts=$(curl -sf "http://127.0.0.1:$PORT/api/v1/charts") || fail "charts"
+echo "$charts" | grep -q '"system.cpu"' || fail "system.cpu missing"
+echo "$charts" | grep -q '"system.ram"' || fail "system.ram missing"
+
+data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
+echo "$data" | grep -q '"points":[1-9]' || fail "no data points: $data"
+
+metrics=$(curl -sf "http://127.0.0.1:$PORT/metrics") || fail "metrics"
+echo "$metrics" | grep -q '^monitor_system_ram' || fail "prometheus format"
+index=$(curl -sf "http://127.0.0.1:$PORT/") || fail "dashboard"
+echo "$index" | grep -qi '<title>Monitor</title>' || fail "dashboard html"
+
+echo "SMOKE OK"
