@@ -21,3 +21,36 @@ web:
 collectors:
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime
   disabled: []         # e.g. ["diskspace"]
+
+health:
+  enabled: true
+  builtin: true        # load the rules shipped with the agent
+  dir: health.d        # extra *.yaml rule files, relative to this config file; same name overrides a built-in
+  log_keep: 1000       # alarm log entries kept in memory (full history in <data_dir>/health/alarm-log.jsonl)
+  silent: false        # true = evaluate and log, but never notify
+  alarms: []           # inline rules, e.g.
+  # - name: ram_in_use
+  #   on: system.ram                      # chart id, or a context (e.g. disk.space) to bind every matching chart
+  #   lookup: average -1m percentage of used
+  #   units: '%'
+  #   every: 10s
+  #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+  #   crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+  #   delay: down 15m multiplier 1.5 max 1h
+  #   repeat: warning 1h critical 15m
+  #   info: system memory utilization
+  #   to: sysadmin
+  notify:
+    roles: {}          # alarm `to:` → channels, e.g. sysadmin: [slack, email]; unknown/empty role = all channels
+    webhook:
+      url: ""          # POST LogEntry JSON
+      headers: {}
+    slack:
+      webhook_url: ""  # Slack / Mattermost / Rocket.Chat incoming webhook
+      channel: ""
+    email:
+      server: ""       # smtp.example.com:587 (STARTTLS) or :465 (TLS)
+      from: ""
+      to: []
+      username: ""
+      password: ""

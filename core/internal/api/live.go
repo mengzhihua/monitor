@@ -103,6 +103,18 @@ func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64)
 	}
 }
 
+// broadcastAll sends b to every client regardless of chart subscription.
+func (h *liveHub) broadcastAll(b []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.conns {
+		select {
+		case c.send <- b:
+		default:
+		}
+	}
+}
+
 func (c *liveConn) wants(chart string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

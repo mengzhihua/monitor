@@ -10,6 +10,7 @@ export interface Info {
   version: string; mode: string; uptime: number; charts_count: number; metrics_count: number
   host: { id: string; hostname: string; os: string; arch: string; labels: Record<string, string>; update_every: number }
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
+  alarms: AlarmSummary | null
 }
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
@@ -17,6 +18,21 @@ export interface DataResponse {
   result: { labels: string[]; data: (number | null)[][] }
 }
 export interface LiveMsg { chart: string; t: number; v: Record<string, number> }
+export type AlarmStatus = 'REMOVED' | 'UNINITIALIZED' | 'UNDEFINED' | 'CLEAR' | 'WARNING' | 'CRITICAL'
+export interface Alarm {
+  id: number; name: string; chart: string; context: string; family: string; class?: string; type?: string; component?: string
+  units: string; info: string; lookup?: string; calc?: string; warn?: string; crit?: string; update_every: number
+  recipient: string; source: string; status: AlarmStatus; value: number | null; last_updated: number
+  last_status_change: number; active: boolean; delay_up_to_timestamp?: number; last_notified?: number
+}
+export interface AlarmLogEntry {
+  unique_id: number; alarm_id: number; when: number; hostname: string; name: string; chart: string; context: string
+  family: string; status: AlarmStatus; old_status: AlarmStatus; value: number | null; old_value: number | null
+  units: string; info: string; recipient: string; delay: number; repeat?: boolean; notified: boolean; notified_at?: number
+}
+export interface AlarmSummary { normal: number; warning: number; critical: number; silent: number }
+export interface AlarmsResponse { hostname: string; now: number; summary: AlarmSummary; alarms: Record<string, Alarm> }
+export type LiveAlarmMsg = { alarm: AlarmLogEntry }
 
 const base = ''
 const TOKEN_KEY = 'monitor.token'
@@ -64,6 +80,8 @@ async function get<T>(path: string): Promise<T> {
 export const api = {
   info: () => get<Info>('/api/v1/info'),
   charts: () => get<ChartsResponse>('/api/v1/charts'),
+  alarms: () => get<AlarmsResponse>('/api/v1/alarms?all=true'),
+  alarmLog: (after = 0) => get<AlarmLogEntry[]>(`/api/v1/alarm_log?after=${after}`),
   data: (chart: string, after: number, before = 0, points = 0) =>
     get<DataResponse>(`/api/v1/data?chart=${encodeURIComponent(chart)}&after=${after}&before=${before}&points=${points}`),
   liveURL(charts: string[] = []) {
@@ -71,8 +89,18 @@ export const api = {
     const q = charts.length ? `?charts=${encodeURIComponent(charts.join(','))}` : ''
     return `${proto}//${location.host}/api/v1/live${q}`
   },
-  /** WebSocket subprotocols: browsers cannot set headers, so the token rides here. */
+  /**
+   * WebSocket subprotocols: browsers cannot set headers, so the token rides
+   * here, base64url-encoded so any token satisfies the subprotocol grammar.
+   */
   liveProtocols(): string[] {
-    return auth.token ? ['monitor', `bearer.${encodeURIComponent(auth.token)}`] : ['monitor']
+    return auth.token ? ['monitor', `bearer.${base64url(auth.token)}`] : ['monitor']
   },
+}
+
+function base64url(s: string): string {
+  const bytes = new TextEncoder().encode(s)
+  let bin = ''
+  bytes.forEach((b) => (bin += String.fromCharCode(b)))
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }

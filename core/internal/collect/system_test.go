@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+
+	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
 func TestMountIDDistinct(t *testing.T) {
@@ -32,5 +34,16 @@ func TestCPURawGuest(t *testing.T) {
 	}
 	if raw["user"] != wantUser || raw["nice"] != wantNice {
 		t.Fatalf("user/nice = %v/%v, want %v/%v", raw["user"], raw["nice"], wantUser, wantNice)
+	}
+}
+
+func TestLoadEveryNeverBelowScheduler(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 15}, nil)
+	if got := loadEvery(reg); got != 15 {
+		t.Fatalf("loadEvery = %d, want 15", got)
+	}
+	reg = registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	if got := loadEvery(reg); got != 5 {
+		t.Fatalf("loadEvery = %d, want 5", got)
 	}
 }

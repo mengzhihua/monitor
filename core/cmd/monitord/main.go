@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/mengzhihua/monitor/core/internal/api"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -97,15 +99,27 @@ func run() error {
 	}
 	sched := collect.NewScheduler(reg, log.With("component", "collect"), cfg.Collectors.Enabled, disabled)
 
+	var eng *health.Engine
+	if cfg.HealthEnabled() {
+		eng, err = newHealth(cfg, *cfgPath, reg, db, log.With("component", "health"))
+		if err != nil {
+			return fmt.Errorf("health: %w", err)
+		}
+	}
+
 	srv, err := api.New(reg, db, sched, api.Options{
 		Version:   version,
 		StartedAt: time.Now(),
 		AllowFrom: cfg.Web.AllowFrom,
 		Token:     cfg.Web.Token,
+		Health:    eng,
 		Logger:    log.With("component", "api"),
 	})
 	if err != nil {
 		return err
+	}
+	if eng != nil {
+		eng.SetOnEvent(srv.PublishAlarm)
 	}
 	httpSrv := &http.Server{
 		Addr:              cfg.Web.Listen,
@@ -120,6 +134,13 @@ func run() error {
 	go func() {
 		defer close(schedDone)
 		sched.Run(ctx)
+	}()
+	healthDone := make(chan struct{})
+	go func() {
+		defer close(healthDone)
+		if eng != nil {
+			eng.Run(ctx)
+		}
 	}()
 
 	errc := make(chan error, 1)
@@ -146,6 +167,11 @@ func run() error {
 	case <-schedDone:
 	case <-shutdownCtx.Done():
 		log.Warn("collectors did not stop in time")
+	}
+	select {
+	case <-healthDone:
+	case <-shutdownCtx.Done():
+		log.Warn("health engine did not stop in time")
 	}
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)
@@ -183,4 +209,62 @@ func hostIdentity(cfg *config.Config) (*registry.Host, error) {
 			"_agent_version":  version,
 		},
 	}, nil
+}
+
+func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, log *slog.Logger) (*health.Engine, error) {
+	var sets [][]*health.Rule
+	if cfg.HealthBuiltin() {
+		builtin, err := health.DefaultRules()
+		if err != nil {
+			return nil, err
+		}
+		sets = append(sets, builtin)
+	}
+	dir := cfg.Health.Dir
+	if dir != "" && !filepath.IsAbs(dir) {
+		dir = filepath.Join(filepath.Dir(cfgPath), dir)
+	}
+	if dir != "" {
+		custom, err := health.LoadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		sets = append(sets, custom)
+	}
+	inline, err := health.CompileAll(cfg.Health.Alarms, cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	sets = append(sets, inline)
+	rules := health.Merge(sets...)
+
+	var notifiers []health.Notifier
+	n := cfg.Health.Notify
+	if n.Webhook.URL != "" {
+		notifiers = append(notifiers, &health.WebhookNotifier{URL: n.Webhook.URL, Headers: n.Webhook.Headers})
+	}
+	if n.Slack.WebhookURL != "" {
+		notifiers = append(notifiers, &health.SlackNotifier{WebhookURL: n.Slack.WebhookURL, Channel: n.Slack.Channel})
+	}
+	if n.Email.Server != "" && len(n.Email.To) > 0 {
+		notifiers = append(notifiers, &health.EmailNotifier{Server: n.Email.Server, From: n.Email.From, To: n.Email.To,
+			Username: n.Email.Username, Password: n.Email.Password, Insecure: n.Email.Insecure})
+	}
+
+	vars := map[string]float64{"cpus": float64(runtime.NumCPU())}
+	if vm, err := mem.VirtualMemory(); err == nil {
+		vars["ram_total"] = float64(vm.Total) / (1024 * 1024)
+	}
+	log.Info("health engine", "rules", len(rules), "notifiers", len(notifiers), "silent", cfg.Health.Silent)
+	return health.New(reg, db, health.Options{
+		Rules:      rules,
+		Hostname:   reg.Host.Hostname,
+		LogDir:     filepath.Join(cfg.Global.DataDir, "health"),
+		LogKeep:    cfg.Health.LogKeep,
+		Notifiers:  notifiers,
+		Roles:      n.Roles,
+		HostVars:   vars,
+		Logger:     log,
+		SilenceAll: cfg.Health.Silent,
+	})
 }

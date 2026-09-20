@@ -12,7 +12,7 @@ None for local default mode. Use an explicitly agreed temporary token for auth t
 - Add `/usr/local/go/bin` to PATH if Go is not found.
 - Run `make all` from the repo root: UI assets must be built before the Go binary to embed the current dashboard. Building only Go can leave stale or absent UI assets.
 - Inspect `ss -ltnp` and `pgrep -ax monitord` before using port 19999. Stop only the identified test service with SIGINT; preserve existing data directories.
-- Run `./core/bin/monitord -listen 127.0.0.1:19999 -data-dir <temporary-data-directory>`, capturing its log.
+- Create an empty temporary config file (so a developer `monitor.yaml` in the repo root is not picked up), then run `./core/bin/monitord -config <temporary-config-file> -listen 127.0.0.1:19999 -data-dir <temporary-data-directory>`, capturing its log.
 - `scripts/smoke.sh` starts its own process on 19998. Keep that port free.
 
 ## UI checks

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mengzhihua/monitor/core/internal/health"
 )
 
 type Config struct {
@@ -32,7 +34,47 @@ type Config struct {
 		Enabled  []string `yaml:"enabled"`  // empty = all
 		Disabled []string `yaml:"disabled"` // names to turn off
 	} `yaml:"collectors"`
+	Health Health `yaml:"health"`
 }
+
+// Health configures the alarm engine and notification channels.
+type Health struct {
+	Enabled *bool             `yaml:"enabled"`  // default true
+	Dir     string            `yaml:"dir"`      // extra rule files (*.yaml), relative to the config file
+	Builtin *bool             `yaml:"builtin"`  // load the rules shipped with the agent (default true)
+	LogKeep int               `yaml:"log_keep"` // alarm log entries kept in memory
+	Silent  bool              `yaml:"silent"`   // evaluate but never notify
+	Notify  Notify            `yaml:"notify"`
+	Alarms  []health.RuleSpec `yaml:"alarms"` // inline rules, same schema as health.d files
+}
+
+// Notify holds the notification channels; a channel is active when its
+// required fields are set. Roles map an alarm's `to:` to channel names.
+type Notify struct {
+	Roles   map[string][]string `yaml:"roles"` // e.g. sysadmin: [slack, email]
+	Webhook struct {
+		URL     string            `yaml:"url"`
+		Headers map[string]string `yaml:"headers"`
+	} `yaml:"webhook"`
+	Slack struct {
+		WebhookURL string `yaml:"webhook_url"`
+		Channel    string `yaml:"channel"`
+	} `yaml:"slack"`
+	Email struct {
+		Server   string   `yaml:"server"` // host:port
+		From     string   `yaml:"from"`
+		To       []string `yaml:"to"`
+		Username string   `yaml:"username"`
+		Password string   `yaml:"password"`
+		Insecure bool     `yaml:"insecure_skip_verify"`
+	} `yaml:"email"`
+}
+
+// HealthEnabled reports whether the alarm engine should run.
+func (c *Config) HealthEnabled() bool { return c.Health.Enabled == nil || *c.Health.Enabled }
+
+// HealthBuiltin reports whether the shipped rules are loaded.
+func (c *Config) HealthBuiltin() bool { return c.Health.Builtin == nil || *c.Health.Builtin }
 
 func Default() *Config {
 	c := &Config{Mode: "agent"}
@@ -42,6 +84,8 @@ func Default() *Config {
 	c.DB.Tier0RetentionSize = "1GiB"
 	c.DB.Checkpoint = 10 * time.Minute
 	c.Web.Listen = ":19999"
+	c.Health.Dir = "health.d"
+	c.Health.LogKeep = 1000
 	return c
 }
 
