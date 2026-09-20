@@ -38,6 +38,7 @@ type Options struct {
 	RetentionSize int64         // bytes, 0 = unlimited
 	BlockSize     int
 	Checkpoint    time.Duration // flush active blocks this often (0 = only when full/close)
+	Tiers         []TierSpec    // rollup tiers; nil = DefaultTiers(), empty = tier0 only
 	Logger        *slog.Logger
 }
 
@@ -71,6 +72,7 @@ type Store struct {
 	log    *slog.Logger
 	mu     sync.RWMutex
 	series map[string]*series
+	tiers  []*tier
 	stop   chan struct{}
 	wg     sync.WaitGroup
 	closed bool
@@ -90,6 +92,22 @@ func Open(opt Options) (*Store, error) {
 	s := &Store{opt: opt, log: opt.Logger, series: map[string]*series{}, stop: make(chan struct{})}
 	if err := s.load(tier0); err != nil {
 		return nil, err
+	}
+	specs := opt.Tiers
+	if specs == nil {
+		specs = DefaultTiers()
+	}
+	for i, spec := range specs {
+		t, err := newTier(i+1, spec, opt.Dir)
+		if err != nil {
+			return nil, err
+		}
+		n, err := t.load()
+		if err != nil {
+			return nil, err
+		}
+		s.log.Info("tsdb: tier loaded", "tier", i+1, "every", spec.Every, "series", len(t.series), "blocks", n)
+		s.tiers = append(s.tiers, t)
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -169,6 +187,14 @@ func (s *Store) Append(id string, ts int64, v float64) {
 	if full {
 		if err := s.flushSeries(sr); err != nil {
 			s.log.Error("tsdb: flush failed", "series", id, "err", err)
+		}
+	}
+	for _, t := range s.tiers {
+		tsr := t.getOrCreate(id)
+		if t.append(tsr, ts, v) {
+			if err := t.flush(tsr); err != nil {
+				s.log.Error("tsdb: tier flush failed", "tier", t.idx, "series", id, "err", err)
+			}
 		}
 	}
 }
@@ -291,6 +317,11 @@ func (s *Store) Flush() error {
 			firstErr = err
 		}
 	}
+	for _, t := range s.tiers {
+		if err := t.flushAll(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -310,6 +341,9 @@ func (s *Store) loop() {
 			return
 		case <-gc.C:
 			s.enforceRetention()
+			for _, t := range s.tiers {
+				t.enforceRetention(time.Now())
+			}
 		case <-cp:
 			if err := s.Flush(); err != nil {
 				s.log.Error("tsdb: checkpoint failed", "err", err)
@@ -386,6 +420,11 @@ func (s *Store) Close() error {
 	s.mu.Unlock()
 	close(s.stop)
 	s.wg.Wait()
+	for _, t := range s.tiers {
+		for _, sr := range t.all() {
+			t.seal(sr)
+		}
+	}
 	return s.Flush()
 }
 
@@ -393,20 +432,24 @@ func (s *Store) Close() error {
 // magic(4) version(1) idLen(2) id start(8) end(8) count(4) dataLen(4) data
 
 func writeBlock(dir, id string, ts []int64, vals []float64) (blockMeta, error) {
+	return writeBlockData(dir, id, ts[0], ts[len(ts)-1], len(ts), encodeBlock(ts, vals))
+}
+
+// writeBlockData writes an already-encoded payload with the standard header.
+func writeBlockData(dir, id string, start, end int64, count int, data []byte) (blockMeta, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return blockMeta{}, err
 	}
-	data := encodeBlock(ts, vals)
 	var hdr bytes.Buffer
 	hdr.WriteString(blockMagic)
 	hdr.WriteByte(blockVersion)
 	_ = binary.Write(&hdr, binary.LittleEndian, uint16(len(id)))
 	hdr.WriteString(id)
-	_ = binary.Write(&hdr, binary.LittleEndian, ts[0])
-	_ = binary.Write(&hdr, binary.LittleEndian, ts[len(ts)-1])
-	_ = binary.Write(&hdr, binary.LittleEndian, uint32(len(ts)))
+	_ = binary.Write(&hdr, binary.LittleEndian, start)
+	_ = binary.Write(&hdr, binary.LittleEndian, end)
+	_ = binary.Write(&hdr, binary.LittleEndian, uint32(count))
 	_ = binary.Write(&hdr, binary.LittleEndian, uint32(len(data)))
-	path := filepath.Join(dir, strconv.FormatInt(ts[0], 10)+".blk")
+	path := filepath.Join(dir, strconv.FormatInt(start, 10)+".blk")
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
 	if err != nil {
@@ -426,7 +469,7 @@ func writeBlock(dir, id string, ts []int64, vals []float64) (blockMeta, error) {
 	if err := os.Rename(tmp, path); err != nil {
 		return blockMeta{}, err
 	}
-	return blockMeta{path: path, start: ts[0], end: ts[len(ts)-1], count: len(ts), size: int64(hdr.Len() + len(data))}, nil
+	return blockMeta{path: path, start: start, end: end, count: count, size: int64(hdr.Len() + len(data))}, nil
 }
 
 func readHeader(path string) (string, blockMeta, error) {
@@ -488,18 +531,26 @@ func parseHeader(r io.Reader) (string, blockMeta, uint32, error) {
 }
 
 func readBlock(path string) ([]int64, []float64, error) {
-	f, err := os.Open(path)
+	meta, data, err := readBlockData(path)
 	if err != nil {
 		return nil, nil, err
+	}
+	return decodeBlock(data, meta.count)
+}
+
+func readBlockData(path string) (blockMeta, []byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return blockMeta{}, nil, err
 	}
 	defer f.Close()
 	_, meta, dataLen, err := parseHeader(f)
 	if err != nil {
-		return nil, nil, err
+		return blockMeta{}, nil, err
 	}
 	data := make([]byte, dataLen)
 	if _, err := io.ReadFull(f, data); err != nil {
-		return nil, nil, err
+		return blockMeta{}, nil, err
 	}
-	return decodeBlock(data, meta.count)
+	return meta, data, nil
 }

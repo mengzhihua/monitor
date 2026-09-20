@@ -24,6 +24,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -81,11 +82,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	tiers := tsdb.DefaultTiers()
+	if cfg.DB.Tiers < 1 || cfg.DB.Tiers > len(tiers)+1 {
+		return fmt.Errorf("db.tiers must be between 1 and %d", len(tiers)+1)
+	}
+	tiers = tiers[:cfg.DB.Tiers-1]
+	for i, ret := range []time.Duration{cfg.DB.Tier1Retention, cfg.DB.Tier2Retention} {
+		if i < len(tiers) {
+			tiers[i].Retention = ret
+		}
+	}
 	db, err := tsdb.Open(tsdb.Options{
 		Dir:           filepath.Join(cfg.Global.DataDir, "db"),
 		Retention:     cfg.DB.Tier0Retention,
 		RetentionSize: retSize,
 		Checkpoint:    cfg.DB.Checkpoint,
+		Tiers:         tiers,
 		Logger:        log.With("component", "tsdb"),
 	})
 	if err != nil {
@@ -107,12 +119,26 @@ func run() error {
 		}
 	}
 
+	var pm *plugins.Manager
+	if cfg.PluginsEnabled() {
+		pdir := cfg.Plugins.Dir
+		if pdir != "" && !filepath.IsAbs(pdir) {
+			pdir = filepath.Join(filepath.Dir(*cfgPath), pdir)
+		}
+		pm = plugins.New(reg, cfg.Plugins.List, plugins.Options{
+			Dir:      pdir,
+			Disabled: cfg.Plugins.Disabled,
+			Logger:   log.With("component", "plugins"),
+		})
+	}
+
 	srv, err := api.New(reg, db, sched, api.Options{
 		Version:   version,
 		StartedAt: time.Now(),
 		AllowFrom: cfg.Web.AllowFrom,
 		Token:     cfg.Web.Token,
 		Health:    eng,
+		Plugins:   pm,
 		Logger:    log.With("component", "api"),
 	})
 	if err != nil {
@@ -140,6 +166,13 @@ func run() error {
 		defer close(healthDone)
 		if eng != nil {
 			eng.Run(ctx)
+		}
+	}()
+	pluginsDone := make(chan struct{})
+	go func() {
+		defer close(pluginsDone)
+		if pm != nil {
+			pm.Run(ctx)
 		}
 	}()
 
@@ -172,6 +205,11 @@ func run() error {
 	case <-healthDone:
 	case <-shutdownCtx.Done():
 		log.Warn("health engine did not stop in time")
+	}
+	select {
+	case <-pluginsDone:
+	case <-shutdownCtx.Done():
+		log.Warn("plugins did not stop in time")
 	}
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)

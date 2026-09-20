@@ -1,0 +1,37 @@
+#!/bin/sh
+# Example plugins.d collector: emits two charts every $1 seconds using the
+# stdin/stdout text protocol. Copy this file to write your own collector in
+# any language (shell, Python, Node, Go, ...).
+#
+# The agent runs:  example.plugin <update_every>
+# Environment:     MONITOR_UPDATE_EVERY, MONITOR_HOSTNAME, MONITOR_PLUGIN
+# Protocol:        see docs/03-plugins-d-protocol.md
+
+every="${1:-1}"
+
+# --- chart definitions (once) --------------------------------------------
+# CHART type.id name title units family context charttype priority update_every options plugin module
+echo "CHART example.random '' 'Random Numbers' 'value' example example.random line 90000 $every '' example random"
+echo "DIMENSION random1 'random 1' absolute 1 1"
+echo "DIMENSION random2 'random 2' absolute 1 1"
+echo "CLABEL environment demo"
+echo "CLABEL_COMMIT"
+
+echo "CHART example.counter '' 'Lines emitted' 'lines/s' example example.counter area 90001 $every '' example counter"
+echo "DIMENSION lines '' incremental 1 1"
+
+# --- data loop --------------------------------------------------------------
+n=0
+while true; do
+  n=$((n + 10))
+  r1=$(awk -v s="$$$n" 'BEGIN{srand(s); print int(rand()*100)}')
+  r2=$(awk -v s="$n$$" 'BEGIN{srand(s); print int(rand()*100)}')
+  echo "BEGIN example.random"
+  echo "SET random1 = $r1"
+  echo "SET random2 = $r2"
+  echo "END"
+  echo "BEGIN example.counter"
+  echo "SET lines = $n"
+  echo "END"
+  sleep "$every"
+done

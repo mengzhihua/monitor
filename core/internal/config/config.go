@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/plugins"
 )
 
 type Config struct {
@@ -24,6 +25,9 @@ type Config struct {
 		Tier0Retention     time.Duration `yaml:"tier0_retention"`
 		Tier0RetentionSize string        `yaml:"tier0_retention_size"`
 		Checkpoint         time.Duration `yaml:"checkpoint"`
+		Tiers              int           `yaml:"tiers"` // 1..3: tier0 only, +1m rollups, +1h rollups
+		Tier1Retention     time.Duration `yaml:"tier1_retention"`
+		Tier2Retention     time.Duration `yaml:"tier2_retention"`
 	} `yaml:"db"`
 	Web struct {
 		Listen    string   `yaml:"listen"`
@@ -34,7 +38,16 @@ type Config struct {
 		Enabled  []string `yaml:"enabled"`  // empty = all
 		Disabled []string `yaml:"disabled"` // names to turn off
 	} `yaml:"collectors"`
-	Health Health `yaml:"health"`
+	Health  Health  `yaml:"health"`
+	Plugins Plugins `yaml:"plugins"`
+}
+
+// Plugins configures external plugins.d collectors.
+type Plugins struct {
+	Enabled  *bool          `yaml:"enabled"`  // default true
+	Dir      string         `yaml:"dir"`      // scanned for executable *.plugin files, relative to the config file
+	Disabled []string       `yaml:"disabled"` // plugin names not to start
+	List     []plugins.Spec `yaml:"list"`     // explicit plugins (command may be relative to dir)
 }
 
 // Health configures the alarm engine and notification channels.
@@ -73,6 +86,9 @@ type Notify struct {
 // HealthEnabled reports whether the alarm engine should run.
 func (c *Config) HealthEnabled() bool { return c.Health.Enabled == nil || *c.Health.Enabled }
 
+// PluginsEnabled reports whether external plugins are started.
+func (c *Config) PluginsEnabled() bool { return c.Plugins.Enabled == nil || *c.Plugins.Enabled }
+
 // HealthBuiltin reports whether the shipped rules are loaded.
 func (c *Config) HealthBuiltin() bool { return c.Health.Builtin == nil || *c.Health.Builtin }
 
@@ -83,9 +99,13 @@ func Default() *Config {
 	c.DB.Tier0Retention = 14 * 24 * time.Hour
 	c.DB.Tier0RetentionSize = "1GiB"
 	c.DB.Checkpoint = 10 * time.Minute
+	c.DB.Tiers = 3
+	c.DB.Tier1Retention = 90 * 24 * time.Hour
+	c.DB.Tier2Retention = 2 * 365 * 24 * time.Hour
 	c.Web.Listen = ":19999"
 	c.Health.Dir = "health.d"
 	c.Health.LogKeep = 1000
+	c.Plugins.Dir = "plugins.d"
 	return c
 }
 

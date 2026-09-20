@@ -152,6 +152,14 @@ onBeforeUnmount(() => clearInterval(timer))
           <span>{{ c.name }}</span>
           <small>{{ c.enabled ? (c.error ? 'error' : c.last_run_ms + 'ms') : 'off' }}</small>
         </div>
+        <template v-if="info.plugins && info.plugins.length">
+          <div class="nav-title">插件</div>
+          <div v-for="p in info.plugins" :key="p.name" class="col"
+            :class="{ bad: p.state !== 'running' && p.state !== 'starting' }" :title="p.error || p.command">
+            <span>{{ p.name }}</span>
+            <small>{{ p.state === 'running' ? p.stats.charts + ' charts' : p.state }}</small>
+          </div>
+        </template>
       </div>
     </nav>
 

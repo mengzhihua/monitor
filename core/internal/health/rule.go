@@ -237,6 +237,9 @@ func ParseRepeat(s string) (Repeat, error) {
 	if len(f) == 0 || strings.EqualFold(f[0], "off") {
 		return r, nil
 	}
+	if len(f)%2 != 0 {
+		return r, fmt.Errorf("repeat %q: expected \"<warning|critical> <duration>\" pairs", s)
+	}
 	for i := 0; i+1 < len(f); i += 2 {
 		d, err := parseDuration(f[i+1])
 		if err != nil {
