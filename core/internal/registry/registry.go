@@ -166,6 +166,18 @@ func (r *Registry) AddChart(c *Chart) *Chart {
 	return c
 }
 
+// RemoveChart forgets a chart (e.g. a container that went away). Stored
+// samples stay in the database until retention drops them.
+func (r *Registry) RemoveChart(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.charts[id]; !ok {
+		return false
+	}
+	delete(r.charts, id)
+	return true
+}
+
 func (r *Registry) Chart(id string) (*Chart, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

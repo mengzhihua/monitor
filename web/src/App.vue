@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Alarm, AlarmLogEntry, Chart, Info } from './api'
+import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info } from './api'
 import { ApiError, api, auth } from './api'
 import { live } from './live'
 import MetricChart from './components/MetricChart.vue'
 import AlarmsPanel from './components/AlarmsPanel.vue'
+import FunctionsPanel from './components/FunctionsPanel.vue'
 
 const info = ref<Info | null>(null)
 const charts = ref<Chart[]>([])
@@ -18,6 +19,8 @@ const activeSection = ref('')
 const alarms = ref<Alarm[]>([])
 const alarmLog = ref<AlarmLogEntry[]>([])
 const showAlarms = ref(false)
+const functions = ref<FunctionInfo[]>([])
+const showFunctions = ref(false)
 const healthOn = computed(() => info.value?.alarms != null)
 const raised = computed(() => ({
   warning: alarms.value.filter((a) => a.status === 'WARNING').length,
@@ -63,7 +66,7 @@ async function refresh() {
     })
     error.value = ''
     needToken.value = false
-    await refreshAlarms()
+    await Promise.all([refreshAlarms(), refreshFunctions()])
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
@@ -81,6 +84,12 @@ async function refreshAlarms() {
     alarms.value = Object.values(a.alarms)
     alarmLog.value = l
   } catch { /* transient; the next refresh retries */ }
+}
+
+async function refreshFunctions() {
+  try {
+    functions.value = await api.functions()
+  } catch { /* transient */ }
 }
 
 /** Apply a live transition without waiting for the next poll. */
@@ -132,6 +141,8 @@ onBeforeUnmount(() => clearInterval(timer))
         @click="showAlarms = !showAlarms" title="告警">
         ⚠ <b v-if="raised.critical">{{ raised.critical }}</b><b v-else-if="raised.warning">{{ raised.warning }}</b><span v-else>0</span>
       </button>
+      <button v-if="functions.length" class="alarms-btn" :class="{ open: showFunctions }" @click="showFunctions = !showFunctions"
+        title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
     </div>
     <div class="controls">
@@ -166,6 +177,7 @@ onBeforeUnmount(() => clearInterval(timer))
     <main>
       <div v-if="error" class="banner">{{ error }}</div>
       <AlarmsPanel v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" @close="showAlarms = false" />
+      <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>此 Agent 已启用访问令牌（web.token），请输入后继续。</p>
         <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />

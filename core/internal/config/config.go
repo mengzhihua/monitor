@@ -37,9 +37,29 @@ type Config struct {
 	Collectors struct {
 		Enabled  []string `yaml:"enabled"`  // empty = all
 		Disabled []string `yaml:"disabled"` // names to turn off
+		// Modules holds per-collector settings keyed by collector name; the
+		// schema of each section is owned by the collector (see
+		// monitor.example.yaml).
+		Modules map[string]yaml.Node `yaml:"modules"`
 	} `yaml:"collectors"`
 	Health  Health  `yaml:"health"`
 	Plugins Plugins `yaml:"plugins"`
+}
+
+// ModuleDecoders adapts collectors.modules to the decoder callbacks the
+// collect scheduler expects.
+func (c *Config) ModuleDecoders() map[string]func(v any) error {
+	out := make(map[string]func(v any) error, len(c.Collectors.Modules))
+	for name, node := range c.Collectors.Modules {
+		node := node
+		out[name] = func(v any) error {
+			if err := node.Decode(v); err != nil {
+				return fmt.Errorf("collectors.modules.%s: %w", name, err)
+			}
+			return nil
+		}
+	}
+	return out
 }
 
 // Plugins configures external plugins.d collectors.

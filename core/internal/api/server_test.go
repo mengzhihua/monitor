@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,7 @@ func newTestServer(t *testing.T, opt Options) (*httptest.Server, *registry.Regis
 	reg := registry.New(&registry.Host{ID: "id", Hostname: "test", OS: "linux", UpdateEvery: 1}, db)
 	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Title: "RAM", Units: "MiB",
 		Type: registry.Stacked, Priority: 200, Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
-	sched := collect.NewScheduler(reg, opt.Logger, []string{"none"}, nil)
+	sched := collect.NewScheduler(reg, opt.Logger, collect.Options{Names: []string{"none"}})
 	if opt.StartedAt.IsZero() {
 		opt.StartedAt = time.Now()
 	}
@@ -265,7 +266,7 @@ alarms:
 	if err != nil {
 		t.Fatal(err)
 	}
-	sched := collect.NewScheduler(reg, nil, []string{"none"}, nil)
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
 	srv, err := New(reg, db, sched, Options{Health: eng, StartedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
@@ -371,5 +372,50 @@ func TestDataTierSelection(t *testing.T) {
 	getJSON(t, ts.URL+"/api/v1/info", &info)
 	if len(info.DB.Tiers) != 3 || info.DB.Tiers[1].Every != 60 || info.DB.Tiers[2].Every != 3600 {
 		t.Fatalf("info tiers = %+v", info.DB.Tiers)
+	}
+}
+
+type fnCollector struct{}
+
+func (fnCollector) Name() string                                                 { return "fn" }
+func (fnCollector) Init(*registry.Registry) error                                { return nil }
+func (fnCollector) Collect(context.Context, *registry.Registry, time.Time) error { return nil }
+func (fnCollector) Functions() []collect.Function {
+	return []collect.Function{{Name: "echo", Help: "echo args", Run: func(_ context.Context, args map[string]string) (any, error) {
+		return args, nil
+	}}}
+}
+
+func TestFunctionsAPI(t *testing.T) {
+	collect.Register("fn", func() collect.Collector { return fnCollector{} })
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "id", Hostname: "test", UpdateEvery: 1}, db)
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"fn"}})
+	srv, err := New(reg, db, sched, Options{StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	var list []map[string]any
+	getJSON(t, ts.URL+"/api/v1/functions", &list)
+	if len(list) != 1 || list[0]["name"] != "echo" {
+		t.Fatalf("functions = %v", list)
+	}
+	var res struct {
+		Function string            `json:"function"`
+		Result   map[string]string `json:"result"`
+	}
+	getJSON(t, ts.URL+"/api/v1/function?function=echo&sort=rss&token=x", &res)
+	if res.Function != "echo" || res.Result["sort"] != "rss" || res.Result["token"] != "" {
+		t.Fatalf("function result = %+v", res)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/function?function=nope", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown function status = %d", resp.StatusCode)
 	}
 }
