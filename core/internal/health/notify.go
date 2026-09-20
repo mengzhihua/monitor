@@ -139,14 +139,21 @@ func postJSON(ctx context.Context, c *http.Client, url string, body []byte, head
 }
 
 // EmailNotifier sends plain-text mail via SMTP (STARTTLS when the server
-// offers it, implicit TLS on port 465).
+// offers it, implicit TLS on port 465). Credentials are only sent over TLS
+// unless Insecure is set.
 type EmailNotifier struct {
 	Server   string // host:port
 	From     string
 	To       []string
 	Username string
 	Password string
-	Insecure bool // skip certificate verification
+	Insecure bool // skip certificate verification and allow plaintext auth
+}
+
+// headerSafe strips CR/LF so values interpolated into mail headers cannot
+// inject additional headers or recipients.
+func headerSafe(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 }
 
 func (n *EmailNotifier) Name() string { return "email" }
@@ -156,10 +163,15 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 	if err != nil {
 		return fmt.Errorf("email server %q: %w", n.Server, err)
 	}
+	for _, addr := range append([]string{n.From}, n.To...) {
+		if strings.ContainsAny(addr, "\r\n") {
+			return fmt.Errorf("email address %q contains a line break", addr)
+		}
+	}
 	subject := fmt.Sprintf("[%s] %s: %s is %s", e.Hostname, e.Status, e.Name, formatValue(e.Value)+" "+e.Units)
 	var msg bytes.Buffer
 	fmt.Fprintf(&msg, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nDate: %s\r\n\r\n",
-		n.From, strings.Join(n.To, ", "), subject, time.Unix(e.When, 0).Format(time.RFC1123Z))
+		n.From, strings.Join(n.To, ", "), headerSafe(subject), time.Unix(e.When, 0).Format(time.RFC1123Z))
 	msg.WriteString(strings.NewReplacer("*", "", "`", "").Replace(Summarize(e)))
 	msg.WriteString("\r\n")
 
@@ -174,18 +186,38 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 	if err != nil {
 		return err
 	}
+	// Bound the whole SMTP session: the dialer timeout only covers connect.
+	deadline := time.Now().Add(30 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+	sessionDone := make(chan struct{})
+	defer close(sessionDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-sessionDone:
+		}
+	}()
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
 		return err
 	}
 	defer c.Close()
-	if port != "465" {
+	encrypted := port == "465"
+	if !encrypted {
 		if ok, _ := c.Extension("STARTTLS"); ok {
 			if err := c.StartTLS(tlsCfg); err != nil {
 				return err
 			}
+			encrypted = true
 		}
+	}
+	if n.Username != "" && !encrypted && !n.Insecure {
+		return fmt.Errorf("smtp %s: server does not offer STARTTLS; refusing to send credentials in plaintext (set insecure: true to override)", n.Server)
 	}
 	if n.Username != "" {
 		if err := c.Auth(smtp.PlainAuth("", n.Username, n.Password, host)); err != nil {

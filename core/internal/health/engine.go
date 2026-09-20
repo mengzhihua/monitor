@@ -101,6 +101,7 @@ type Alarm struct {
 	chart       *registry.Chart
 	nextRun     time.Time
 	pending     *LogEntry // transition waiting for its delay to expire
+	notifiedSt  Status    // status last reported to notifiers (or silently settled)
 	delayMult   float64
 	lastDelayAt time.Time
 }
@@ -168,8 +169,20 @@ type Engine struct {
 	nextLog uint64
 	logFile *os.File
 
-	notifyCh chan LogEntry
-	notified atomic.Int64
+	notifyCh   chan LogEntry
+	notified   atomic.Int64
+	dispatchWG sync.WaitGroup
+	startOnce  sync.Once
+	closeOnce  sync.Once
+	closed     bool // notifyCh closed; guarded by mu
+}
+
+// logUpdate is appended to alarm-log.jsonl when a previously written entry
+// is delivered, so notification state survives restarts.
+type logUpdate struct {
+	Update     string `json:"update"`
+	UniqueID   uint64 `json:"unique_id"`
+	NotifiedAt int64  `json:"notified_at"`
 }
 
 // New builds an engine; call Run to start evaluating.
@@ -214,6 +227,16 @@ func (e *Engine) loadLog(path string) error {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
 	for sc.Scan() {
+		var up logUpdate
+		if err := json.Unmarshal(sc.Bytes(), &up); err == nil && up.Update == "notified" {
+			for i := len(e.entries) - 1; i >= 0; i-- {
+				if e.entries[i].UniqueID == up.UniqueID {
+					e.entries[i].Notified, e.entries[i].NotifiedAt = true, up.NotifiedAt
+					break
+				}
+			}
+			continue
+		}
 		var le LogEntry
 		if err := json.Unmarshal(sc.Bytes(), &le); err != nil {
 			continue
@@ -241,29 +264,49 @@ func (e *Engine) Now() time.Time { return e.now() }
 // SetOnEvent installs the transition callback; call before Run.
 func (e *Engine) SetOnEvent(fn func(LogEntry)) { e.opt.OnEvent = fn }
 
-// Run evaluates alarms until ctx is cancelled.
+// Run evaluates alarms until ctx is cancelled, then Closes the engine.
 func (e *Engine) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		e.dispatch()
-	}()
+	e.startDispatch()
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			close(e.notifyCh)
-			wg.Wait()
-			if e.logFile != nil {
-				_ = e.logFile.Close()
-			}
+			e.Close()
 			return
 		case now := <-t.C:
 			e.Tick(now)
 		}
 	}
+}
+
+// startDispatch launches the notification dispatcher (once).
+func (e *Engine) startDispatch() {
+	e.startOnce.Do(func() {
+		e.dispatchWG.Add(1)
+		go func() {
+			defer e.dispatchWG.Done()
+			e.dispatch()
+		}()
+	})
+}
+
+// Close stops accepting notifications, waits for queued ones to be delivered
+// and closes the alarm log. Safe to call more than once.
+func (e *Engine) Close() {
+	e.closeOnce.Do(func() {
+		e.mu.Lock()
+		e.closed = true
+		close(e.notifyCh)
+		e.mu.Unlock()
+		e.dispatchWG.Wait()
+		e.mu.Lock()
+		if e.logFile != nil {
+			_ = e.logFile.Close()
+			e.logFile = nil
+		}
+		e.mu.Unlock()
+	})
 }
 
 // Tick binds rules to any new charts and evaluates alarms that are due.
@@ -317,7 +360,7 @@ func (e *Engine) bind() {
 				Warn: r.Spec.Warn, Crit: r.Spec.Crit, Every: int64(r.Every / time.Second),
 				Recipient: r.Spec.To, Source: r.Source, Labels: c.Labels,
 				Status: StatusUninitialized, Value: math.NaN(), Active: true,
-				rule: r, chart: c, delayMult: 1,
+				rule: r, chart: c, delayMult: 1, notifiedSt: StatusUninitialized,
 			}
 			if a.Units == "" {
 				a.Units = c.Units
@@ -421,7 +464,9 @@ func (e *Engine) newEntry(a *Alarm, old Status, oldValue float64, now time.Time)
 }
 
 // transition applies the notification delay: the log entry is written now,
-// notification happens when the delay expires unless the status changed again.
+// notification happens when the delay expires unless the alarm has meanwhile
+// returned to the status notifiers last heard about (a.notifiedSt), in which
+// case the whole flap is dropped.
 func (e *Engine) transition(a *Alarm, entry LogEntry, now time.Time) {
 	d := a.rule.Delay
 	var delay time.Duration
@@ -453,25 +498,32 @@ func (e *Engine) transition(a *Alarm, entry LogEntry, now time.Time) {
 	}
 	e.mu.Unlock()
 
-	// Transitions into UNINITIALIZED/UNDEFINED and the very first CLEAR are
-	// logged but never notified; a rule that starts out raised is.
+	// Transitions into UNINITIALIZED/UNDEFINED, a CLEAR when nothing raised
+	// was ever reported, and a return to the last reported status are logged
+	// but never notified; a rule that starts out raised is.
+	e.mu.Lock()
 	silent := entry.Status <= StatusUndefined ||
-		(entry.Status == StatusClear && entry.OldStatus <= StatusClear)
+		(entry.Status == StatusClear && a.notifiedSt <= StatusClear) ||
+		entry.Status == a.notifiedSt
 	if silent {
-		e.mu.Lock()
 		a.pending = nil
 		a.DelayUpTo = 0
+		a.notifiedSt = entry.Status
 		e.mu.Unlock()
 		e.record(entry, false)
 		return
 	}
 	if notifyNow {
-		e.mu.Lock()
 		a.pending = nil
+		from := a.notifiedSt
+		a.notifiedSt = entry.Status
 		e.mu.Unlock()
-		e.record(entry, true)
+		saved := e.record(entry, false)
+		saved.OldStatus = from // notifiers see the change since the last report
+		e.notify(saved)
 		return
 	}
+	e.mu.Unlock()
 	saved := e.record(entry, false)
 	e.mu.Lock()
 	a.pending = &saved
@@ -491,10 +543,11 @@ func (e *Engine) flushPending(now time.Time) {
 		p := *a.pending
 		a.pending = nil
 		a.DelayUpTo = 0
-		if a.Status == p.OldStatus {
+		if a.Status == a.notifiedSt {
 			continue
 		}
-		p.Status, p.Value = a.Status, a.Value
+		p.Status, p.Value, p.OldStatus = a.Status, a.Value, a.notifiedSt
+		a.notifiedSt = a.Status
 		ready = append(ready, p)
 	}
 	e.mu.Unlock()
@@ -529,23 +582,17 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 	return entry
 }
 
+// notify queues an entry for delivery. Delivery state (Notified, NotifiedAt,
+// Alarm.LastNotified) is only recorded once a notifier actually succeeds.
 func (e *Engine) notify(entry LogEntry) {
-	if e.opt.SilenceAll || len(e.opt.Notifiers) == 0 {
+	if e.opt.SilenceAll || len(e.notifiersFor(entry.Recipient)) == 0 {
 		return
 	}
 	e.mu.Lock()
-	for _, a := range e.alarms {
-		if a.ID == entry.AlarmID {
-			a.LastNotified = entry.When
-		}
+	defer e.mu.Unlock()
+	if e.closed {
+		return
 	}
-	for i := range e.entries {
-		if e.entries[i].UniqueID == entry.UniqueID {
-			e.entries[i].Notified = true
-			e.entries[i].NotifiedAt = e.now().Unix()
-		}
-	}
-	e.mu.Unlock()
 	select {
 	case e.notifyCh <- entry:
 	default:
@@ -555,6 +602,7 @@ func (e *Engine) notify(entry LogEntry) {
 
 func (e *Engine) dispatch() {
 	for entry := range e.notifyCh {
+		delivered := false
 		for _, n := range e.notifiersFor(entry.Recipient) {
 			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := n.Notify(cctx, entry)
@@ -563,7 +611,32 @@ func (e *Engine) dispatch() {
 				e.log.Error("notify failed", "via", n.Name(), "alarm", entry.Name, "err", err)
 				continue
 			}
+			delivered = true
 			e.notified.Add(1)
+		}
+		if delivered {
+			e.markNotified(entry)
+		}
+	}
+}
+
+func (e *Engine) markNotified(entry LogEntry) {
+	at := e.now().Unix()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, a := range e.alarms {
+		if a.ID == entry.AlarmID && entry.When > a.LastNotified {
+			a.LastNotified = entry.When
+		}
+	}
+	for i := range e.entries {
+		if e.entries[i].UniqueID == entry.UniqueID {
+			e.entries[i].Notified, e.entries[i].NotifiedAt = true, at
+		}
+	}
+	if e.logFile != nil {
+		if b, err := json.Marshal(logUpdate{Update: "notified", UniqueID: entry.UniqueID, NotifiedAt: at}); err == nil {
+			_, _ = e.logFile.Write(append(b, '\n'))
 		}
 	}
 }
@@ -619,7 +692,12 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 		if len(vals) == 0 {
 			continue
 		}
-		v := reduce(vals, l.Method)
+		var v float64
+		if l.Method == tsdb.GroupSum {
+			v = integrate(pts, int64(c.UpdateEvery))
+		} else {
+			v = reduce(vals, l.Method)
+		}
 		if l.AbsValue {
 			v = math.Abs(v)
 		}
@@ -647,6 +725,31 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 		return sum * 100 / total
 	}
 	return sum
+}
+
+// integrate sums per-second rates over the time they were in effect, so
+// `sum` yields a total regardless of the collection interval. Each sample
+// covers the gap since the previous one, capped at twice the chart interval
+// (a longer gap means missed collections, not a sustained rate).
+func integrate(pts []tsdb.Point, every int64) float64 {
+	if every <= 0 {
+		every = 1
+	}
+	var total float64
+	prev := int64(-1)
+	for _, p := range pts {
+		dt := every
+		if prev >= 0 {
+			if d := p.TS - prev; d > 0 && d <= 2*every {
+				dt = d
+			}
+		}
+		prev = p.TS
+		if !math.IsNaN(p.Value) {
+			total += p.Value * float64(dt)
+		}
+	}
+	return total
 }
 
 func reduce(vals []float64, fn tsdb.GroupFunc) float64 {

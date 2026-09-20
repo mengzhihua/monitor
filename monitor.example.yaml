@@ -54,3 +54,5 @@ health:
       to: []
       username: ""
       password: ""
+      # skip TLS verification and allow AUTH over plaintext (not recommended)
+      insecure_skip_verify: false

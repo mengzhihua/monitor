@@ -1,9 +1,12 @@
 package health
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,7 +168,21 @@ func newTestEngine(t *testing.T, rulesYAML string, notifiers ...Notifier) (*Engi
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.startDispatch()
+	t.Cleanup(e.Close)
 	return e, reg
+}
+
+// waitDelivered blocks until n notifications were delivered successfully.
+func waitDelivered(t *testing.T, e *Engine, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for e.Notified() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("delivered %d notifications, want %d", e.Notified(), n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 const ramRule = `
@@ -183,10 +200,6 @@ alarms:
 func TestEngineTransitionsAndHysteresis(t *testing.T) {
 	n := &memNotifier{}
 	e, reg := newTestEngine(t, ramRule, n)
-	go func() {
-		for range e.notifyCh {
-		}
-	}()
 	now := time.Unix(1_700_000_000, 0)
 	feed := func(used, free float64) {
 		for i := 0; i < 10; i++ {
@@ -216,6 +229,7 @@ func TestEngineTransitionsAndHysteresis(t *testing.T) {
 	if s := e.Alarms()[0].Status; s != StatusCritical {
 		t.Fatalf("status = %v, want CRITICAL", s)
 	}
+	waitDelivered(t, e, 3)
 	log := e.Log(0)
 	// UNINIT→CLEAR, CLEAR→WARNING, WARNING→CLEAR, CLEAR→CRITICAL
 	if len(log) != 4 || log[1].Status != StatusWarning || log[1].OldStatus != StatusClear || log[3].Status != StatusCritical {
@@ -228,9 +242,12 @@ func TestEngineTransitionsAndHysteresis(t *testing.T) {
 		t.Fatal("initial CLEAR must not notify")
 	}
 	for _, l := range log[1:] {
-		if !l.Notified {
+		if !l.Notified || l.NotifiedAt == 0 {
 			t.Fatalf("entry %s→%s not notified", l.OldStatus, l.Status)
 		}
+	}
+	if a := e.Alarms()[0]; a.LastNotified != log[3].When {
+		t.Fatalf("LastNotified = %d, want %d", a.LastNotified, log[3].When)
 	}
 	sum := e.Summary()
 	if sum.Critical != 1 || sum.Normal != 0 {
@@ -243,14 +260,8 @@ func TestEngineTransitionsAndHysteresis(t *testing.T) {
 
 func TestEngineDelaySuppressesFlap(t *testing.T) {
 	rule := ramRule + "    delay: down 30s\n"
-	e, reg := newTestEngine(t, rule)
-	sent := 0
-	e.opt.Notifiers = []Notifier{&memNotifier{}}
-	go func() {
-		for range e.notifyCh {
-			sent++
-		}
-	}()
+	n := &memNotifier{}
+	e, reg := newTestEngine(t, rule, n)
 	now := time.Unix(1_700_000_000, 0)
 	feed := func(used float64, secs int) {
 		for i := 0; i < secs; i++ {
@@ -270,6 +281,8 @@ func TestEngineDelaySuppressesFlap(t *testing.T) {
 	if a := e.Alarms()[0]; a.DelayUpTo != 0 {
 		t.Fatalf("pending should be cleared: %+v", a)
 	}
+	waitDelivered(t, e, 1)
+	time.Sleep(20 * time.Millisecond)
 	entries := e.Log(0)
 	notified := 0
 	for _, l := range entries {
@@ -277,13 +290,86 @@ func TestEngineDelaySuppressesFlap(t *testing.T) {
 			notified++
 		}
 	}
-	// notified: first WARNING, and the re-raise (CLEAR→WARNING). The CLEAR
-	// in between must not have produced a notification.
-	if notified != 2 {
+	// Only the first WARNING is reported: the CLEAR was never sent, so the
+	// re-raise is not news to the notifiers either.
+	if notified != 1 || n.count() != 1 {
 		for _, l := range entries {
 			t.Logf("%s→%s notified=%v delay=%d", l.OldStatus, l.Status, l.Notified, l.Delay)
 		}
-		t.Fatalf("notified = %d, want 2", notified)
+		t.Fatalf("notified = %d (delivered %d), want 1", notified, n.count())
+	}
+	if len(entries) != 4 || entries[3].OldStatus != StatusClear {
+		t.Fatalf("log must still record the real transitions: %+v", entries)
+	}
+}
+
+func TestEngineUpDelayDropsShortRaise(t *testing.T) {
+	rule := ramRule + "    delay: up 1m\n"
+	n := &memNotifier{}
+	e, reg := newTestEngine(t, rule, n)
+	now := time.Unix(1_700_000_000, 0)
+	feed := func(used float64, secs int) {
+		for i := 0; i < secs; i++ {
+			_ = reg.Collect("system.ram", now, map[string]float64{"used": used, "free": 100 - used})
+			now = now.Add(time.Second)
+			e.Tick(now)
+		}
+	}
+	feed(10, 12) // CLEAR
+	feed(90, 12) // WARNING, up-delay 60s → pending
+	feed(10, 12) // CLEAR again 12s later: WARNING was never reported
+	feed(10, 90) // let the delay expire
+	if a := e.Alarms()[0]; a.DelayUpTo != 0 || a.Status != StatusClear {
+		t.Fatalf("alarm = %+v", a)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if n.count() != 0 {
+		t.Fatalf("flap must not notify at all, got %+v", n.seen)
+	}
+	feed(99, 12) // CRITICAL, pending
+	feed(90, 12) // WARNING while pending: severity changed, cycle continues
+	feed(90, 60) // delay expires → one notification CLEAR→WARNING
+	waitDelivered(t, e, 1)
+	if n.count() != 1 || n.seen[0].Status != StatusWarning || n.seen[0].OldStatus != StatusClear {
+		t.Fatalf("notifications = %+v", n.seen)
+	}
+}
+
+func TestEngineSumIntegratesRates(t *testing.T) {
+	rules := `
+alarms:
+  - name: errors_10s
+    on: net.errors
+    lookup: sum -10s of inbound
+    every: 1s
+    warn: '$this > 50'
+`
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 5}, db)
+	reg.AddChart(&registry.Chart{ID: "net.errors", Dimensions: []*registry.Dimension{{ID: "inbound"}}})
+	rs, err := ParseRules([]byte(rules), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(reg, db, Options{Rules: rs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+	now := time.Unix(1_700_000_000, 0)
+	// stored value is a rate: 6 errors/s sampled every 5s = 30 errors per sample
+	for i := 0; i < 2; i++ {
+		_ = reg.Collect("net.errors", now, map[string]float64{"inbound": 6})
+		now = now.Add(5 * time.Second)
+	}
+	e.Tick(now)
+	a := e.Alarms()[0]
+	if math.Abs(a.Value-60) > 1e-9 || a.Status != StatusWarning {
+		t.Fatalf("sum = %v status=%v, want 60 WARNING", a.Value, a.Status)
 	}
 }
 
@@ -318,20 +404,28 @@ func TestEnginePersistsLog(t *testing.T) {
 	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
 	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
 	rules, _ := ParseRules([]byte(ramRule), "t")
-	e, err := New(reg, db, Options{Rules: rules, LogDir: dir})
+	n := &memNotifier{}
+	e, err := New(reg, db, Options{Rules: rules, LogDir: dir, Notifiers: []Notifier{n}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.startDispatch()
 	now := time.Unix(1_700_000_000, 0)
 	_ = reg.Collect("system.ram", now, map[string]float64{"used": 90, "free": 10})
 	e.Tick(now.Add(time.Second))
-	e.logFile.Close()
+	waitDelivered(t, e, 1)
+	e.Close()
 	e2, err := New(reg, db, Options{Rules: rules, LogDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := e2.Log(0); len(got) != 1 || got[0].Status != StatusWarning {
+	t.Cleanup(e2.Close)
+	got := e2.Log(0)
+	if len(got) != 1 || got[0].Status != StatusWarning {
 		t.Fatalf("reloaded log = %+v", got)
+	}
+	if !got[0].Notified || got[0].NotifiedAt == 0 {
+		t.Fatalf("delivery state lost across restart: %+v", got[0])
 	}
 	if e2.nextLog != 2 {
 		t.Fatalf("nextLog = %d", e2.nextLog)
@@ -392,5 +486,94 @@ func TestEngineNotifiesWhenStartingRaised(t *testing.T) {
 	}
 	if e.Notified() != 1 {
 		t.Fatalf("Notified() = %d", e.Notified())
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) WriteString(str string) { s.mu.Lock(); s.b.WriteString(str); s.mu.Unlock() }
+func (s *syncBuf) String() string         { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// fakeSMTP speaks just enough SMTP to reach AUTH; it never offers STARTTLS.
+func fakeSMTP(t *testing.T) (addr string, got *syncBuf) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	got = &syncBuf{}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				r := bufio.NewReader(c)
+				fmt.Fprint(c, "220 fake ESMTP\r\n")
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					got.WriteString(line)
+					switch {
+					case strings.HasPrefix(line, "EHLO"):
+						fmt.Fprint(c, "250-fake\r\n250 AUTH PLAIN\r\n")
+					case strings.HasPrefix(line, "DATA"):
+						fmt.Fprint(c, "354 go\r\n")
+						for {
+							l, err := r.ReadString('\n')
+							if err != nil {
+								return
+							}
+							got.WriteString(l)
+							if l == ".\r\n" {
+								break
+							}
+						}
+						fmt.Fprint(c, "250 queued\r\n")
+					case strings.HasPrefix(line, "QUIT"):
+						fmt.Fprint(c, "221 bye\r\n")
+						return
+					default:
+						fmt.Fprint(c, "250 ok\r\n")
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String(), got
+}
+
+func TestEmailRefusesPlaintextCredentials(t *testing.T) {
+	addr, got := fakeSMTP(t)
+	n := &EmailNotifier{Server: addr, From: "a@x", To: []string{"b@x"}, Username: "u", Password: "p"}
+	err := n.Notify(context.Background(), LogEntry{Name: "x"})
+	if err == nil || !strings.Contains(err.Error(), "STARTTLS") {
+		t.Fatalf("err = %v, want STARTTLS refusal", err)
+	}
+	if strings.Contains(got.String(), "AUTH") {
+		t.Fatalf("credentials were sent: %q", got.String())
+	}
+}
+
+func TestEmailHeaderInjection(t *testing.T) {
+	addr, got := fakeSMTP(t)
+	n := &EmailNotifier{Server: addr, From: "a@x", To: []string{"b@x"}}
+	if err := n.Notify(context.Background(), LogEntry{Name: "x\r\nBcc: evil@x", Hostname: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	headers, _, _ := strings.Cut(strings.SplitN(got.String(), "DATA\r\n", 2)[1], "\r\n\r\n")
+	if strings.Contains(headers, "\r\nBcc:") || !strings.Contains(headers, "Subject: [h] UNDEFINED: x  Bcc: evil@x") {
+		t.Fatalf("header injected: %q", headers)
+	}
+	if err := (&EmailNotifier{Server: addr, From: "a@x", To: []string{"b@x\r\nRCPT TO:<evil@x>"}}).Notify(context.Background(), LogEntry{Name: "x"}); err == nil {
+		t.Fatal("recipient with line break must be rejected")
 	}
 }

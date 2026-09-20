@@ -270,6 +270,7 @@ alarms:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(eng.Close)
 	eng.SetOnEvent(srv.PublishAlarm)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
