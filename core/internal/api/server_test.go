@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,7 +93,8 @@ func TestInfoChartsData(t *testing.T) {
 			Data   [][]*float64 `json:"data"`
 		} `json:"result"`
 	}
-	getJSON(t, ts.URL+"/api/v1/data?chart=system.ram&after=-10", &data)
+	after, before := now.Unix()-10, now.Unix()
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d", after, before), &data)
 	if len(data.DimensionIDs) != 2 || data.Points != 10 || len(data.Result.Labels) != 3 {
 		t.Fatalf("data = %+v", data)
 	}
@@ -102,7 +104,7 @@ func TestInfoChartsData(t *testing.T) {
 	}
 
 	// dimension filter + grouping
-	getJSON(t, ts.URL+"/api/v1/data?chart=system.ram&after=-10&points=2&group=max&dimensions=used", &data)
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&points=2&group=max&dimensions=used", after, before), &data)
 	// grid alignment may add one bucket in front
 	if len(data.DimensionIDs) != 1 || data.DimensionIDs[0] != "used" || data.Points < 2 || data.Points > 3 {
 		t.Fatalf("filtered data = %+v", data)
