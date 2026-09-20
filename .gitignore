@@ -1,0 +1,18 @@
+# Go
+core/bin/
+core/data/
+data/
+*.exe
+*.test
+*.out
+
+# Web
+web/node_modules/
+web/dist/
+core/internal/api/ui/dist/*
+!core/internal/api/ui/dist/.gitkeep
+
+# misc
+.DS_Store
+*.log
+monitor.yaml

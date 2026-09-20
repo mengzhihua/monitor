@@ -1,0 +1,168 @@
+package api
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/mengzhihua/monitor/core/internal/registry"
+)
+
+// liveHub fans out every completed chart collection to WebSocket clients.
+// Protocol (server → client), one JSON object per message:
+//
+//	{"chart":"system.cpu","t":1700000000,"v":{"user":12.3,"system":4.5}}
+//
+// Clients may send {"charts":["system.cpu","system.ram"]} at any time to
+// change their subscription; an empty list means all charts.
+type liveHub struct {
+	log      *slog.Logger
+	upgrader websocket.Upgrader
+
+	mu    sync.RWMutex
+	conns map[*liveConn]struct{}
+}
+
+type liveConn struct {
+	ws     *websocket.Conn
+	send   chan []byte
+	mu     sync.RWMutex
+	charts map[string]bool // nil = all
+}
+
+type liveMsg struct {
+	Chart  string             `json:"chart"`
+	T      int64              `json:"t"`
+	Values map[string]float64 `json:"v"`
+}
+
+func newLiveHub(reg *registry.Registry, log *slog.Logger) *liveHub {
+	h := &liveHub{
+		log:   log,
+		conns: map[*liveConn]struct{}{},
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 16 * 1024,
+			CheckOrigin:     func(r *http.Request) bool { return true },
+		},
+	}
+	reg.Subscribe(h.broadcast)
+	return h
+}
+
+func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64) {
+	h.mu.RLock()
+	n := len(h.conns)
+	h.mu.RUnlock()
+	if n == 0 {
+		return
+	}
+	b, err := json.Marshal(liveMsg{Chart: chartID, T: ts, Values: values})
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.conns {
+		if !c.wants(chartID) {
+			continue
+		}
+		select {
+		case c.send <- b:
+		default: // slow client: drop the sample rather than block collection
+		}
+	}
+}
+
+func (c *liveConn) wants(chart string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.charts == nil || c.charts[chart]
+}
+
+func (c *liveConn) setCharts(list []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(list) == 0 {
+		c.charts = nil
+		return
+	}
+	c.charts = make(map[string]bool, len(list))
+	for _, id := range list {
+		if id = strings.TrimSpace(id); id != "" {
+			c.charts[id] = true
+		}
+	}
+}
+
+func (h *liveHub) handle(w http.ResponseWriter, r *http.Request) {
+	ws, err := h.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	c := &liveConn{ws: ws, send: make(chan []byte, 256)}
+	if q := r.URL.Query().Get("charts"); q != "" {
+		c.setCharts(strings.Split(q, ","))
+	}
+	h.mu.Lock()
+	h.conns[c] = struct{}{}
+	h.mu.Unlock()
+
+	go h.writer(c)
+	h.reader(c) // blocks until the client disconnects
+
+	h.mu.Lock()
+	delete(h.conns, c)
+	h.mu.Unlock()
+	close(c.send)
+}
+
+func (h *liveHub) reader(c *liveConn) {
+	c.ws.SetReadLimit(64 * 1024)
+	_ = c.ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+	c.ws.SetPongHandler(func(string) error {
+		return c.ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+	})
+	for {
+		_, msg, err := c.ws.ReadMessage()
+		if err != nil {
+			return
+		}
+		_ = c.ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+		var req struct {
+			Charts []string `json:"charts"`
+		}
+		if json.Unmarshal(msg, &req) == nil {
+			c.setCharts(req.Charts)
+		}
+	}
+}
+
+func (h *liveHub) writer(c *liveConn) {
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+	defer c.ws.Close()
+	for {
+		select {
+		case b, ok := <-c.send:
+			if !ok {
+				_ = c.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				return
+			}
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.ws.WriteMessage(websocket.TextMessage, b); err != nil {
+				return
+			}
+		case <-ping.C:
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}

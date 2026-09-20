@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+
+  core:
+    needs: web
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: core/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+        working-directory: core
+      - run: go vet ./...
+        working-directory: core
+      - run: go test -race ./...
+        working-directory: core
+      - run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.sha }}" -o bin/monitord ./cmd/monitord
+        working-directory: core
+        shell: bash
+      - name: smoke
+        run: ./scripts/smoke.sh
+        shell: bash
+
+  cross:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: core/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+      - run: make cross VERSION=${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monitord-binaries
+          path: core/bin/
