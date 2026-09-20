@@ -24,6 +24,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -118,12 +119,26 @@ func run() error {
 		}
 	}
 
+	var pm *plugins.Manager
+	if cfg.PluginsEnabled() {
+		pdir := cfg.Plugins.Dir
+		if pdir != "" && !filepath.IsAbs(pdir) {
+			pdir = filepath.Join(filepath.Dir(*cfgPath), pdir)
+		}
+		pm = plugins.New(reg, cfg.Plugins.List, plugins.Options{
+			Dir:      pdir,
+			Disabled: cfg.Plugins.Disabled,
+			Logger:   log.With("component", "plugins"),
+		})
+	}
+
 	srv, err := api.New(reg, db, sched, api.Options{
 		Version:   version,
 		StartedAt: time.Now(),
 		AllowFrom: cfg.Web.AllowFrom,
 		Token:     cfg.Web.Token,
 		Health:    eng,
+		Plugins:   pm,
 		Logger:    log.With("component", "api"),
 	})
 	if err != nil {
@@ -151,6 +166,13 @@ func run() error {
 		defer close(healthDone)
 		if eng != nil {
 			eng.Run(ctx)
+		}
+	}()
+	pluginsDone := make(chan struct{})
+	go func() {
+		defer close(pluginsDone)
+		if pm != nil {
+			pm.Run(ctx)
 		}
 	}()
 
@@ -183,6 +205,11 @@ func run() error {
 	case <-healthDone:
 	case <-shutdownCtx.Done():
 		log.Warn("health engine did not stop in time")
+	}
+	select {
+	case <-pluginsDone:
+	case <-shutdownCtx.Done():
+		log.Warn("plugins did not stop in time")
 	}
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)

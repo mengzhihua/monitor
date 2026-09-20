@@ -25,6 +25,18 @@ collectors:
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime
   disabled: []         # e.g. ["diskspace"]
 
+plugins:
+  enabled: true
+  dir: plugins.d       # every executable *.plugin here is started as "<file> <update_every>"
+  disabled: []         # plugin names not to start, e.g. ["example"]
+  list:                # explicit plugins (any language); command relative to dir or on PATH
+    # - name: python_example
+    #   command: python3
+    #   args: [plugins.d/python_example.plugin.py]
+    #   update_every: 5     # default global.update_every
+    #   timeout: 120        # kill + restart after this many seconds without output (default 10×update_every, min 60)
+    #   env: ["MY_TOKEN=..."]
+
 health:
   enabled: true
   builtin: true        # load the rules shipped with the agent

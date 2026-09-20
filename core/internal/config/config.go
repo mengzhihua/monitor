@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/plugins"
 )
 
 type Config struct {
@@ -37,7 +38,16 @@ type Config struct {
 		Enabled  []string `yaml:"enabled"`  // empty = all
 		Disabled []string `yaml:"disabled"` // names to turn off
 	} `yaml:"collectors"`
-	Health Health `yaml:"health"`
+	Health  Health  `yaml:"health"`
+	Plugins Plugins `yaml:"plugins"`
+}
+
+// Plugins configures external plugins.d collectors.
+type Plugins struct {
+	Enabled  *bool          `yaml:"enabled"`  // default true
+	Dir      string         `yaml:"dir"`      // scanned for executable *.plugin files, relative to the config file
+	Disabled []string       `yaml:"disabled"` // plugin names not to start
+	List     []plugins.Spec `yaml:"list"`     // explicit plugins (command may be relative to dir)
 }
 
 // Health configures the alarm engine and notification channels.
@@ -76,6 +86,9 @@ type Notify struct {
 // HealthEnabled reports whether the alarm engine should run.
 func (c *Config) HealthEnabled() bool { return c.Health.Enabled == nil || *c.Health.Enabled }
 
+// PluginsEnabled reports whether external plugins are started.
+func (c *Config) PluginsEnabled() bool { return c.Plugins.Enabled == nil || *c.Plugins.Enabled }
+
 // HealthBuiltin reports whether the shipped rules are loaded.
 func (c *Config) HealthBuiltin() bool { return c.Health.Builtin == nil || *c.Health.Builtin }
 
@@ -92,6 +105,7 @@ func Default() *Config {
 	c.Web.Listen = ":19999"
 	c.Health.Dir = "health.d"
 	c.Health.LogKeep = 1000
+	c.Plugins.Dir = "plugins.d"
 	return c
 }
 

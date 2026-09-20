@@ -20,6 +20,7 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -34,6 +35,8 @@ type Options struct {
 	Token     string
 	Health    *health.Engine // nil = alarms API disabled
 	Logger    *slog.Logger
+	// Plugins exposes external plugins.d processes in /api/v1/collectors (optional).
+	Plugins *plugins.Manager
 }
 
 type Server struct {
@@ -186,6 +189,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"charts_count":  len(charts),
 		"metrics_count": dims,
 		"collectors":    s.sched.Status(),
+		"plugins":       s.pluginStatus(),
 		"alarms":        s.alarmSummary(),
 		"db": map[string]any{
 			"tiers": s.db.Tiers(), "dir": s.db.Dir(),
@@ -457,7 +461,14 @@ func (s *Server) writePrometheus(w http.ResponseWriter) {
 }
 
 func (s *Server) handleCollectors(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"available": collect.Available(), "status": s.sched.Status()})
+	writeJSON(w, map[string]any{"available": collect.Available(), "status": s.sched.Status(), "plugins": s.pluginStatus()})
+}
+
+func (s *Server) pluginStatus() []plugins.Status {
+	if s.opt.Plugins == nil {
+		return []plugins.Status{}
+	}
+	return s.opt.Plugins.Status()
 }
 
 func (s *Server) alarmSummary() any {

@@ -6,10 +6,17 @@ export interface Chart {
   dimensions: Dimension[]; first_entry: number; last_entry: number
 }
 export interface ChartsResponse { hostname: string; update_every: number; charts_count: number; charts: Record<string, Chart> }
+export interface PluginStatus {
+  name: string; command: string; state: 'starting' | 'running' | 'waiting' | 'stopped' | 'disabled' | 'failed'
+  pid?: number; enabled: boolean; update_every: number; restarts: number; started?: number; error?: string
+  stats: { lines: number; samples: number; charts: number; errors: number; last_error?: string; last_data?: number }
+  variables?: Record<string, number>
+}
 export interface Info {
   version: string; mode: string; uptime: number; charts_count: number; metrics_count: number
   host: { id: string; hostname: string; os: string; arch: string; labels: Record<string, string>; update_every: number }
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
+  plugins?: PluginStatus[]
   alarms: AlarmSummary | null
 }
 export interface DataResponse {
