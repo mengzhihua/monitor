@@ -27,6 +27,9 @@ const (
 	blockVersion = 1
 	// DefaultBlockSize is the number of samples per on-disk block (1h at 1s).
 	DefaultBlockSize = 3600
+	// Upper bounds used to reject corrupt headers before allocating.
+	maxBlockSamples = 1 << 22
+	maxBlockBytes   = 64 << 20
 )
 
 type Options struct {
@@ -58,6 +61,9 @@ type series struct {
 	vals   []float64
 	blocks []blockMeta // sorted by start
 	dirty  bool
+	// flushMu serialises flushes of one series so blocks land in time order
+	// even when a checkpoint and a full-block flush race.
+	flushMu sync.Mutex
 }
 
 type Store struct {
@@ -243,6 +249,8 @@ func (s *Store) Bounds(id string) (first, last int64, ok bool) {
 }
 
 func (s *Store) flushSeries(sr *series) error {
+	sr.flushMu.Lock()
+	defer sr.flushMu.Unlock()
 	sr.mu.Lock()
 	if len(sr.ts) == 0 {
 		sr.mu.Unlock()
@@ -471,6 +479,9 @@ func parseHeader(r io.Reader) (string, blockMeta, uint32, error) {
 	}
 	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
 		return "", blockMeta{}, 0, err
+	}
+	if count == 0 || count > maxBlockSamples || dataLen > maxBlockBytes || m.end < m.start {
+		return "", blockMeta{}, 0, fmt.Errorf("implausible header: count=%d bytes=%d range=[%d,%d]", count, dataLen, m.start, m.end)
 	}
 	m.count = int(count)
 	return string(idb), m, dataLen, nil

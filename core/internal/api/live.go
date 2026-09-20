@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,13 @@ type liveMsg struct {
 	Values map[string]float64 `json:"v"`
 }
 
+const (
+	// wsProto is the subprotocol the dashboard offers; the agent selects it so
+	// the browser accepts the handshake when a bearer.<token> entry is also sent.
+	wsProto      = "monitor"
+	wsTokenProto = "bearer."
+)
+
 func newLiveHub(reg *registry.Registry, log *slog.Logger) *liveHub {
 	h := &liveHub{
 		log:   log,
@@ -48,11 +56,27 @@ func newLiveHub(reg *registry.Registry, log *slog.Logger) *liveHub {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 16 * 1024,
-			CheckOrigin:     func(r *http.Request) bool { return true },
+			CheckOrigin:     sameHostOrigin,
+			Subprotocols:    []string{wsProto},
 		},
 	}
 	reg.Subscribe(h.broadcast)
 	return h
+}
+
+// sameHostOrigin accepts non-browser clients (no Origin) and browsers whose
+// page was served from this agent, blocking cross-site pages from reading
+// the live feed through the visitor's browser.
+func sameHostOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64) {

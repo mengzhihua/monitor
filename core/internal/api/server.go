@@ -10,10 +10,13 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/registry"
@@ -105,18 +108,32 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			}
 		}
 		if s.opt.Token != "" && (strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics") {
-			tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if tok == "" {
-				tok = r.URL.Query().Get("token")
-			}
-			if tok != s.opt.Token {
+			if requestToken(r) != s.opt.Token {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 		}
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestToken extracts the caller's credential from, in order: the
+// Authorization header, a `bearer.<token>` WebSocket subprotocol (browsers
+// cannot set headers on WebSocket upgrades) or a `token` query parameter.
+func requestToken(r *http.Request) string {
+	if tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); tok != "" && tok != r.Header.Get("Authorization") {
+		return tok
+	}
+	for _, p := range websocket.Subprotocols(r) {
+		if strings.HasPrefix(p, wsTokenProto) {
+			// percent-encoded so the token fits the subprotocol token grammar
+			if tok, err := url.QueryUnescape(strings.TrimPrefix(p, wsTokenProto)); err == nil {
+				return tok
+			}
+			return ""
+		}
+	}
+	return r.URL.Query().Get("token")
 }
 
 func (s *Server) uiHandler() http.Handler {
@@ -371,13 +388,21 @@ func promName(s string) string {
 func (s *Server) writePrometheus(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	host := s.reg.Host.Hostname
-	for _, c := range s.reg.Charts() {
+	charts := s.reg.Charts()
+	// HELP/TYPE may appear once per metric family, so charts sharing a
+	// context (per-core cpu, per-disk io, ...) are grouped by metric name.
+	sort.SliceStable(charts, func(i, j int) bool { return charts[i].Context < charts[j].Context })
+	seen := map[string]bool{}
+	for _, c := range charts {
 		ts, vals := c.LastValues()
 		if len(vals) == 0 {
 			continue
 		}
 		metric := "monitor_" + promName(c.Context)
-		fmt.Fprintf(w, "# HELP %s %s (%s)\n# TYPE %s gauge\n", metric, c.Title, c.Units, metric)
+		if !seen[metric] {
+			seen[metric] = true
+			fmt.Fprintf(w, "# HELP %s %s (%s)\n# TYPE %s gauge\n", metric, c.Title, c.Units, metric)
+		}
 		keys := make([]string, 0, len(vals))
 		for k := range vals {
 			keys = append(keys, k)

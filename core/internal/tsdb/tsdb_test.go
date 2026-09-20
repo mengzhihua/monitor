@@ -1,8 +1,12 @@
 package tsdb
 
 import (
+	"encoding/binary"
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,6 +106,78 @@ func TestStoreFlushReloadQuery(t *testing.T) {
 	first, last, ok := s.Bounds("system.cpu|user")
 	if !ok || first != start || last != start+249 {
 		t.Fatalf("bounds %d %d %v", first, last, ok)
+	}
+}
+
+func TestCorruptHeaderRejected(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, BlockSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < 10; i++ {
+		s.Append("x", 1_700_000_000+i, 1)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var blk string
+	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, _ error) error {
+		if !d.IsDir() && strings.HasSuffix(p, ".blk") {
+			blk = p
+		}
+		return nil
+	})
+	if blk == "" {
+		t.Fatal("no block written")
+	}
+	b, err := os.ReadFile(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// header: magic(4) ver(1) idLen(2) id(1) start(8) end(8) count(4) dataLen(4)
+	off := 4 + 1 + 2 + 1 + 8 + 8
+	binary.LittleEndian.PutUint32(b[off:], 0xFFFFFFFF)
+	binary.LittleEndian.PutUint32(b[off+4:], 0xFFFFFFFF)
+	if err := os.WriteFile(blk, b, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir, BlockSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, _, ok := s.Bounds("x"); ok {
+		t.Fatal("corrupt block should have been skipped")
+	}
+}
+
+func TestConcurrentFlushKeepsBlockOrder(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), BlockSize: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := int64(1_700_000_000)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			_ = s.Flush()
+		}
+	}()
+	for i := int64(0); i < 2000; i++ {
+		s.Append("x", start+i, float64(i))
+	}
+	<-done
+	_ = s.Flush()
+	sr := s.getOrCreate("x")
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	for i := 1; i < len(sr.blocks); i++ {
+		if sr.blocks[i].start <= sr.blocks[i-1].end {
+			t.Fatalf("blocks out of order at %d: %+v after %+v", i, sr.blocks[i], sr.blocks[i-1])
+		}
 	}
 }
 
