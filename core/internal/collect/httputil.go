@@ -26,6 +26,26 @@ func httpGet(ctx context.Context, client *http.Client, url string) ([]byte, erro
 	return httpGetAuth(ctx, client, url, "", "")
 }
 
+func httpPost(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return body, fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	return body, nil
+}
+
 func httpGetToken(ctx context.Context, client *http.Client, url, token string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

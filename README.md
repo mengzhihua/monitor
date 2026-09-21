@@ -168,6 +168,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `fluentd`（/api/plugins.json）、`logstash`（/_node/stats）、`cassandra`（JMX Prometheus :7072）、`ceph`（`ceph status --format json`）、`couchdb`、`couchbase`、`hddtemp`（:7634）、`openvpn`（management :7505）、`beanstalk`（:11300）、`uwsgi`（stats :1717）、`powerdns`（HTTP API）、`dnsmasq`（CHAOS TXT）；目标缺失自动禁用 |
 | 告警 | Fluentd retry、Logstash heap、Cassandra failures、Ceph ERR、CouchDB 5xx、Couchbase quota、HDD 温度、Beanstalk buried、uWSGI exceptions、PowerDNS latency |
 
+### 已实现能力（M12 续 2：RAID / BMC / 更多应用）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `megacli`、`hpssa`、`adaptecraid`、`redfish`、`activemq`、`gearman`、`geth`、`ipfs`、`pihole`、`powerdns_recursor`、`rspamd`、`typesense`；目标缺失自动禁用 |
+| 告警 | MegaRAID degraded、HPSSA nok、Adaptec LD critical、Redfish Critical、ActiveMQ backlog、Geth RPC fail、Recursor drops、Typesense unhealthy |
+
 ### 开发
 
 ```bash

@@ -462,6 +462,7 @@ sequenceDiagram
 | **M11 cgroup / Kubernetes** | cgroup + k8s_kubelet/kubeproxy/apiserver/k8s_state | 对标 Netdata 容器树与 K8s |
 | **M12 SNMP / 长尾应用** | snmp + proxysql/clickhouse/cockroachdb/pulsar/envoy/upsd/zfspool/dmcache/filecheck/supervisord/monit | 对标 Netdata 第一批长尾 |
 | **M12 续 日志/存储/DNS** | fluentd/logstash/cassandra/ceph/couchdb/couchbase/hddtemp/openvpn/beanstalk/uwsgi/powerdns/dnsmasq | 对标 Netdata 第二批长尾 |
+| **M12 续 2 RAID/BMC/应用** | megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense | 对标 Netdata 第三批长尾 |
 | **M13 规则与查询** | health.d 规则全集、`data?context=`、`/api/v2` | 告警与跨图查询对齐 |
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
 | **M15–M16** | k-means ML、Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
@@ -499,5 +500,6 @@ sequenceDiagram
 | cgroup / k8s_kubelet / k8s_kubeproxy / k8s_apiserver / k8s_state | `internal/collect` | M11 |
 | snmp / proxysql / clickhouse / cockroachdb / pulsar / envoy / upsd / zfspool / dmcache / filecheck / supervisord / monit | `internal/collect` | M12 |
 | fluentd / logstash / cassandra / ceph / couchdb / couchbase / hddtemp / openvpn / beanstalk / uwsgi / powerdns / dnsmasq | `internal/collect` | M12 续 |
+| megacli / hpssa / adaptecraid / redfish / activemq / gearman / geth / ipfs / pihole / powerdns_recursor / rspamd / typesense | `internal/collect` | M12 续 2 |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
 | （仅移动）五端原生客户端 | `app/` | M3 |

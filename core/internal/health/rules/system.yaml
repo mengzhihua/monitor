@@ -973,3 +973,107 @@ alarms:
     delay: down 5m multiplier 1.5 max 1h
     info: PowerDNS answer latency is high
     to: sysadmin
+
+  - name: megacli_adapter_degraded
+    on: megacli.adapter_health_state
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of degraded
+    units: state
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: MegaRAID adapter is degraded
+    to: sysadmin
+
+  - name: hpssa_controller_nok
+    on: hpssa.controller_status
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of nok
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: HP Smart Array controller is not OK
+    to: sysadmin
+
+  - name: adaptecraid_ld_critical
+    on: adaptecraid.logical_device_status
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of critical
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Adaptec RAID logical device is critical
+    to: sysadmin
+
+  - name: redfish_system_critical
+    on: redfish.system_health_state
+    class: Errors
+    type: System
+    component: BMC
+    lookup: last -30s unaligned of critical
+    units: state
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Redfish system health is Critical
+    to: sysadmin
+
+  - name: activemq_unprocessed
+    on: activemq.unprocessed_messages
+    class: Latency
+    type: Service
+    component: ActiveMQ
+    lookup: last -30s unaligned of unprocessed
+    units: messages
+    every: 10s
+    warn: '$this > 1000'
+    delay: down 5m multiplier 1.5 max 1h
+    info: ActiveMQ unprocessed messages are high
+    to: sysadmin
+
+  - name: geth_rpc_failures
+    on: geth.rpc_calls
+    class: Errors
+    type: Service
+    component: Geth
+    lookup: sum -1m unaligned absolute of failed
+    units: calls
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Geth RPC failures in the last minute
+    to: sysadmin
+
+  - name: powerdns_recursor_drops
+    on: powerdns_recursor.drops
+    class: Errors
+    type: Service
+    component: PowerDNS
+    lookup: sum -1m unaligned absolute of *
+    units: drops
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: PowerDNS Recursor dropped queries in the last minute
+    to: sysadmin
+
+  - name: typesense_unhealthy
+    on: typesense.health_status
+    class: Availability
+    type: Database
+    component: Typesense
+    lookup: last -30s unaligned of ok
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Typesense health is not OK
+    to: sysadmin
