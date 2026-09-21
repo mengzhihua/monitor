@@ -42,8 +42,10 @@ cd core && go run ./cmd/monitord -listen :19999
 | TSDB tier0 | 每秒原始数据，Gorilla 压缩（典型指标 ≈ 2 bit/样本），追加式块文件 + 重启恢复，按时长/大小保留，范围查询 + 聚合（avg/min/max/sum/median/last） |
 | TSDB tier1/tier2 | 每分钟 / 每小时降采样层（每桶 min/max/sum/last/count，均值 = sum/count），写入时同步折叠、按层独立保留（默认 90 天 / 2 年）、重启恢复；`/api/v1/data` 按 `(before-after)/points` 自动选层（`tier=auto|0|1|2` 可强制），粗层无数据时自动回退到细层；`/api/v1/info.db.tiers` 暴露各层 update_every/保留/序列/块/字节 |
 | plugins.d | 外部采集器进程（任意语言）通过 stdout 文本协议接入：`CHART/DIMENSION/CLABEL/BEGIN/SET/END/FLUSH/VARIABLE/DISABLE/EXIT`；自动发现 `plugins.d/*.plugin`，也可在 `plugins.list` 显式声明；崩溃自动重启（1s→60s 指数退避）、无输出看门狗、进程组回收、`DISABLE` 自禁用；状态在 `/api/v1/collectors.plugins` 与 `/api/v1/info.plugins` |
-| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/collectors`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；可选 `token` 与 `allow_from` CIDR 访问控制 |
-| Dashboard | Vue3 + uPlot，按 system/cpu/mem/disk/net 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板（实时状态 + 事件流） |
+| 应用/服务采集器 | `apps`：进程按应用分组（内置 ssh/database/httpd/containers/browser… 20+ 组，`collectors.modules.apps.groups` 可自定义 glob）→ `apps.cpu/mem/processes/threads/io_read/io_write`；`systemd`：Linux cgroup v2 每服务 CPU/内存/IO；`docker`：Engine API（unix socket / tcp）每容器 CPU/内存/网络/块 IO，容器消失自动移除图表；`nginx`（`stub_status`）；`redis`（内置 RESP 客户端 `INFO`，支持 AUTH/TLS/unix socket）。服务类模块目标不可达时自动禁用并在 `/api/v1/collectors` 标明原因 |
+| Functions | 采集器可暴露按需函数：`GET /api/v1/functions` 列出，`GET /api/v1/function?function=<name>&<args>` 执行；内置 `processes`（实时进程表：pid/ppid/name/group/cpu%/rss/threads/cmdline，`sort=cpu|rss|pid`、`group=` 过滤） |
+| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/collectors` `/functions` `/function`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；可选 `token` 与 `allow_from` CIDR 访问控制 |
+| Dashboard | Vue3 + uPlot，按 system/cpu/mem/disk/net 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板（实时状态 + 事件流），Functions 面板（实时进程表，2s 刷新、排序/筛选） |
 
 ### 已实现能力（M1：健康/告警）
 

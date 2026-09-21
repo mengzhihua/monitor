@@ -40,6 +40,10 @@ export interface AlarmLogEntry {
 export interface AlarmSummary { normal: number; warning: number; critical: number; silent: number }
 export interface AlarmsResponse { hostname: string; now: number; summary: AlarmSummary; alarms: Record<string, Alarm> }
 export type LiveAlarmMsg = { alarm: AlarmLogEntry }
+export interface FunctionInfo { name: string; help: string; timeout: number }
+/** Tabular function result (e.g. `processes`). */
+export interface FunctionTable { columns: string[]; rows: Record<string, unknown>[]; total: number }
+export interface FunctionResponse { function: string; time: number; result: FunctionTable | unknown }
 
 const base = ''
 const TOKEN_KEY = 'monitor.token'
@@ -89,6 +93,11 @@ export const api = {
   charts: () => get<ChartsResponse>('/api/v1/charts'),
   alarms: () => get<AlarmsResponse>('/api/v1/alarms?all=true'),
   alarmLog: (after = 0) => get<AlarmLogEntry[]>(`/api/v1/alarm_log?after=${after}`),
+  functions: () => get<FunctionInfo[]>('/api/v1/functions'),
+  function: (name: string, args: Record<string, string> = {}) => {
+    const q = new URLSearchParams({ function: name, ...args })
+    return get<FunctionResponse>(`/api/v1/function?${q}`)
+  },
   data: (chart: string, after: number, before = 0, points = 0) =>
     get<DataResponse>(`/api/v1/data?chart=${encodeURIComponent(chart)}&after=${after}&before=${before}&points=${points}`),
   liveURL(charts: string[] = []) {

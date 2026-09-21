@@ -160,11 +160,16 @@ exit 0
 `)
 	writeScript(t, dir, "quit.plugin", "echo DISABLE\nsleep 5\n")
 	writeScript(t, dir, "noexec.txt", "echo nope\n")
+	if err := os.MkdirAll(filepath.Join(dir, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeScript(t, filepath.Join(dir, "vendor"), "sub.plugin", "echo DISABLE\n")
 	sink := &memSink{}
 	reg := newReg(sink)
 	m := New(reg, []Spec{
 		{Name: "missing", Command: filepath.Join(dir, "nope.plugin")},
 		{Name: "off", Command: "flaky.plugin", Disabled: true},
+		{Name: "sub", Command: "vendor/sub.plugin"},
 	}, Options{Dir: dir, RestartMin: 10 * time.Millisecond, RestartMax: 20 * time.Millisecond, Disabled: []string{"quit"}})
 	// "quit" disabled by name, "off" by spec → only flaky + missing run
 	ctx, cancel := context.WithCancel(context.Background())
@@ -180,9 +185,12 @@ exit 0
 	}
 	waitFor(t, func() bool {
 		st := byName()
-		return st["flaky"].Restarts >= 2 && st["missing"].State == StateFailed
-	}, "flaky restarted twice and missing failed")
+		return st["flaky"].Restarts >= 2 && st["missing"].State == StateFailed && st["sub"].State == StateDisabled
+	}, "flaky restarted twice, missing failed, sub ran from the plugins dir")
 	st := byName()
+	if st["sub"].Command != filepath.Join(dir, "vendor", "sub.plugin") {
+		t.Fatalf("relative sub-directory command = %q", st["sub"].Command)
+	}
 	if st["off"].State != StateDisabled || st["quit"].State != StateDisabled || st["flaky"].Command != filepath.Join(dir, "flaky.plugin") {
 		t.Fatalf("status = %+v", st)
 	}

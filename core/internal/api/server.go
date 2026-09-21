@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -82,6 +83,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/data", s.handleData)
 	m.HandleFunc("GET /api/v1/allmetrics", s.handleAllMetrics)
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
+	m.HandleFunc("GET /api/v1/functions", s.handleFunctions)
+	m.HandleFunc("GET /api/v1/function", s.handleFunction)
 	m.HandleFunc("GET /api/v1/live", s.live.handle)
 	m.HandleFunc("GET /api/v1/alarms", s.handleAlarms)
 	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
@@ -310,25 +313,28 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		}
 		tier, auto = n, false
 	}
-	var series [][]tsdb.Bucket
-	for {
-		series = series[:0]
-		empty := true
-		for _, d := range dims {
-			bs, err := s.db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+	if auto {
+		for ; tier > 0; tier-- {
+			covered := true
+			for _, d := range dims {
+				if !s.db.TierCovers(registry.SeriesID(c.ID, d.ID), tier, after) {
+					covered = false
+					break
+				}
 			}
-			if len(bs) > 0 {
-				empty = false
+			if covered {
+				break
 			}
-			series = append(series, bs)
 		}
-		if !auto || !empty || tier == 0 {
-			break
+	}
+	series := make([][]tsdb.Bucket, 0, len(dims))
+	for _, d := range dims {
+		bs, err := s.db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		tier--
+		series = append(series, bs)
 	}
 	every, _ := s.db.TierEvery(tier)
 	res := tsdb.AggregateBuckets(series, every, after, before, points, group)
@@ -462,6 +468,60 @@ func (s *Server) writePrometheus(w http.ResponseWriter) {
 
 func (s *Server) handleCollectors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"available": collect.Available(), "status": s.sched.Status(), "plugins": s.pluginStatus()})
+}
+
+type functionInfo struct {
+	Name    string `json:"name"`
+	Help    string `json:"help"`
+	Timeout int    `json:"timeout"`
+}
+
+func (s *Server) handleFunctions(w http.ResponseWriter, r *http.Request) {
+	fns := s.sched.Functions()
+	out := make([]functionInfo, 0, len(fns))
+	for _, f := range fns {
+		out = append(out, functionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
+	}
+	writeJSON(w, out)
+}
+
+// handleFunction runs one collector function: ?function=processes plus any
+// extra query parameters are passed through as arguments.
+func (s *Server) handleFunction(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	name := q.Get("function")
+	if name == "" {
+		name = q.Get("name")
+	}
+	var fn *collect.Function
+	for _, f := range s.sched.Functions() {
+		if f.Name == name {
+			fn = &f
+			break
+		}
+	}
+	if fn == nil {
+		http.Error(w, "unknown function", http.StatusNotFound)
+		return
+	}
+	args := map[string]string{}
+	for k, v := range q {
+		if k != "function" && k != "name" && k != "token" && len(v) > 0 {
+			args[k] = v[0]
+		}
+	}
+	timeout := time.Duration(fn.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	res, err := fn.Run(ctx, args)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"function": fn.Name, "time": time.Now().Unix(), "result": res})
 }
 
 func (s *Server) pluginStatus() []plugins.Status {

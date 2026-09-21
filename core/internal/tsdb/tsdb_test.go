@@ -273,6 +273,86 @@ func TestTiersRollupReloadAndPlan(t *testing.T) {
 	}
 }
 
+func TestTierRestartInsideBucketKeepsFolding(t *testing.T) {
+	dir := t.TempDir()
+	tiers := []TierSpec{{Every: 60, BlockSize: 4}}
+	s, err := Open(Options{Dir: dir, Tiers: tiers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(1_700_000_000) - 1_700_000_000%60
+	for i := int64(0); i < 90; i++ { // one full minute + 30s of the next
+		s.Append("a", start+i, float64(i))
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir, Tiers: tiers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(90); i < 150; i++ { // rest of minute 2 + all of minute 3
+		s.Append("a", start+i, float64(i))
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir, Tiers: tiers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	bs, err := s.QueryTier("a", 1, start, start+149)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bs) != 3 {
+		t.Fatalf("buckets = %+v", bs)
+	}
+	if b := bs[1]; b.Count != 60 || b.Min != 60 || b.Max != 119 || b.Last != 119 {
+		t.Fatalf("bucket spanning the restart = %+v", b)
+	}
+	if bs[2].Count != 30 {
+		t.Fatalf("open bucket after two restarts = %+v", bs[2])
+	}
+}
+
+func TestTierCoversFallsBackToRawHistory(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, Tiers: []TierSpec{}}) // tier0 only, like an M0 database
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(1_700_000_000) - 1_700_000_000%3600
+	for i := int64(0); i < 7200; i++ {
+		s.Append("a", start+i, 1)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir}) // upgrade: default tiers enabled
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for i := int64(7200); i < 7260; i++ { // a minute of new samples → one tier1/tier2 bucket each
+		s.Append("a", start+i, 1)
+	}
+	if s.TierCovers("a", 2, start) || s.TierCovers("a", 1, start) {
+		t.Fatal("tiers without the old history must not claim coverage")
+	}
+	if !s.TierCovers("a", 1, start+7200) {
+		t.Fatal("tier1 covers the post-upgrade range")
+	}
+	bs, tier, err := s.QueryAuto("a", start, start+7260, 2)
+	if err != nil || tier != 0 || len(bs) != 7260 {
+		t.Fatalf("auto over upgrade boundary: tier=%d n=%d err=%v", tier, len(bs), err)
+	}
+	if _, tier, _ = s.QueryAuto("a", start+7200, start+7260, 1); tier != 1 {
+		t.Fatalf("post-upgrade range should use tier1, got %d", tier)
+	}
+}
+
 func TestBucketBlockRoundTrip(t *testing.T) {
 	in := []Bucket{{TS: 60, Min: -1.5, Max: 9, Sum: 20.25, Last: 3, Count: 7}, {TS: 120, Min: 2, Max: 2, Sum: 2, Last: 2, Count: 1}}
 	out, err := decodeBuckets(encodeBuckets(in), len(in))

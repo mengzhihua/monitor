@@ -23,6 +23,37 @@ type Collector interface {
 	Collect(ctx context.Context, reg *registry.Registry, now time.Time) error
 }
 
+// Configurable collectors receive their `collectors.modules.<name>` section
+// before Init. decode unmarshals the section into v (yaml semantics).
+type Configurable interface {
+	Configure(decode func(v any) error) error
+}
+
+// Function is an on-demand routine exposed via /api/v1/function (e.g. a live
+// process table). Collectors implementing FunctionProvider are asked for
+// theirs at scheduler construction.
+type Function struct {
+	Name    string `json:"name"`
+	Help    string `json:"help"`
+	Timeout int    `json:"timeout"` // seconds
+	Run     func(ctx context.Context, args map[string]string) (any, error)
+}
+
+type FunctionProvider interface {
+	Functions() []Function
+}
+
+// Options controls which collectors the scheduler instantiates.
+type Options struct {
+	Names    []string        // empty = all registered
+	Disabled map[string]bool // names turned off in config
+	// Modules supplies a decoder for every collector that has a config
+	// section; nil entries mean "use defaults".
+	Modules map[string]func(v any) error
+	// Timeout bounds one Collect call; defaults to the update interval.
+	Timeout time.Duration
+}
+
 type Factory func() Collector
 
 var (
@@ -70,41 +101,75 @@ type Scheduler struct {
 	log     *slog.Logger
 	timeout time.Duration
 	cols    []*running
+	funcs   []Function
 }
 
-// NewScheduler instantiates the named collectors (all registered ones when
-// names is empty) and initialises them; collectors whose Init fails are kept
-// in the status list as disabled.
-func NewScheduler(reg *registry.Registry, log *slog.Logger, names []string, disabled map[string]bool) *Scheduler {
+// NewScheduler instantiates the selected collectors, configures and
+// initialises them; collectors whose Configure/Init fails are kept in the
+// status list as disabled.
+func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Scheduler {
+	names := opt.Names
 	if len(names) == 0 {
 		names = Available()
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Scheduler{reg: reg, log: log, timeout: time.Duration(reg.Host.UpdateEvery) * time.Second}
+	if opt.Timeout <= 0 {
+		opt.Timeout = time.Duration(reg.Host.UpdateEvery) * time.Second
+	}
+	s := &Scheduler{reg: reg, log: log, timeout: opt.Timeout}
 	regMu.Lock()
 	defer regMu.Unlock()
+	for n := range opt.Modules {
+		if _, ok := factories[n]; !ok {
+			log.Warn("collector: config for unknown module", "name", n)
+		}
+	}
 	for _, n := range names {
 		f, ok := factories[n]
 		if !ok {
 			log.Warn("collector: unknown", "name", n)
 			continue
 		}
-		if disabled[n] {
+		if opt.Disabled[n] {
 			s.cols = append(s.cols, &running{c: f(), status: Status{Name: n}})
 			continue
 		}
 		c := f()
 		r := &running{c: c, status: Status{Name: n, Enabled: true}}
-		if err := c.Init(reg); err != nil {
+		err := configure(c, opt.Modules[n])
+		if err == nil {
+			err = c.Init(reg)
+		}
+		if err != nil {
 			r.status.Enabled = false
 			r.status.Error = err.Error()
 			log.Info("collector: disabled", "name", n, "reason", err)
+		} else if fp, ok := c.(FunctionProvider); ok {
+			s.funcs = append(s.funcs, fp.Functions()...)
 		}
 		s.cols = append(s.cols, r)
 	}
 	return s
+}
+
+func configure(c Collector, decode func(v any) error) error {
+	cc, ok := c.(Configurable)
+	if !ok {
+		return nil
+	}
+	if decode == nil {
+		decode = func(any) error { return nil }
+	}
+	return cc.Configure(decode)
+}
+
+// Functions lists the on-demand functions offered by enabled collectors.
+func (s *Scheduler) Functions() []Function {
+	out := make([]Function, len(s.funcs))
+	copy(out, s.funcs)
+	return out
 }
 
 func (s *Scheduler) Status() []Status {

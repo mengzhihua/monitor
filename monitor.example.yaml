@@ -22,8 +22,32 @@ web:
   token: ""            # if set, /api and /metrics require ?token= or "Authorization: Bearer"
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime
-  disabled: []         # e.g. ["diskspace"]
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis
+  disabled: []         # e.g. ["diskspace"]; service modules (docker/nginx/redis/systemd) auto-disable when the target is unreachable
+  modules:             # per-collector settings (collectors.modules.<name>)
+    apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
+      defaults: true   # built-in groups (ssh, database, httpd, containers, browser, …)
+      cmdline: false   # also match patterns against the full command line
+      top: 200         # max rows returned by the `processes` function
+      groups: {}       # extra/overriding groups: name → glob patterns, e.g. { myapp: ["myapp*", "worker-*"] }
+    systemd:           # linux, cgroup v2: per-service cpu/mem/io from /sys/fs/cgroup/system.slice
+      cgroup_root: /sys/fs/cgroup
+      slices: [system.slice]
+      include: []      # unit-name globs; empty = all
+      exclude: []
+    docker:            # Docker Engine API: per-container cpu/mem/net/blkio
+      address: ""      # default unix:///var/run/docker.sock (DOCKER_HOST honored); tcp://host:2375 on Windows
+      timeout: 5s
+      exclude: ["k8s_POD.*"]
+    nginx:
+      url: http://127.0.0.1/stub_status
+      timeout: 2s
+    redis:
+      address: 127.0.0.1:6379   # or unix:///var/run/redis/redis.sock
+      # username: default
+      # password: ""
+      tls: false
+      timeout: 2s
 
 plugins:
   enabled: true

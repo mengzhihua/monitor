@@ -118,7 +118,9 @@ func New(reg *registry.Registry, specs []Spec, opt Options) *Manager {
 		if sp.Timeout <= 0 {
 			sp.Timeout = max(10*sp.UpdateEvery, 60)
 		}
-		if !filepath.IsAbs(sp.Command) && opt.Dir != "" && !strings.ContainsAny(sp.Command, `/\`) {
+		// Relative commands resolve against the plugins dir first; a bare name
+		// that is not there falls back to PATH.
+		if !filepath.IsAbs(sp.Command) && opt.Dir != "" {
 			if _, err := os.Stat(filepath.Join(opt.Dir, sp.Command)); err == nil {
 				sp.Command = filepath.Join(opt.Dir, sp.Command)
 			}

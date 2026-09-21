@@ -109,7 +109,7 @@ func run() error {
 	for _, n := range cfg.Collectors.Disabled {
 		disabled[n] = true
 	}
-	sched := collect.NewScheduler(reg, log.With("component", "collect"), cfg.Collectors.Enabled, disabled)
+	sched := collect.NewScheduler(reg, log.With("component", "collect"), collect.Options{Names: cfg.Collectors.Enabled, Disabled: disabled, Modules: cfg.ModuleDecoders()})
 
 	var eng *health.Engine
 	if cfg.HealthEnabled() {

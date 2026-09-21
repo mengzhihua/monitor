@@ -420,12 +420,15 @@ func (s *Store) Close() error {
 	s.mu.Unlock()
 	close(s.stop)
 	s.wg.Wait()
+	err := s.Flush()
 	for _, t := range s.tiers {
 		for _, sr := range t.all() {
-			t.seal(sr)
+			if e := t.saveOpen(sr); e != nil && err == nil {
+				err = e
+			}
 		}
 	}
-	return s.Flush()
+	return err
 }
 
 // ---- block file format ----
@@ -437,7 +440,11 @@ func writeBlock(dir, id string, ts []int64, vals []float64) (blockMeta, error) {
 
 // writeBlockData writes an already-encoded payload with the standard header.
 func writeBlockData(dir, id string, start, end int64, count int, data []byte) (blockMeta, error) {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	return writeBlockFile(filepath.Join(dir, strconv.FormatInt(start, 10)+".blk"), id, start, end, count, data)
+}
+
+func writeBlockFile(path, id string, start, end int64, count int, data []byte) (blockMeta, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return blockMeta{}, err
 	}
 	var hdr bytes.Buffer
@@ -449,7 +456,6 @@ func writeBlockData(dir, id string, start, end int64, count int, data []byte) (b
 	_ = binary.Write(&hdr, binary.LittleEndian, end)
 	_ = binary.Write(&hdr, binary.LittleEndian, uint32(count))
 	_ = binary.Write(&hdr, binary.LittleEndian, uint32(len(data)))
-	path := filepath.Join(dir, strconv.FormatInt(start, 10)+".blk")
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
 	if err != nil {
