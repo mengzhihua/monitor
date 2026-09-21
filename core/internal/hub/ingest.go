@@ -2,6 +2,7 @@ package hub
 
 import (
 	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 )
@@ -29,19 +31,26 @@ func (n *Nodes) IngestEnabled() bool { return len(n.opt.Keys) > 0 }
 
 // Authorized checks an agent's stream credential.
 func (n *Nodes) Authorized(r *http.Request) bool {
+	_, ok := n.authorize(r)
+	return ok
+}
+
+// authorize returns the hash of the accepted key; nodes are bound to it.
+func (n *Nodes) authorize(r *http.Request) (string, bool) {
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if key == "" || key == r.Header.Get("Authorization") {
 		key = r.URL.Query().Get("api_key")
 	}
 	if key == "" {
-		return false
+		return "", false
 	}
 	for _, k := range n.opt.Keys {
 		if subtle.ConstantTimeCompare([]byte(k), []byte(key)) == 1 {
-			return true
+			sum := sha256.Sum256([]byte(key))
+			return hex.EncodeToString(sum[:]), true
 		}
 	}
-	return false
+	return "", false
 }
 
 var upgrader = websocket.Upgrader{ReadBufferSize: 64 * 1024, WriteBufferSize: 16 * 1024,
@@ -53,7 +62,8 @@ func (n *Nodes) HandleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming not enabled on this hub", http.StatusNotFound)
 		return
 	}
-	if !n.Authorized(r) {
+	keyHash, ok := n.authorize(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -61,20 +71,21 @@ func (n *Nodes) HandleStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	s := &session{n: n, ws: ws, out: make(chan []byte, 4096), done: make(chan struct{}), remote: r.RemoteAddr}
+	s := &session{n: n, ws: ws, out: make(chan []byte, 4096), done: make(chan struct{}), remote: r.RemoteAddr, keyHash: keyHash}
 	s.serve()
 }
 
 // session is one agent connection.
 type session struct {
-	n      *Nodes
-	ws     *websocket.Conn
-	out    chan []byte
-	done   chan struct{}
-	remote string
-	node   *Node
-	once   sync.Once
-	err    error
+	n       *Nodes
+	ws      *websocket.Conn
+	out     chan []byte
+	done    chan struct{}
+	remote  string
+	keyHash string
+	node    *Node
+	once    sync.Once
+	err     error
 }
 
 func (s *session) send(f stream.Frame) error {
@@ -155,15 +166,32 @@ func (s *session) serve() {
 		return
 	}
 	now := s.n.opt.Now()
-	node := s.attach(hello, now)
+	node, err := s.attach(hello, now)
+	if err != nil {
+		_ = s.send(stream.Frame{Type: stream.TypeError, Error: err.Error()})
+		s.n.log.Warn("hub: node rejected", "host", hello.Host.Hostname, "from", s.remote, "err", err)
+		time.Sleep(100 * time.Millisecond) // let the error frame flush before close
+		return
+	}
 	defer s.detach(node, now)
 
+	// Per-chart watermark = the oldest last-sample across its dimensions, so a
+	// dimension that lagged (or never arrived) is not skipped by the replay.
+	// Re-sent samples are idempotent for the TSDB.
 	last := map[string]int64{}
 	for _, c := range node.reg.Charts() {
+		var wm int64 = -1
 		for _, d := range c.Dims() {
-			if _, l, ok := node.db.Bounds(registry.SeriesID(c.ID, d.ID)); ok && l > last[c.ID] {
-				last[c.ID] = l
+			_, l, ok := node.db.Bounds(registry.SeriesID(c.ID, d.ID))
+			if !ok {
+				l = 0
 			}
+			if wm < 0 || l < wm {
+				wm = l
+			}
+		}
+		if wm > 0 {
+			last[c.ID] = wm
 		}
 	}
 	if err := s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())}); err != nil {
@@ -192,21 +220,36 @@ func (s *session) serve() {
 	}
 }
 
+var (
+	errTooManyNodes = errors.New("hub: node limit reached")
+	errKeyMismatch  = errors.New("hub: node is bound to a different api key")
+)
+
 // attach registers (or refreshes) the node for this connection, replacing
-// any previous connection of the same node.
-func (s *session) attach(hello stream.Frame, now time.Time) *Node {
+// any previous connection of the same node. A node stays bound to the API
+// key that first registered it; a different key may not claim its id.
+func (s *session) attach(hello stream.Frame, now time.Time) (*Node, error) {
 	id := nodeID(hello.Host)
 	s.n.mu.Lock()
 	node, ok := s.n.nodes[id]
 	if !ok {
+		if len(s.n.nodes) >= s.n.opt.MaxNodes {
+			s.n.mu.Unlock()
+			return nil, errTooManyNodes
+		}
 		node = s.n.newNode(id, *hello.Host)
 		node.FirstSeen = now.Unix()
 		s.n.nodes[id] = node
 	}
-	s.n.dirty = true
+	s.n.gen++
 	s.n.mu.Unlock()
 
 	node.mu.Lock()
+	if node.keyHash != "" && node.keyHash != s.keyHash {
+		node.mu.Unlock()
+		return nil, errKeyMismatch
+	}
+	node.keyHash = s.keyHash
 	old := node.conn
 	node.conn = s
 	node.Host = *hello.Host
@@ -219,7 +262,7 @@ func (s *session) attach(hello stream.Frame, now time.Time) *Node {
 	if old != nil {
 		old.close(errors.New("replaced by a new connection"))
 	}
-	return node
+	return node, nil
 }
 
 func (s *session) detach(node *Node, _ time.Time) {
@@ -229,9 +272,7 @@ func (s *session) detach(node *Node, _ time.Time) {
 		node.LastSeen = s.n.opt.Now().Unix()
 	}
 	node.mu.Unlock()
-	s.n.mu.Lock()
-	s.n.dirty = true
-	s.n.mu.Unlock()
+	s.n.touch()
 }
 
 func (s *session) handle(node *Node, f stream.Frame) {
@@ -240,22 +281,26 @@ func (s *session) handle(node *Node, f stream.Frame) {
 		if f.Chart == nil || f.Chart.ID == "" {
 			return
 		}
-		if old, ok := node.reg.Chart(f.Chart.ID); ok {
-			// same id, possibly new dimensions: add the missing ones
-			for _, d := range f.Chart.Dimensions {
-				old.AddDimension(&registry.Dimension{ID: d.ID, Name: d.Name, Hidden: d.Hidden, Algorithm: registry.Absolute})
-			}
+		if len(f.Chart.Dimensions) > s.n.opt.MaxDimsPerChart {
+			s.n.log.Warn("hub: chart rejected, too many dimensions", "node", node.ID, "chart", f.Chart.ID, "dims", len(f.Chart.Dimensions))
 			return
 		}
-		node.reg.AddChart(f.Chart.ToChart())
-		s.n.mu.Lock()
-		s.n.dirty = true
-		s.n.mu.Unlock()
+		if old, ok := node.reg.Chart(f.Chart.ID); ok {
+			if stream.DefOf(old).Fingerprint() == f.Chart.Fingerprint() {
+				return
+			}
+			node.reg.ReplaceChart(f.Chart.ToChart())
+		} else {
+			if len(node.reg.Charts()) >= s.n.opt.MaxChartsPerNode {
+				s.n.log.Warn("hub: chart rejected, node chart limit reached", "node", node.ID, "chart", f.Chart.ID)
+				return
+			}
+			node.reg.AddChart(f.Chart.ToChart())
+		}
+		s.n.touch()
 	case stream.TypeChartDel:
 		if node.reg.RemoveChart(f.ID) {
-			s.n.mu.Lock()
-			s.n.dirty = true
-			s.n.mu.Unlock()
+			s.n.touch()
 		}
 	case stream.TypeData:
 		if err := node.reg.Ingest(f.ChartID, f.T, f.V); err != nil {
@@ -278,8 +323,26 @@ func (s *session) handle(node *Node, f stream.Frame) {
 			e.Hostname = node.Host.Hostname
 		}
 		node.recordAlarm(e)
+		s.n.touch()
 		if s.n.opt.OnAlarm != nil {
 			s.n.opt.OnAlarm(node.ID, e)
+		}
+	case stream.TypeAlarms:
+		snap := f.Alarms
+		if snap == nil {
+			snap = []health.LogEntry{}
+		}
+		for i := range snap {
+			if snap[i].Hostname == "" {
+				snap[i].Hostname = node.Host.Hostname
+			}
+		}
+		changed := node.replaceAlarms(snap)
+		s.n.touch()
+		if s.n.opt.OnAlarm != nil {
+			for _, e := range changed {
+				s.n.opt.OnAlarm(node.ID, e)
+			}
 		}
 	case stream.TypeFuncResult:
 		node.deliverResult(f)

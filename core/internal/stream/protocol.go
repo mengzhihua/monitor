@@ -7,7 +7,7 @@
 // Frames are JSON objects with a "type" discriminator (one frame per
 // WebSocket text message):
 //
-//	agent → hub: hello, chart, chart_del, data, alarm, func_result, pong
+//	agent → hub: hello, chart, chart_del, data, alarm, alarms, func_result, pong
 //	hub → agent: welcome, func_call, error, ping
 package stream
 
@@ -28,6 +28,7 @@ const (
 	TypeChartDel   = "chart_del"
 	TypeData       = "data"
 	TypeAlarm      = "alarm"
+	TypeAlarms     = "alarms" // full snapshot of the agent's current alarm state
 	TypeFuncCall   = "func_call"
 	TypeFuncResult = "func_result"
 	TypeError      = "error"
@@ -59,8 +60,10 @@ type Frame struct {
 	V       map[string]float64 `json:"v,omitempty"`
 	Replay  bool               `json:"replay,omitempty"`
 
-	// alarm
-	Alarm *health.LogEntry `json:"alarm,omitempty"`
+	// alarm (one transition) / alarms (snapshot sent after connect so state
+	// changes that happened while disconnected are not lost)
+	Alarm  *health.LogEntry  `json:"alarm,omitempty"`
+	Alarms []health.LogEntry `json:"alarms,omitempty"`
 
 	// func_call / func_result
 	CallID uint64            `json:"call_id,omitempty"`
@@ -68,6 +71,14 @@ type Frame struct {
 	Args   map[string]string `json:"args,omitempty"`
 	Result json.RawMessage   `json:"result,omitempty"`
 	Error  string            `json:"error,omitempty"`
+}
+
+// SnapshotEntry renders the current state of an alarm as a log entry so the
+// hub can mirror it with the same code path as live transitions.
+func SnapshotEntry(a health.Alarm, hostname string) health.LogEntry {
+	return health.LogEntry{AlarmID: a.ID, When: a.LastStatusChange, Hostname: hostname, Name: a.Name, Chart: a.Chart,
+		Context: a.Context, Family: a.Family, Class: a.Class, Type: a.Type, Component: a.Component,
+		Status: a.Status, OldStatus: a.Status, Value: a.Value, OldValue: a.Value, Units: a.Units, Info: a.Info, Recipient: a.Recipient}
 }
 
 // FunctionInfo advertises an agent function to the hub.

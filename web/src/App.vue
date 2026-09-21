@@ -117,16 +117,21 @@ async function refresh() {
 
 async function refreshAlarms() {
   if (!healthOn.value) return
+  const node = selectedNode.value
   try {
     const [a, l] = await Promise.all([api.alarms(), api.alarmLog()])
+    if (selectedNode.value !== node) return
     alarms.value = Object.values(a.alarms)
     alarmLog.value = l
   } catch { /* transient; the next refresh retries */ }
 }
 
 async function refreshFunctions() {
+  const node = selectedNode.value
   try {
-    functions.value = await api.functions()
+    const f = await api.functions()
+    if (selectedNode.value !== node) return
+    functions.value = f
   } catch { /* transient */ }
 }
 

@@ -41,6 +41,11 @@ stream:
 hub:
   api_keys: []         # empty = ingestion disabled; e.g. ["change-me-stream-key"]
   replicate: 24h       # max backfill accepted from agents
+  # A node stays bound to the api key that first registered it (give each agent
+  # its own key so one cannot impersonate another). Ingest quotas, 0 = default:
+  max_nodes: 0             # 1000
+  max_charts_per_node: 0   # 5000
+  max_dims_per_chart: 0    # 1000
 
 collectors:
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis

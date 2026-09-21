@@ -2,6 +2,7 @@ package hub
 
 import (
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func TestPersistenceAndIsolation(t *testing.T) {
 	b := n.newNode("b", registry.Host{ID: "b", Hostname: "b", UpdateEvery: 1})
 	n.mu.Lock()
 	n.nodes["a"], n.nodes["b"] = a, b
-	n.dirty = true
+	n.gen++
 	n.mu.Unlock()
 	a.reg.AddChart(def.ToChart())
 	b.reg.AddChart(def.ToChart())
@@ -129,5 +130,45 @@ func TestPersistenceAndIsolation(t *testing.T) {
 	}
 	if err := n2.Forget("missing"); err == nil {
 		t.Fatal("forgetting unknown node should fail")
+	}
+}
+
+// A failed Save keeps the state dirty so the next periodic save retries.
+func TestSaveRetriesAfterFailure(t *testing.T) {
+	db, _ := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	defer db.Close()
+	dir := t.TempDir()
+	n, err := Open(db, dir, Options{Keys: []string{"k"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := n.newNode("a", registry.Host{ID: "a", Hostname: "a", UpdateEvery: 1})
+	n.mu.Lock()
+	n.nodes["a"] = a
+	n.gen++
+	n.mu.Unlock()
+
+	// make the target a directory so the rename fails
+	if err := os.Mkdir(n.path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Save(); err == nil {
+		t.Fatal("save into a directory succeeded?")
+	}
+	if err := os.Remove(n.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Save(); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	m, err := Open(db, dir, Options{Keys: []string{"k"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Get("a"); !ok {
+		t.Fatal("node not persisted by the retried save")
+	}
+	if err := m.Save(); err != nil { // nothing changed → no-op
+		t.Fatal(err)
 	}
 }
