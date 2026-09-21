@@ -23,11 +23,6 @@ env:
 permissions:
   contents: write
 
-# One release at a time so two quick pushes cannot race for the same tag.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   meta:
     runs-on: ubuntu-latest
@@ -57,23 +52,34 @@ jobs:
             if [[ -n "$existing" ]]; then
               tag="$existing"
             else
-              last=$(git tag -l 'v[0-9]*' | sort -V | tail -1)
-              last=${last:-v0.0.0}
-              if [[ "$last" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-                tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$(( ${BASH_REMATCH[3]} + 1 ))"
-              else
-                echo "cannot parse latest tag '$last'" >&2; exit 1
-              fi
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git tag -a "$tag" "$GITHUB_SHA" -m "Release $tag"
-              git push origin "refs/tags/$tag"
+              # Concurrent runs may race for the same next version: the tag push is
+              # atomic on the remote, so on rejection refetch tags and recompute.
+              for attempt in 1 2 3 4 5; do
+                git fetch -q --tags --force origin
+                last=$(git tag -l 'v[0-9]*' | sort -V | tail -1)
+                last=${last:-v0.0.0}
+                if [[ "$last" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+                  tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$(( ${BASH_REMATCH[3]} + 1 ))"
+                else
+                  echo "cannot parse latest tag '$last'" >&2; exit 1
+                fi
+                git tag -a "$tag" "$GITHUB_SHA" -m "Release $tag"
+                if git push origin "refs/tags/$tag"; then break; fi
+                git tag -d "$tag"
+                [[ $attempt -lt 5 ]] || { echo "could not allocate a release tag" >&2; exit 1; }
+                sleep $(( attempt * 2 ))
+              done
             fi
           fi
           version="${tag#v}"
+          # Monotonic build number: major*1e6 + minor*1e4 + patch (minor < 100,
+          # patch < 10000). Must match scripts/build-android-server.sh.
           build=1
           if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-            build=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
+            (( ${BASH_REMATCH[2]} < 100 && ${BASH_REMATCH[3]} < 10000 )) || { echo "version fields out of range: $version" >&2; exit 1; }
+            build=$(( ${BASH_REMATCH[1]} * 1000000 + ${BASH_REMATCH[2]} * 10000 + ${BASH_REMATCH[3]} ))
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
