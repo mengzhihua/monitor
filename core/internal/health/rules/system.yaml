@@ -673,3 +673,55 @@ alarms:
     delay: down 5m multiplier 1.5 max 1h
     info: FreeRADIUS access rejects in the last minute
     to: sysadmin
+
+  - name: kubelet_runtime_errors
+    on: k8s_kubelet.kubelet_runtime_operations_errors
+    class: Errors
+    type: Service
+    component: Kubernetes
+    lookup: sum -1m unaligned absolute of *
+    units: errors
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Kubelet runtime operation errors in the last minute
+    to: sysadmin
+
+  - name: k8s_apiserver_5xx
+    on: k8s_apiserver.requests_by_code
+    class: Errors
+    type: Service
+    component: Kubernetes
+    lookup: sum -1m unaligned absolute of 5xx
+    units: requests
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Kubernetes API server 5xx responses in the last minute
+    to: sysadmin
+
+  - name: k8s_node_not_ready
+    on: k8s_state.node_condition
+    class: Availability
+    type: System
+    component: Kubernetes
+    lookup: last -30s unaligned of Ready
+    units: state
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Kubernetes node Ready condition is not True
+    to: sysadmin
+
+  - name: k8s_pods_failed
+    on: k8s_state.node_pods_phase
+    class: Errors
+    type: System
+    component: Kubernetes
+    lookup: last -30s unaligned of failed
+    units: pods
+    every: 10s
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Kubernetes node has pods in Failed phase
+    to: sysadmin

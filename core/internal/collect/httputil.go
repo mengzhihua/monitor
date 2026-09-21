@@ -2,16 +2,84 @@ package collect
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/ingest"
+	"github.com/mengzhihua/monitor/core/internal/registry"
 )
+
+func insecureClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // local kubelet/apiserver often use self-signed certs
+		},
+	}
+}
 
 func httpGet(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	return httpGetAuth(ctx, client, url, "", "")
+}
+
+func httpGetToken(ctx context.Context, client *http.Client, url, token string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return body, fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	return body, nil
+}
+
+func httpGetTokenTry(ctx context.Context, client *http.Client, urls []string, token string) (string, []byte, error) {
+	var last error
+	for _, u := range urls {
+		if u == "" {
+			continue
+		}
+		b, err := httpGetToken(ctx, client, u, token)
+		if err != nil {
+			last = err
+			continue
+		}
+		return u, b, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("no urls")
+	}
+	return "", nil, last
+}
+
+func ensureDim(reg *registry.Registry, chartID, dimID string, d *registry.Dimension) {
+	c, ok := reg.Chart(chartID)
+	if !ok {
+		return
+	}
+	if d == nil {
+		d = &registry.Dimension{ID: dimID}
+	}
+	if d.ID == "" {
+		d.ID = dimID
+	}
+	c.AddDimension(d)
 }
 
 func httpGetAuth(ctx context.Context, client *http.Client, url, user, pass string) ([]byte, error) {

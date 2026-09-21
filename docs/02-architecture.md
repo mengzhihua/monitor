@@ -459,7 +459,8 @@ sequenceDiagram
 | **M8 存储/时间/硬件** | proc ipv6/ipvs/nfs/zfs/btrfs/wireless/ksm/zram；mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm | 对标 Netdata 存储与时钟面 |
 | **M9 队列/DNS/代理** | zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs | 对标 Netdata 队列与边缘代理 |
 | **M10 邮件/安全/日志** | postfix/exim/dovecot/fail2ban/weblog/squidlog/openldap/wireguard/samba/freeradius/tor | 对标 Netdata 邮件与边缘安全 |
-| **M11–M12 采集器全集** | cgroup/k8s、SNMP/长尾，见 [04-netdata-gap.md](04-netdata-gap.md) | 850+ 集成名对齐 |
+| **M11 cgroup / Kubernetes** | cgroup + k8s_kubelet/kubeproxy/apiserver/k8s_state | 对标 Netdata 容器树与 K8s |
+| **M12 采集器全集** | SNMP/长尾，见 [04-netdata-gap.md](04-netdata-gap.md) | 850+ 集成名对齐 |
 | **M13 规则与查询** | health.d 规则全集、`data?context=`、`/api/v2` | 告警与跨图查询对齐 |
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
 | **M15–M16** | k-means ML、Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
@@ -494,5 +495,6 @@ sequenceDiagram
 | mongodb / pgbouncer / chrony / ntpd / smartctl / nvme / apcupsd / lvm | `internal/collect` | M8 |
 | zookeeper / nats / varnish / squid / tomcat / traefik / bind / unbound / coredns / hdfs | `internal/collect` | M9 |
 | postfix / exim / dovecot / fail2ban / weblog / squidlog / openldap / wireguard / samba / freeradius / tor | `internal/collect` | M10 |
+| cgroup / k8s_kubelet / k8s_kubeproxy / k8s_apiserver / k8s_state | `internal/collect` | M11 |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
 | （仅移动）五端原生客户端 | `app/` | M3 |

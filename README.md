@@ -147,6 +147,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `postfix`（postqueue）、`exim`（-bpc）、`dovecot`（EXPORT :24242）、`fail2ban`、`weblog`（access.log）、`squidlog`、`openldap`（cn=Monitor）、`wireguard`（wg dump）、`samba`（smbstatus -P）、`freeradius`（radclient status）、`tor`（control :9051）；目标缺失自动禁用 |
 | 告警 | 邮件队列、Dovecot 认证失败、Fail2ban 封禁、web/squid 日志 5xx、FreeRADIUS reject |
 
+### 已实现能力（M11：cgroup / Kubernetes）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `cgroup`（cgroup v2 容器/VM：cpu/mem/io/pids）、`k8s_kubelet`（:10250/:10255/metrics）、`k8s_kubeproxy`（:10249/metrics）、`k8s_apiserver`（:6443/metrics）、`k8s_state`（API nodes/pods）；目标缺失自动禁用 |
+| 告警 | kubelet runtime 错误、API server 5xx、节点 NotReady、Failed pods |
+
 ### 开发
 
 ```bash
