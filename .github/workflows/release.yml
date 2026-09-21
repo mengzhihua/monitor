@@ -246,7 +246,9 @@ jobs:
 
   client-windows:
     needs: [meta]
-    runs-on: windows-latest
+    # windows-latest ships VS 2026, which Flutter's CMake generator selection
+    # does not know yet (falls back to "Visual Studio 16 2019" and fails).
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.meta.outputs.ref }}" }
