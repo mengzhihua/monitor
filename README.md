@@ -133,6 +133,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 应用采集器 | `mongodb`（serverStatus）、`pgbouncer`、`chrony`、`ntpd`、`smartctl`、`nvme`、`apcupsd`、`lvm`；目标缺失自动禁用 |
 | 告警 | ntpd 失步、chrony 未同步、Mongo 连接、UPS 电池、SMART 失败、NVMe 寿命、LVM 容量 |
 
+### 已实现能力（M9：队列 / DNS / 代理）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `zookeeper`（mntr :2181）、`nats`（/varz :8222）、`varnish`（varnishstat）、`squid`（cachemgr）、`tomcat`（status XML）、`traefik`（/metrics）、`bind`（stats JSON）、`unbound`（unbound-control）、`coredns`（:9153/metrics）、`hdfs`（NameNode JMX）；目标缺失自动禁用 |
+| 告警 | ZooKeeper outstanding、Tomcat/Traefik 错误、BIND SERVFAIL、CoreDNS panic、HDFS missing blocks |
+
 ### 开发
 
 ```bash
