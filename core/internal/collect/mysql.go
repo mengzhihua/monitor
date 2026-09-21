@@ -143,7 +143,7 @@ func mysqlNum(m map[string]string, k string) float64 {
 
 func (m *mysqlCollector) status(ctx context.Context) (map[string]string, error) {
 	addrs := []string{m.cfg.Address}
-	if !strings.HasPrefix(m.cfg.Address, "unix://") {
+	if m.cfg.Address == "127.0.0.1:3306" {
 		addrs = append(addrs, "unix:///var/run/mysqld/mysqld.sock", "unix:///tmp/mysql.sock")
 	}
 	var last error

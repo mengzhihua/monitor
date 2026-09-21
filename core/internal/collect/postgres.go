@@ -120,7 +120,7 @@ func (p *postgresCollector) Collect(ctx context.Context, reg *registry.Registry,
 
 func (p *postgresCollector) stats(ctx context.Context) (pgStats, error) {
 	addrs := []string{p.cfg.Address}
-	if !strings.HasPrefix(p.cfg.Address, "unix://") {
+	if p.cfg.Address == "127.0.0.1:5432" {
 		addrs = append(addrs, "unix:///var/run/postgresql", "unix:///tmp")
 	}
 	q := `SELECT
