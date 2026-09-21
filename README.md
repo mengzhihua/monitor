@@ -118,7 +118,7 @@ flutter analyze && flutter test
 
 ### 发布（GitHub Release）
 
-推送 `v*` tag（或手动运行 Release 工作流）会自动构建并发布全部安装包：
+每次推送到 `main` 会自动打 tag（在最新 `v*` 的基础上 patch +1，如 `v0.1.3` → `v0.1.4`）并构建、发布全部安装包；需要升 minor/major 时手动推 tag 即可，也可手动运行 Release 工作流重建某个已有 tag：
 
 | | 产物 |
 |---|---|
@@ -126,7 +126,7 @@ flutter analyze && flutter test
 | 客户端 `Monitor` | macOS arm64 / amd64（.dmg + .zip）、Windows amd64（.zip）、Linux amd64（.tar.gz）、Android（.apk）、iOS（未签名 .ipa） |
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 ```
 
 目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。
