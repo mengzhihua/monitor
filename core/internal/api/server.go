@@ -21,8 +21,10 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
@@ -31,13 +33,21 @@ var uiFS embed.FS
 
 type Options struct {
 	Version   string
+	Mode      string // agent | hub (informational)
 	StartedAt time.Time
 	AllowFrom []string
-	Token     string
-	Health    *health.Engine // nil = alarms API disabled
-	Logger    *slog.Logger
+	// Token is the legacy single admin credential; Users adds named
+	// credentials with roles. With neither set the API is anonymous (admin).
+	Token  string
+	Users  []User
+	Health *health.Engine // nil = alarms API disabled
+	Logger *slog.Logger
 	// Plugins exposes external plugins.d processes in /api/v1/collectors (optional).
 	Plugins *plugins.Manager
+	// Nodes enables hub mode: /api/v1/stream ingestion and node= routing.
+	Nodes *hub.Nodes
+	// Stream reports this agent's own upstream connection in /api/v1/info.
+	Stream *stream.Client
 }
 
 type Server struct {
@@ -70,9 +80,22 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		}
 		s.nets = append(s.nets, n)
 	}
+	if err := validateUsers(opt.Users); err != nil {
+		return nil, err
+	}
 	s.live = newLiveHub(reg, s.log)
 	s.routes()
 	return s, nil
+}
+
+// PublishNodeSample / PublishNodeAlarm feed a remote node's activity into
+// the live WebSocket; wire them into hub.Options.
+func (s *Server) PublishNodeSample(nodeID, chartID string, ts int64, values map[string]float64) {
+	s.live.broadcastNode(nodeID, chartID, ts, values)
+}
+
+func (s *Server) PublishNodeAlarm(nodeID string, e health.LogEntry) {
+	s.publishAlarm(nodeID, e)
 }
 
 func (s *Server) routes() {
@@ -89,6 +112,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarms", s.handleAlarms)
 	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
 	m.HandleFunc("GET /api/v1/alarm_rules", s.handleAlarmRules)
+	m.HandleFunc("GET /api/v1/nodes", s.handleNodes)
+	m.HandleFunc("DELETE /api/v1/nodes", s.handleForgetNode)
+	if s.opt.Nodes != nil {
+		m.HandleFunc("GET "+stream.Path, s.opt.Nodes.HandleStream)
+	}
 	m.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		s.writePrometheus(w)
 	})
@@ -118,11 +146,21 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if s.opt.Token != "" && (strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics") {
-			if requestToken(r) != s.opt.Token {
+		if r.URL.Path == stream.Path { // agents authenticate with stream keys
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics" {
+			u, ok := s.authenticate(r)
+			if !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			if !u.Role.allows(r) {
+				http.Error(w, "forbidden: role "+string(u.Role)+" may not "+r.Method+" "+r.URL.Path, http.StatusForbidden)
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), userKey{}, u))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -184,9 +222,13 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	for _, c := range charts {
 		dims += len(c.Dims())
 	}
-	writeJSON(w, map[string]any{
+	mode := s.opt.Mode
+	if mode == "" {
+		mode = "agent"
+	}
+	out := map[string]any{
 		"version":       s.opt.Version,
-		"mode":          "agent",
+		"mode":          mode,
 		"host":          h,
 		"uptime":        int64(time.Since(s.opt.StartedAt).Seconds()),
 		"charts_count":  len(charts),
@@ -197,19 +239,32 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"db": map[string]any{
 			"tiers": s.db.Tiers(), "dir": s.db.Dir(),
 		},
-	})
+		"user": userOf(r),
+	}
+	if s.opt.Nodes != nil {
+		out["nodes_count"] = len(s.opt.Nodes.List()) + 1
+		out["streaming_enabled"] = s.opt.Nodes.IngestEnabled()
+	}
+	if s.opt.Stream != nil {
+		out["stream"] = s.opt.Stream.Status()
+	}
+	writeJSON(w, out)
 }
 
 func (s *Server) handleCharts(w http.ResponseWriter, r *http.Request) {
-	charts := s.reg.Charts()
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	charts := v.reg.Charts()
 	out := make(map[string]any, len(charts))
 	for _, c := range charts {
-		out[c.ID] = chartJSON(c, s.db)
+		out[c.ID] = chartJSON(c, v.db)
 	}
-	writeJSON(w, map[string]any{"hostname": s.reg.Host.Hostname, "update_every": s.reg.Host.UpdateEvery, "charts_count": len(charts), "charts": out})
+	writeJSON(w, map[string]any{"node": v.id, "hostname": v.hostname, "update_every": v.reg.Host.UpdateEvery, "charts_count": len(charts), "charts": out})
 }
 
-func chartJSON(c *registry.Chart, db *tsdb.Store) map[string]any {
+func chartJSON(c *registry.Chart, db tsdb.Reader) map[string]any {
 	var first, last int64
 	dims := c.Dims()
 	for _, d := range dims {
@@ -232,12 +287,16 @@ func chartJSON(c *registry.Chart, db *tsdb.Store) map[string]any {
 }
 
 func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
-	c, ok := s.reg.Chart(r.URL.Query().Get("chart"))
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	c, ok := v.reg.Chart(r.URL.Query().Get("chart"))
 	if !ok {
 		http.Error(w, "chart not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, chartJSON(c, s.db))
+	writeJSON(w, chartJSON(c, v.db))
 }
 
 // parseTime accepts unix seconds or a relative offset (negative = seconds
@@ -259,7 +318,12 @@ func parseTime(s string, rel int64, def int64) int64 {
 // handleData implements /api/v1/data?chart=&after=&before=&points=&group=&dimensions=&options=
 func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	c, ok := s.reg.Chart(q.Get("chart"))
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	db := v.db
+	c, ok := v.reg.Chart(q.Get("chart"))
 	if !ok {
 		http.Error(w, "chart not found", http.StatusNotFound)
 		return
@@ -304,10 +368,10 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	// tier: ""/"auto" lets the planner pick by range/points (falling back to
 	// finer tiers while the planned one has nothing for this chart); a digit
 	// forces that tier.
-	tier, auto := s.db.PlanTier(after, before, points), true
+	tier, auto := db.PlanTier(after, before, points), true
 	if tq := q.Get("tier"); tq != "" && tq != "auto" {
 		n, err := strconv.Atoi(tq)
-		if _, ok := s.db.TierEvery(n); err != nil || !ok {
+		if _, ok := db.TierEvery(n); err != nil || !ok {
 			http.Error(w, "unknown tier", http.StatusBadRequest)
 			return
 		}
@@ -317,7 +381,7 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 		for ; tier > 0; tier-- {
 			covered := true
 			for _, d := range dims {
-				if !s.db.TierCovers(registry.SeriesID(c.ID, d.ID), tier, after) {
+				if !db.TierCovers(registry.SeriesID(c.ID, d.ID), tier, after) {
 					covered = false
 					break
 				}
@@ -329,14 +393,14 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	}
 	series := make([][]tsdb.Bucket, 0, len(dims))
 	for _, d := range dims {
-		bs, err := s.db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
+		bs, err := db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		series = append(series, bs)
 	}
-	every, _ := s.db.TierEvery(tier)
+	every, _ := db.TierEvery(tier)
 	res := tsdb.AggregateBuckets(series, every, after, before, points, group)
 
 	// result.data rows: [time, dim1, dim2, ...]; NaN → null
@@ -377,6 +441,7 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 	labels := append([]string{"time"}, names...)
 	writeJSON(w, map[string]any{
 		"api":               1,
+		"node":              v.id,
 		"id":                c.ID,
 		"name":              c.ID,
 		"context":           c.Context,
@@ -400,12 +465,16 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
 
 func (s *Server) handleAllMetrics(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
 	switch r.URL.Query().Get("format") {
 	case "prometheus":
-		s.writePrometheus(w)
+		s.writePrometheusFor(w, v)
 	default:
 		out := map[string]any{}
-		for _, c := range s.reg.Charts() {
+		for _, c := range v.reg.Charts() {
 			ts, vals := c.LastValues()
 			dims := map[string]any{}
 			for _, d := range c.Dims() {
@@ -432,14 +501,28 @@ func promName(s string) string {
 	return b.String()
 }
 
+// writePrometheus exposes the local host and, on a hub, every remote node
+// (instance label = hostname, node label = node id).
 func (s *Server) writePrometheus(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	host := s.reg.Host.Hostname
-	charts := s.reg.Charts()
+	seen := map[string]bool{}
+	s.writePromCharts(w, s.reg.Host.Hostname, "", s.reg.Charts(), seen)
+	if s.opt.Nodes != nil {
+		for _, n := range s.opt.Nodes.List() {
+			s.writePromCharts(w, n.Host.Hostname, n.ID, n.Registry().Charts(), seen)
+		}
+	}
+}
+
+func (s *Server) writePrometheusFor(w http.ResponseWriter, v *view) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	s.writePromCharts(w, v.hostname, v.id, v.reg.Charts(), map[string]bool{})
+}
+
+func (s *Server) writePromCharts(w http.ResponseWriter, host, node string, charts []*registry.Chart, seen map[string]bool) {
 	// HELP/TYPE may appear once per metric family, so charts sharing a
 	// context (per-core cpu, per-disk io, ...) are grouped by metric name.
 	sort.SliceStable(charts, func(i, j int) bool { return charts[i].Context < charts[j].Context })
-	seen := map[string]bool{}
 	for _, c := range charts {
 		ts, vals := c.LastValues()
 		if len(vals) == 0 {
@@ -458,6 +541,9 @@ func (s *Server) writePrometheus(w http.ResponseWriter) {
 		for _, k := range keys {
 			var lbl strings.Builder
 			fmt.Fprintf(&lbl, `chart=%q,family=%q,dimension=%q,instance=%q`, c.ID, c.Family, k, host)
+			if node != "" {
+				fmt.Fprintf(&lbl, `,node=%q`, node)
+			}
 			for lk, lv := range c.Labels {
 				fmt.Fprintf(&lbl, `,%s=%q`, promName(lk), lv)
 			}
@@ -477,10 +563,19 @@ type functionInfo struct {
 }
 
 func (s *Server) handleFunctions(w http.ResponseWriter, r *http.Request) {
-	fns := s.sched.Functions()
-	out := make([]functionInfo, 0, len(fns))
-	for _, f := range fns {
-		out = append(out, functionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	out := []functionInfo{}
+	if v.node != nil {
+		for _, f := range v.node.Functions() {
+			out = append(out, functionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
+		}
+	} else {
+		for _, f := range s.sched.Functions() {
+			out = append(out, functionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
+		}
 	}
 	writeJSON(w, out)
 }
@@ -489,9 +584,40 @@ func (s *Server) handleFunctions(w http.ResponseWriter, r *http.Request) {
 // extra query parameters are passed through as arguments.
 func (s *Server) handleFunction(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
 	name := q.Get("function")
 	if name == "" {
 		name = q.Get("name")
+	}
+	args := map[string]string{}
+	for k, val := range q {
+		if k != "function" && k != "name" && k != "token" && k != "node" && len(val) > 0 {
+			args[k] = val[0]
+		}
+	}
+	if v.node != nil { // proxy to the agent over its stream connection
+		timeout := 10 * time.Second
+		for _, f := range v.node.Functions() {
+			if f.Name == name && f.Timeout > 0 {
+				timeout = time.Duration(f.Timeout) * time.Second
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		defer cancel()
+		res, err := v.node.Call(ctx, name, args)
+		if err != nil {
+			code := http.StatusBadGateway
+			if err.Error() == "unknown function" {
+				code = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), code)
+			return
+		}
+		writeJSON(w, map[string]any{"function": name, "node": v.id, "time": time.Now().Unix(), "result": json.RawMessage(res)})
+		return
 	}
 	var fn *collect.Function
 	for _, f := range s.sched.Functions() {
@@ -503,12 +629,6 @@ func (s *Server) handleFunction(w http.ResponseWriter, r *http.Request) {
 	if fn == nil {
 		http.Error(w, "unknown function", http.StatusNotFound)
 		return
-	}
-	args := map[string]string{}
-	for k, v := range q {
-		if k != "function" && k != "name" && k != "token" && len(v) > 0 {
-			args[k] = v[0]
-		}
 	}
 	timeout := time.Duration(fn.Timeout) * time.Second
 	if timeout <= 0 {

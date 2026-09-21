@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,8 +25,10 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
@@ -132,20 +135,74 @@ func run() error {
 		})
 	}
 
-	srv, err := api.New(reg, db, sched, api.Options{
+	switch cfg.Mode {
+	case "", "agent", "hub":
+	default:
+		return fmt.Errorf("mode must be agent or hub, got %q", cfg.Mode)
+	}
+	var users []api.User
+	for _, u := range cfg.Web.Users {
+		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role)})
+	}
+
+	var sc *stream.Client
+	if cfg.Stream.Enabled {
+		if len(cfg.Stream.Destinations) == 0 {
+			return errors.New("stream.enabled requires stream.destinations")
+		}
+		sc = stream.NewClient(reg, db, stream.ClientOptions{
+			Destinations:       cfg.Stream.Destinations,
+			APIKey:             cfg.Stream.APIKey,
+			InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
+			Timeout:            cfg.Stream.Timeout,
+			Replicate:          cfg.Stream.Replicate,
+			Version:            version,
+			Functions:          sched.Functions,
+			Logger:             log.With("component", "stream"),
+		})
+	}
+
+	apiOpt := api.Options{
 		Version:   version,
+		Mode:      cfg.Mode,
 		StartedAt: time.Now(),
 		AllowFrom: cfg.Web.AllowFrom,
 		Token:     cfg.Web.Token,
+		Users:     users,
 		Health:    eng,
 		Plugins:   pm,
+		Stream:    sc,
 		Logger:    log.With("component", "api"),
-	})
+	}
+	var nodes *hub.Nodes
+	var srv *api.Server
+	if cfg.Mode == "hub" {
+		if len(cfg.Hub.APIKeys) == 0 {
+			log.Warn("hub mode without hub.api_keys: agents cannot connect")
+		}
+		nodes, err = hub.Open(db, filepath.Join(cfg.Global.DataDir, "hub"), hub.Options{
+			Keys:      cfg.Hub.APIKeys,
+			Replicate: cfg.Hub.Replicate,
+			Logger:    log.With("component", "hub"),
+			OnSample:  func(n, c string, t int64, v map[string]float64) { srv.PublishNodeSample(n, c, t, v) },
+			OnAlarm:   func(n string, e health.LogEntry) { srv.PublishNodeAlarm(n, e) },
+		})
+		if err != nil {
+			return fmt.Errorf("hub: %w", err)
+		}
+		apiOpt.Nodes = nodes
+	}
+	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {
 		return err
 	}
 	if eng != nil {
-		eng.SetOnEvent(srv.PublishAlarm)
+		eng.SetOnEvent(func(e health.LogEntry) {
+			srv.PublishAlarm(e)
+			if sc != nil {
+				sc.PublishAlarm(e)
+			}
+		})
 	}
 	httpSrv := &http.Server{
 		Addr:              cfg.Web.Listen,
@@ -174,6 +231,20 @@ func run() error {
 		if pm != nil {
 			pm.Run(ctx)
 		}
+	}()
+	streamDone := make(chan struct{})
+	go func() {
+		defer close(streamDone)
+		var wg sync.WaitGroup
+		if sc != nil {
+			wg.Add(1)
+			go func() { defer wg.Done(); sc.Run(ctx) }()
+		}
+		if nodes != nil {
+			wg.Add(1)
+			go func() { defer wg.Done(); nodes.Run(ctx) }()
+		}
+		wg.Wait()
 	}()
 
 	errc := make(chan error, 1)
@@ -210,6 +281,11 @@ func run() error {
 	case <-pluginsDone:
 	case <-shutdownCtx.Done():
 		log.Warn("plugins did not stop in time")
+	}
+	select {
+	case <-streamDone:
+	case <-shutdownCtx.Done():
+		log.Warn("stream/hub did not stop in time")
 	}
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)
