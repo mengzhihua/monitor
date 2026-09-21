@@ -22,18 +22,18 @@ sleep 4
 fail() { echo "SMOKE FAIL: $*"; exit 1; }
 
 info=$(curl -sf "http://127.0.0.1:$PORT/api/v1/info") || fail "info"
-echo "$info" | grep -q '"charts_count":[1-9]' || fail "no charts: $info"
+echo "$info" | grep '"charts_count":[1-9]' >/dev/null || fail "no charts: $info"
 
 charts=$(curl -sf "http://127.0.0.1:$PORT/api/v1/charts") || fail "charts"
-echo "$charts" | grep -q '"system.cpu"' || fail "system.cpu missing"
-echo "$charts" | grep -q '"system.ram"' || fail "system.ram missing"
+echo "$charts" | grep '"system.cpu"' >/dev/null || fail "system.cpu missing"
+echo "$charts" | grep '"system.ram"' >/dev/null || fail "system.ram missing"
 
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
-echo "$data" | grep -q '"points":[1-9]' || fail "no data points: $data"
+echo "$data" | grep '"points":[1-9]' >/dev/null || fail "no data points: $data"
 
 metrics=$(curl -sf "http://127.0.0.1:$PORT/metrics") || fail "metrics"
-echo "$metrics" | grep -q '^monitor_system_ram' || fail "prometheus format"
+echo "$metrics" | grep '^monitor_system_ram' >/dev/null || fail "prometheus format"
 index=$(curl -sf "http://127.0.0.1:$PORT/") || fail "dashboard"
-echo "$index" | grep -qi '<title>Monitor</title>' || fail "dashboard html"
+echo "$index" | grep -i '<title>Monitor</title>' >/dev/null || fail "dashboard html"
 
 echo "SMOKE OK"

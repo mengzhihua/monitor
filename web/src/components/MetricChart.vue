@@ -160,7 +160,10 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { unsub?.(); ro?.disconnect(); plot?.destroy() })
 watch(() => props.window, load)
-watch(() => props.chart.dimensions.length, load)
+/** Anything that feeds makeOpts/buildData/load: a changed definition needs a full reload. */
+const defFingerprint = () =>
+  [props.chart.chart_type, props.chart.update_every, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}`)].join('\u0001')
+watch(defFingerprint, load)
 </script>
 
 <template>

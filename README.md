@@ -98,13 +98,48 @@ make lint         # gofmt + vet
 cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 ```
 
+### 客户端（Flutter，M3 起步）
+
+`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址（可选 Bearer token）即可连接，Hub 模式下可切换节点；图表页按 family 分组，历史数据走 `/api/v1/data`，实时点走 `/api/v1/live` WebSocket（断线 3s 自动重连）；告警页显示当前告警与最近状态变化。
+
+```bash
+cd app && flutter pub get
+flutter run -d macos      # 或 linux / windows / <android-device> / <ios-device>
+flutter analyze && flutter test
+```
+
+### Android 服务端（M4 起步）
+
+`android/` 是原生 Kotlin 壳：前台服务拉起随包分发的静态 `monitord`（`jniLibs/arm64-v8a/libmonitord.so`），可设置监听端口、可选上报到 Hub、开机自启，并直接打开内嵌 Dashboard。Android 沙箱限制 `/proc/net` 等接口，网络类图表可能缺失。
+
+```bash
+./scripts/build-android-server.sh assembleRelease   # 需要 Go、JDK 17、ANDROID_HOME（SDK 35）
+```
+
+### 发布（GitHub Release）
+
+推送 `v*` tag（或手动运行 Release 工作流）会自动构建并发布全部安装包：
+
+| | 产物 |
+|---|---|
+| 服务端 `monitord` | macOS arm64（Apple 芯片）/ amd64（Intel）、Windows amd64、Linux amd64 / arm64、Android arm64 APK |
+| 客户端 `Monitor` | macOS arm64 / amd64（.dmg + .zip）、Windows amd64（.zip）、Linux amd64（.tar.gz）、Android（.apk）、iOS（未签名 .ipa） |
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。
+
 ## 仓库规划
 
 ```
 core/      Go：monitord（agent/hub）、monitorctl、gomobile 绑定
 web/       Vue3 Dashboard（embed 进 monitord）
 app/       Flutter 五端客户端
-android/   Android 服务端壳（Kotlin 前台服务 + 采集桥）
+android/   Android 服务端壳（Kotlin 前台服务，运行随包分发的 monitord）
+scripts/   smoke 测试、Android 服务端打包、macOS 分架构打包
+.github/   CI 与 Release 工作流
 plugins/   外部采集器（plugins.d 文本协议）
 proto/     节点↔Hub 流协议
 api/       OpenAPI 定义
