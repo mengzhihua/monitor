@@ -166,6 +166,48 @@ func (r *Registry) AddChart(c *Chart) *Chart {
 	return c
 }
 
+// ReplaceChart installs c as the definition of chart c.ID, carrying over the
+// last values of dimensions that survive. Unlike AddChart it updates
+// metadata (title, units, dimension names/hidden) and drops dimensions
+// absent from c; readers always go through the registry, so swapping the
+// instance is safe without touching the old chart.
+func (r *Registry) ReplaceChart(c *Chart) *Chart {
+	r.mu.Lock()
+	old, ok := r.charts[c.ID]
+	r.mu.Unlock()
+	if !ok {
+		return r.AddChart(c)
+	}
+	lastT, last := old.LastValues()
+	if c.Type == "" {
+		c.Type = Line
+	}
+	if c.Context == "" {
+		c.Context = c.ID
+	}
+	if c.UpdateEvery == 0 {
+		c.UpdateEvery = r.Host.UpdateEvery
+	}
+	if c.Priority == 0 {
+		c.Priority = 100000
+	}
+	c.dimIx = map[string]*Dimension{}
+	c.last = map[string]float64{}
+	c.lastT = lastT
+	dims := c.Dimensions
+	c.Dimensions = nil
+	for _, d := range dims {
+		c.AddDimension(d)
+		if v, ok := last[d.ID]; ok {
+			c.last[d.ID] = v
+		}
+	}
+	r.mu.Lock()
+	r.charts[c.ID] = c
+	r.mu.Unlock()
+	return c
+}
+
 // RemoveChart forgets a chart (e.g. a container that went away). Stored
 // samples stay in the database until retention drops them.
 func (r *Registry) RemoveChart(id string) bool {

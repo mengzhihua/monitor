@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -365,5 +366,209 @@ func TestRBAC(t *testing.T) {
 	// invalid role rejected at construction
 	if _, err := New(registry.New(&registry.Host{}, nil), nil, nil, Options{Users: []User{{Name: "x", Token: "t", Role: "root"}}}); err == nil {
 		t.Fatal("expected error for unknown role")
+	}
+}
+
+// Alarm state is a snapshot on every connect: transitions that happened while
+// the agent was offline (or the hub down) converge, and survive hub restart.
+func TestHubAlarmSnapshotConverges(t *testing.T) {
+	hubTS, nodes := newHub(t, Options{})
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "agent-1", Hostname: "agent", OS: "linux", UpdateEvery: 1}, db)
+	var mu sync.Mutex
+	current := []health.Alarm{{ID: 1, Name: "ram_high", Chart: "system.ram", Status: health.StatusWarning, LastStatusChange: 100}}
+	client := stream.NewClient(reg, db, stream.ClientOptions{Destinations: []string{hubTS.URL}, APIKey: testKey, Timeout: 5 * time.Second,
+		Alarms: func() []health.Alarm { mu.Lock(); defer mu.Unlock(); return append([]health.Alarm(nil), current...) }})
+	ctx, cancel := context.WithCancel(context.Background())
+	go client.Run(ctx)
+	node := waitNode(t, nodes, "agent-1")
+	waitFor(t, "snapshot", func() bool {
+		a := node.Alarms()
+		return len(a) == 1 && a[0].Status == health.StatusWarning && a[0].Hostname == "agent"
+	})
+	cancel()
+	waitFor(t, "disconnect", func() bool { return !client.Status().Connected })
+
+	// offline: ram_high clears, a new alarm raises
+	mu.Lock()
+	current = []health.Alarm{{ID: 1, Name: "ram_high", Chart: "system.ram", Status: health.StatusClear, LastStatusChange: 200},
+		{ID: 2, Name: "cpu_high", Chart: "system.cpu", Status: health.StatusCritical, LastStatusChange: 201}}
+	mu.Unlock()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	go client.Run(ctx2)
+	waitFor(t, "converged", func() bool {
+		by := map[string]health.LogEntry{}
+		for _, a := range node.Alarms() {
+			by[a.Name] = a
+		}
+		return len(by) == 2 && by["ram_high"].Status == health.StatusClear && by["cpu_high"].Status == health.StatusCritical
+	})
+	log := node.AlarmLog(0)
+	last := log[len(log)-1]
+	if got := log[len(log)-2]; got.Name != "ram_high" || got.OldStatus != health.StatusWarning || got.Status != health.StatusClear {
+		t.Fatalf("log transition = %+v", got)
+	}
+	if last.Name != "cpu_high" {
+		t.Fatalf("log tail = %+v", last)
+	}
+
+	// persisted with the node → visible after a hub restart before the agent reconnects
+	if err := nodes.Save(); err != nil {
+		t.Fatal(err)
+	}
+	var lst struct {
+		Nodes []struct{ Alarms map[string]int }
+	}
+	getJSON(t, hubTS.URL+"/api/v1/nodes", &lst)
+	if len(lst.Nodes) != 2 || lst.Nodes[1].Alarms["critical"] != 1 {
+		t.Fatalf("nodes = %+v", lst.Nodes)
+	}
+}
+
+func waitNode(t *testing.T, nodes *hub.Nodes, id string) *hub.Node {
+	t.Helper()
+	var node *hub.Node
+	waitFor(t, "node "+id, func() bool {
+		n, ok := nodes.Get(id)
+		node = n
+		return ok && n.Status(time.Now()) != hub.StatusOffline
+	})
+	return node
+}
+
+// A node is bound to the key that registered it: a second agent holding a
+// different valid key cannot claim the same id.
+func TestHubNodeBoundToKey(t *testing.T) {
+	hubTS, nodes := newHubKeys(t, []string{testKey, "other-key"})
+	_, _, a := newAgent(t, hubTS.URL, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Run(ctx)
+	waitNode(t, nodes, "agent-1")
+
+	db, _ := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "agent-1", Hostname: "impostor", OS: "linux", UpdateEvery: 1}, db)
+	b := stream.NewClient(reg, db, stream.ClientOptions{Destinations: []string{hubTS.URL}, APIKey: "other-key", Timeout: 5 * time.Second})
+	go b.Run(ctx)
+	waitFor(t, "impostor rejected", func() bool { return strings.Contains(b.Status().LastError, "different api key") })
+	n, _ := nodes.Get("agent-1")
+	if n.Host.Hostname != "agent" || !a.Status().Connected {
+		t.Fatalf("node taken over: %+v connected=%v", n.Host, a.Status().Connected)
+	}
+}
+
+func newHubKeys(t *testing.T, keys []string) (*httptest.Server, *hub.Nodes) {
+	return newHubOpt(t, hub.Options{Keys: keys})
+}
+
+func newHubOpt(t *testing.T, hopt hub.Options) (*httptest.Server, *hub.Nodes) {
+	t.Helper()
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	nodes, err := hub.Open(db, t.TempDir(), hopt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registry.New(&registry.Host{ID: "hub-id", Hostname: "hub", OS: "linux", UpdateEvery: 1}, db)
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
+	srv, err := New(reg, db, sched, Options{Mode: "hub", Nodes: nodes, StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, nodes
+}
+
+func TestHubQuotas(t *testing.T) {
+	hubTS, nodes := newHubOpt(t, hub.Options{Keys: []string{testKey}, MaxNodes: 1, MaxChartsPerNode: 1, MaxDimsPerChart: 2})
+	reg, _, a := newAgent(t, hubTS.URL, nil) // system.ram: 2 dims → fits
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Run(ctx)
+	node := waitNode(t, nodes, "agent-1")
+	waitFor(t, "first chart", func() bool { return len(node.Registry().Charts()) == 1 })
+
+	// over the per-node chart limit → ignored; too many dims → ignored
+	reg.AddChart(&registry.Chart{ID: "app.two", Context: "app.two", Title: "2", Units: "n", Dimensions: []*registry.Dimension{{ID: "a"}}})
+	_ = reg.Collect("app.two", time.Now(), map[string]float64{"a": 1})
+	reg.AddChart(&registry.Chart{ID: "app.wide", Context: "app.wide", Title: "w", Units: "n", Dimensions: []*registry.Dimension{{ID: "a"}, {ID: "b"}, {ID: "c"}}})
+	_ = reg.Collect("app.wide", time.Now(), map[string]float64{"a": 1, "b": 2, "c": 3})
+	time.Sleep(200 * time.Millisecond)
+	if got := len(node.Registry().Charts()); got != 1 {
+		t.Fatalf("hub accepted %d charts, quota is 1", got)
+	}
+
+	// second node over MaxNodes → rejected with an error frame
+	db, _ := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	t.Cleanup(func() { _ = db.Close() })
+	reg2 := registry.New(&registry.Host{ID: "agent-2", Hostname: "two", OS: "linux", UpdateEvery: 1}, db)
+	b := stream.NewClient(reg2, db, stream.ClientOptions{Destinations: []string{hubTS.URL}, APIKey: testKey, Timeout: 5 * time.Second})
+	go b.Run(ctx)
+	waitFor(t, "node limit", func() bool { return strings.Contains(b.Status().LastError, "node limit") })
+	if _, ok := nodes.Get("agent-2"); ok {
+		t.Fatal("node registered beyond MaxNodes")
+	}
+}
+
+// A re-sent definition replaces the hub's copy: renamed/hidden dimensions
+// and chart metadata are updated, removed dimensions disappear.
+func TestHubChartDefinitionUpdate(t *testing.T) {
+	hubTS, nodes := newHub(t, Options{})
+	reg, _, a := newAgent(t, hubTS.URL, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Run(ctx)
+	node := waitNode(t, nodes, "agent-1")
+	now := time.Now().Truncate(time.Second)
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 1, "free": 2})
+	waitFor(t, "chart", func() bool { return len(node.Registry().Charts()) == 1 })
+
+	// agent-side: rename+hide "free", drop nothing yet, retitle
+	reg.RemoveChart("system.ram")
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Title: "Memory", Units: "MiB", Type: registry.Stacked,
+		Priority: 200, Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free", Name: "available", Hidden: true}}})
+	_ = reg.Collect("system.ram", now.Add(time.Second), map[string]float64{"used": 3, "free": 4})
+	waitFor(t, "updated def", func() bool {
+		hc, ok := node.Registry().Chart("system.ram")
+		if !ok || hc.Title != "Memory" {
+			return false
+		}
+		for _, d := range hc.Dims() {
+			if d.ID == "free" {
+				return d.Name == "available" && d.Hidden
+			}
+		}
+		return false
+	})
+	hc, _ := node.Registry().Chart("system.ram")
+	if _, last := hc.LastValues(); last["used"] != 3 {
+		t.Fatalf("last values after replace = %v", last)
+	}
+
+	// drop a dimension → hub drops it too
+	reg.RemoveChart("system.ram")
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Title: "Memory", Units: "MiB", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	_ = reg.Collect("system.ram", now.Add(2*time.Second), map[string]float64{"used": 5})
+	waitFor(t, "dimension removed", func() bool {
+		hc, ok := node.Registry().Chart("system.ram")
+		return ok && len(hc.Dims()) == 1
+	})
+}
+
+func TestHubLiveUnknownNodeRejected(t *testing.T) {
+	hubTS, _ := newHub(t, Options{})
+	url := "ws" + strings.TrimPrefix(hubTS.URL, "http") + "/api/v1/live?node=nope"
+	if _, resp, err := websocket.DefaultDialer.Dial(url, nil); err == nil || resp == nil || resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown node live: err=%v resp=%v", err, resp)
 	}
 }

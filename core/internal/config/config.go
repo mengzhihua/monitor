@@ -72,6 +72,10 @@ type Stream struct {
 type Hub struct {
 	APIKeys   []string      `yaml:"api_keys"`  // credentials agents present; empty = no ingestion
 	Replicate time.Duration `yaml:"replicate"` // max backfill accepted from agents
+	// Ingest quotas (0 = default: 1000 / 5000 / 1000).
+	MaxNodes         int `yaml:"max_nodes"`
+	MaxChartsPerNode int `yaml:"max_charts_per_node"`
+	MaxDimsPerChart  int `yaml:"max_dims_per_chart"`
 }
 
 // ModuleDecoders adapts collectors.modules to the decoder callbacks the

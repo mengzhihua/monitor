@@ -62,6 +62,7 @@ type series struct {
 	vals   []float64
 	blocks []blockMeta // sorted by start
 	dirty  bool
+	last   int64 // newest timestamp ever accepted (buffer or flushed block)
 	// flushMu serialises flushes of one series so blocks land in time order
 	// even when a checkpoint and a full-block flush race.
 	flushMu sync.Mutex
@@ -149,6 +150,11 @@ func (s *Store) load(root string) error {
 	}
 	for _, sr := range s.series {
 		sort.Slice(sr.blocks, func(i, j int) bool { return sr.blocks[i].start < sr.blocks[j].start })
+		for _, b := range sr.blocks {
+			if b.end > sr.last {
+				sr.last = b.end
+			}
+		}
 	}
 	s.log.Info("tsdb: loaded", "series", len(s.series), "blocks", n)
 	return nil
@@ -175,10 +181,11 @@ func (s *Store) getOrCreate(id string) *series {
 func (s *Store) Append(id string, ts int64, v float64) {
 	sr := s.getOrCreate(id)
 	sr.mu.Lock()
-	if n := len(sr.ts); n > 0 && ts <= sr.ts[n-1] {
+	if ts <= sr.last {
 		sr.mu.Unlock()
 		return // out of order / duplicate second: drop
 	}
+	sr.last = ts
 	sr.ts = append(sr.ts, ts)
 	sr.vals = append(sr.vals, v)
 	sr.dirty = true

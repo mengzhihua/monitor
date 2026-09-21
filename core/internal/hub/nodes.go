@@ -37,7 +37,12 @@ type Options struct {
 	Keys []string
 	// Replicate bounds how far back agents may backfill on connect.
 	Replicate time.Duration
-	Logger    *slog.Logger
+	// Quotas guard hub memory/disk against a misbehaving agent; zero means
+	// the defaults (1000 nodes, 5000 charts per node, 1000 dimensions per chart).
+	MaxNodes         int
+	MaxChartsPerNode int
+	MaxDimsPerChart  int
+	Logger           *slog.Logger
 	// OnSample/OnAlarm mirror node activity to the live WebSocket feed.
 	OnSample func(nodeID, chartID string, ts int64, values map[string]float64)
 	OnAlarm  func(nodeID string, e health.LogEntry)
@@ -52,6 +57,9 @@ type Node struct {
 	Version   string
 	FirstSeen int64
 	LastSeen  int64
+	// keyHash pins the node to the API key it first connected with, so one
+	// agent cannot take over another's node id (give each agent its own key).
+	keyHash string
 
 	reg *registry.Registry
 	db  *tsdb.View
@@ -94,7 +102,10 @@ type Nodes struct {
 
 	mu    sync.RWMutex
 	nodes map[string]*Node
-	dirty bool
+	// gen counts changes; saved is the gen last written successfully, so a
+	// failed Save keeps the state dirty and the next tick retries.
+	gen, saved uint64
+	saveMu     sync.Mutex // one Save at a time: they share the tmp file
 }
 
 type persisted struct {
@@ -107,8 +118,10 @@ type persistedNode struct {
 	Version   string                `json:"version"`
 	FirstSeen int64                 `json:"first_seen"`
 	LastSeen  int64                 `json:"last_seen"`
+	KeyHash   string                `json:"key_hash,omitempty"`
 	Charts    []*stream.ChartDef    `json:"charts"`
 	Functions []stream.FunctionInfo `json:"functions,omitempty"`
+	Alarms    []health.LogEntry     `json:"alarms,omitempty"`
 }
 
 // Open loads nodes.json from dir (if present).
@@ -121,6 +134,15 @@ func Open(db *tsdb.Store, dir string, opt Options) (*Nodes, error) {
 	}
 	if opt.Replicate <= 0 {
 		opt.Replicate = 24 * time.Hour
+	}
+	if opt.MaxNodes <= 0 {
+		opt.MaxNodes = 1000
+	}
+	if opt.MaxChartsPerNode <= 0 {
+		opt.MaxChartsPerNode = 5000
+	}
+	if opt.MaxDimsPerChart <= 0 {
+		opt.MaxDimsPerChart = 1000
 	}
 	n := &Nodes{db: db, path: filepath.Join(dir, "nodes.json"), opt: opt, log: opt.Logger, nodes: map[string]*Node{}}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -139,10 +161,13 @@ func Open(db *tsdb.Store, dir string, opt Options) (*Nodes, error) {
 	}
 	for _, pn := range p.Nodes {
 		node := n.newNode(pn.ID, pn.Host)
-		node.Version, node.FirstSeen, node.LastSeen = pn.Version, pn.FirstSeen, pn.LastSeen
+		node.Version, node.FirstSeen, node.LastSeen, node.keyHash = pn.Version, pn.FirstSeen, pn.LastSeen, pn.KeyHash
 		node.functions = pn.Functions
 		for _, cd := range pn.Charts {
 			node.reg.AddChart(cd.ToChart())
+		}
+		for _, a := range pn.Alarms {
+			node.alarms[a.Chart+"."+a.Name] = a
 		}
 		n.nodes[node.ID] = node
 	}
@@ -162,19 +187,34 @@ func (n *Nodes) newNode(id string, host registry.Host) *Node {
 	return node
 }
 
-// Save writes nodes.json if anything changed.
-func (n *Nodes) Save() error {
+// touch marks the node set changed.
+func (n *Nodes) touch() {
 	n.mu.Lock()
-	if !n.dirty {
+	n.gen++
+	n.mu.Unlock()
+}
+
+// Save writes nodes.json if anything changed since the last successful save.
+func (n *Nodes) Save() error {
+	n.saveMu.Lock()
+	defer n.saveMu.Unlock()
+	n.mu.Lock()
+	gen := n.gen
+	if gen == n.saved {
 		n.mu.Unlock()
 		return nil
 	}
-	n.dirty = false
 	var p persisted
 	for _, node := range n.nodes {
 		node.mu.Lock()
-		e := persistedNode{ID: node.ID, Host: node.Host, Version: node.Version, FirstSeen: node.FirstSeen, LastSeen: node.LastSeen, Functions: node.functions}
+		e := persistedNode{ID: node.ID, Host: node.Host, Version: node.Version, FirstSeen: node.FirstSeen, LastSeen: node.LastSeen, KeyHash: node.keyHash, Functions: node.functions}
+		for _, a := range node.alarms {
+			e.Alarms = append(e.Alarms, a)
+		}
 		node.mu.Unlock()
+		sort.Slice(e.Alarms, func(i, j int) bool {
+			return e.Alarms[i].Chart+"."+e.Alarms[i].Name < e.Alarms[j].Chart+"."+e.Alarms[j].Name
+		})
 		for _, c := range node.reg.Charts() {
 			e.Charts = append(e.Charts, stream.DefOf(c))
 		}
@@ -190,7 +230,15 @@ func (n *Nodes) Save() error {
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, n.path)
+	if err := os.Rename(tmp, n.path); err != nil {
+		return err
+	}
+	n.mu.Lock()
+	if gen > n.saved {
+		n.saved = gen
+	}
+	n.mu.Unlock()
+	return nil
 }
 
 // Run persists periodically until ctx is done, then once more.
@@ -267,7 +315,7 @@ func (n *Nodes) Forget(id string) error {
 		return errors.New("node is connected")
 	}
 	delete(n.nodes, id)
-	n.dirty = true
+	n.gen++
 	return nil
 }
 
@@ -359,6 +407,43 @@ func (nd *Node) recordAlarm(e health.LogEntry) {
 		nd.alog = nd.alog[len(nd.alog)-alarmLogKeep:]
 	}
 	nd.mu.Unlock()
+}
+
+// replaceAlarms installs a full snapshot of the agent's alarm state and
+// returns the entries whose status differs from what the hub held (they are
+// appended to the mirrored log so the gap shows up as transitions).
+func (nd *Node) replaceAlarms(snapshot []health.LogEntry) []health.LogEntry {
+	nd.mu.Lock()
+	defer nd.mu.Unlock()
+	var changed []health.LogEntry
+	var seq uint64 // snapshot entries carry no log id; continue the mirrored sequence
+	for _, e := range nd.alog {
+		if e.UniqueID > seq {
+			seq = e.UniqueID
+		}
+	}
+	fresh := make(map[string]health.LogEntry, len(snapshot))
+	for _, e := range snapshot {
+		k := e.Chart + "." + e.Name
+		fresh[k] = e
+		if old, ok := nd.alarms[k]; !ok || old.Status != e.Status {
+			if ok {
+				e.OldStatus, e.OldValue = old.Status, old.Value
+			}
+			seq++
+			e.UniqueID = seq
+			fresh[k] = e
+			changed = append(changed, e)
+		}
+	}
+	nd.alarms = fresh
+	if len(changed) > 0 {
+		nd.alog = append(nd.alog, changed...)
+		if len(nd.alog) > alarmLogKeep {
+			nd.alog = nd.alog[len(nd.alog)-alarmLogKeep:]
+		}
+	}
+	return changed
 }
 
 // Call runs a function on the agent over the stream and returns its raw JSON

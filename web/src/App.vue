@@ -94,7 +94,7 @@ async function refresh() {
     const byId = new Map(charts.value.map((x) => [x.id, x]))
     charts.value = list.map((x) => {
       const old = byId.get(x.id)
-      if (old) { old.dimensions = x.dimensions; return old }
+      if (old) { Object.assign(old, x); return old }
       return x
     })
     error.value = ''
@@ -117,16 +117,21 @@ async function refresh() {
 
 async function refreshAlarms() {
   if (!healthOn.value) return
+  const node = selectedNode.value
   try {
     const [a, l] = await Promise.all([api.alarms(), api.alarmLog()])
+    if (selectedNode.value !== node) return
     alarms.value = Object.values(a.alarms)
     alarmLog.value = l
   } catch { /* transient; the next refresh retries */ }
 }
 
 async function refreshFunctions() {
+  const node = selectedNode.value
   try {
-    functions.value = await api.functions()
+    const f = await api.functions()
+    if (selectedNode.value !== node) return
+    functions.value = f
   } catch { /* transient */ }
 }
 

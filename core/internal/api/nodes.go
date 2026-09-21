@@ -108,8 +108,8 @@ func (s *Server) isLocal(id string) bool {
 	return id == "" || id == "local" || id == s.reg.Host.ID
 }
 
-func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
-	id := r.URL.Query().Get("node")
+// resolve maps a node= value to its view; ok is false for unknown nodes.
+func (s *Server) resolve(id string) (*view, bool) {
 	// A streamed node wins over the local host when both carry the same ID
 	// (agent + hub on one machine share the OS machine-id).
 	if s.opt.Nodes != nil && id != "" && id != "local" {
@@ -119,6 +119,30 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
 	}
 	if s.isLocal(id) {
 		return &view{hostname: s.reg.Host.Hostname, reg: s.reg, db: s.db}, true
+	}
+	return nil, false
+}
+
+// GET /api/v1/live?node= — the node is validated before the upgrade so an
+// unknown id gets a 404 instead of a silent, idle socket.
+func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	s.live.handle(w, r, v.id, func(id string) (string, bool) {
+		v, ok := s.resolve(id)
+		if !ok {
+			return "", false
+		}
+		return v.id, true
+	})
+}
+
+func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
+	id := r.URL.Query().Get("node")
+	if v, ok := s.resolve(id); ok {
+		return v, true
 	}
 	if s.opt.Nodes == nil {
 		http.Error(w, "not a hub: node= is unsupported", http.StatusNotFound)

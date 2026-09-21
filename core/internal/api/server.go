@@ -108,7 +108,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
 	m.HandleFunc("GET /api/v1/functions", s.handleFunctions)
 	m.HandleFunc("GET /api/v1/function", s.handleFunction)
-	m.HandleFunc("GET /api/v1/live", s.live.handle)
+	m.HandleFunc("GET /api/v1/live", s.handleLive)
 	m.HandleFunc("GET /api/v1/alarms", s.handleAlarms)
 	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
 	m.HandleFunc("GET /api/v1/alarm_rules", s.handleAlarmRules)

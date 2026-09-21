@@ -32,11 +32,12 @@ type liveHub struct {
 }
 
 type liveConn struct {
-	ws     *websocket.Conn
-	send   chan []byte
-	mu     sync.RWMutex
-	node   string          // "" = local host
-	charts map[string]bool // nil = all
+	ws      *websocket.Conn
+	send    chan []byte
+	mu      sync.RWMutex
+	node    string          // "" = local host
+	charts  map[string]bool // nil = all
+	resolve func(string) (string, bool)
 }
 
 type liveMsg struct {
@@ -157,15 +158,14 @@ func (c *liveConn) setCharts(list []string) {
 	}
 }
 
-func (h *liveHub) handle(w http.ResponseWriter, r *http.Request) {
+// handle serves an upgraded live connection scoped to node ("" = local);
+// resolve validates in-band node switches and returns the canonical id.
+func (h *liveHub) handle(w http.ResponseWriter, r *http.Request, node string, resolve func(string) (string, bool)) {
 	ws, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	c := &liveConn{ws: ws, send: make(chan []byte, 256)}
-	if n := r.URL.Query().Get("node"); n != "" && n != "local" {
-		c.node = n
-	}
+	c := &liveConn{ws: ws, send: make(chan []byte, 256), node: node, resolve: resolve}
 	if q := r.URL.Query().Get("charts"); q != "" {
 		c.setCharts(strings.Split(q, ","))
 	}
@@ -201,11 +201,14 @@ func (h *liveHub) reader(c *liveConn) {
 		if json.Unmarshal(msg, &req) == nil {
 			c.setCharts(req.Charts)
 			if req.Node != nil {
-				n := *req.Node
-				if n == "local" {
-					n = ""
+				if n, ok := c.resolve(*req.Node); ok {
+					c.setNode(n)
+				} else if b, err := json.Marshal(map[string]string{"error": "unknown node " + *req.Node}); err == nil {
+					select {
+					case c.send <- b:
+					default:
+					}
 				}
-				c.setNode(n)
 			}
 		}
 	}

@@ -111,6 +111,7 @@ type LogEntry struct {
 	UniqueID   uint64  `json:"unique_id"`
 	AlarmID    uint64  `json:"alarm_id"`
 	When       int64   `json:"when"`
+	Updated    int64   `json:"updated,omitempty"` // last evaluation time; set on state snapshots
 	Hostname   string  `json:"hostname"`
 	Name       string  `json:"name"`
 	Chart      string  `json:"chart"`

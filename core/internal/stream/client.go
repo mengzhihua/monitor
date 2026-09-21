@@ -36,7 +36,10 @@ type ClientOptions struct {
 	Version   string
 	// Functions lists the collector functions the hub may call (optional).
 	Functions func() []collect.Function
-	Logger    *slog.Logger
+	// Alarms returns the current alarm state; it is sent as a snapshot after
+	// every (re)connect so transitions that happened offline reach the hub.
+	Alarms func() []health.Alarm
+	Logger *slog.Logger
 }
 
 // ClientStatus is exposed through /api/v1/info.
@@ -133,9 +136,12 @@ func (c *Client) Run(ctx context.Context) {
 	}
 	backoff := time.Second
 	for {
-		err := c.session(ctx)
+		connected, err := c.session(ctx)
 		if ctx.Err() != nil {
 			return
+		}
+		if connected {
+			backoff = time.Second // only consecutive failures grow the delay
 		}
 		if err != nil {
 			c.mu.Lock()
@@ -220,15 +226,18 @@ func (c *Client) functions() []FunctionInfo {
 
 // session runs one connection: hello/welcome handshake, replication of the
 // gap since the hub's last sample, then live forwarding until an error.
-func (c *Client) session(ctx context.Context) error {
-	// Start queueing before dialing so nothing collected during the
-	// handshake is lost; drain stale content from the previous session.
-	c.mu.Lock()
-	c.accepting = true
-	c.mu.Unlock()
+// connected reports whether the welcome handshake completed.
+func (c *Client) session(ctx context.Context) (connected bool, err error) {
+	// Drop whatever the previous session left behind (it is covered by
+	// replication), then start queueing before dialing so nothing collected
+	// during the handshake is lost. Producers only enqueue while accepting,
+	// so draining first cannot discard samples of this session.
 	for len(c.queue) > 0 {
 		<-c.queue
 	}
+	c.mu.Lock()
+	c.accepting = true
+	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
 		c.accepting = false
@@ -238,7 +247,7 @@ func (c *Client) session(ctx context.Context) error {
 
 	ws, dest, err := c.dial(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer ws.Close()
 	sess := &clientSession{c: c, ws: ws, out: make(chan []byte, 1024), done: make(chan struct{}), errc: make(chan error, 1), sentDefs: map[string]string{}}
@@ -246,18 +255,18 @@ func (c *Client) session(ctx context.Context) error {
 	defer sess.close()
 
 	if err := sess.send(Frame{Type: TypeHello, Host: c.reg.Host, Version: c.opt.Version, Functions: c.functions()}); err != nil {
-		return err
+		return false, err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(c.opt.Timeout))
 	var welcome Frame
 	if err := ws.ReadJSON(&welcome); err != nil {
-		return fmt.Errorf("waiting for welcome: %w", err)
+		return false, fmt.Errorf("waiting for welcome: %w", err)
 	}
 	if welcome.Type == TypeError {
-		return fmt.Errorf("hub rejected: %s", welcome.Error)
+		return false, fmt.Errorf("hub rejected: %s", welcome.Error)
 	}
 	if welcome.Type != TypeWelcome {
-		return fmt.Errorf("unexpected frame %q before welcome", welcome.Type)
+		return false, fmt.Errorf("unexpected frame %q before welcome", welcome.Type)
 	}
 	c.mu.Lock()
 	c.st.Connected, c.st.Destination, c.st.Since, c.st.LastError = true, dest, time.Now().Unix(), ""
@@ -271,7 +280,10 @@ func (c *Client) session(ctx context.Context) error {
 	// queue (the hub drops any duplicate the replay already covered).
 	cutoff := time.Now().Unix() - 1
 	if err := sess.replicate(welcome, cutoff); err != nil {
-		return err
+		return true, err
+	}
+	if err := sess.sendAlarmSnapshot(); err != nil {
+		return true, err
 	}
 
 	sweep := time.NewTicker(30 * time.Second)
@@ -280,28 +292,42 @@ func (c *Client) session(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shutdown"), time.Now().Add(time.Second))
-			return nil
+			return true, nil
 		case err := <-sess.errc:
-			return err
+			return true, err
 		case f := <-c.queue:
 			if f.Type == TypeData {
 				if f.T <= cutoff { // covered by replication
 					continue
 				}
 				if err := sess.ensureDef(f.ChartID); err != nil {
-					return err
+					return true, err
 				}
 			}
 			if err := sess.send(f); err != nil {
-				return err
+				return true, err
 			}
 			c.sent.Add(1)
 		case <-sweep.C:
 			if err := sess.sweepDefs(); err != nil {
-				return err
+				return true, err
 			}
 		}
 	}
+}
+
+// sendAlarmSnapshot mirrors the agent's whole alarm state; the hub replaces
+// what it holds for this node, so alarms that changed (or vanished) while
+// disconnected converge.
+func (s *clientSession) sendAlarmSnapshot() error {
+	if s.c.opt.Alarms == nil {
+		return nil
+	}
+	f := Frame{Type: TypeAlarms, Alarms: []health.LogEntry{}}
+	for _, a := range s.c.opt.Alarms() {
+		f.Alarms = append(f.Alarms, SnapshotEntry(a, s.c.reg.Host.Hostname))
+	}
+	return s.send(f)
 }
 
 type clientSession struct {

@@ -109,6 +109,44 @@ func TestStoreFlushReloadQuery(t *testing.T) {
 	}
 }
 
+func TestAppendDropsSamplesOlderThanFlushedBlocks(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, BlockSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(1_700_000_000)
+	for i := int64(0); i < 10; i++ {
+		s.Append("x", start+i, float64(i))
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	s.Append("x", start+5, 999) // replayed duplicate against an empty buffer
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir, BlockSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.Append("x", start+9, 999) // duplicate after restart
+	s.Append("x", start+10, 10)
+	pts, err := s.Query("x", start, start+20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 11 {
+		t.Fatalf("got %d points, want 11: %+v", len(pts), pts)
+	}
+	for i, p := range pts {
+		if p.TS != start+int64(i) || p.Value != float64(i) {
+			t.Fatalf("point %d = %+v", i, p)
+		}
+	}
+}
+
 func TestCorruptHeaderRejected(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(Options{Dir: dir, BlockSize: 10})

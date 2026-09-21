@@ -150,7 +150,12 @@ func run() error {
 		if len(cfg.Stream.Destinations) == 0 {
 			return errors.New("stream.enabled requires stream.destinations")
 		}
+		var alarms func() []health.Alarm
+		if eng != nil {
+			alarms = eng.Alarms
+		}
 		sc = stream.NewClient(reg, db, stream.ClientOptions{
+			Alarms:             alarms,
 			Destinations:       cfg.Stream.Destinations,
 			APIKey:             cfg.Stream.APIKey,
 			InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
@@ -181,11 +186,14 @@ func run() error {
 			log.Warn("hub mode without hub.api_keys: agents cannot connect")
 		}
 		nodes, err = hub.Open(db, filepath.Join(cfg.Global.DataDir, "hub"), hub.Options{
-			Keys:      cfg.Hub.APIKeys,
-			Replicate: cfg.Hub.Replicate,
-			Logger:    log.With("component", "hub"),
-			OnSample:  func(n, c string, t int64, v map[string]float64) { srv.PublishNodeSample(n, c, t, v) },
-			OnAlarm:   func(n string, e health.LogEntry) { srv.PublishNodeAlarm(n, e) },
+			Keys:             cfg.Hub.APIKeys,
+			Replicate:        cfg.Hub.Replicate,
+			MaxNodes:         cfg.Hub.MaxNodes,
+			MaxChartsPerNode: cfg.Hub.MaxChartsPerNode,
+			MaxDimsPerChart:  cfg.Hub.MaxDimsPerChart,
+			Logger:           log.With("component", "hub"),
+			OnSample:         func(n, c string, t int64, v map[string]float64) { srv.PublishNodeSample(n, c, t, v) },
+			OnAlarm:          func(n string, e health.LogEntry) { srv.PublishNodeAlarm(n, e) },
 		})
 		if err != nil {
 			return fmt.Errorf("hub: %w", err)

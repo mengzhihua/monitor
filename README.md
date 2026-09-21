@@ -61,9 +61,9 @@ cd core && go run ./cmd/monitord -listen :19999
 
 | 模块 | 说明 |
 | --- | --- |
-| 流式上报 | Agent 出站 WebSocket（`stream.destinations`，支持 `ws://` / `wss://`，多目标顺序尝试）连接 Hub 的 `/api/v1/stream`，API Key 鉴权；`hello/welcome` 握手后发送主机信息、图表定义（含删除）、每秒样本、告警迁移，并响应 Hub 下发的 Functions 调用 |
-| 断线续传 | 有界队列（不阻塞采集），1s→60s 指数退避重连；Hub 在 `welcome` 中返回每张图最后时间戳，Agent 从本地 TSDB 回放缺口（`stream.replicate` / `hub.replicate` 限制回填范围），再接续实时数据 |
-| Hub 节点管理 | 每个节点独立 Registry + TSDB 命名空间（`node:<id>|` 前缀，共用同一存储与分层降采样），元数据/图表定义/Functions 列表持久化到 `data/hub/nodes.json`，重启后离线节点仍可查历史；状态 `live` / `stale` / `offline` |
+| 流式上报 | Agent 出站 WebSocket（`stream.destinations`，支持 `ws://` / `wss://`，多目标顺序尝试）连接 Hub 的 `/api/v1/stream`，API Key 鉴权；`hello/welcome` 握手后发送主机信息、图表定义（含删除）、每秒样本、告警迁移，并响应 Hub 下发的 Functions 调用；每次连上后先发送完整告警快照，离线期间的告警变化在 Hub 端收敛 |
+| 断线续传 | 有界队列（不阻塞采集），1s→60s 指数退避重连；Hub 在 `welcome` 中返回每张图各维度中最旧的最后时间戳（重复样本幂等丢弃），Agent 从本地 TSDB 回放缺口（`stream.replicate` / `hub.replicate` 限制回填范围），再接续实时数据 |
+| Hub 节点管理 | 每个节点独立 Registry + TSDB 命名空间（`node:<id>|` 前缀，共用同一存储与分层降采样），元数据/图表定义/Functions/告警状态持久化到 `data/hub/nodes.json`，重启后离线节点仍可查历史与告警；状态 `live` / `stale` / `offline`；节点绑定首次注册它的 API Key（其它 Key 不能顶替同一节点 ID，建议每台 Agent 独立 Key）；`hub.max_nodes` / `max_charts_per_node` / `max_dims_per_chart` 限额 |
 | API | `GET /api/v1/nodes`（`?status=` 过滤）、`DELETE /api/v1/nodes?node=`（仅离线节点）；`charts/chart/data/allmetrics/alarms/alarm_log/functions/function/live` 均支持 `node=<id>` 选择远端节点，`/metrics` 带 `node` 标签导出全部节点；`/api/v1/function?node=` 透传到 Agent 执行（如远端 `processes`） |
 | RBAC | `web.users` 命名凭据 + 角色：`admin`（全部）、`troubleshooter`（只读 + Functions）、`viewer`（只读，不可执行 Functions）；`web.token` 仍视为 admin；`/api/v1/info.user` 返回当前身份 |
 | Dashboard | Hub 模式顶部节点选择器（在线/全部计数、live/stale/offline 标识），切换后图表、告警、Functions、WebSocket 实时流全部切到所选节点；Agent 端显示到 Hub 的上报状态 |
