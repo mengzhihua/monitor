@@ -169,6 +169,20 @@ func (c *memCollector) Init(reg *registry.Registry) error {
 	reg.AddChart(&registry.Chart{ID: "mem.available", Family: "ram", Title: "Available RAM for applications", Units: "MiB", Type: registry.Area,
 		Priority: 301, Plugin: "system", Module: "mem",
 		Dimensions: []*registry.Dimension{{ID: "avail", Divisor: 1024 * 1024}}})
+	reg.AddChart(&registry.Chart{ID: "mem.kernel", Family: "ram", Title: "Memory used by the kernel", Units: "MiB", Type: registry.Stacked,
+		Priority: 302, Plugin: "system", Module: "mem",
+		Dimensions: []*registry.Dimension{
+			{ID: "slab", Divisor: 1024 * 1024}, {ID: "sunreclaim", Name: "unreclaimable", Divisor: 1024 * 1024},
+			{ID: "page_tables", Divisor: 1024 * 1024}, {ID: "vmalloc_used", Divisor: 1024 * 1024}}})
+	reg.AddChart(&registry.Chart{ID: "mem.writeback", Family: "ram", Title: "Writeback memory", Units: "MiB",
+		Priority: 303, Plugin: "system", Module: "mem",
+		Dimensions: []*registry.Dimension{{ID: "dirty", Divisor: 1024 * 1024}, {ID: "writeback", Divisor: 1024 * 1024}}})
+	reg.AddChart(&registry.Chart{ID: "mem.committed", Family: "ram", Title: "Committed (overcommit) memory", Units: "MiB", Type: registry.Area,
+		Priority: 304, Plugin: "system", Module: "mem",
+		Dimensions: []*registry.Dimension{{ID: "committed", Divisor: 1024 * 1024}, {ID: "limit", Divisor: 1024 * 1024, Hidden: true}}})
+	reg.AddChart(&registry.Chart{ID: "mem.pgfaults", Family: "ram", Title: "Memory page faults", Units: "faults/s",
+		Priority: 305, Plugin: "system", Module: "mem",
+		Dimensions: []*registry.Dimension{incDim("minor"), incDim("major")}})
 	if sw, err := mem.SwapMemory(); err == nil && sw.Total > 0 {
 		c.hasSwap = true
 		reg.AddChart(&registry.Chart{ID: "mem.swap", Family: "swap", Title: "System swap", Units: "MiB", Type: registry.Stacked,
@@ -193,6 +207,13 @@ func (c *memCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 	_ = reg.Collect("system.ram", now, map[string]float64{
 		"free": float64(vm.Free), "used": float64(used), "cached": float64(vm.Cached), "buffers": float64(vm.Buffers)})
 	_ = reg.Collect("mem.available", now, map[string]float64{"avail": float64(vm.Available)})
+	_ = reg.Collect("mem.kernel", now, map[string]float64{
+		"slab": float64(vm.Slab), "sunreclaim": float64(vm.Sunreclaim), "page_tables": float64(vm.PageTables), "vmalloc_used": float64(vm.VmallocUsed)})
+	_ = reg.Collect("mem.writeback", now, map[string]float64{"dirty": float64(vm.Dirty), "writeback": float64(vm.WriteBack)})
+	_ = reg.Collect("mem.committed", now, map[string]float64{"committed": float64(vm.CommittedAS), "limit": float64(vm.CommitLimit)})
+	if sw, err := mem.SwapMemoryWithContext(ctx); err == nil {
+		_ = reg.Collect("mem.pgfaults", now, map[string]float64{"minor": float64(sw.PgFault), "major": float64(sw.PgMajFault)})
+	}
 	if c.hasSwap {
 		sw, err := mem.SwapMemoryWithContext(ctx)
 		if err != nil {
@@ -206,12 +227,20 @@ func (c *memCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 
 // ---- disk io ----
 
-type diskCollector struct{ known map[string]bool }
+type diskIOPrev struct {
+	readBytes, writeBytes, readCount, writeCount, readTime, writeTime uint64
+}
+
+type diskCollector struct {
+	known map[string]bool
+	prev  map[string]diskIOPrev
+}
 
 func (c *diskCollector) Name() string { return "disk" }
 
 func (c *diskCollector) Init(reg *registry.Registry) error {
 	c.known = map[string]bool{}
+	c.prev = map[string]diskIOPrev{}
 	io, err := disk.IOCounters()
 	if err != nil {
 		return err
@@ -258,6 +287,12 @@ func (c *diskCollector) ensure(reg *registry.Registry, name string) {
 	reg.AddChart(&registry.Chart{ID: "disk_util." + name, Context: "disk.util", Family: name, Title: "Disk utilization time", Units: "% of time working", Type: registry.Area,
 		Priority: 2002, Plugin: "system", Module: "disk", Labels: lbl,
 		Dimensions: []*registry.Dimension{{ID: "utilization", Algorithm: registry.Incremental, Divisor: 10}}})
+	reg.AddChart(&registry.Chart{ID: "disk_await." + name, Context: "disk.await", Family: name, Title: "Disk average completed I/O latency", Units: "milliseconds/operation",
+		Priority: 2003, Plugin: "system", Module: "disk", Labels: lbl,
+		Dimensions: []*registry.Dimension{{ID: "reads"}, {ID: "writes", Multiplier: -1}}})
+	reg.AddChart(&registry.Chart{ID: "disk_avgsz." + name, Context: "disk.avgsz", Family: name, Title: "Disk average completed I/O amount", Units: "KiB/operation",
+		Priority: 2004, Plugin: "system", Module: "disk", Labels: lbl,
+		Dimensions: []*registry.Dimension{{ID: "reads", Divisor: 1024}, {ID: "writes", Multiplier: -1, Divisor: 1024}}})
 }
 
 func (c *diskCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
@@ -273,8 +308,29 @@ func (c *diskCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		_ = reg.Collect("disk."+name, now, map[string]float64{"reads": float64(st.ReadBytes), "writes": float64(st.WriteBytes)})
 		_ = reg.Collect("disk_ops."+name, now, map[string]float64{"reads": float64(st.ReadCount), "writes": float64(st.WriteCount)})
 		_ = reg.Collect("disk_util."+name, now, map[string]float64{"utilization": float64(st.IoTime)})
+		cur := diskIOPrev{st.ReadBytes, st.WriteBytes, st.ReadCount, st.WriteCount, st.ReadTime, st.WriteTime}
+		if prev, ok := c.prev[name]; ok {
+			awaitR, awaitW := ratePerOp(st.ReadTime, prev.readTime, st.ReadCount, prev.readCount), ratePerOp(st.WriteTime, prev.writeTime, st.WriteCount, prev.writeCount)
+			avgR, avgW := ratePerOp(st.ReadBytes, prev.readBytes, st.ReadCount, prev.readCount), ratePerOp(st.WriteBytes, prev.writeBytes, st.WriteCount, prev.writeCount)
+			_ = reg.Collect("disk_await."+name, now, map[string]float64{"reads": awaitR, "writes": awaitW})
+			_ = reg.Collect("disk_avgsz."+name, now, map[string]float64{"reads": avgR, "writes": avgW})
+		}
+		c.prev[name] = cur
 	}
 	return nil
+}
+
+// ratePerOp is (delta amount) / (delta operations); 0 when no ops completed.
+func ratePerOp(curAmt, prevAmt, curOps, prevOps uint64) float64 {
+	dOps := float64(curOps) - float64(prevOps)
+	if dOps <= 0 {
+		return 0
+	}
+	dAmt := float64(curAmt) - float64(prevAmt)
+	if dAmt < 0 {
+		return 0
+	}
+	return dAmt / dOps
 }
 
 // ---- disk space ----

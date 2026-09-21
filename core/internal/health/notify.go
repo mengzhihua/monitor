@@ -244,3 +244,40 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 	}
 	return c.Quit()
 }
+
+// ChatNotifier posts a markdown payload understood by DingTalk, WeCom or Feishu.
+type ChatNotifier struct {
+	Kind       string // dingtalk | wecom | feishu
+	WebhookURL string
+	Client     *http.Client
+}
+
+func (n *ChatNotifier) Name() string {
+	if n.Kind == "" {
+		return "chat"
+	}
+	return n.Kind
+}
+
+func (n *ChatNotifier) Notify(ctx context.Context, e LogEntry) error {
+	c := n.Client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	title := fmt.Sprintf("[%s] %s on %s", e.Status, e.Name, e.Hostname)
+	text := strings.NewReplacer("*", "**", "`", "`").Replace(Summarize(e))
+	var body []byte
+	var err error
+	switch n.Kind {
+	case "wecom":
+		body, err = json.Marshal(map[string]any{"msgtype": "markdown", "markdown": map[string]string{"content": title + "\n" + text}})
+	case "feishu":
+		body, err = json.Marshal(map[string]any{"msg_type": "text", "content": map[string]string{"text": title + "\n" + strings.NewReplacer("*", "", "`", "").Replace(Summarize(e))}})
+	default: // dingtalk
+		body, err = json.Marshal(map[string]any{"msgtype": "markdown", "markdown": map[string]string{"title": title, "text": title + "\n\n" + text}})
+	}
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, c, n.WebhookURL, body, nil)
+}

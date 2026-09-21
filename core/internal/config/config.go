@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/mengzhihua/monitor/core/internal/export"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 )
@@ -49,6 +50,7 @@ type Config struct {
 	} `yaml:"collectors"`
 	Health  Health  `yaml:"health"`
 	Plugins Plugins `yaml:"plugins"`
+	Export  Export  `yaml:"export"`
 }
 
 // User is an API credential: role admin | troubleshooter | viewer.
@@ -133,6 +135,20 @@ type Notify struct {
 		Password string   `yaml:"password"`
 		Insecure bool     `yaml:"insecure_skip_verify"`
 	} `yaml:"email"`
+	DingTalk struct {
+		WebhookURL string `yaml:"webhook_url"`
+	} `yaml:"dingtalk"`
+	WeCom struct {
+		WebhookURL string `yaml:"webhook_url"`
+	} `yaml:"wecom"`
+	Feishu struct {
+		WebhookURL string `yaml:"webhook_url"`
+	} `yaml:"feishu"`
+}
+
+// Export pushes latest samples to Graphite / Influx / JSON HTTP.
+type Export struct {
+	Destinations []export.Destination `yaml:"destinations"`
 }
 
 // HealthEnabled reports whether the alarm engine should run.

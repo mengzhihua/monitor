@@ -24,6 +24,9 @@ async function load() {
   try {
     const args: Record<string, string> = {}
     if (selected.value === 'processes') args.sort = sort.value
+    if (selected.value === 'services' || selected.value === 'network-connections') {
+      if (sort.value) args.sort = sort.value
+    }
     const r = await api.function(selected.value, args)
     if (isTable(r.result)) {
       table.value = r.result
@@ -42,20 +45,27 @@ async function load() {
 function rows() {
   if (!table.value) return []
   const q = filter.value.trim().toLowerCase()
-  if (!q) return table.value.rows
-  return table.value.rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q)))
+  let list = table.value.rows
+  if (q) list = list.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q)))
+  const col = sort.value
+  if (col && list.length && typeof list[0]![col] === 'number') {
+    list = [...list].sort((a, b) => Number(b[col] ?? 0) - Number(a[col] ?? 0))
+  }
+  return list
 }
 
 function fmt(col: string, v: unknown): string {
   if (v === null || v === undefined) return ''
   if (typeof v !== 'number') return String(v)
-  if (col === 'rss') return v >= 1 << 30 ? (v / (1 << 30)).toFixed(2) + ' GiB' : (v / (1 << 20)).toFixed(1) + ' MiB'
+  if (col === 'rss' || col === 'memory') return v >= 1 << 30 ? (v / (1 << 30)).toFixed(2) + ' GiB' : (v / (1 << 20)).toFixed(1) + ' MiB'
   if (col === 'cpu') return v.toFixed(1) + '%'
+  if (col === 'time' || col === 'rtt' || col === 'latency') return v.toFixed(1) + ' ms'
   return Number.isInteger(v) ? String(v) : v.toFixed(2)
 }
 
 function sortable(col: string) {
-  return selected.value === 'processes' && ['cpu', 'rss', 'pid'].includes(col)
+  const row = table.value?.rows[0]
+  return !!row && typeof row[col] === 'number'
 }
 
 watch([selected, sort], load)

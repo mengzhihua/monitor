@@ -419,3 +419,26 @@ func TestFunctionsAPI(t *testing.T) {
 		t.Fatalf("unknown function status = %d", resp.StatusCode)
 	}
 }
+
+func TestIngestOpenMetricsAndWeights(t *testing.T) {
+	ts, _ := newTestServer(t, Options{Version: "test"})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/ingest/openmetrics", strings.NewReader("# TYPE demo_total counter\ndemo_total 5\n"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var charts struct {
+		Charts map[string]any `json:"charts"`
+	}
+	getJSON(t, ts.URL+"/api/v1/charts", &charts)
+	if _, ok := charts.Charts["om.demo_total"]; !ok {
+		t.Fatalf("charts = %v", charts.Charts)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/weights", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("weights without ml = %d", resp.StatusCode)
+	}
+}

@@ -37,24 +37,24 @@ cd core && go run ./cmd/monitord -listen :19999
 
 | 模块 | 说明 |
 | --- | --- |
-| 采集器 | `cpu`（总量 + 每核）、`load`、`mem`（RAM/Swap）、`disk`（IO/ops）、`diskspace`（空间/inode）、`net`（带宽/包/错误/丢弃）、`uptime`；基于 gopsutil，Linux/macOS/Windows/Android 通用，设备/网卡/挂载点运行时动态注册 |
+| 采集器 | `cpu`（总量 + 每核）、`load`、`mem`（RAM/Swap/kernel/writeback/committed/pgfaults）、`disk`（IO/ops/util/await/avgsz）、`diskspace`（空间/inode）、`net`（带宽/包/错误/丢弃）、`uptime`、`sensors`（温度）；Linux `proc`（中断/forks/熵/fd/PSI/IPv4 SNMP）；基于 gopsutil，设备/网卡/挂载点运行时动态注册 |
 | Registry | Host → Chart → Dimension 模型，`absolute` / `incremental` / `percentage-of-*-row` 算法，计数器回绕处理 |
 | TSDB tier0 | 每秒原始数据，Gorilla 压缩（典型指标 ≈ 2 bit/样本），追加式块文件 + 重启恢复，按时长/大小保留，范围查询 + 聚合（avg/min/max/sum/median/last） |
 | TSDB tier1/tier2 | 每分钟 / 每小时降采样层（每桶 min/max/sum/last/count，均值 = sum/count），写入时同步折叠、按层独立保留（默认 90 天 / 2 年）、重启恢复；`/api/v1/data` 按 `(before-after)/points` 自动选层（`tier=auto|0|1|2` 可强制），粗层无数据时自动回退到细层；`/api/v1/info.db.tiers` 暴露各层 update_every/保留/序列/块/字节 |
 | plugins.d | 外部采集器进程（任意语言）通过 stdout 文本协议接入：`CHART/DIMENSION/CLABEL/BEGIN/SET/END/FLUSH/VARIABLE/DISABLE/EXIT`；自动发现 `plugins.d/*.plugin`，也可在 `plugins.list` 显式声明；崩溃自动重启（1s→60s 指数退避）、无输出看门狗、进程组回收、`DISABLE` 自禁用；状态在 `/api/v1/collectors.plugins` 与 `/api/v1/info.plugins` |
-| 应用/服务采集器 | `apps`：进程按应用分组（内置 ssh/database/httpd/containers/browser… 20+ 组，`collectors.modules.apps.groups` 可自定义 glob）→ `apps.cpu/mem/processes/threads/io_read/io_write`；`systemd`：Linux cgroup v2 每服务 CPU/内存/IO；`docker`：Engine API（unix socket / tcp）每容器 CPU/内存/网络/块 IO，容器消失自动移除图表；`nginx`（`stub_status`）；`redis`（内置 RESP 客户端 `INFO`，支持 AUTH/TLS/unix socket）。服务类模块目标不可达时自动禁用并在 `/api/v1/collectors` 标明原因 |
-| Functions | 采集器可暴露按需函数：`GET /api/v1/functions` 列出，`GET /api/v1/function?function=<name>&<args>` 执行；内置 `processes`（实时进程表：pid/ppid/name/group/cpu%/rss/threads/cmdline，`sort=cpu|rss|pid`、`group=` 过滤） |
-| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/collectors` `/functions` `/function`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；可选 `token` 与 `allow_from` CIDR 访问控制 |
-| Dashboard | Vue3 + uPlot，按 system/cpu/mem/disk/net 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板（实时状态 + 事件流），Functions 面板（实时进程表，2s 刷新、排序/筛选） |
+| 应用/服务采集器 | `apps`：进程按应用分组 → `apps.cpu/mem/processes/threads/io_*`；`systemd`：cgroup v2 每服务 CPU/内存/IO；`docker`：每容器 cpu/mem/net/blkio；`nginx`（stub_status）；`apache`（server-status?auto）；`phpfpm`；`redis`（内置 RESP）；`memcached`（STATS）。目标不可达时自动禁用 |
+| Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`（套接字表）、`services`（systemd）、Hub 上 `streaming`（节点连接状态） |
+| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/collectors` `/functions` `/function` `/weights`；`POST /api/v1/ingest/openmetrics`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；可选 `token` 与 `allow_from` CIDR 访问控制 |
+| Dashboard | Vue3 + uPlot，按 family 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板，Functions 面板（进程/连接/服务表） |
 
 ### 已实现能力（M1：健康/告警）
 
 | 模块 | 说明 |
 | --- | --- |
-| 规则 | YAML 告警规则（`name/on/lookup/calc/warn/crit/every/delay/repeat/to`），语义对齐 Netdata health.d；`on:` 可指定 chart ID 或 context（模板，自动绑定所有匹配图表，支持 `chart_labels` 过滤）；内置 17 条系统规则（CPU/iowait/load/RAM/swap/磁盘空间与 inode/磁盘繁忙/网络错误与丢包/包风暴），`health.d/*.yaml` 或 `health.alarms:` 同名覆盖 |
+| 规则 | YAML 告警规则（`name/on/lookup/calc/warn/crit/every/delay/repeat/to`），语义对齐 Netdata health.d；`on:` 可指定 chart ID 或 context（模板，自动绑定所有匹配图表，支持 `chart_labels` 过滤）；内置系统规则（CPU/iowait/load/RAM/swap/磁盘/网络/熵/PSI/TCP 重传/HTTP check），`health.d/*.yaml` 或 `health.alarms:` 同名覆盖 |
 | 表达式 | `$this` `$status` `$WARNING/$CRITICAL/$CLEAR` 与图表维度、其他告警值、`$cpus/$ram_total`；四则/比较/逻辑/三元、`abs min max isnan isinf`，支持 Netdata 式滞回写法 `$this > (($status >= $WARNING) ? (75) : (85))` |
 | 引擎 | 每秒调度、`lookup` 直接查 TSDB（average/min/max/sum/median/last，`percentage`/`absolute` 选项），状态 CLEAR/WARNING/CRITICAL 迁移，`delay up/down multiplier max` 抑制抖动（回到原状态则丢弃通知），`repeat` 周期重复提醒，事件持久化到 `data/health/alarm-log.jsonl` |
-| 通知 | Webhook（JSON POST）、Slack 兼容 incoming webhook、SMTP 邮件；`to:` 角色 → 通道路由，`health.silent` 静默 |
+| 通知 | Webhook、Slack/Mattermost、SMTP、钉钉、企业微信、飞书；`to:` 角色 → 通道路由，`health.silent` 静默 |
 | API | `/api/v1/alarms`（`?all=true` 含 CLEAR）、`/api/v1/alarm_log?after=<id>`、`/api/v1/alarm_rules`；`/api/v1/info.alarms` 汇总；`/api/v1/live` 推送 `{"alarm":{...}}` 事件 |
 
 ### 已实现能力（M2：Hub 集中模式）
@@ -87,6 +87,18 @@ EOF
 ./core/bin/monitord -config agent.yaml -data-dir ./data-agent
 curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 ```
+
+### 已实现能力（M5：摄入 / 合成检查 / 导出 / ML）
+
+| 模块 | 说明 |
+| --- | --- |
+| OpenMetrics 摄入 | `POST /api/v1/ingest/openmetrics` 解析 Prometheus / OpenMetrics 文本，按 metric 建图、按 label 建维度（上限 500 图 × 200 维） |
+| Prometheus 抓取 | `collectors.modules.prometheus.jobs` 定期拉取任意 `/metrics`，图表前缀 `prom.` |
+| StatsD | 默认监听 `127.0.0.1:8125` UDP，`name:value\|c\|g\|ms` → `statsd.counter/gauge/timer` |
+| 合成检查 | `httpcheck`（状态/耗时/长度/状态码/证书到期）、`portcheck`（TCP）、`ping`（ICMP 或 TCP RTT） |
+| 导出 | `export.destinations`：Graphite TCP、InfluxDB line protocol、JSON HTTP；按 `every` 推送最新样本 |
+| ML | 每维度滑动窗口一阶差分的 σ 检测；`anomaly_detection.anomaly_rate` 图 + `GET /api/v1/weights?method=anomaly-rate`（异常顾问） |
+| IPv4 / 连接 | `ipv4.*`（/proc/net/snmp）、`ip.tcpsock` TCP 状态；Function `network-connections` |
 
 ### 开发
 
@@ -148,4 +160,4 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0 骨架 → M1 单机 Agent → M2 Hub 集中 → M3 Flutter 客户端 → M4 Android 服务端 → M5 ML/日志/导出/集群 → M6 生态。详见架构文档 §11。
+M0 骨架 → M1 单机 Agent → M2 Hub 集中 → M3 Flutter 客户端 → M4 Android 服务端 → M5 ML/摄入/导出/合成检查 → M6 日志/OTLP/集群/更多应用采集器。详见架构文档 §11。
