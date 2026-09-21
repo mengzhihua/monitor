@@ -1,7 +1,12 @@
 package collect
 
 import (
+	"os"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
 func TestParseProcStat(t *testing.T) {
@@ -133,5 +138,110 @@ func TestIcmpChecksum(t *testing.T) {
 	// checksum field must make the whole packet sum to 0xffff
 	if icmpChecksum(pkt) != 0 {
 		t.Fatalf("checksum residual %x", icmpChecksum(pkt))
+	}
+}
+
+func TestParseSNMP6AndSockstat6(t *testing.T) {
+	m := parseKVFloat("Ip6InReceives                    100\nIp6OutRequests                   40\nUdp6InDatagrams                  7\n")
+	if m["Ip6InReceives"] != 100 || m["Udp6InDatagrams"] != 7 {
+		t.Fatalf("%v", m)
+	}
+	st := parseSockstat6("TCP6: inuse 4 orphan 1\nUDP6: inuse 2\n")
+	if st["tcp6_inuse"] != 4 || st["udp6_inuse"] != 2 {
+		t.Fatalf("%v", st)
+	}
+}
+
+func TestParseIPVS(t *testing.T) {
+	raw := "   Total Incoming Outgoing         Incoming         Outgoing\n   Conns  Packets  Packets            Bytes            Bytes\n\n      0a      14      1e                64                c8\n"
+	st, ok := parseIPVS(raw)
+	if !ok || st.conns != 0xa || st.inPkts != 0x14 || st.outBytes != 0xc8 {
+		t.Fatalf("%+v %v", st, ok)
+	}
+}
+
+func TestParseRPCStats(t *testing.T) {
+	raw := "net 0 0 0 0\nrpc 90 2 1\nio 100 200\nrc 5 1 0\nproc3 22 0 10 0 20 0 0 30 40 0 0 0 0 1 0 0 0 2 0 0 0 0 3\n"
+	st := parseRPCStats(raw)
+	if st["rpc_calls"] != 90 || st["proc3_getattr"] != 10 || st["proc3_lookup"] != 20 || st["proc3_read"] != 30 || st["io_write"] != 200 {
+		t.Fatalf("%v", st)
+	}
+}
+
+func TestParseKstatAndZramAndWireless(t *testing.T) {
+	arc := parseKstat("13 1 0x01 1 1\nname type data\nhits 4 100\nmisses 4 25\nsize 4 1048576\nc 4 2097152\n")
+	if arc["hits"] != 100 || arc["size"] != 1048576 {
+		t.Fatalf("%v", arc)
+	}
+	z, ok := parseZramMMStat("1000 400 500 0 500")
+	if !ok || z.orig != 1000 || z.compr != 400 || z.memUsed != 500 {
+		t.Fatalf("%+v", z)
+	}
+	w := parseWireless("Inter-| sta-|   Quality        |   Discarded packets\n face | tus | link level noise |  nwid  crypt  frag  retry   misc\nwlan0: 0000   70.  -40.  -256        1      2     3      4      5\n")
+	if len(w) != 1 || w[0].Name != "wlan0" || w[0].Link != 70 || w[0].Level != -40 || w[0].Retry != 4 {
+		t.Fatalf("%+v", w)
+	}
+}
+
+func TestProcM8Collect(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := dir + "/" + rel
+		if i := strings.LastIndex(rel, "/"); i >= 0 {
+			if err := os.MkdirAll(dir+"/"+rel[:i], 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("snmp6", "Ip6InReceives 10\nIp6OutRequests 4\nIp6OutForwDatagrams 0\nIp6InDelivers 9\n")
+	write("sockstat6", "TCP6: inuse 3\nUDP6: inuse 1\n")
+	write("ip_vs_stats", "   Total Incoming Outgoing         Incoming         Outgoing\n   Conns  Packets  Packets            Bytes            Bytes\n\n      01      02      03                04                05\n")
+	write("nfs", "rpc 8 0 0\nproc3 22 0 1 0 2 0 0 3 4 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n")
+	write("arcstats", "name type data\nhits 4 50\nmisses 4 10\nsize 4 4096\nc 4 8192\nc_min 4 1024\nc_max 4 16384\n")
+	write("ksm/pages_shared", "2\n")
+	write("ksm/pages_sharing", "4\n")
+	write("ksm/pages_unshared", "1\n")
+	write("ksm/pages_volatile", "1\n")
+	write("block/zram0/mm_stat", "800 200 250\n")
+	write("wireless", "Inter-| sta-|   Quality\n face | tus | link level noise |  nwid  crypt  frag  retry   misc\nwlan0: 0000   55.  -50.  -90         0      0     0      1      0\n")
+	write("btrfs/aaaaaaaa/label", "pool\n")
+	write("btrfs/aaaaaaaa/allocation/data/total_bytes", "1000\n")
+	write("btrfs/aaaaaaaa/allocation/data/bytes_used", "400\n")
+	write("btrfs/aaaaaaaa/allocation/metadata/total_bytes", "200\n")
+	write("btrfs/aaaaaaaa/allocation/metadata/bytes_used", "50\n")
+	write("btrfs/aaaaaaaa/allocation/system/total_bytes", "32\n")
+	write("btrfs/aaaaaaaa/allocation/system/bytes_used", "8\n")
+
+	p := &procCollector{}
+	p.m8.snmp6 = dir + "/snmp6"
+	p.m8.sockstat6 = dir + "/sockstat6"
+	p.m8.ipvs = dir + "/ip_vs_stats"
+	p.m8.nfs = dir + "/nfs"
+	p.m8.arc = dir + "/arcstats"
+	p.m8.ksm = dir + "/ksm"
+	p.m8.zram = dir + "/block"
+	p.m8.wireless = dir + "/wireless"
+	p.m8.btrfs = dir + "/btrfs"
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	p.initM8(reg)
+	if !p.m8.haveIPv6 || !p.m8.haveIPVS || !p.m8.haveZFS || !p.m8.haveKSM || !p.m8.haveZram || !p.m8.haveBtrfs {
+		t.Fatalf("flags %+v", p.m8)
+	}
+	p.collectM8(reg, time.Now())
+	if _, ok := reg.Chart("ipv6.packets"); !ok {
+		t.Fatal("ipv6.packets missing")
+	}
+	if _, ok := reg.Chart("zfs.arc_size"); !ok {
+		t.Fatal("zfs.arc_size missing")
+	}
+	if _, ok := reg.Chart("mem.zram_usage.zram0"); !ok {
+		t.Fatal("zram chart missing")
+	}
+	if _, ok := reg.Chart("btrfs.data.pool"); !ok {
+		t.Fatal("btrfs chart missing")
 	}
 }
