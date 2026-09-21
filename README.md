@@ -203,6 +203,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `vcsa`（REST health）、`mssql`（sqlcmd）、`oracledb`（sqlplus）、`sql`（mysql/psql/sqlcmd/sqlplus）、`cloudwatch`（SigV4）、`azure_monitor`（OAuth）、`vsphere`（SOAP /sdk）、`cato_networks`（GraphQL）、`snmp_traps`（UDP）、`snmp_topology`（snmpwalk LLDP）；缺凭证或目标则自动禁用 |
 | 告警 | VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询 |
 
+### 已实现能力（M13：查询 API / 系统 health 模板）
+
+| 模块 | 说明 |
+| --- | --- |
+| 查询 | `/api/v1/data?context=` 同名维度跨图求和；`format=csv\|ssv\|jsonp`；`GET /api/v1/alarm_count`；`GET /api/v1/badge.svg` |
+| `/api/v2` | `contexts` / `nodes` / `data` / `badge.svg`（`api: 2` 包装） |
+| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
+
 ### 开发
 
 ```bash

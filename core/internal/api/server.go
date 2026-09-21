@@ -115,6 +115,12 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/chart", s.handleChart)
 	m.HandleFunc("GET /api/v1/data", s.handleData)
 	m.HandleFunc("GET /api/v1/allmetrics", s.handleAllMetrics)
+	m.HandleFunc("GET /api/v1/alarm_count", s.handleAlarmCount)
+	m.HandleFunc("GET /api/v1/badge.svg", s.handleBadge)
+	m.HandleFunc("GET /api/v2/data", s.handleDataV2)
+	m.HandleFunc("GET /api/v2/contexts", s.handleContextsV2)
+	m.HandleFunc("GET /api/v2/nodes", s.handleNodesV2)
+	m.HandleFunc("GET /api/v2/badge.svg", s.handleBadge)
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
 	m.HandleFunc("GET /api/v1/functions", s.handleFunctions)
 	m.HandleFunc("GET /api/v1/function", s.handleFunction)
@@ -335,153 +341,6 @@ func parseTime(s string, rel int64, def int64) int64 {
 	return n
 }
 
-// handleData implements /api/v1/data?chart=&after=&before=&points=&group=&dimensions=&options=
-func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	v, ok := s.target(w, r)
-	if !ok {
-		return
-	}
-	db := v.db
-	c, ok := v.reg.Chart(q.Get("chart"))
-	if !ok {
-		http.Error(w, "chart not found", http.StatusNotFound)
-		return
-	}
-	now := time.Now().Unix()
-	before := parseTime(q.Get("before"), now, now)
-	after := parseTime(q.Get("after"), before, before-600)
-	if after >= before {
-		after = before - 600
-	}
-	points, _ := strconv.Atoi(q.Get("points"))
-	if points <= 0 {
-		points = int(before - after)
-	}
-	if points > 10000 {
-		points = 10000
-	}
-	group := tsdb.ParseGroup(q.Get("group"))
-	want := map[string]bool{}
-	if d := q.Get("dimensions"); d != "" {
-		for _, x := range strings.Split(d, ",") {
-			want[strings.TrimSpace(x)] = true
-		}
-	}
-	opts := q.Get("options")
-	showHidden := strings.Contains(opts, "all-dimensions")
-
-	var dims []*registry.Dimension
-	var ids, names []string
-	for _, d := range c.Dims() {
-		if d.Hidden && !showHidden && len(want) == 0 {
-			continue
-		}
-		if len(want) > 0 && !want[d.ID] && !want[d.Name] {
-			continue
-		}
-		dims = append(dims, d)
-		ids = append(ids, d.ID)
-		names = append(names, d.Name)
-	}
-
-	// tier: ""/"auto" lets the planner pick by range/points (falling back to
-	// finer tiers while the planned one has nothing for this chart); a digit
-	// forces that tier.
-	tier, auto := db.PlanTier(after, before, points), true
-	if tq := q.Get("tier"); tq != "" && tq != "auto" {
-		n, err := strconv.Atoi(tq)
-		if _, ok := db.TierEvery(n); err != nil || !ok {
-			http.Error(w, "unknown tier", http.StatusBadRequest)
-			return
-		}
-		tier, auto = n, false
-	}
-	if auto {
-		for ; tier > 0; tier-- {
-			covered := true
-			for _, d := range dims {
-				if !db.TierCovers(registry.SeriesID(c.ID, d.ID), tier, after) {
-					covered = false
-					break
-				}
-			}
-			if covered {
-				break
-			}
-		}
-	}
-	series := make([][]tsdb.Bucket, 0, len(dims))
-	for _, d := range dims {
-		bs, err := db.QueryTier(registry.SeriesID(c.ID, d.ID), tier, after, before)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		series = append(series, bs)
-	}
-	every, _ := db.TierEvery(tier)
-	res := tsdb.AggregateBuckets(series, every, after, before, points, group)
-
-	// result.data rows: [time, dim1, dim2, ...]; NaN → null
-	rows := make([][]any, 0, len(res.Times))
-	var minV, maxV = math.Inf(1), math.Inf(-1)
-	lastFilled := 0
-	for i, t := range res.Times {
-		row := make([]any, 0, len(series)+1)
-		row = append(row, t)
-		empty := true
-		for _, sv := range res.Values {
-			v := sv[i]
-			if math.IsNaN(v) {
-				row = append(row, nil)
-				continue
-			}
-			empty = false
-			row = append(row, round3(v))
-			if v < minV {
-				minV = v
-			}
-			if v > maxV {
-				maxV = v
-			}
-		}
-		rows = append(rows, row)
-		if !empty {
-			lastFilled = len(rows)
-		}
-	}
-	// drop trailing empty buckets (the current, still-collecting second)
-	if lastFilled < len(rows) && len(rows) > 1 {
-		rows = rows[:max(lastFilled, 1)]
-	}
-	if math.IsInf(minV, 0) {
-		minV, maxV = 0, 0
-	}
-	labels := append([]string{"time"}, names...)
-	writeJSON(w, map[string]any{
-		"api":               1,
-		"node":              v.id,
-		"id":                c.ID,
-		"name":              c.ID,
-		"context":           c.Context,
-		"units":             c.Units,
-		"chart_type":        c.Type,
-		"update_every":      c.UpdateEvery,
-		"view_update_every": res.Step,
-		"tier":              tier,
-		"after":             res.After,
-		"before":            res.Before,
-		"points":            len(rows),
-		"group":             group,
-		"dimension_ids":     ids,
-		"dimension_names":   names,
-		"min":               round3(minV),
-		"max":               round3(maxV),
-		"result":            map[string]any{"labels": labels, "data": rows},
-	})
-}
-
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
 
 func (s *Server) handleAllMetrics(w http.ResponseWriter, r *http.Request) {
@@ -563,6 +422,10 @@ func (s *Server) handleContexts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeJSON(w, s.contextsPayload(v, 1))
+}
+
+func (s *Server) contextsPayload(v *view, api int) map[string]any {
 	type ctxInfo struct {
 		Family     string   `json:"family"`
 		Title      string   `json:"title"`
@@ -611,7 +474,7 @@ func (s *Server) handleContexts(w http.ResponseWriter, r *http.Request) {
 	for _, info := range out {
 		sort.Strings(info.Charts)
 	}
-	writeJSON(w, map[string]any{"node": v.id, "hostname": v.hostname, "contexts_count": len(out), "contexts": out})
+	return map[string]any{"api": api, "node": v.id, "hostname": v.hostname, "contexts_count": len(out), "contexts": out}
 }
 
 // writePrometheus exposes the local host and, on a hub, every remote node

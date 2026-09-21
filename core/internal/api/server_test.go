@@ -533,3 +533,168 @@ func TestIngestOTLPAndWeightsKS2(t *testing.T) {
 		t.Fatalf("logs status %d", resp.StatusCode)
 	}
 }
+
+func TestDataContextAndFormats(t *testing.T) {
+	ts, reg := newTestServer(t, Options{Version: "test"})
+	now := time.Now().Truncate(time.Second)
+	for i := 0; i < 2; i++ {
+		id := fmt.Sprintf("cpu.cpu%d", i)
+		reg.AddChart(&registry.Chart{ID: id, Context: "cpu.cpu", Family: "utilization", Title: "Core", Units: "%",
+			Dimensions: []*registry.Dimension{{ID: "user"}, {ID: "system"}}})
+		for j := 0; j < 10; j++ {
+			_ = reg.Collect(id, now.Add(time.Duration(j-9)*time.Second), map[string]float64{"user": float64(10 + i*5), "system": 2})
+		}
+	}
+
+	var data struct {
+		API          int      `json:"api"`
+		ID           string   `json:"id"`
+		Context      string   `json:"context"`
+		DimensionIDs []string `json:"dimension_ids"`
+		Points       int      `json:"points"`
+		Result       struct {
+			Data [][]*float64 `json:"data"`
+		} `json:"result"`
+	}
+	after, before := now.Unix()-10, now.Unix()
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?context=cpu.cpu&after=%d&before=%d", after, before), &data)
+	if data.API != 1 || data.Context != "cpu.cpu" || len(data.DimensionIDs) != 2 || data.Points < 8 {
+		t.Fatalf("context data = %+v", data)
+	}
+	last := data.Result.Data[len(data.Result.Data)-1]
+	// two cores: user 10+15=25, system 2+2=4
+	if last[1] == nil || *last[1] != 25 || last[2] == nil || *last[2] != 4 {
+		t.Fatalf("aggregated last row = %v", last)
+	}
+
+	csvResp, err := http.Get(ts.URL + fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&format=csv", after, before))
+	if err != nil {
+		t.Fatal(err)
+	}
+	csvBody, _ := io.ReadAll(csvResp.Body)
+	csvResp.Body.Close()
+	if !strings.Contains(string(csvBody), "time,used,free") {
+		t.Fatalf("csv header:\n%s", csvBody)
+	}
+
+	ssvResp, err := http.Get(ts.URL + fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&format=ssv", after, before))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssvBody, _ := io.ReadAll(ssvResp.Body)
+	ssvResp.Body.Close()
+	if !strings.Contains(string(ssvBody), "time used free") {
+		t.Fatalf("ssv:\n%s", ssvBody)
+	}
+
+	jpResp, err := http.Get(ts.URL + fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d&format=jsonp&callback=plot", after, before))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jpBody, _ := io.ReadAll(jpResp.Body)
+	jpResp.Body.Close()
+	if !strings.HasPrefix(string(jpBody), "plot(") || !strings.HasSuffix(strings.TrimSpace(string(jpBody)), ");") {
+		t.Fatalf("jsonp:\n%s", jpBody)
+	}
+
+	if resp := getJSON(t, ts.URL+"/api/v1/data", nil); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing chart/context status = %d", resp.StatusCode)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/data?context=missing.ctx", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing context status = %d", resp.StatusCode)
+	}
+
+	var v2 struct {
+		API int `json:"api"`
+	}
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v2/data?context=cpu.cpu&after=%d&before=%d&points=2", after, before), &v2)
+	if v2.API != 2 {
+		t.Fatalf("v2 data api = %d", v2.API)
+	}
+	getJSON(t, ts.URL+"/api/v2/contexts", &v2)
+	if v2.API != 2 {
+		t.Fatalf("v2 contexts api = %d", v2.API)
+	}
+	getJSON(t, ts.URL+"/api/v2/nodes", &v2)
+	if v2.API != 2 {
+		t.Fatalf("v2 nodes api = %d", v2.API)
+	}
+
+	badge, err := http.Get(ts.URL + "/api/v1/badge.svg?chart=system.ram&dimension=used")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bBody, _ := io.ReadAll(badge.Body)
+	badge.Body.Close()
+	if badge.StatusCode != 200 || !strings.Contains(string(bBody), "<svg") || !strings.Contains(string(bBody), "system.ram") {
+		t.Fatalf("badge status=%d body=%s", badge.StatusCode, bBody)
+	}
+}
+
+func TestAlarmCountAndBadge(t *testing.T) {
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "id", Hostname: "test", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Units: "MiB",
+		Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	rules, err := health.ParseRules([]byte(`
+alarms:
+  - name: ram_in_use
+    on: system.ram
+    lookup: average -10s percentage of used
+    units: '%'
+    every: 1s
+    warn: '$this > 80'
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := health.New(reg, db, health.Options{Rules: rules, Hostname: "test", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
+	srv, err := New(reg, db, sched, Options{Health: eng, StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(eng.Close)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	now := time.Now()
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 90, "free": 10})
+	eng.Tick(now.Add(time.Second))
+
+	var ac struct {
+		Status   bool `json:"status"`
+		Count    int  `json:"count"`
+		Warning  int  `json:"warning"`
+		Critical int  `json:"critical"`
+	}
+	getJSON(t, ts.URL+"/api/v1/alarm_count", &ac)
+	if !ac.Status || ac.Count != 1 || ac.Warning != 1 {
+		t.Fatalf("alarm_count = %+v", ac)
+	}
+	getJSON(t, ts.URL+"/api/v1/alarm_count?status=CRITICAL", &ac)
+	if ac.Count != 0 {
+		t.Fatalf("alarm_count critical = %+v", ac)
+	}
+	getJSON(t, ts.URL+"/api/v1/alarm_count?status=WARNING,CRITICAL", &ac)
+	if ac.Count != 1 {
+		t.Fatalf("alarm_count warning+critical = %+v", ac)
+	}
+
+	resp, err := http.Get(ts.URL + "/api/v1/badge.svg?alarm=ram_in_use")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "ram_in_use") || !strings.Contains(string(body), "#ca8a04") {
+		t.Fatalf("alarm badge: %s", body)
+	}
+}

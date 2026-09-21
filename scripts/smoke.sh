@@ -30,6 +30,12 @@ echo "$charts" | grep '"system.ram"' >/dev/null || fail "system.ram missing"
 
 curl -sf "http://127.0.0.1:$PORT/api/v1/contexts" | grep '"contexts"' >/dev/null || fail "contexts"
 curl -sf "http://127.0.0.1:$PORT/api/v1/allmetrics?format=csv" | grep 'system.ram' >/dev/null || fail "allmetrics csv"
+curl -sf "http://127.0.0.1:$PORT/api/v1/data?context=system.ram&after=-5" | grep '"points":[1-9]' >/dev/null || fail "data context"
+curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5&format=csv" | grep 'time' >/dev/null || fail "data csv"
+curl -sf "http://127.0.0.1:$PORT/api/v2/contexts" | grep '"api":2' >/dev/null || fail "v2 contexts"
+curl -sf "http://127.0.0.1:$PORT/api/v2/nodes" | grep '"api":2' >/dev/null || fail "v2 nodes"
+curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_count" | grep '"count"' >/dev/null || fail "alarm_count"
+curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
 echo "$data" | grep '"points":[1-9]' >/dev/null || fail "no data points: $data"
