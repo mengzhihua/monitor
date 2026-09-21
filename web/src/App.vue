@@ -94,7 +94,7 @@ async function refresh() {
     const byId = new Map(charts.value.map((x) => [x.id, x]))
     charts.value = list.map((x) => {
       const old = byId.get(x.id)
-      if (old) { old.dimensions = x.dimensions; return old }
+      if (old) { Object.assign(old, x); return old }
       return x
     })
     error.value = ''

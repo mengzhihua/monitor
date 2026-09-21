@@ -76,7 +76,7 @@ type Frame struct {
 // SnapshotEntry renders the current state of an alarm as a log entry so the
 // hub can mirror it with the same code path as live transitions.
 func SnapshotEntry(a health.Alarm, hostname string) health.LogEntry {
-	return health.LogEntry{AlarmID: a.ID, When: a.LastStatusChange, Hostname: hostname, Name: a.Name, Chart: a.Chart,
+	return health.LogEntry{AlarmID: a.ID, When: a.LastStatusChange, Updated: a.LastUpdated, Hostname: hostname, Name: a.Name, Chart: a.Chart,
 		Context: a.Context, Family: a.Family, Class: a.Class, Type: a.Type, Component: a.Component,
 		Status: a.Status, OldStatus: a.Status, Value: a.Value, OldValue: a.Value, Units: a.Units, Info: a.Info, Recipient: a.Recipient}
 }

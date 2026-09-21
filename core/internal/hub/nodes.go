@@ -105,6 +105,7 @@ type Nodes struct {
 	// gen counts changes; saved is the gen last written successfully, so a
 	// failed Save keeps the state dirty and the next tick retries.
 	gen, saved uint64
+	saveMu     sync.Mutex // one Save at a time: they share the tmp file
 }
 
 type persisted struct {
@@ -195,6 +196,8 @@ func (n *Nodes) touch() {
 
 // Save writes nodes.json if anything changed since the last successful save.
 func (n *Nodes) Save() error {
+	n.saveMu.Lock()
+	defer n.saveMu.Unlock()
 	n.mu.Lock()
 	gen := n.gen
 	if gen == n.saved {

@@ -68,9 +68,13 @@ func (s *Server) handleAlarms(w http.ResponseWriter, r *http.Request) {
 }
 
 func alarmFromEntry(e health.LogEntry) health.Alarm {
+	updated := e.Updated
+	if updated < e.When {
+		updated = e.When
+	}
 	return health.Alarm{ID: e.AlarmID, Name: e.Name, Chart: e.Chart, Context: e.Context, Family: e.Family, Class: e.Class,
 		Type: e.Type, Component: e.Component, Units: e.Units, Info: e.Info, Recipient: e.Recipient, Source: "remote",
-		Status: e.Status, Value: e.Value, LastUpdated: e.When, LastStatusChange: e.When, Active: true}
+		Status: e.Status, Value: e.Value, LastUpdated: updated, LastStatusChange: e.When, Active: true}
 }
 
 // GET /api/v1/alarm_log?after=<unique_id>[&node=id]  — entries newer than after (0 = all).
