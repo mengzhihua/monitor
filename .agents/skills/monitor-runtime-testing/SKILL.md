@@ -1,6 +1,6 @@
 ---
 name: monitor-runtime-testing
-description: Exercise the embedded monitord dashboard, real collectors, live protocol, token guard, and TSDB restart persistence locally.
+description: Exercise embedded monitord dashboards, agent-to-Hub streaming, RBAC, live protocol, and TSDB restart persistence locally.
 ---
 
 # Monitor runtime testing
@@ -36,3 +36,15 @@ None for local default mode. Use an explicitly agreed temporary token for auth t
 - Test absent/wrong token -> 401, query/Bearer token -> 200.
 - Distinguish public UI-shell availability from a functioning authenticated dashboard. Test `/?token=...` explicitly; the UI may not forward it to API/WebSocket.
 - Restore the default no-token service after testing.
+
+## Hub runtime setup and checks
+- Use separate configs/data directories for Hub and agent. Configure `mode: hub`, `hub.api_keys`, and `web.users` on the Hub; configure `stream.enabled`, `stream.destinations`, and `stream.api_key` on the agent. Use distinct web ports (e.g. 19999/19998); do not run smoke.sh on an occupied agent port.
+- Same-machine agents share machine-id with the Hub. Discover the non-local node ID from `/api/v1/nodes`; use empty node or `local` for Hub views rather than the host ID.
+- Enable `apps` on the agent for a meaningful remote Processes Function. Different enabled collector sets distinguish scoped registries even when both processes observe the same physical host.
+- In the M2 UI, `?token=` is imported into **sessionStorage** (`monitor.token`), then removed from the URL. Node selection uses `monitor.node` in sessionStorage too. Reload must retain both.
+- Native browser WebSocket auth uses subprotocols `monitor` and `bearer.<base64url-token>`. Pass `node=<remote-id>` and require matching frame `node`; unknown-node testing requires a real upgrade, not plain HTTP GET.
+- Exercise viewer chart access plus Function 403, troubleshooter Function 200 plus DELETE 403, admin live DELETE 409 and offline DELETE 204. Use explicit test credentials, not extracted browser cookies.
+- Add a silent test-only alarm based on real memory use if deterministic remote alarm visibility is needed. Verify both current rules and recent events, then compare direct-agent and Hub snapshots across a Hub restart.
+- For outage tests, automate stop/wait/restart using known PIDs and record actual timestamps. Reconnect backoff can extend the disconnected interval beyond the Hub downtime. Use a five-minute or longer chart window and fixed absolute API bounds; compare populated agent CPU rows with Hub rows exactly.
+- Connected-but-silent streams become stale after more than max(10 seconds, 3*update_every). Use SIGSTOP for that state. Resume before SIGINT to test a graceful disconnect, which can become offline immediately. The UI polls nodes every 30 seconds.
+- Test wrong keys on a third port and isolated data directory. Require HTTP401 logs with increasing retry delays while the process/local API remain alive; clean up only that known PID afterward.
