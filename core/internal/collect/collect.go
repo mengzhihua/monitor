@@ -212,6 +212,23 @@ func (s *Scheduler) Collector(name string) Collector {
 	return nil
 }
 
+// SetEnabled turns a collector on or off at runtime (hub config push).
+func (s *Scheduler) SetEnabled(name string, on bool) bool {
+	for _, r := range s.cols {
+		if r.c.Name() != name {
+			continue
+		}
+		r.mu.Lock()
+		r.status.Enabled = on
+		if on {
+			r.status.Error = ""
+		}
+		r.mu.Unlock()
+		return true
+	}
+	return false
+}
+
 // Run blocks until ctx is done. The first tick is aligned to the next whole
 // interval boundary so samples land on round timestamps.
 func (s *Scheduler) Run(ctx context.Context) {

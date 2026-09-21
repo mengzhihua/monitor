@@ -211,6 +211,17 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | `/api/v2` | `contexts` / `nodes` / `data` / `badge.svg`（`api: 2` 包装） |
 | 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
 
+### 已实现能力（M14：Hub Cloud）
+
+| 模块 | 说明 |
+| --- | --- |
+| 认领 | `POST /api/v1/hub/claim-tokens` 签发一次性 token；Agent `stream.claim_token` 在连接时 `POST /api/v1/claim` 换成长生命周期 stream key，并加入指定 Room |
+| 组织 | Space → Room → nodes；`GET/POST/DELETE /api/v1/hub/spaces`、`…/rooms`；节点列表带 `space_id` / `room_id` |
+| 配置下发 | `PUT /api/v1/hub/config` 写 per-node `disabled` 采集器列表；Agent 握手后拉 `GET /api/v1/agent/config` 并 `Scheduler.SetEnabled` |
+| 环复制 | `hub.peers` 周期 `POST /api/v1/hub/ring` 推送非 replica 节点的最近样本；对端以 replica 节点展示；本地 live 连接优先 |
+| 登录 | `web.oidc` 授权码流程；回调铸造本地 session token（默认 viewer）；浏览器带 `Accept: text/html` 时跳转 `/?token=` |
+| Dashboard | Hub 面板：创建 Space/Room、签发/复制 claim、下发禁用列表；节点选择器标注 replica |
+
 ### 开发
 
 ```bash

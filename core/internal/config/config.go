@@ -37,6 +37,7 @@ type Config struct {
 		AllowFrom []string `yaml:"allow_from"` // CIDRs; empty = all
 		Token     string   `yaml:"token"`      // optional bearer token for the API (admin)
 		Users     []User   `yaml:"users"`      // named credentials with roles
+		OIDC      OIDC     `yaml:"oidc"`
 	} `yaml:"web"`
 	Stream     Stream `yaml:"stream"`
 	Hub        Hub    `yaml:"hub"`
@@ -65,6 +66,7 @@ type Stream struct {
 	Enabled            bool          `yaml:"enabled"`
 	Destinations       []string      `yaml:"destinations"` // ws://hub:19999 (path optional), tried in order
 	APIKey             string        `yaml:"api_key"`
+	ClaimToken         string        `yaml:"claim_token"`
 	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
 	Timeout            time.Duration `yaml:"timeout"`
 	Replicate          time.Duration `yaml:"replicate"` // max history re-sent after reconnect
@@ -81,6 +83,18 @@ type Hub struct {
 	// Cluster: other hubs this process queries for nodes it does not own.
 	Peers     []string `yaml:"peers"`
 	PeerToken string   `yaml:"peer_token"`
+	// Default Space/Room names created on empty org (hub mode).
+	Space string `yaml:"space"`
+	Room  string `yaml:"room"`
+}
+
+// OIDC is web.oidc.
+type OIDC struct {
+	Issuer       string `yaml:"issuer"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	RedirectURL  string `yaml:"redirect_url"`
+	Role         string `yaml:"role"`
 }
 
 // ModuleDecoders adapts collectors.modules to the decoder callbacks the

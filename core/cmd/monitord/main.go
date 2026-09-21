@@ -159,12 +159,18 @@ func run() error {
 			Alarms:             alarms,
 			Destinations:       cfg.Stream.Destinations,
 			APIKey:             cfg.Stream.APIKey,
+			ClaimToken:         cfg.Stream.ClaimToken,
 			InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
 			Timeout:            cfg.Stream.Timeout,
 			Replicate:          cfg.Stream.Replicate,
 			Version:            version,
 			Functions:          sched.Functions,
 			Logger:             log.With("component", "stream"),
+			OnConfig: func(disabled []string) {
+				for _, n := range disabled {
+					sched.SetEnabled(n, false)
+				}
+			},
 		})
 	}
 
@@ -182,13 +188,32 @@ func run() error {
 	}
 	var nodes *hub.Nodes
 	var cluster *hub.Cluster
+	var org *hub.Org
 	var srv *api.Server
 	if cfg.Mode == "hub" {
-		if len(cfg.Hub.APIKeys) == 0 {
-			log.Warn("hub mode without hub.api_keys: agents cannot connect")
+		hubDir := filepath.Join(cfg.Global.DataDir, "hub")
+		org, err = hub.OpenOrg(hubDir)
+		if err != nil {
+			return fmt.Errorf("hub org: %w", err)
 		}
-		nodes, err = hub.Open(db, filepath.Join(cfg.Global.DataDir, "hub"), hub.Options{
+		if len(org.Spaces()) == 0 {
+			spName, rmName := cfg.Hub.Space, cfg.Hub.Room
+			if spName == "" {
+				spName = "default"
+			}
+			if rmName == "" {
+				rmName = "default"
+			}
+			if sp, err := org.CreateSpace(spName); err == nil {
+				_, _ = org.CreateRoom(sp.ID, rmName)
+			}
+		}
+		if len(cfg.Hub.APIKeys) == 0 && len(org.Keys()) == 0 {
+			log.Warn("hub mode without hub.api_keys: agents cannot connect until a claim token is redeemed")
+		}
+		nodes, err = hub.Open(db, hubDir, hub.Options{
 			Keys:             cfg.Hub.APIKeys,
+			ExtraKeys:        org.Keys,
 			Replicate:        cfg.Hub.Replicate,
 			MaxNodes:         cfg.Hub.MaxNodes,
 			MaxChartsPerNode: cfg.Hub.MaxChartsPerNode,
@@ -201,11 +226,18 @@ func run() error {
 			return fmt.Errorf("hub: %w", err)
 		}
 		apiOpt.Nodes = nodes
+		apiOpt.Org = org
+		apiOpt.PeerToken = cfg.Hub.PeerToken
 		apiOpt.ExtraFunctions = []collect.Function{streamingFunction(nodes)}
 		if len(cfg.Hub.Peers) > 0 {
 			cluster = hub.NewCluster(cfg.Hub.Peers, cfg.Hub.PeerToken, log.With("component", "cluster"))
+			cluster.SetNodes(nodes)
 			apiOpt.Cluster = cluster
 		}
+	}
+	if cfg.Web.OIDC.Issuer != "" || cfg.Web.OIDC.ClientID != "" {
+		apiOpt.OIDC = &api.OIDCConfig{Issuer: cfg.Web.OIDC.Issuer, ClientID: cfg.Web.OIDC.ClientID,
+			ClientSecret: cfg.Web.OIDC.ClientSecret, RedirectURL: cfg.Web.OIDC.RedirectURL, Role: cfg.Web.OIDC.Role}
 	}
 	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {

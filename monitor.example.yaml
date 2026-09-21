@@ -24,6 +24,12 @@ web:
   # - { name: ops,   token: "change-me-1", role: admin }          # everything, incl. DELETE /api/v1/nodes
   # - { name: oncall, token: "change-me-2", role: troubleshooter } # read + Functions (processes table…)
   # - { name: tv,    token: "change-me-3", role: viewer }         # read-only metrics/alarms/nodes
+  oidc:                  # optional OpenID Connect; login at /api/v1/auth/oidc/login
+    issuer: ""           # e.g. https://login.example.com
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""     # e.g. http://hub:19999/api/v1/auth/oidc/callback
+    role: viewer         # minted session role: admin | troubleshooter | viewer
 
 # Agent → Hub streaming (outbound WebSocket, so agents behind NAT only need to reach the hub).
 # Host info, chart definitions, per-second samples, alarm transitions and Functions are
@@ -32,6 +38,7 @@ stream:
   enabled: false
   destinations: []     # tried in order, e.g. ["wss://hub.example.com", "10.0.0.5:19999"] (path defaults to /api/v1/stream)
   api_key: ""          # must be listed in the hub's hub.api_keys
+  claim_token: ""      # one-time token from POST /api/v1/hub/claim-tokens; minted into api_key on first connect
   insecure_skip_verify: false
   timeout: 10s
   replicate: 1h        # at most this much history is re-sent after reconnecting
@@ -47,7 +54,9 @@ hub:
   max_charts_per_node: 0   # 5000
   max_dims_per_chart: 0    # 1000
   peers: []                # other hub base URLs, e.g. ["http://hub2:19999"]
-  peer_token: ""           # Bearer token presented to peers (usually their web.token)
+  peer_token: ""           # Bearer token presented to peers (usually their web.token); also required on POST /api/v1/hub/ring
+  space: default           # created on first hub start if org.json is empty
+  room: default
 
 collectors:
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology

@@ -52,6 +52,18 @@ func TestAuthorized(t *testing.T) {
 	if empty.IngestEnabled() || empty.Authorized(mk("Bearer k1", "")) {
 		t.Fatal("no keys configured must disable ingestion")
 	}
+
+	minted := []string{"claim-key"}
+	n2, err := Open(db, t.TempDir(), Options{ExtraKeys: func() []string { return minted }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !n2.IngestEnabled() || !n2.Authorized(mk("Bearer claim-key", "")) {
+		t.Fatal("runtime ExtraKeys must authorize")
+	}
+	if n2.Authorized(mk("Bearer k1", "")) {
+		t.Fatal("static keys of another hub must not leak")
+	}
 }
 
 func TestPersistenceAndIsolation(t *testing.T) {

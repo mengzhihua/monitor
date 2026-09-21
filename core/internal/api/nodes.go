@@ -8,6 +8,7 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
@@ -71,7 +72,21 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 			return u, true
 		}
 	}
+	if s.oidc != nil {
+		if u, ok := s.oidc.session(tok); ok {
+			return u, true
+		}
+	}
 	return User{}, false
+}
+
+func publicAPI(path string) bool {
+	switch path {
+	case stream.Path, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
+		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback":
+		return true
+	}
+	return false
 }
 
 // allows is the RBAC matrix: reads for everyone, Functions from
@@ -199,6 +214,15 @@ func (s *Server) nodesPayload(r *http.Request, api int) map[string]any {
 				continue
 			}
 			out = append(out, inf)
+		}
+	}
+	if s.opt.Org != nil {
+		for i := range out {
+			if out[i].Local || out[i].ID == "" {
+				continue
+			}
+			sp, rm := s.opt.Org.Membership(out[i].ID)
+			out[i].SpaceID, out[i].RoomID = sp, rm
 		}
 	}
 	return map[string]any{"api": api, "now": now.Unix(), "nodes": out}

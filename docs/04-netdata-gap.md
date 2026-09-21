@@ -50,7 +50,7 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | **M12 续 3** | storcli, nginxvts, tengine, nsd, dnsdist, dnsmasq_dhcp, isc_dhcpd, puppet, openvpn_status_log, rethinkdb, yugabytedb, vernemq |
 | **M12 续 4** | icecast, phpdaemon, pika, maxscale, nginxplus, nginxunit, docker_engine, riakkv, litespeed, boinc, spigotmc, w1sensor |
 | **M12 续 5** | ap, dockerhub, ethtool, intelgpu, logind, dcgm, panos, powerstore, powervault, s3check, scaleio, smbios_memory |
-| **M12 续 6（本轮）** | vcsa, mssql, oracledb, sql, cloudwatch, azure_monitor, vsphere, cato_networks, snmp_traps, snmp_topology |
+| **M12 续 6** | vcsa, mssql, oracledb, sql, cloudwatch, azure_monitor, vsphere, cato_networks, snmp_traps, snmp_topology |
 
 go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实现之前：该软件若暴露 `/metrics`，用已有 `prometheus` 采集器即可先出图（图表 ID 为 `prom.*`，与 Netdata 原生 ID 不同）。
 
@@ -61,6 +61,7 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | 有 | info, charts, chart, data, allmetrics(json/prometheus), collectors, functions, function, live, alarms, alarm_log, alarm_rules, weights, logs, ingest, nodes, stream, /metrics |
 | **M7** | `GET /api/v1/contexts`；`GET\|POST /api/v1/alarms/silence`；`GET /api/v1/alarm_variables`；allmetrics `csv`/`shell` |
 | **M13** | `/api/v1/data?context=` 跨图聚合；data `format=csv/ssv/jsonp`；`/api/v2` contexts/nodes/data；`alarm_count`；`badge.svg` |
+| **M14** | `hub/spaces` `hub/rooms` `hub/claim-tokens` `POST /api/v1/claim` `hub/config` `agent/config` `hub/ring` `auth/oidc/{login,callback}` |
 | 未做 | `manage/health` 其余管理项；v2 nodes 批量上下文树 / group_by=node |
 
 ### 2.5 健康 / 通知 / 导出
@@ -88,7 +89,8 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | 状态 | 能力 |
 | --- | --- |
 | 有 | API Key 流式接入、replication 补传、节点列表、`node=` 查询、`hub.peers` 扇出、三角色 RBAC |
-| 未做 | claim token、Space/Room、OIDC/LDAP、配置下发、样本环复制 HA、ACLK 语义、移动推送网关、只读分享链接 |
+| **M14** | claim token、Space/Room、OIDC 登录、配置下发（disabled 采集器）、样本环复制 HA |
+| 未做 | LDAP、ACLK 语义、移动推送网关、只读分享链接 |
 
 ### 2.7 Dashboard / 客户端 / 平台
 
@@ -96,6 +98,7 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | --- | --- |
 | 有 | Vue 实时图、告警/Functions/日志/异常顾问、Hub 节点切换 |
 | **M7** | 告警静默按钮 |
+| **M14** | Hub 面板（Space/Room/claim/配置下发）、OIDC 登录入口、replica 标注 |
 | 未做 | context 总览页、静默倒计时、Netdata 式 metric correlation UI 深化、Flutter 五端（M3）、Android 服务端壳（M4）、Windows/FreeBSD proc 对等 |
 
 ### 2.8 ML / Functions
@@ -123,19 +126,19 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | **M12 续 4** | icecast/phpdaemon/pika/maxscale/nginxplus/nginxunit/docker_engine/riakkv/litespeed/boinc/spigotmc/w1sensor | 第五批长尾 12 个 |
 | **M12 续 5** | ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory | 第六批长尾 12 个 |
 | **M12 续 6** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | go.d init.go 收尾（跳过 testrandom） |
-| **M13（本轮）** | 剩余系统 health.d 模板；data context 聚合；data csv/ssv/jsonp；`/api/v2` 子集；alarm_count；badge | 规则编译测试 |
-| **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
+| **M13** | 剩余系统 health.d 模板；data context 聚合；data csv/ssv/jsonp；`/api/v2` 子集；alarm_count；badge | 规则编译测试 |
+| **M14（本轮）** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
 | **M15** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
 | **M16** | Windows/FreeBSD 对等、Flutter、Android Agent | 跨平台 CI |
 
 M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
 
-## 4. 本轮（M13）交付清单
+## 4. 本轮（M14）交付清单
 
-1. `/api/v1/data?context=`：同名维度跨图求和；`chart` 优先于 `context`  
-2. data `format=csv` / `ssv` / `jsonp`（`callback=`）  
-3. `/api/v2/contexts` `/api/v2/nodes` `/api/v2/data` `/api/v2/badge.svg`  
-4. `GET /api/v1/alarm_count?status=`；`GET /api/v1/badge.svg?chart=&dimension=&alarm=`  
-5. 内置规则：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 错误、page faults、committed、writeback、TIME_WAIT、Docker exited
+1. Hub 签发一次性 claim token；Agent `stream.claim_token` 兑换 stream API key 并加入 Room  
+2. Space / Room CRUD；节点列表带 `space_id` / `room_id`  
+3. `PUT /api/v1/hub/config` 下发 `disabled` 采集器；Agent 握手后拉取并 `SetEnabled`  
+4. `hub.peers` 环复制最近样本（`POST /api/v1/hub/ring`）；replica 节点不再回推；live 连接优先  
+5. `web.oidc` 授权码登录，铸造本地 session；Dashboard Hub 面板
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。

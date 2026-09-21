@@ -45,4 +45,67 @@ echo "$metrics" | grep '^monitor_system_ram' >/dev/null || fail "prometheus form
 index=$(curl -sf "http://127.0.0.1:$PORT/") || fail "dashboard"
 echo "$index" | grep -i '<title>Monitor</title>' >/dev/null || fail "dashboard html"
 
+# Agent has no org store → hub cloud routes 404
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/hub/spaces")
+[[ "$code" == "404" ]] || fail "hub spaces on agent: $code"
+
+# Hub claim / config / ring (second process)
+HUBPORT=$((PORT + 1))
+HUBDATA=$(mktemp -d)
+cat > "$HUBDATA/monitor.yaml" <<EOF
+mode: hub
+global:
+  hostname: smoke-hub
+  data_dir: $HUBDATA/data
+web:
+  listen: "127.0.0.1:$HUBPORT"
+hub:
+  space: smoke
+  room: edge
+EOF
+"$BIN" -config "$HUBDATA/monitor.yaml" -log-level warn &
+HPID=$!
+trap 'kill $PID $HPID 2>/dev/null || true; wait $PID 2>/dev/null || true; wait $HPID 2>/dev/null || true; rm -rf "$DATA" "$HUBDATA"' EXIT
+for i in $(seq 1 30); do
+  curl -sf "http://127.0.0.1:$HUBPORT/healthz" >/dev/null 2>&1 && break
+  sleep 0.5
+done
+curl -sf "http://127.0.0.1:$HUBPORT/healthz" >/dev/null || fail "hub healthz"
+
+eval "$(python3 - "$HUBPORT" <<'PY'
+import json, sys, urllib.request, urllib.error
+base = f"http://127.0.0.1:{sys.argv[1]}"
+def get(path):
+    return json.load(urllib.request.urlopen(base + path))
+def req(method, path, body=None, headers=None):
+    data = None if body is None else json.dumps(body).encode()
+    r = urllib.request.Request(base + path, data=data, method=method, headers=headers or {"Content-Type": "application/json"})
+    with urllib.request.urlopen(r) as resp:
+        raw = resp.read()
+        return json.loads(raw) if raw else {}
+spaces = get("/api/v1/hub/spaces")["spaces"]
+assert spaces and spaces[0]["name"] == "smoke", spaces
+rooms = get("/api/v1/hub/rooms?space_id=" + spaces[0]["id"])["rooms"]
+assert rooms and rooms[0]["name"] == "edge", rooms
+cl = req("POST", "/api/v1/hub/claim-tokens", {"space_id": spaces[0]["id"], "room_id": rooms[0]["id"], "ttl": "1h"})
+assert cl.get("token"), cl
+redeemed = req("POST", "/api/v1/claim", {"token": cl["token"], "node_id": "box-1"})
+assert redeemed.get("api_key") and redeemed.get("node_id") == "box-1", redeemed
+cfg = req("PUT", "/api/v1/hub/config?node=box-1", {"node_id": "box-1", "disabled": ["nvidia"]})
+assert cfg.get("disabled") == ["nvidia"], cfg
+got = req("GET", "/api/v1/agent/config", headers={"Authorization": "Bearer " + redeemed["api_key"]})
+assert got.get("disabled") == ["nvidia"], got
+ring = req("POST", "/api/v1/hub/ring", {
+    "host": {"id": "peer-agent", "hostname": "peer-agent", "os": "linux", "update_every": 1},
+    "charts": [{"id": "system.ram", "context": "system.ram", "units": "MiB", "dimensions": [{"id": "used"}, {"id": "free"}]}],
+    "samples": [{"chart": "system.ram", "t": 1, "v": {"used": 11, "free": 22}}],
+})
+assert ring.get("replica") is True, ring
+nodes = get("/api/v1/nodes")["nodes"]
+assert any(n.get("id") == "peer-agent" and n.get("replica") for n in nodes), nodes
+print("HUB_SMOKE=1")
+PY
+)" || fail "hub claim/config/ring"
+[[ "${HUB_SMOKE:-}" == "1" ]] || fail "hub python smoke"
+
 echo "SMOKE OK"

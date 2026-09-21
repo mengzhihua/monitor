@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/stream"
 )
 
 const clusterHopHeader = "X-Monitor-Cluster-Hop"
@@ -26,6 +30,7 @@ type Cluster struct {
 
 	mu    sync.RWMutex
 	index map[string]peerNode // node id → location
+	nodes *Nodes
 }
 
 type peerNode struct {
@@ -107,6 +112,7 @@ func (c *Cluster) refresh() {
 	c.mu.Lock()
 	c.index = next
 	c.mu.Unlock()
+	c.pushRing()
 }
 
 // PeerInfos is the remote-node catalog discovered from peers (not locally streamed).
@@ -163,4 +169,51 @@ func (c *Cluster) Proxy(w http.ResponseWriter, r *http.Request, id string) bool 
 	}
 	proxy.ServeHTTP(w, r)
 	return true
+}
+
+// SetNodes wires local streamed nodes so refresh() can push last samples to peers.
+func (c *Cluster) SetNodes(n *Nodes) { c.nodes = n }
+
+// RingPayload is the JSON body of POST /api/v1/hub/ring.
+type RingPayload struct {
+	Host    registry.Host      `json:"host"`
+	Charts  []*stream.ChartDef `json:"charts"`
+	Samples []ReplicaSample    `json:"samples"`
+}
+
+func (c *Cluster) pushRing() {
+	if c.nodes == nil {
+		return
+	}
+	for _, node := range c.nodes.List() {
+		host, charts, samples := node.SnapshotRing()
+		if len(samples) == 0 {
+			continue
+		}
+		defs := make([]*stream.ChartDef, 0, len(charts))
+		for _, ch := range charts {
+			defs = append(defs, stream.DefOf(ch))
+		}
+		body, err := json.Marshal(RingPayload{Host: host, Charts: defs, Samples: samples})
+		if err != nil {
+			continue
+		}
+		for _, peer := range c.peers {
+			req, err := http.NewRequest(http.MethodPost, peer+"/api/v1/hub/ring", bytes.NewReader(body))
+			if err != nil {
+				continue
+			}
+			req.Header.Set(clusterHopHeader, "1")
+			req.Header.Set("Content-Type", "application/json")
+			if c.token != "" {
+				req.Header.Set("Authorization", "Bearer "+c.token)
+			}
+			resp, err := c.http.Do(req)
+			if err != nil {
+				c.log.Warn("cluster ring push", "peer", peer, "err", err)
+				continue
+			}
+			resp.Body.Close()
+		}
+	}
 }

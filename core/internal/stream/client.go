@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -40,6 +41,10 @@ type ClientOptions struct {
 	// every (re)connect so transitions that happened offline reach the hub.
 	Alarms func() []health.Alarm
 	Logger *slog.Logger
+	// ClaimToken is redeemed once against POST /api/v1/claim for a stream API key.
+	ClaimToken string
+	// OnConfig applies a hub-pushed overlay (disabled collector names).
+	OnConfig func(disabled []string)
 }
 
 // ClientStatus is exposed through /api/v1/info.
@@ -189,12 +194,18 @@ func destURL(d string) (string, error) {
 
 func (c *Client) dial(ctx context.Context) (*websocket.Conn, string, error) {
 	dialer := websocket.Dialer{HandshakeTimeout: c.opt.Timeout, TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}} //nolint:gosec // operator opt-in
-	hdr := http.Header{}
-	if c.opt.APIKey != "" {
-		hdr.Set("Authorization", "Bearer "+c.opt.APIKey)
-	}
 	var lastErr error
 	for _, d := range c.opt.Destinations {
+		if c.opt.ClaimToken != "" && c.opt.APIKey == "" {
+			if err := c.redeemClaim(ctx, d); err != nil {
+				lastErr = err
+				continue
+			}
+		}
+		hdr := http.Header{}
+		if c.opt.APIKey != "" {
+			hdr.Set("Authorization", "Bearer "+c.opt.APIKey)
+		}
 		u, err := destURL(d)
 		if err != nil {
 			lastErr = err
@@ -211,6 +222,98 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, string, error) {
 		return ws, u, nil
 	}
 	return nil, "", lastErr
+}
+
+func httpOrigin(dest string) (string, error) {
+	u, err := destURL(dest)
+	if err != nil {
+		return "", err
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return "", err
+	}
+	switch p.Scheme {
+	case "ws":
+		p.Scheme = "http"
+	case "wss":
+		p.Scheme = "https"
+	}
+	p.Path = ""
+	p.RawQuery = ""
+	return strings.TrimRight(p.String(), "/"), nil
+}
+
+func (c *Client) redeemClaim(ctx context.Context, dest string) error {
+	base, err := httpOrigin(dest)
+	if err != nil {
+		return err
+	}
+	nodeID := ""
+	if c.reg != nil && c.reg.Host != nil {
+		nodeID = c.reg.Host.ID
+		if nodeID == "" {
+			nodeID = c.reg.Host.Hostname
+		}
+	}
+	payload, _ := json.Marshal(map[string]string{"token": c.opt.ClaimToken, "node_id": nodeID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/claim", strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	cli := &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}}} //nolint:gosec
+	resp, err := cli.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("claim: HTTP %s %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return err
+	}
+	if out.APIKey == "" {
+		return errors.New("claim: empty api_key")
+	}
+	c.opt.APIKey = out.APIKey
+	return nil
+}
+
+func (c *Client) fetchConfig(ctx context.Context, dest string) {
+	if c.opt.OnConfig == nil || c.opt.APIKey == "" {
+		return
+	}
+	base, err := httpOrigin(dest)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/agent/config", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+c.opt.APIKey)
+	cli := &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}}} //nolint:gosec
+	resp, err := cli.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return
+	}
+	var cfg struct {
+		Disabled []string `json:"disabled"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&cfg) != nil {
+		return
+	}
+	c.opt.OnConfig(cfg.Disabled)
 }
 
 func (c *Client) functions() []FunctionInfo {
@@ -272,6 +375,7 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 	c.st.Connected, c.st.Destination, c.st.Since, c.st.LastError = true, dest, time.Now().Unix(), ""
 	c.mu.Unlock()
 	c.log.Info("stream: connected", "hub", dest)
+	c.fetchConfig(ctx, dest)
 
 	go sess.reader(ctx)
 
