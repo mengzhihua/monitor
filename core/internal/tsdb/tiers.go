@@ -319,6 +319,13 @@ func (t *tier) query(id string, after, before int64) ([]Bucket, error) {
 	}
 	// a bucket starting at TS covers up to TS+Every-1
 	lo := after - t.spec.Every + 1
+	// Retention is enforced per block on disk; a block can straddle the cutoff,
+	// so also hide expired buckets at read time.
+	if t.spec.Retention > 0 {
+		if cut := time.Now().Add(-t.spec.Retention).Unix() - t.spec.Every + 1; cut > lo {
+			lo = cut
+		}
+	}
 	sr.mu.Lock()
 	blocks := make([]blockMeta, 0, len(sr.blocks))
 	for _, b := range sr.blocks {
