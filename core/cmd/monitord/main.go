@@ -24,6 +24,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/api"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
+	"github.com/mengzhihua/monitor/core/internal/export"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
@@ -199,6 +200,7 @@ func run() error {
 			return fmt.Errorf("hub: %w", err)
 		}
 		apiOpt.Nodes = nodes
+		apiOpt.ExtraFunctions = []collect.Function{streamingFunction(nodes)}
 	}
 	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {
@@ -252,6 +254,10 @@ func run() error {
 			wg.Add(1)
 			go func() { defer wg.Done(); nodes.Run(ctx) }()
 		}
+		if exp := export.New(reg, cfg.Export.Destinations, log.With("component", "export")); !exp.Empty() {
+			wg.Add(1)
+			go func() { defer wg.Done(); exp.Run(ctx) }()
+		}
 		wg.Wait()
 	}()
 
@@ -299,6 +305,32 @@ func run() error {
 		log.Error("tsdb close", "err", err)
 	}
 	return runErr
+}
+
+func streamingFunction(nodes *hub.Nodes) collect.Function {
+	return collect.Function{
+		Name:    "streaming",
+		Help:    "Hub node connection status (live/stale/offline)",
+		Timeout: 5,
+		Run: func(_ context.Context, _ map[string]string) (any, error) {
+			now := time.Now()
+			list := nodes.List()
+			type row struct {
+				ID       string `json:"id"`
+				Hostname string `json:"hostname"`
+				Status   string `json:"status"`
+				LastData int64  `json:"last_data"`
+				Charts   int    `json:"charts"`
+			}
+			out := collect.Table{Columns: []string{"id", "hostname", "status", "last_data", "charts"}, Total: len(list)}
+			out.Rows = make([]any, len(list))
+			for i, n := range list {
+				inf := n.Info(now)
+				out.Rows[i] = row{ID: inf.ID, Hostname: inf.Hostname, Status: inf.Status, LastData: inf.LastData, Charts: inf.ChartsCount}
+			}
+			return out, nil
+		},
+	}
 }
 
 func hostIdentity(cfg *config.Config) (*registry.Host, error) {
@@ -371,6 +403,15 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	if n.Email.Server != "" && len(n.Email.To) > 0 {
 		notifiers = append(notifiers, &health.EmailNotifier{Server: n.Email.Server, From: n.Email.From, To: n.Email.To,
 			Username: n.Email.Username, Password: n.Email.Password, Insecure: n.Email.Insecure})
+	}
+	if n.DingTalk.WebhookURL != "" {
+		notifiers = append(notifiers, &health.ChatNotifier{Kind: "dingtalk", WebhookURL: n.DingTalk.WebhookURL})
+	}
+	if n.WeCom.WebhookURL != "" {
+		notifiers = append(notifiers, &health.ChatNotifier{Kind: "wecom", WebhookURL: n.WeCom.WebhookURL})
+	}
+	if n.Feishu.WebhookURL != "" {
+		notifiers = append(notifiers, &health.ChatNotifier{Kind: "feishu", WebhookURL: n.Feishu.WebhookURL})
 	}
 
 	vars := map[string]float64{"cpus": float64(runtime.NumCPU())}

@@ -453,8 +453,8 @@ sequenceDiagram
 | **M2 Hub** | 流协议 + replication、hub 模式（claim、Space/Room、用户/RBAC/JWT）、跨节点查询、集中告警、Web Hub 管理页、Proxy 级联 | 多节点集中监控 |
 | **M3 客户端** | Flutter App 五端：登录、节点、Dashboard、告警、推送（APNs/FCM/自建）、mDNS 直连 | 应用商店/桌面安装包 |
 | **M4 Android 服务端** | gomobile AAR、Kotlin 前台服务与采集桥、Android 专用采集器与省电策略、Android 上运行 Hub 验证 | 安卓设备作为节点 / 小型 Hub |
-| **M5 智能与日志** | 边缘 ML 异常检测、异常顾问、关联分析、journald / Event Log / 文件日志检索、导出器（remote write/Influx/OpenTSDB）、Hub 集群 | 对标 Netdata 完整能力 |
-| **M6 生态** | 应用采集器扩充（nginx/mysql/pg/redis/docker/k8s…）、合成检查、OTLP、配置下发、审计、OIDC | 生产可用 |
+| **M5 智能与日志** | 边缘 ML 异常检测、异常顾问、OpenMetrics/StatsD 摄入、Prometheus 抓取、合成检查（HTTP/TCP/Ping）、导出器（Graphite/Influx/JSON）、apache/phpfpm/memcached | 对标 Netdata 完整 Agent 能力 |
+| **M6 生态** | 应用采集器扩充（mysql/pg/es/rabbitmq/kafka…）、journald / Event Log 检索、OTLP、Hub 集群、配置下发、审计、OIDC | 生产可用 |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -474,10 +474,10 @@ sequenceDiagram
 | Streaming / Replication / Parent | `internal/stream` + `--mode hub` | M2 |
 | Netdata Cloud（Space/Room/RBAC/集中通知） | `internal/hub` | M2 |
 | Mobile App 告警推送 | `app/`（Flutter）+ Hub push | M3 |
-| ML anomaly detection / Anomaly Advisor / Metric Correlations | `internal/ml` | M5 |
-| Logs（journald / Event Log） | `internal/functions/logs` | M5 |
-| Exporting | `internal/export` | M5 |
-| Parent Cluster | `internal/stream/cluster` | M5 |
-| OpenMetrics / StatsD / OTLP | `internal/ingest` | M1 / M6 |
+| ML anomaly detection / Anomaly Advisor / Metric Correlations | `internal/collect/ml.go` + `/api/v1/weights` | M5 |
+| Logs（journald / Event Log） | `internal/functions/logs` | M6 |
+| Exporting | `internal/export`（Graphite / Influx / JSON） | M5 |
+| Parent Cluster | `internal/stream/cluster` | M6 |
+| OpenMetrics / StatsD / OTLP | `internal/ingest` + `prometheus`/`statsd` collectors；OTLP 待 M6 | M5 / M6 |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
 | （仅移动）五端原生客户端 | `app/` | M3 |

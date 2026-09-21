@@ -252,3 +252,55 @@ func readIOStat(path string) (rd, wr float64, ok bool) {
 	}
 	return rd, wr, ok
 }
+
+func (s *systemdCollector) Functions() []Function {
+	return []Function{{
+		Name:    "services",
+		Help:    "Linux systemd services (cgroup v2 cpu/memory)",
+		Timeout: 10,
+		Run: func(_ context.Context, args map[string]string) (any, error) {
+			return s.services(args), nil
+		},
+	}}
+}
+
+type ServiceRow struct {
+	Name   string  `json:"name"`
+	CPU    float64 `json:"cpu_usec"` // cumulative
+	Memory uint64  `json:"memory"`   // bytes
+}
+
+func (s *systemdCollector) services(args map[string]string) Table {
+	units := s.scan()
+	rows := make([]ServiceRow, 0, len(units))
+	for _, u := range units {
+		row := ServiceRow{Name: u.name}
+		if m, err := readUint(filepath.Join(u.dir, "memory.current")); err == nil {
+			row.Memory = uint64(m)
+		}
+		if st := readKV(filepath.Join(u.dir, "cpu.stat")); st != nil {
+			row.CPU = st["usage_usec"]
+		}
+		rows = append(rows, row)
+	}
+	sortBy := args["sort"]
+	sort.Slice(rows, func(i, j int) bool {
+		switch sortBy {
+		case "name":
+			return rows[i].Name < rows[j].Name
+		case "cpu":
+			return rows[i].CPU > rows[j].CPU
+		default:
+			if rows[i].Memory != rows[j].Memory {
+				return rows[i].Memory > rows[j].Memory
+			}
+			return rows[i].Name < rows[j].Name
+		}
+	})
+	out := Table{Columns: []string{"name", "cpu_usec", "memory"}, Total: len(rows)}
+	out.Rows = make([]any, len(rows))
+	for i, r := range rows {
+		out.Rows[i] = r
+	}
+	return out
+}

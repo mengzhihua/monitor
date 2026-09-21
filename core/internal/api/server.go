@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"math"
@@ -22,6 +23,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
+	"github.com/mengzhihua/monitor/core/internal/ingest"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
@@ -48,24 +50,28 @@ type Options struct {
 	Nodes *hub.Nodes
 	// Stream reports this agent's own upstream connection in /api/v1/info.
 	Stream *stream.Client
+	// ExtraFunctions are hub-side functions (e.g. streaming) merged with collectors.
+	ExtraFunctions []collect.Function
 }
 
 type Server struct {
-	reg   *registry.Registry
-	db    *tsdb.Store
-	sched *collect.Scheduler
-	opt   Options
-	log   *slog.Logger
-	live  *liveHub
-	nets  []*net.IPNet
-	mux   *http.ServeMux
+	reg    *registry.Registry
+	db     *tsdb.Store
+	sched  *collect.Scheduler
+	opt    Options
+	log    *slog.Logger
+	live   *liveHub
+	nets   []*net.IPNet
+	mux    *http.ServeMux
+	ingest *ingest.Mapper
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
 	}
-	s := &Server{reg: reg, db: db, sched: sched, opt: opt, log: opt.Logger, mux: http.NewServeMux()}
+	s := &Server{reg: reg, db: db, sched: sched, opt: opt, log: opt.Logger, mux: http.NewServeMux(),
+		ingest: ingest.NewMapper(ingest.Options{Prefix: "om", Plugin: "ingest", Module: "openmetrics", Family: "openmetrics"})}
 	for _, c := range opt.AllowFrom {
 		if !strings.Contains(c, "/") {
 			if strings.Contains(c, ":") {
@@ -112,6 +118,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarms", s.handleAlarms)
 	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
 	m.HandleFunc("GET /api/v1/alarm_rules", s.handleAlarmRules)
+	m.HandleFunc("GET /api/v1/weights", s.handleWeights)
+	m.HandleFunc("POST /api/v1/ingest/openmetrics", s.handleIngestOpenMetrics)
+	m.HandleFunc("PUT /api/v1/ingest/openmetrics", s.handleIngestOpenMetrics)
 	m.HandleFunc("GET /api/v1/nodes", s.handleNodes)
 	m.HandleFunc("DELETE /api/v1/nodes", s.handleForgetNode)
 	if s.opt.Nodes != nil {
@@ -573,11 +582,16 @@ func (s *Server) handleFunctions(w http.ResponseWriter, r *http.Request) {
 			out = append(out, functionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
 		}
 	} else {
-		for _, f := range s.sched.Functions() {
+		for _, f := range s.functions() {
 			out = append(out, functionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
 		}
 	}
 	writeJSON(w, out)
+}
+
+func (s *Server) functions() []collect.Function {
+	out := s.sched.Functions()
+	return append(out, s.opt.ExtraFunctions...)
 }
 
 // handleFunction runs one collector function: ?function=processes plus any
@@ -620,7 +634,7 @@ func (s *Server) handleFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var fn *collect.Function
-	for _, f := range s.sched.Functions() {
+	for _, f := range s.functions() {
 		if f.Name == name {
 			fn = &f
 			break
@@ -656,4 +670,30 @@ func (s *Server) alarmSummary() any {
 		return nil
 	}
 	return s.opt.Health.Summary()
+}
+
+func (s *Server) handleIngestOpenMetrics(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	samples := ingest.ParseOpenMetrics(string(body))
+	n := s.ingest.Apply(s.reg, time.Now(), samples)
+	writeJSON(w, map[string]any{"samples": n, "parsed": len(samples)})
+}
+
+func (s *Server) handleWeights(w http.ResponseWriter, r *http.Request) {
+	method := r.URL.Query().Get("method")
+	if method == "" {
+		method = "anomaly-rate"
+	}
+	c := s.sched.Collector("ml")
+	wp, ok := c.(collect.WeightProvider)
+	if !ok || c == nil {
+		http.Error(w, "ml collector disabled", http.StatusNotFound)
+		return
+	}
+	weights := wp.Weights(method)
+	writeJSON(w, map[string]any{"method": method, "weights": weights, "count": len(weights)})
 }

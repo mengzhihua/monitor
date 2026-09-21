@@ -23,6 +23,26 @@ type Collector interface {
 	Collect(ctx context.Context, reg *registry.Registry, now time.Time) error
 }
 
+// Stopper is an optional collector that holds sockets or background work
+// (StatsD, long-lived HTTP clients) and must release them on shutdown.
+type Stopper interface {
+	Stop()
+}
+
+// WeightProvider ranks charts (Anomaly Advisor / metric correlations).
+type WeightProvider interface {
+	Weights(method string) []Weight
+}
+
+// Weight is one row of GET /api/v1/weights.
+type Weight struct {
+	Chart       string  `json:"chart"`
+	Context     string  `json:"context"`
+	Title       string  `json:"title"`
+	Score       float64 `json:"score"`
+	AnomalyRate float64 `json:"anomaly_rate"`
+}
+
 // Configurable collectors receive their `collectors.modules.<name>` section
 // before Init. decode unmarshals the section into v (yaml semantics).
 type Configurable interface {
@@ -182,9 +202,20 @@ func (s *Scheduler) Status() []Status {
 	return out
 }
 
+// Collector returns a live collector by name (even if it failed to Init).
+func (s *Scheduler) Collector(name string) Collector {
+	for _, r := range s.cols {
+		if r.c.Name() == name {
+			return r.c
+		}
+	}
+	return nil
+}
+
 // Run blocks until ctx is done. The first tick is aligned to the next whole
 // interval boundary so samples land on round timestamps.
 func (s *Scheduler) Run(ctx context.Context) {
+	defer s.stop()
 	every := time.Duration(s.reg.Host.UpdateEvery) * time.Second
 	s.tick(ctx, time.Now())
 	next := time.Now().Truncate(every).Add(every)
@@ -201,6 +232,14 @@ func (s *Scheduler) Run(ctx context.Context) {
 				next = next.Add(every)
 			}
 			timer.Reset(time.Until(next))
+		}
+	}
+}
+
+func (s *Scheduler) stop() {
+	for _, r := range s.cols {
+		if st, ok := r.c.(Stopper); ok {
+			st.Stop()
 		}
 	}
 }

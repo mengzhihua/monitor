@@ -461,6 +461,13 @@ func TestWebhookAndSlackNotifiers(t *testing.T) {
 	if got[1]["channel"] != "#ops" || got[1]["attachments"] == nil {
 		t.Fatalf("slack payload = %v", got[1])
 	}
+	dt := &ChatNotifier{Kind: "dingtalk", WebhookURL: srv.URL + "/ding"}
+	if err := dt.Notify(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+	if got[2]["msgtype"] != "markdown" {
+		t.Fatalf("dingtalk payload = %v", got[2])
+	}
 	if err := (&WebhookNotifier{URL: srv.URL + "/fail"}).Notify(context.Background(), entry); err == nil {
 		t.Fatal("HTTP 500 should be an error")
 	}
