@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Alarm, AlarmLogEntry } from '../api'
+import { api } from '../api'
 
 const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[] }>()
 const emit = defineEmits<{ close: [] }>()
@@ -10,6 +11,21 @@ const sorted = computed(() =>
   [...props.alarms].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.chart.localeCompare(b.chart) || a.name.localeCompare(b.name)),
 )
 const recent = computed(() => [...props.log].sort((a, b) => b.unique_id - a.unique_id).slice(0, 50))
+const allSilenced = computed(() => props.alarms.length > 0 && props.alarms.every((a) => a.silenced))
+
+async function silenceAll(on: boolean) {
+  try {
+    await api.silence(on ? { all: true } : { all: false, clear: true })
+    for (const a of props.alarms) a.silenced = on
+  } catch { /* token / role */ }
+}
+
+async function silenceOne(a: Alarm, on: boolean) {
+  try {
+    await api.silence({ chart: a.chart, alarm: a.name, clear: !on })
+    a.silenced = on
+  } catch { /* token / role */ }
+}
 
 function fmt(v: number | null) {
   if (v === null || !Number.isFinite(v)) return '—'
@@ -28,11 +44,16 @@ function ago(t: number) {
   <div class="panel">
     <div class="head">
       <h3>告警 <small>{{ alarms.length }} 条规则</small></h3>
-      <button class="x" @click="emit('close')" title="关闭">×</button>
+      <div class="actions">
+        <button class="mute" @click="silenceAll(!allSilenced)" :title="allSilenced ? '解除全部静默' : '静默全部通知'">
+          {{ allSilenced ? '解除静默' : '全部静默' }}
+        </button>
+        <button class="x" @click="emit('close')" title="关闭">×</button>
+      </div>
     </div>
     <table>
       <thead>
-        <tr><th>状态</th><th>告警</th><th>图表</th><th class="num">当前值</th><th>持续</th></tr>
+        <tr><th>状态</th><th>告警</th><th>图表</th><th class="num">当前值</th><th>持续</th><th></th></tr>
       </thead>
       <tbody>
         <tr v-for="a in sorted" :key="a.chart + '.' + a.name" :class="a.status.toLowerCase()" :title="a.info">
@@ -41,8 +62,9 @@ function ago(t: number) {
           <td class="dim">{{ a.chart }}</td>
           <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
           <td class="dim">{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</td>
+          <td><button class="mute tiny" @click="silenceOne(a, !a.silenced)">{{ a.silenced ? '响铃' : '静默' }}</button></td>
         </tr>
-        <tr v-if="!alarms.length"><td colspan="5" class="dim">暂无告警规则</td></tr>
+        <tr v-if="!alarms.length"><td colspan="6" class="dim">暂无告警规则</td></tr>
       </tbody>
     </table>
 
@@ -65,6 +87,9 @@ function ago(t: number) {
 <style scoped>
 .panel { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; }
 .head { display: flex; justify-content: space-between; align-items: center; }
+.actions { display: flex; gap: 8px; align-items: center; }
+.mute { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.mute.tiny { padding: 0 6px; font-size: 11px; }
 h3 { margin: 0 0 8px; font-size: 13px; color: #cbd5e1; text-transform: uppercase; letter-spacing: .05em; }
 h3 small { color: #64748b; font-weight: 400; margin-left: 6px; text-transform: none; }
 .x { background: none; border: 0; color: #94a3b8; font-size: 18px; cursor: pointer; }

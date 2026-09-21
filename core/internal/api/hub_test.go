@@ -348,6 +348,9 @@ func TestRBAC(t *testing.T) {
 		{"DELETE", "/api/v1/nodes?node=x", "tok-view", 403},
 		{"DELETE", "/api/v1/nodes?node=x", "tok-admin", 404},
 		{"GET", "/metrics", "tok-view", 200},
+		{"GET", "/api/v1/alarms/silence", "tok-view", 404}, // health disabled on this server
+		{"POST", "/api/v1/alarms/silence", "tok-view", 403},
+		{"POST", "/api/v1/alarms/silence", "tok-tsh", 403},
 	}
 	for _, c := range cases {
 		if got := do(c.method, c.path, c.tok); got != c.want {

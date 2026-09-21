@@ -102,6 +102,8 @@ func (e *Engine) flush(ctx context.Context, d Destination) error {
 		return e.flushJSON(ctx, d)
 	case "prometheus", "prom", "remote_write", "prometheus-remote-write":
 		return e.flushPromRW(ctx, d)
+	case "opentsdb", "open_tsdb":
+		return e.flushOpenTSDB(ctx, d)
 	default:
 		return fmt.Errorf("unknown exporter %q", d.Type)
 	}
@@ -201,6 +203,30 @@ func (e *Engine) flushJSON(ctx context.Context, d Destination) error {
 		charts[c.ID] = map[string]any{"context": c.Context, "units": c.Units, "last_updated": ts, "dimensions": vals}
 	}
 	body, err := json.Marshal(map[string]any{"hostname": e.host, "prefix": d.Prefix, "charts": charts})
+	if err != nil {
+		return err
+	}
+	return e.post(ctx, url, "application/json", body, d.Headers)
+}
+
+func (e *Engine) flushOpenTSDB(ctx context.Context, d Destination) error {
+	url := d.URL
+	if url == "" {
+		return fmt.Errorf("opentsdb: url required")
+	}
+	type put struct {
+		Metric    string            `json:"metric"`
+		Timestamp int64             `json:"timestamp"`
+		Value     float64           `json:"value"`
+		Tags      map[string]string `json:"tags"`
+	}
+	var pts []put
+	for _, p := range e.snapshot() {
+		metric := d.Prefix + "." + graphiteSafe(p.chart) + "." + graphiteSafe(p.dim)
+		pts = append(pts, put{Metric: metric, Timestamp: p.ts, Value: p.value,
+			Tags: map[string]string{"host": e.host, "chart": p.chart, "dimension": p.dim}})
+	}
+	body, err := json.Marshal(pts)
 	if err != nil {
 		return err
 	}

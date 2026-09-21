@@ -147,6 +147,16 @@ type Notify struct {
 	Feishu struct {
 		WebhookURL string `yaml:"webhook_url"`
 	} `yaml:"feishu"`
+	Telegram struct {
+		Token  string `yaml:"token"`
+		ChatID string `yaml:"chat_id"`
+	} `yaml:"telegram"`
+	Discord struct {
+		WebhookURL string `yaml:"webhook_url"`
+	} `yaml:"discord"`
+	PagerDuty struct {
+		RoutingKey string `yaml:"routing_key"`
+	} `yaml:"pagerduty"`
 }
 
 // Export pushes latest samples to Graphite / Influx / JSON HTTP.

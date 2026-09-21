@@ -468,6 +468,26 @@ func TestWebhookAndSlackNotifiers(t *testing.T) {
 	if got[2]["msgtype"] != "markdown" {
 		t.Fatalf("dingtalk payload = %v", got[2])
 	}
+	tg := &TelegramNotifier{Token: "t", ChatID: "1", Endpoint: srv.URL}
+	if err := tg.Notify(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+	if got[3]["chat_id"] != "1" {
+		t.Fatalf("telegram payload = %v", got[3])
+	}
+	if err := (&DiscordNotifier{WebhookURL: srv.URL + "/discord"}).Notify(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+	if got[4]["content"] == nil {
+		t.Fatalf("discord payload = %v", got[4])
+	}
+	pd := &PagerDutyNotifier{RoutingKey: "rk", Endpoint: srv.URL + "/pd"}
+	if err := pd.Notify(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+	if got[5]["routing_key"] != "rk" || got[5]["event_action"] != "trigger" {
+		t.Fatalf("pagerduty payload = %v", got[5])
+	}
 	if err := (&WebhookNotifier{URL: srv.URL + "/fail"}).Notify(context.Background(), entry); err == nil {
 		t.Fatal("HTTP 500 should be an error")
 	}
@@ -496,6 +516,27 @@ func TestEngineNotifiesWhenStartingRaised(t *testing.T) {
 	}
 	if e.Notified() != 1 {
 		t.Fatalf("Notified() = %d", e.Notified())
+	}
+}
+
+func TestEngineRuntimeSilence(t *testing.T) {
+	n := &memNotifier{}
+	e, reg := newTestEngine(t, ramRule, n)
+	all := true
+	e.ApplySilence(&all, "", 0, false)
+	now := time.Unix(1_700_000_000, 0)
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 90, "free": 10})
+	e.Tick(now.Add(time.Second))
+	time.Sleep(50 * time.Millisecond)
+	if n.count() != 0 {
+		t.Fatalf("silenced engine notified: %+v", n.seen)
+	}
+	if !e.IsSilenced("system.ram", "ram_in_use") {
+		t.Fatal("expected silenced")
+	}
+	e.ApplySilence(&all, "", 0, true)
+	if e.IsSilenced("system.ram", "ram_in_use") {
+		t.Fatal("expected unsilenced")
 	}
 }
 

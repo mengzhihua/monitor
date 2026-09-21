@@ -42,7 +42,9 @@ export interface Alarm {
   units: string; info: string; lookup?: string; calc?: string; warn?: string; crit?: string; update_every: number
   recipient: string; source: string; status: AlarmStatus; value: number | null; last_updated: number
   last_status_change: number; active: boolean; delay_up_to_timestamp?: number; last_notified?: number
+  silenced?: boolean
 }
+export interface SilenceState { all: boolean; until?: number; alarms: Record<string, number> }
 export interface AlarmLogEntry {
   unique_id: number; alarm_id: number; when: number; hostname: string; name: string; chart: string; context: string
   family: string; status: AlarmStatus; old_status: AlarmStatus; value: number | null; old_value: number | null
@@ -104,6 +106,14 @@ async function get<T>(path: string): Promise<T> {
   return r.json() as Promise<T>
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (auth.token) headers.Authorization = `Bearer ${auth.token}`
+  const r = await fetch(base + path, { method: 'POST', headers, body: JSON.stringify(body) })
+  if (!r.ok) throw new ApiError(r.status, `${path}: ${r.status} ${await r.text()}`)
+  return r.json() as Promise<T>
+}
+
 /**
  * Selected node on a hub: '' is the hub itself, otherwise a remote node id.
  * Every node-scoped request carries it as `node=`.
@@ -126,6 +136,9 @@ export const api = {
   charts: () => get<ChartsResponse>(`/api/v1/charts${q({})}`),
   alarms: () => get<AlarmsResponse>(`/api/v1/alarms${q({ all: 'true' })}`),
   alarmLog: (after = 0) => get<AlarmLogEntry[]>(`/api/v1/alarm_log${q({ after })}`),
+  silence: (body: { all?: boolean; alarm?: string; chart?: string; until?: number; clear?: boolean } = {}) =>
+    post<SilenceState>('/api/v1/alarms/silence', body),
+  silenceState: () => get<SilenceState>('/api/v1/alarms/silence'),
   functions: () => get<FunctionInfo[]>(`/api/v1/functions${q({})}`),
   function: (name: string, args: Record<string, string> = {}) =>
     get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`),
