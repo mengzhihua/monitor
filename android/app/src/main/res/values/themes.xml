@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.Monitor" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#00A86B</item>
+    </style>
+</resources>

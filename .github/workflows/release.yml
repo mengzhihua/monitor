@@ -1,0 +1,313 @@
+name: Release
+
+# Push a tag like v0.2.0 (or run manually) to build every server and client
+# package and publish them on a GitHub Release. Artifacts are unsigned unless
+# the optional signing secrets below are configured:
+#   ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and publish"
+        required: true
+
+env:
+  FLUTTER_VERSION: "3.35.4"
+  GO_VERSION: "1.23"
+
+permissions:
+  contents: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      build_number: ${{ steps.v.outputs.build_number }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          build=1
+          if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            build=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build" >> "$GITHUB_OUTPUT"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+
+  # ---------------------------------------------------------------- server ----
+  server:
+    needs: [meta, web]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: darwin,  goarch: arm64, label: macos-arm64 }
+          - { goos: darwin,  goarch: amd64, label: macos-amd64 }
+          - { goos: linux,   goarch: amd64, label: linux-amd64 }
+          - { goos: linux,   goarch: arm64, label: linux-arm64 }
+          - { goos: windows, goarch: amd64, label: windows-amd64 }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          v="${{ needs.meta.outputs.tag }}"
+          name="monitord-${v}-${{ matrix.label }}"
+          ext=""; [ "$GOOS" = windows ] && ext=".exe"
+          mkdir -p "dist/$name"
+          (cd core && go build -trimpath -ldflags "-s -w -X main.version=$v" -o "../dist/$name/monitord$ext" ./cmd/monitord)
+          cp monitor.example.yaml README.md "dist/$name/"
+          cp -r plugins.d "dist/$name/plugins.d"
+          cd dist
+          if [ "$GOOS" = windows ]; then zip -qr "$name.zip" "$name"; else tar czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.label }}
+          path: dist/*
+
+  server-android:
+    needs: [meta, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: android-actions/setup-android@v3
+        with: { packages: "platforms;android-35 build-tools;35.0.0" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+      - name: build apk
+        env:
+          VERSION: ${{ needs.meta.outputs.tag }}
+        run: ./scripts/build-android-server.sh assembleRelease
+      - name: sign (optional)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          v="${{ needs.meta.outputs.tag }}"
+          mkdir -p dist
+          in=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          [ -f "$in" ] || in=android/app/build/outputs/apk/release/app-release.apk
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > /tmp/ks.jks
+            tools="$ANDROID_HOME/build-tools/35.0.0"
+            "$tools/zipalign" -f -p 4 "$in" /tmp/aligned.apk
+            "$tools/apksigner" sign --ks /tmp/ks.jks --ks-pass env:KEYSTORE_PASSWORD \
+              --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
+              --out "dist/monitord-${v}-android-arm64.apk" /tmp/aligned.apk
+            rm -f /tmp/ks.jks
+          else
+            cp "$in" "dist/monitord-${v}-android-arm64-unsigned.apk"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-android
+          path: dist/*
+
+  # ---------------------------------------------------------------- client ----
+  client-android:
+    needs: [meta]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter build apk --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+        working-directory: app
+      - run: |
+          mkdir -p dist
+          cp app/build/app/outputs/flutter-apk/app-release.apk "dist/monitor-app-${{ needs.meta.outputs.tag }}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-android
+          path: dist/*
+
+  client-linux:
+    needs: [meta]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter build linux --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+        working-directory: app
+      - run: |
+          set -euo pipefail
+          name="monitor-app-${{ needs.meta.outputs.tag }}-linux-amd64"
+          mkdir -p dist
+          cp -r app/build/linux/x64/release/bundle "dist/$name"
+          tar czf "dist/$name.tar.gz" -C dist "$name"
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-linux
+          path: dist/*
+
+  client-windows:
+    needs: [meta]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter build windows --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+        working-directory: app
+      - shell: pwsh
+        run: |
+          $name = "monitor-app-${{ needs.meta.outputs.tag }}-windows-amd64"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "app/build/windows/x64/runner/Release/*" -DestinationPath "dist/$name.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-windows
+          path: dist/*
+
+  client-macos:
+    needs: [meta]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter build macos --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+        working-directory: app
+      - name: package arm64 (Apple Silicon) and amd64 (Intel)
+        run: ./scripts/package-macos-app.sh app/build/macos/Build/Products/Release/*.app dist "monitor-app-${{ needs.meta.outputs.tag }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-macos
+          path: dist/*
+
+  client-ios:
+    needs: [meta]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.event.inputs.tag || github.ref }}" }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter build ios --release --no-codesign --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+        working-directory: app
+      - name: package unsigned ipa
+        run: |
+          set -euo pipefail
+          name="monitor-app-${{ needs.meta.outputs.tag }}-ios-unsigned"
+          mkdir -p dist Payload
+          cp -r app/build/ios/iphoneos/Runner.app Payload/
+          zip -qry "dist/$name.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-ios
+          path: dist/*
+
+  # --------------------------------------------------------------- publish ----
+  release:
+    needs: [meta, server, server-android, client-android, client-linux, client-windows, client-macos, client-ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          generate_release_notes: true
+          files: artifacts/*
+          body: |
+            ## Server (`monitord`)
+            | Platform | File |
+            |---|---|
+            | macOS Apple Silicon | `monitord-*-macos-arm64.tar.gz` |
+            | macOS Intel | `monitord-*-macos-amd64.tar.gz` |
+            | Windows x64 | `monitord-*-windows-amd64.zip` |
+            | Linux x64 / arm64 | `monitord-*-linux-{amd64,arm64}.tar.gz` |
+            | Android (arm64, foreground service) | `monitord-*-android-arm64*.apk` |
+
+            ## Client (`Monitor` app)
+            | Platform | File |
+            |---|---|
+            | macOS Apple Silicon | `monitor-app-*-macos-arm64.dmg` / `.zip` |
+            | macOS Intel | `monitor-app-*-macos-amd64.dmg` / `.zip` |
+            | Windows x64 | `monitor-app-*-windows-amd64.zip` |
+            | Linux x64 | `monitor-app-*-linux-amd64.tar.gz` |
+            | Android | `monitor-app-*-android.apk` |
+            | iOS (unsigned; sideload with your own signing) | `monitor-app-*-ios-unsigned.ipa` |
+
+            macOS/iOS/Windows packages are not code-signed or notarized yet; on macOS run
+            `xattr -dr com.apple.quarantine <app>` after unpacking. `SHA256SUMS.txt` lists all checksums.

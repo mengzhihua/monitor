@@ -74,3 +74,36 @@ jobs:
         with:
           name: monitord-binaries
           path: core/bin/
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "3.35.4", channel: stable, cache: true }
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter analyze
+        working-directory: app
+      - run: flutter test
+        working-directory: app
+
+  android-server:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: core/go.sum
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: android-actions/setup-android@v3
+        with: { packages: "platforms;android-35 build-tools;35.0.0" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: core/internal/api/ui/dist
+      - run: ./scripts/build-android-server.sh assembleDebug
+        env: { VERSION: "${{ github.sha }}" }
