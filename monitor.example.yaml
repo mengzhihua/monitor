@@ -50,7 +50,7 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -133,6 +133,19 @@ collectors:
       command: nvidia-smi
     netstat:             # TCP states + `network-connections` function
       top: 500
+    haproxy:
+      url: ""                # empty = try :8404/;csv then /stats;csv
+      timeout: 2s
+    lighttpd:
+      url: http://127.0.0.1/server-status?auto
+      timeout: 2s
+    consul:
+      url: http://127.0.0.1:8500
+      token: ""
+      timeout: 2s
+    whoisquery:
+      timeout: 10s
+      jobs: []               # e.g. [{ name: example, domain: example.com }]
 
 plugins:
   enabled: true
@@ -186,12 +199,20 @@ health:
       webhook_url: ""    # 企业微信群机器人
     feishu:
       webhook_url: ""    # 飞书自定义机器人
+    telegram:
+      token: ""          # Bot token from @BotFather
+      chat_id: ""
+    discord:
+      webhook_url: ""
+    pagerduty:
+      routing_key: ""    # Events API v2 routing key
 
 # Types: graphite (TCP line protocol), influx (InfluxDB 1.x /write), json (HTTP POST),
-# prometheus (Prometheus remote write: snappy + protobuf).
+# prometheus (Prometheus remote write: snappy + protobuf), opentsdb (/api/put JSON).
 export:
   destinations: []
   # - { type: graphite, address: "127.0.0.1:2003", prefix: monitor, every: 10s }
   # - { type: influx, url: "http://127.0.0.1:8086/write?db=monitor", prefix: monitor, every: 10s }
   # - { type: json, url: "http://127.0.0.1:9000/ingest", every: 10s }
   # - { type: prometheus, url: "http://127.0.0.1:9090/api/v1/write", prefix: monitor, every: 10s }
+  # - { type: opentsdb, url: "http://127.0.0.1:4242/api/put", prefix: monitor, every: 10s }

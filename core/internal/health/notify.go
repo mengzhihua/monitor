@@ -281,3 +281,97 @@ func (n *ChatNotifier) Notify(ctx context.Context, e LogEntry) error {
 	}
 	return postJSON(ctx, c, n.WebhookURL, body, nil)
 }
+
+// TelegramNotifier sends a Markdown message via Bot API sendMessage.
+type TelegramNotifier struct {
+	Token    string
+	ChatID   string
+	Client   *http.Client
+	Endpoint string // default https://api.telegram.org
+}
+
+func (n *TelegramNotifier) Name() string { return "telegram" }
+
+func (n *TelegramNotifier) Notify(ctx context.Context, e LogEntry) error {
+	ep := n.Endpoint
+	if ep == "" {
+		ep = "https://api.telegram.org"
+	}
+	c := n.Client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	text := fmt.Sprintf("*%s* `%s` on `%s`\n%s", e.Status, e.Name, e.Hostname, strings.NewReplacer("*", "", "`", "").Replace(Summarize(e)))
+	body, err := json.Marshal(map[string]any{"chat_id": n.ChatID, "text": text, "parse_mode": "Markdown"})
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, c, strings.TrimRight(ep, "/")+"/bot"+n.Token+"/sendMessage", body, nil)
+}
+
+// DiscordNotifier posts plain text to a Discord incoming webhook.
+type DiscordNotifier struct {
+	WebhookURL string
+	Client     *http.Client
+}
+
+func (n *DiscordNotifier) Name() string { return "discord" }
+
+func (n *DiscordNotifier) Notify(ctx context.Context, e LogEntry) error {
+	c := n.Client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	body, err := json.Marshal(map[string]any{"content": fmt.Sprintf("[%s] %s on %s\n%s", e.Status, e.Name, e.Hostname, strings.NewReplacer("*", "", "`", "").Replace(Summarize(e)))})
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, c, n.WebhookURL, body, nil)
+}
+
+// PagerDutyNotifier sends Events API v2 trigger/resolve payloads.
+type PagerDutyNotifier struct {
+	RoutingKey string
+	Client     *http.Client
+	Endpoint   string // default https://events.pagerduty.com/v2/enqueue
+}
+
+func (n *PagerDutyNotifier) Name() string { return "pagerduty" }
+
+func (n *PagerDutyNotifier) Notify(ctx context.Context, e LogEntry) error {
+	c := n.Client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	ep := n.Endpoint
+	if ep == "" {
+		ep = "https://events.pagerduty.com/v2/enqueue"
+	}
+	action := "trigger"
+	sev := "warning"
+	switch e.Status {
+	case StatusClear:
+		action = "resolve"
+		sev = "info"
+	case StatusCritical:
+		sev = "critical"
+	}
+	body, err := json.Marshal(map[string]any{
+		"routing_key":  n.RoutingKey,
+		"event_action": action,
+		"dedup_key":    e.Hostname + "/" + e.Chart + "/" + e.Name,
+		"payload": map[string]any{
+			"summary":   fmt.Sprintf("%s is %s on %s", e.Name, e.Status, e.Hostname),
+			"source":    e.Hostname,
+			"severity":  sev,
+			"component": e.Chart,
+			"custom_details": map[string]any{
+				"value": e.Value, "units": e.Units, "info": e.Info,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, c, ep, body, nil)
+}

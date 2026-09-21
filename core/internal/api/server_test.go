@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -129,6 +130,34 @@ func TestInfoChartsData(t *testing.T) {
 	}
 	if !strings.Contains(sb.String(), `monitor_system_ram{chart="system.ram",family="ram",dimension="used",instance="test"} 109`) {
 		t.Fatalf("prometheus output:\n%s", sb.String())
+	}
+	csvResp, err := http.Get(ts.URL + "/api/v1/allmetrics?format=csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csvBody, _ := io.ReadAll(csvResp.Body)
+	csvResp.Body.Close()
+	if !strings.Contains(string(csvBody), "system.ram,used,109") {
+		t.Fatalf("csv:\n%s", csvBody)
+	}
+	shResp, err := http.Get(ts.URL + "/api/v1/allmetrics?format=shell")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shBody, _ := io.ReadAll(shResp.Body)
+	shResp.Body.Close()
+	if !strings.Contains(string(shBody), "NETDATA_system_ram_used=109") {
+		t.Fatalf("shell:\n%s", shBody)
+	}
+	var ctxs struct {
+		Count    int `json:"contexts_count"`
+		Contexts map[string]struct {
+			Charts []string `json:"charts"`
+		} `json:"contexts"`
+	}
+	getJSON(t, ts.URL+"/api/v1/contexts", &ctxs)
+	if ctxs.Count != 1 || len(ctxs.Contexts["system.ram"].Charts) != 1 {
+		t.Fatalf("contexts = %+v", ctxs)
 	}
 	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
 		t.Fatal("API must not advertise wildcard CORS")
@@ -326,6 +355,28 @@ alarms:
 	getJSON(t, ts.URL+"/api/v1/alarm_rules", &rs)
 	if len(rs) != 1 {
 		t.Fatalf("alarm_rules = %v", rs)
+	}
+
+	var vars struct {
+		Chart     string         `json:"chart"`
+		Variables map[string]any `json:"variables"`
+	}
+	getJSON(t, ts.URL+"/api/v1/alarm_variables?chart=system.ram", &vars)
+	if vars.Chart != "system.ram" || vars.Variables["used"] == nil {
+		t.Fatalf("variables = %+v", vars)
+	}
+	resp, err := http.Post(ts.URL+"/api/v1/alarms/silence?all=true", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("silence status = %d", resp.StatusCode)
+	}
+	var sil map[string]any
+	getJSON(t, ts.URL+"/api/v1/alarms/silence", &sil)
+	if sil["all"] != true {
+		t.Fatalf("silence = %v", sil)
 	}
 }
 

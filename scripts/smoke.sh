@@ -28,6 +28,9 @@ charts=$(curl -sf "http://127.0.0.1:$PORT/api/v1/charts") || fail "charts"
 echo "$charts" | grep '"system.cpu"' >/dev/null || fail "system.cpu missing"
 echo "$charts" | grep '"system.ram"' >/dev/null || fail "system.ram missing"
 
+curl -sf "http://127.0.0.1:$PORT/api/v1/contexts" | grep '"contexts"' >/dev/null || fail "contexts"
+curl -sf "http://127.0.0.1:$PORT/api/v1/allmetrics?format=csv" | grep 'system.ram' >/dev/null || fail "allmetrics csv"
+
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
 echo "$data" | grep '"points":[1-9]' >/dev/null || fail "no data points: $data"
 

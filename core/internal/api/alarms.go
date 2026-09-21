@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/health"
@@ -121,6 +123,81 @@ func (s *Server) handleAlarmRules(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{"source": ru.Source, "spec": ru.Spec, "every": ru.Every.Seconds()})
 	}
 	writeJSON(w, out)
+}
+
+func (s *Server) handleAlarmVariables(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	chart := r.URL.Query().Get("chart")
+	if chart == "" {
+		http.Error(w, "chart required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := v.reg.Chart(chart); !ok {
+		http.Error(w, "chart not found", http.StatusNotFound)
+		return
+	}
+	vars := map[string]any{}
+	if v.node == nil && s.opt.Health != nil {
+		vars = s.opt.Health.ChartVariables(chart, r.URL.Query().Get("alarm"))
+	} else if c, ok := v.reg.Chart(chart); ok {
+		_, last := c.LastValues()
+		for k, val := range last {
+			vars[k] = val
+		}
+	}
+	writeJSON(w, map[string]any{"chart": chart, "variables": vars})
+}
+
+type silenceBody struct {
+	All   *bool  `json:"all"`
+	Alarm string `json:"alarm"`
+	Chart string `json:"chart"`
+	Until int64  `json:"until"`
+	Clear bool   `json:"clear"`
+}
+
+func (s *Server) handleSilence(w http.ResponseWriter, r *http.Request) {
+	if s.opt.Health == nil {
+		http.Error(w, "health engine disabled", http.StatusNotFound)
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, s.opt.Health.SilenceInfo())
+		return
+	}
+	var body silenceBody
+	if r.Body != nil {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
+	}
+	q := r.URL.Query()
+	if q.Get("all") == "true" {
+		t := true
+		body.All = &t
+	} else if q.Get("all") == "false" {
+		f := false
+		body.All = &f
+	}
+	if q.Get("alarm") != "" {
+		body.Alarm = q.Get("alarm")
+	}
+	if q.Get("chart") != "" {
+		body.Chart = q.Get("chart")
+	}
+	if q.Get("clear") == "true" {
+		body.Clear = true
+	}
+	if u := q.Get("until"); u != "" {
+		body.Until, _ = strconv.ParseInt(u, 10, 64)
+	}
+	key := body.Alarm
+	if body.Chart != "" && body.Alarm != "" && !strings.Contains(body.Alarm, ".") {
+		key = body.Chart + "." + body.Alarm
+	}
+	s.opt.Health.ApplySilence(body.All, key, body.Until, body.Clear)
+	writeJSON(w, s.opt.Health.SilenceInfo())
 }
 
 // PublishAlarm pushes a local transition to live WebSocket clients watching

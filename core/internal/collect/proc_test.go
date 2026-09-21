@@ -77,6 +77,48 @@ func TestParseStatsDLine(t *testing.T) {
 	}
 }
 
+func TestParseSoftnet(t *testing.T) {
+	st := parseSoftnet("0001fe6e 00000002 00000001 00000000 00000000 00000000 00000000 00000000 00000000 00000003 00000000\n0000000a 00000001 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001\n")
+	if st.processed != 0x1fe6e+0xa || st.dropped != 3 || st.squeezed != 1 || st.receivedRPS != 4 {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestParseConntrackStat(t *testing.T) {
+	raw := "entries  new invalid ignore insert insert_failed drop early_drop icmp_error expect_new expect_create expect_delete search_restart\n" +
+		"0000005c 00000001 00000002 00000000 00000003 00000004 00000005 00000000 00000000 00000000 00000000 00000000 00000006\n" +
+		"0000005c 00000001 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000\n"
+	m := parseConntrackStat(raw)
+	if m["new"] != 2 || m["invalid"] != 2 || m["insert_failed"] != 4 || m["search_restart"] != 6 {
+		t.Fatalf("%v", m)
+	}
+	if _, ok := m["entries"]; ok {
+		t.Fatal("entries should not be summed")
+	}
+}
+
+func TestParseIPCTable(t *testing.T) {
+	shm := "key shmid perms size cpid\n0 1 600 1024 2\n0 2 600 2048 3\n"
+	n, size := parseIPCTable(shm, "size")
+	if n != 2 || size != 3072 {
+		t.Fatalf("n=%v size=%v", n, size)
+	}
+}
+
+func TestParseMDStat(t *testing.T) {
+	raw := "Personalities : [raid1]\nmd0 : active raid1 sda1[0] sdb1[1]\n      1000 blocks super 1.2 [2/2] [UU]\n\nmd1 : active raid1 sdc1[0] sdd1[1](F)\n      2000 blocks [2/1] [U_]\n      [=====>...............]  recovery = 33.0% (1/3)\n\nunused devices: <none>\n"
+	arr := parseMDStat(raw)
+	if len(arr) != 2 {
+		t.Fatalf("%+v", arr)
+	}
+	if arr[0].Name != "md0" || arr[0].InUse != 2 || arr[0].Down != 0 || arr[0].Synced != 100 {
+		t.Fatalf("md0 %+v", arr[0])
+	}
+	if arr[1].Name != "md1" || arr[1].Down != 1 || arr[1].Synced != 33 {
+		t.Fatalf("md1 %+v", arr[1])
+	}
+}
+
 func TestRatePerOp(t *testing.T) {
 	if ratePerOp(200, 100, 10, 5) != 20 {
 		t.Fatal("rate")

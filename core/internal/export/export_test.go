@@ -48,6 +48,26 @@ func TestFlushJSONAndInflux(t *testing.T) {
 	}
 }
 
+func TestFlushOpenTSDB(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	_ = reg.Collect("system.ram", time.Unix(1_700_000_000, 0), map[string]float64{"used": 12.5})
+	e := New(reg, []Destination{{Type: "opentsdb", URL: srv.URL, Prefix: "monitor"}}, nil)
+	if err := e.flushOpenTSDB(context.Background(), e.dest[0]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"metric":"monitor.system_ram.used"`) || !strings.Contains(got, `"value":12.5`) {
+		t.Fatalf("opentsdb = %s", got)
+	}
+}
+
 func TestFlushGraphite(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

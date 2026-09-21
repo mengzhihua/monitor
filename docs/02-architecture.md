@@ -455,6 +455,11 @@ sequenceDiagram
 | **M4 Android 服务端** | gomobile AAR、Kotlin 前台服务与采集桥、Android 专用采集器与省电策略、Android 上运行 Hub 验证 | 安卓设备作为节点 / 小型 Hub |
 | **M5 智能与日志** | 边缘 ML 异常检测、异常顾问、OpenMetrics/StatsD 摄入、Prometheus 抓取、合成检查（HTTP/TCP/Ping）、导出器（Graphite/Influx/JSON）、apache/phpfpm/memcached | 对标 Netdata 完整 Agent 能力 |
 | **M6 生态** | 应用采集器扩充（mysql/pg/es/rabbitmq）、journald / Event Log 检索、OTLP、Hub 集群、Prometheus remote write、Metric Correlations（ks2/volume）、sslcheck/dns/nvidia | 生产可用 |
+| **M7 Agent 对齐** | proc conntrack/softnet/ipc/md/battery；haproxy/lighttpd/consul/whois；contexts/silence/alarm_variables/allmetrics csv·shell；OpenTSDB；Telegram/Discord/PagerDuty | 对标 Netdata 单机 Agent 剩余核心面 |
+| **M8–M12 采集器全集** | 其余 proc.plugin；go.d 按批原生移植（存储/队列/K8s/SNMP/长尾），见 [04-netdata-gap.md](04-netdata-gap.md) | 850+ 集成名对齐 |
+| **M13 规则与查询** | health.d 规则全集、`data?context=`、`/api/v2` | 告警与跨图查询对齐 |
+| **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
+| **M15–M16** | k-means ML、Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -476,8 +481,11 @@ sequenceDiagram
 | Mobile App 告警推送 | `app/`（Flutter）+ Hub push | M3 |
 | ML anomaly detection / Anomaly Advisor / Metric Correlations | `internal/collect/ml.go` + `/api/v1/weights` | M5 |
 | Logs（journald / Event Log） | `internal/collect/logs.go` + `/api/v1/logs` | M6 |
-| Exporting | `internal/export`（Graphite / Influx / JSON / Prometheus remote write） | M5 / M6 |
+| Exporting | `internal/export`（Graphite / Influx / JSON / Prometheus remote write / OpenTSDB） | M5 / M6 / M7 |
 | Parent Cluster | `internal/hub/cluster.go` | M6 |
 | OpenMetrics / StatsD / OTLP | `internal/ingest` + `prometheus`/`statsd`/`otlp` collectors | M5 / M6 |
+| Contexts / alarm silence / alarm_variables | `internal/api` | M7 |
+| Telegram / Discord / PagerDuty | `internal/health/notify.go` | M7 |
+| 全量差距与后续批次 | [04-netdata-gap.md](04-netdata-gap.md) | M7+ |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
 | （仅移动）五端原生客户端 | `app/` | M3 |

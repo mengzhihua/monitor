@@ -122,6 +122,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarms", s.handleAlarms)
 	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
 	m.HandleFunc("GET /api/v1/alarm_rules", s.handleAlarmRules)
+	m.HandleFunc("GET /api/v1/alarm_variables", s.handleAlarmVariables)
+	m.HandleFunc("GET /api/v1/alarms/silence", s.handleSilence)
+	m.HandleFunc("POST /api/v1/alarms/silence", s.handleSilence)
+	m.HandleFunc("GET /api/v1/contexts", s.handleContexts)
 	m.HandleFunc("GET /api/v1/weights", s.handleWeights)
 	m.HandleFunc("GET /api/v1/logs", s.handleLogs)
 	m.HandleFunc("POST /api/v1/ingest/openmetrics", s.handleIngestOpenMetrics)
@@ -488,6 +492,10 @@ func (s *Server) handleAllMetrics(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Query().Get("format") {
 	case "prometheus":
 		s.writePrometheusFor(w, v)
+	case "csv":
+		s.writeAllMetricsCSV(w, v)
+	case "shell":
+		s.writeAllMetricsShell(w, v)
 	default:
 		out := map[string]any{}
 		for _, c := range v.reg.Charts() {
@@ -515,6 +523,95 @@ func promName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func (s *Server) writeAllMetricsCSV(w http.ResponseWriter, v *view) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	fmt.Fprintln(w, "chart,dimension,value,timestamp")
+	for _, c := range v.reg.Charts() {
+		ts, vals := c.LastValues()
+		keys := make([]string, 0, len(vals))
+		for k := range vals {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(w, "%s,%s,%g,%d\n", c.ID, k, vals[k], ts)
+		}
+	}
+}
+
+func (s *Server) writeAllMetricsShell(w http.ResponseWriter, v *view) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintf(w, "# hostname=%s\n", v.hostname)
+	for _, c := range v.reg.Charts() {
+		_, vals := c.LastValues()
+		keys := make([]string, 0, len(vals))
+		for k := range vals {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		prefix := "NETDATA_" + promName(c.ID)
+		for _, k := range keys {
+			fmt.Fprintf(w, "%s_%s=%g\n", prefix, promName(k), vals[k])
+		}
+	}
+}
+
+func (s *Server) handleContexts(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	type ctxInfo struct {
+		Family     string   `json:"family"`
+		Title      string   `json:"title"`
+		Units      string   `json:"units"`
+		ChartType  string   `json:"chart_type"`
+		Priority   int      `json:"priority"`
+		Plugin     string   `json:"plugin"`
+		Charts     []string `json:"charts"`
+		Dimensions []string `json:"dimensions"`
+		FirstEntry int64    `json:"first_entry"`
+		LastEntry  int64    `json:"last_entry"`
+	}
+	out := map[string]*ctxInfo{}
+	for _, c := range v.reg.Charts() {
+		ctx := c.Context
+		if ctx == "" {
+			ctx = c.ID
+		}
+		info, ok := out[ctx]
+		if !ok {
+			info = &ctxInfo{Family: c.Family, Title: c.Title, Units: c.Units, ChartType: string(c.Type),
+				Priority: c.Priority, Plugin: c.Plugin}
+			out[ctx] = info
+		}
+		info.Charts = append(info.Charts, c.ID)
+		if c.Priority < info.Priority {
+			info.Priority = c.Priority
+		}
+		seen := map[string]bool{}
+		for _, d := range info.Dimensions {
+			seen[d] = true
+		}
+		for _, d := range c.Dims() {
+			if !seen[d.ID] {
+				info.Dimensions = append(info.Dimensions, d.ID)
+			}
+		}
+		meta := chartJSON(c, v.db)
+		if fe, _ := meta["first_entry"].(int64); fe > 0 && (info.FirstEntry == 0 || fe < info.FirstEntry) {
+			info.FirstEntry = fe
+		}
+		if le, _ := meta["last_entry"].(int64); le > info.LastEntry {
+			info.LastEntry = le
+		}
+	}
+	for _, info := range out {
+		sort.Strings(info.Charts)
+	}
+	writeJSON(w, map[string]any{"node": v.id, "hostname": v.hostname, "contexts_count": len(out), "contexts": out})
 }
 
 // writePrometheus exposes the local host and, on a hub, every remote node

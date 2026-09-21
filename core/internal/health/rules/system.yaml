@@ -327,3 +327,85 @@ alarms:
     delay: down 2m multiplier 1.5 max 30m
     info: DNS query is failing
     to: sysadmin
+
+  - name: conntrack_full
+    on: netfilter.conntrack_sockets
+    class: Utilization
+    type: System
+    component: Netfilter
+    lookup: average -10s unaligned of connections
+    calc: '$this * 100 / (($max < 1) ? (1) : ($max))'
+    units: '%'
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (75) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: netfilter connection tracking table utilization
+    to: sysadmin
+
+  - name: md_degraded
+    on: md.disks
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -10s unaligned of down
+    units: disks
+    every: 10s
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: MD RAID array has failed disks
+    to: sysadmin
+
+  - name: haproxy_backend_down
+    on: haproxy.backend_status
+    class: Availability
+    type: Service
+    component: HAProxy
+    lookup: last -10s unaligned of down
+    units: backends
+    every: 10s
+    warn: '$this > 0'
+    delay: down 2m multiplier 1.5 max 30m
+    info: HAProxy backends are down
+    to: sysadmin
+
+  - name: consul_checks_critical
+    on: consul.health_checks
+    class: Availability
+    type: Service
+    component: Consul
+    lookup: last -10s unaligned of critical
+    units: checks
+    every: 10s
+    warn: '$this > 0'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Consul health checks are critical
+    to: sysadmin
+
+  - name: battery_low
+    on: powersupply.capacity
+    class: Utilization
+    type: System
+    component: Power
+    lookup: min -1m unaligned of capacity
+    units: '%'
+    every: 1m
+    warn: '$this < (($status >= $WARNING) ? (20) : (10))'
+    crit: '$this < (($status == $CRITICAL) ? (10) : (5))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: battery / power-supply remaining capacity
+    to: sysadmin
+
+  - name: whois_expiration
+    on: whoisquery.time_until_expiration
+    class: Latency
+    type: Service
+    component: WHOIS
+    lookup: min -1m unaligned of days
+    units: days
+    every: 1h
+    warn: '$this < (($status >= $WARNING) ? (30) : (14))'
+    crit: '$this < (($status == $CRITICAL) ? (7) : (2))'
+    delay: down 1d multiplier 1.5 max 7d
+    info: domain registration days until expiration
+    to: sysadmin

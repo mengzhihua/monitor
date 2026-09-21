@@ -92,6 +92,7 @@ type Alarm struct {
 	LastUpdated      int64   `json:"last_updated"`
 	LastStatusChange int64   `json:"last_status_change"`
 	Active           bool    `json:"active"`
+	Silenced         bool    `json:"silenced,omitempty"`
 
 	// notification pacing
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
@@ -176,6 +177,11 @@ type Engine struct {
 	startOnce  sync.Once
 	closeOnce  sync.Once
 	closed     bool // notifyCh closed; guarded by mu
+
+	// runtime silence (health.silent seeds silenceAll). until=0 means forever.
+	silenceAll   bool
+	silenceUntil int64
+	silenced     map[string]int64 // chart.name or name → until unix
 }
 
 // logUpdate is appended to alarm-log.jsonl when a previously written entry
@@ -198,7 +204,8 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 		opt.Now = time.Now
 	}
 	e := &Engine{opt: opt, reg: reg, db: db, log: opt.Logger, now: opt.Now, rules: opt.Rules,
-		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256)}
+		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256),
+		silenceAll: opt.SilenceAll, silenced: map[string]int64{}}
 	if opt.LogDir != "" {
 		if err := os.MkdirAll(opt.LogDir, 0o755); err != nil {
 			return nil, err
@@ -591,7 +598,7 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 // notify queues an entry for delivery. Delivery state (Notified, NotifiedAt,
 // Alarm.LastNotified) is only recorded once a notifier actually succeeds.
 func (e *Engine) notify(entry LogEntry) {
-	if e.opt.SilenceAll || len(e.notifiersFor(entry.Recipient)) == 0 {
+	if e.IsSilenced(entry.Chart, entry.Name) || len(e.notifiersFor(entry.Recipient)) == 0 {
 		return
 	}
 	e.mu.Lock()
@@ -828,8 +835,21 @@ func (e *Engine) variables(a *Alarm, this float64, lastT int64, last map[string]
 func (e *Engine) Alarms() []Alarm {
 	e.mu.RLock()
 	out := make([]Alarm, 0, len(e.alarms))
+	now := e.now().Unix()
+	allSilent := e.silenceAll && (e.silenceUntil == 0 || now < e.silenceUntil)
 	for _, a := range e.alarms {
-		out = append(out, *a)
+		cp := *a
+		if allSilent {
+			cp.Silenced = true
+		} else {
+			for _, key := range []string{a.Chart + "." + a.Name, a.Name} {
+				if until, ok := e.silenced[key]; ok && (until == 0 || now < until) {
+					cp.Silenced = true
+					break
+				}
+			}
+		}
+		out = append(out, cp)
 	}
 	e.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
@@ -882,6 +902,106 @@ func (e *Engine) Summary() Summary {
 		}
 	}
 	return s
+}
+
+// IsSilenced reports whether notifications for this alarm are currently suppressed.
+func (e *Engine) IsSilenced(chart, name string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := e.now().Unix()
+	if e.silenceAll {
+		if e.silenceUntil == 0 || now < e.silenceUntil {
+			return true
+		}
+		e.silenceAll, e.silenceUntil = false, 0
+	}
+	for _, key := range []string{chart + "." + name, name} {
+		if until, ok := e.silenced[key]; ok {
+			if until == 0 || now < until {
+				return true
+			}
+			delete(e.silenced, key)
+		}
+	}
+	return false
+}
+
+// ApplySilence updates runtime silence. until<0 is seconds from now; 0 = forever.
+// all=true silences every alarm; key silences one name or chart.name; clear removes it.
+func (e *Engine) ApplySilence(all *bool, key string, until int64, clear bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if until < 0 {
+		until = e.now().Unix() - until
+	}
+	if all != nil {
+		if clear || !*all {
+			e.silenceAll, e.silenceUntil = false, 0
+		} else {
+			e.silenceAll, e.silenceUntil = true, until
+		}
+	}
+	if key != "" {
+		if e.silenced == nil {
+			e.silenced = map[string]int64{}
+		}
+		if clear {
+			delete(e.silenced, key)
+		} else {
+			e.silenced[key] = until
+		}
+	}
+}
+
+// SilenceInfo is the GET /api/v1/alarms/silence payload.
+func (e *Engine) SilenceInfo() map[string]any {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	now := e.now().Unix()
+	all := e.silenceAll && (e.silenceUntil == 0 || now < e.silenceUntil)
+	alarms := map[string]int64{}
+	for k, v := range e.silenced {
+		if v == 0 || now < v {
+			alarms[k] = v
+		}
+	}
+	return map[string]any{"all": all, "until": e.silenceUntil, "alarms": alarms}
+}
+
+// ChartVariables returns $names available to alarm expressions for a chart.
+func (e *Engine) ChartVariables(chartID, alarmName string) map[string]any {
+	out := map[string]any{}
+	for k, v := range e.opt.HostVars {
+		out[k] = v
+	}
+	if c, ok := e.reg.Chart(chartID); ok {
+		_, last := c.LastValues()
+		for k, v := range last {
+			out[k] = v
+		}
+		for _, d := range c.Dims() {
+			if v, ok := last[d.ID]; ok {
+				out[d.Name] = v
+			}
+		}
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, a := range e.alarms {
+		if a.Chart != chartID {
+			continue
+		}
+		if !math.IsNaN(a.Value) {
+			out[a.Name] = a.Value
+		}
+		if alarmName == "" || a.Name == alarmName {
+			out["status"] = float64(a.Status)
+			if !math.IsNaN(a.Value) {
+				out["this"] = a.Value
+			}
+		}
+	}
+	return out
 }
 
 // JSON encoding: NaN/Inf values (an alarm that has no data yet) become null.

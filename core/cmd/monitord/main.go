@@ -422,6 +422,15 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	if n.Feishu.WebhookURL != "" {
 		notifiers = append(notifiers, &health.ChatNotifier{Kind: "feishu", WebhookURL: n.Feishu.WebhookURL})
 	}
+	if n.Telegram.Token != "" && n.Telegram.ChatID != "" {
+		notifiers = append(notifiers, &health.TelegramNotifier{Token: n.Telegram.Token, ChatID: n.Telegram.ChatID})
+	}
+	if n.Discord.WebhookURL != "" {
+		notifiers = append(notifiers, &health.DiscordNotifier{WebhookURL: n.Discord.WebhookURL})
+	}
+	if n.PagerDuty.RoutingKey != "" {
+		notifiers = append(notifiers, &health.PagerDutyNotifier{RoutingKey: n.PagerDuty.RoutingKey})
+	}
 
 	vars := map[string]float64{"cpus": float64(runtime.NumCPU())}
 	if vm, err := mem.VirtualMemory(); err == nil {
