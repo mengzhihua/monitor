@@ -60,7 +60,8 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | --- | --- |
 | 有 | info, charts, chart, data, allmetrics(json/prometheus), collectors, functions, function, live, alarms, alarm_log, alarm_rules, weights, logs, ingest, nodes, stream, /metrics |
 | **M7** | `GET /api/v1/contexts`；`GET\|POST /api/v1/alarms/silence`；`GET /api/v1/alarm_variables`；allmetrics `csv`/`shell` |
-| 未做 | `/api/v1/data?context=` 跨图聚合；data `format=csv/ssv/jsonp`；`/api/v2`（contexts/nodes 批量、badge）；`alarm_count`；`manage/health` 其余管理项 |
+| **M13** | `/api/v1/data?context=` 跨图聚合；data `format=csv/ssv/jsonp`；`/api/v2` contexts/nodes/data；`alarm_count`；`badge.svg` |
+| 未做 | `manage/health` 其余管理项；v2 nodes 批量上下文树 / group_by=node |
 
 ### 2.5 健康 / 通知 / 导出
 
@@ -79,7 +80,8 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | **M12 续 4** | phpDaemon idle、MaxScale errors、NGINX Plus dropped、Docker health fails、Riak FSM、BOINC compute_error、SpigotMC TPS、w1sensor hot |
 | **M12 续 5** | 光模块温度、Intel GPU busy、DCGM GPU 温度、PAN-OS session、PowerStore/PowerVault health、S3 check、ScaleIO capacity |
 | **M12 续 6** | VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询 |
-| 未做 | Netdata `health.d` 其余数百条模板；维护窗口日历；告警聚合摘要；MongoDB 导出；Kinesis/Pub/Sub |
+| **M13** | CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
+| 未做 | Netdata `health.d` 其余应用/Windows 模板；维护窗口日历；告警聚合摘要；MongoDB 导出；Kinesis/Pub/Sub |
 
 ### 2.6 Hub / Cloud
 
@@ -120,18 +122,20 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | **M12 续 3** | storcli/nginxvts/tengine/nsd/dnsdist/dnsmasq_dhcp/isc_dhcpd/puppet/openvpn_status_log/rethinkdb/yugabytedb/vernemq | 第四批长尾 12 个 |
 | **M12 续 4** | icecast/phpdaemon/pika/maxscale/nginxplus/nginxunit/docker_engine/riakkv/litespeed/boinc/spigotmc/w1sensor | 第五批长尾 12 个 |
 | **M12 续 5** | ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory | 第六批长尾 12 个 |
-| **M12 续 6（本轮）** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | go.d init.go 收尾（跳过 testrandom） |
-| **M13** | 移植 Netdata health.d 规则全集；data context 聚合；`/api/v2` 子集 | 规则编译测试 |
+| **M12 续 6** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | go.d init.go 收尾（跳过 testrandom） |
+| **M13（本轮）** | 剩余系统 health.d 模板；data context 聚合；data csv/ssv/jsonp；`/api/v2` 子集；alarm_count；badge | 规则编译测试 |
 | **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
 | **M15** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
 | **M16** | Windows/FreeBSD 对等、Flutter、Android Agent | 跨平台 CI |
 
 M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
 
-## 4. 本轮（M12 续 6）交付清单
+## 4. 本轮（M13）交付清单
 
-1. 采集器：`vcsa` `mssql` `oracledb` `sql` `cloudwatch` `azure_monitor` `vsphere` `cato_networks` `snmp_traps` `snmp_topology`  
-2. REST / CLI / SOAP / GraphQL / UDP 探测；缺凭证或目标自动禁用（`testrandom` 故意不搬）  
-3. 内置规则：VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询
+1. `/api/v1/data?context=`：同名维度跨图求和；`chart` 优先于 `context`  
+2. data `format=csv` / `ssv` / `jsonp`（`callback=`）  
+3. `/api/v2/contexts` `/api/v2/nodes` `/api/v2/data` `/api/v2/badge.svg`  
+4. `GET /api/v1/alarm_count?status=`；`GET /api/v1/badge.svg?chart=&dimension=&alarm=`  
+5. 内置规则：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 错误、page faults、committed、writeback、TIME_WAIT、Docker exited
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。

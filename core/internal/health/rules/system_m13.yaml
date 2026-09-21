@@ -1,0 +1,242 @@
+# M13 leftover Netdata system health.d templates. Rules bind only when
+# the matching chart exists (zero-config: missing collectors stay quiet).
+alarms:
+  - name: 10min_cpu_steal
+    on: system.cpu
+    class: Utilization
+    type: System
+    component: CPU
+    lookup: average -10m unaligned of steal
+    units: '%'
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (10) : (20))'
+    crit: '$this > (($status == $CRITICAL) ? (20) : (30))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: average CPU steal time over the last 10 minutes
+    to: sysadmin
+
+  - name: 10min_cpu_guest
+    on: system.cpu
+    class: Utilization
+    type: System
+    component: CPU
+    lookup: average -10m unaligned of guest
+    units: '%'
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (20) : (40))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: average CPU guest time over the last 10 minutes
+    to: sysadmin
+
+  - name: allocated_file_descriptors
+    on: system.file_nr
+    class: Utilization
+    type: System
+    component: File descriptors
+    lookup: average -1m unaligned of allocated
+    calc: '$this * 100 / $max'
+    units: '%'
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (70) : (80))'
+    crit: '$this > (($status == $CRITICAL) ? (80) : (90))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: allocated file descriptors as a percentage of the kernel limit
+    to: sysadmin
+
+  - name: processes_blocked
+    on: system.processes
+    class: Latency
+    type: System
+    component: Processes
+    lookup: average -1m unaligned of blocked
+    units: processes
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (10) : (20))'
+    crit: '$this > (($status == $CRITICAL) ? (20) : (40))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: processes in uninterruptible (D) state
+    to: sysadmin
+
+  - name: 1m_forks_rate
+    on: system.forks
+    class: Workload
+    type: System
+    component: Processes
+    lookup: average -1m unaligned of started
+    units: processes/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (200) : (500))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: process creation rate over the last minute
+    to: sysadmin
+
+  - name: 1m_context_switches
+    on: system.ctxt
+    class: Workload
+    type: System
+    component: Processes
+    lookup: average -1m unaligned of switches
+    units: switches/s
+    every: 10s
+    info: CPU context switches per second over the last minute
+    to: silent
+
+  - name: 10min_disk_await
+    on: disk.await
+    class: Latency
+    type: System
+    component: Disk
+    lookup: average -10m unaligned of reads
+    units: milliseconds/operation
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (50) : (100))'
+    crit: '$this > (($status == $CRITICAL) ? (100) : (200))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: average completed disk I/O latency over the last 10 minutes
+    to: sysadmin
+
+  - name: 10min_io_pressure
+    on: system.io_some_pressure
+    class: Latency
+    type: System
+    component: Pressure
+    lookup: average -10m unaligned of avg10
+    units: '%'
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (20) : (40))'
+    crit: '$this > (($status == $CRITICAL) ? (40) : (70))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: IO some-pressure stall over the last 10 minutes
+    to: sysadmin
+
+  - name: 1m_ipv4_udp_errors
+    on: ipv4.udperrors
+    class: Errors
+    type: System
+    component: UDP
+    lookup: sum -1m unaligned of InErrors,NoPorts,RcvbufErrors,SndbufErrors,InCsumErrors
+    units: errors
+    every: 10s
+    warn: '$this >= 10'
+    delay: down 15m multiplier 1.5 max 1h
+    info: IPv4 UDP errors over the last minute
+    to: sysadmin
+
+  - name: 1m_ipv4_tcp_resets
+    on: ipv4.tcperrors
+    class: Errors
+    type: System
+    component: TCP
+    lookup: sum -1m unaligned of OutRsts
+    units: resets
+    every: 10s
+    warn: '$this >= 20'
+    delay: down 15m multiplier 1.5 max 1h
+    info: IPv4 TCP outbound resets over the last minute
+    to: sysadmin
+
+  - name: 1m_tcp_handshake_fails
+    on: ipv4.tcphandshake
+    class: Errors
+    type: System
+    component: TCP
+    lookup: sum -1m unaligned of AttemptFails
+    units: fails
+    every: 10s
+    warn: '$this >= 10'
+    delay: down 15m multiplier 1.5 max 1h
+    info: IPv4 TCP handshake failures over the last minute
+    to: sysadmin
+
+  - name: 1m_ipv4_ip_errors
+    on: ipv4.errors
+    class: Errors
+    type: System
+    component: IP
+    lookup: sum -1m unaligned of InDiscards,OutDiscards,InHdrErrors,InAddrErrors,OutNoRoutes
+    units: packets
+    every: 10s
+    warn: '$this >= 10'
+    delay: down 15m multiplier 1.5 max 1h
+    info: IPv4 packet errors over the last minute
+    to: sysadmin
+
+  - name: 1m_ipv6_udp_errors
+    on: ipv6.udperrors
+    class: Errors
+    type: System
+    component: UDP
+    lookup: sum -1m unaligned of InErrors,NoPorts,RcvbufErrors,SndbufErrors,InCsumErrors
+    units: errors
+    every: 10s
+    warn: '$this >= 10'
+    delay: down 15m multiplier 1.5 max 1h
+    info: IPv6 UDP errors over the last minute
+    to: sysadmin
+
+  - name: 1m_major_page_faults
+    on: mem.pgfaults
+    class: Errors
+    type: System
+    component: Memory
+    lookup: average -1m unaligned of major
+    units: faults/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (20) : (50))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: major page faults per second over the last minute
+    to: sysadmin
+
+  - name: committed_memory
+    on: mem.committed
+    class: Utilization
+    type: System
+    component: Memory
+    lookup: average -1m unaligned of committed
+    calc: '$this * 100 / $limit'
+    units: '%'
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: committed address space as a percentage of the overcommit limit
+    to: sysadmin
+
+  - name: 1m_writeback
+    on: mem.writeback
+    class: Latency
+    type: System
+    component: Memory
+    lookup: average -1m unaligned of dirty,writeback
+    units: MiB
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (256) : (512))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: dirty plus writeback memory over the last minute
+    to: sysadmin
+
+  - name: tcp_timewait
+    on: ip.tcpsock
+    class: Utilization
+    type: System
+    component: TCP
+    lookup: average -1m unaligned of time_wait
+    units: connections
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (10000) : (20000))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: TCP sockets in TIME_WAIT
+    to: sysadmin
+
+  - name: docker_exited_containers
+    on: docker.containers
+    class: Errors
+    type: Containers
+    component: Docker
+    lookup: last -30s unaligned of exited
+    units: containers
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (5) : (20))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Docker containers in exited state
+    to: sysadmin

@@ -247,9 +247,11 @@ REST 前缀 `/api/v1`（Agent 与 Hub 一致；Hub 额外 `/api/v1/hub/*`）。�
 | --- | --- |
 | `GET /api/v1/info` | 节点信息、版本、能力、采集器列表、tier/retention |
 | `GET /api/v1/charts` | 全部 chart 元数据 |
-| `GET /api/v1/data?chart=&after=&before=&points=&group=avg|min|max|sum|median|p95|incremental-sum&dimensions=&gtime=&options=anomaly-bit,unaligned,percentage` | 时序查询；`after/before` 支持相对秒（`-600`）与绝对时间戳；自动选 tier |
-| `GET /api/v1/contexts` / `GET /api/v1/data?context=&nodes=&group_by=node|instance|dimension|label` | 跨 chart / 跨节点（Hub）聚合 |
-| `GET /api/v1/alarms` / `alarm_log` / `alarm_variables` | 告警当前状态、历史、规则变量 |
+| `GET /api/v1/data?chart=&context=&after=&before=&points=&group=avg|min|max|sum|median&dimensions=&format=json|csv|ssv|jsonp&tier=` | 时序查询；`chart` 或 `context`（同名维度跨图求和）；`after/before` 支持相对秒与绝对时间戳；自动选 tier |
+| `GET /api/v1/contexts` / `GET /api/v1/data?context=` | 跨 chart 聚合 |
+| `GET /api/v2/contexts` / `GET /api/v2/nodes` / `GET /api/v2/data` | v1 子集，响应带 `"api": 2` |
+| `GET /api/v1/alarms` / `alarm_log` / `alarm_variables` / `alarm_count` | 告警当前状态、历史、规则变量、计数 |
+| `GET /api/v1/badge.svg?chart=&dimension=&alarm=` | 状态徽章 SVG |
 | `POST /api/v1/alarms/silence` | 静默 |
 | `GET /api/v1/weights?method=anomaly-rate|ks2|volume&after=&before=&baseline_after=&baseline_before=` | 异常顾问 / 关联分析 |
 | `GET /api/v1/functions` / `GET /api/v1/function?function=processes&args=` | 实时函数 |
@@ -467,7 +469,7 @@ sequenceDiagram
 | **M12 续 4 Web/DB/应用** | icecast/phpdaemon/pika/maxscale/nginxplus/nginxunit/docker_engine/riakkv/litespeed/boinc/spigotmc/w1sensor | 对标 Netdata 第五批长尾 |
 | **M12 续 5 硬件/REST** | ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory | 对标 Netdata 第六批长尾 |
 | **M12 续 6 云/SQL/SNMP** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | 对标 Netdata go.d init.go 收尾（跳过 testrandom） |
-| **M13 规则与查询** | health.d 规则全集、`data?context=`、`/api/v2` | 告警与跨图查询对齐 |
+| **M13 规则与查询（本轮）** | 剩余系统 health.d 模板、`data?context=`、data csv/ssv/jsonp、`/api/v2` 子集、alarm_count、badge | 告警与跨图查询对齐 |
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
 | **M15–M16** | k-means ML、Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
 

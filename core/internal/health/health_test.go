@@ -116,6 +116,15 @@ func TestDefaultRulesCompile(t *testing.T) {
 	if len(rules) < 10 {
 		t.Fatalf("only %d builtin rules", len(rules))
 	}
+	found := map[string]bool{}
+	for _, r := range rules {
+		found[r.Spec.Name] = true
+	}
+	for _, name := range []string{"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors"} {
+		if !found[name] {
+			t.Fatalf("missing M13 builtin rule %q", name)
+		}
+	}
 	override, _ := ParseRules([]byte(`
 alarms:
   - name: ram_in_use

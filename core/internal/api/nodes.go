@@ -157,6 +157,10 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
 
 // GET /api/v1/nodes — the local host first, then streamed nodes.
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.nodesPayload(r, 1))
+}
+
+func (s *Server) nodesPayload(r *http.Request, api int) map[string]any {
 	now := time.Now()
 	local := hub.Info{ID: "", Hostname: s.reg.Host.Hostname, OS: s.reg.Host.OS, Arch: s.reg.Host.Arch, Labels: s.reg.Host.Labels,
 		UpdateEvery: s.reg.Host.UpdateEvery, Version: s.opt.Version, Status: hub.StatusLive, Local: true,
@@ -197,7 +201,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 			out = append(out, inf)
 		}
 	}
-	writeJSON(w, map[string]any{"now": now.Unix(), "nodes": out})
+	return map[string]any{"api": api, "now": now.Unix(), "nodes": out}
 }
 
 // DELETE /api/v1/nodes?node=<id> — drop an offline node's metadata.
