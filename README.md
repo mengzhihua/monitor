@@ -154,6 +154,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `cgroup`（cgroup v2 容器/VM：cpu/mem/io/pids）、`k8s_kubelet`（:10250/:10255/metrics）、`k8s_kubeproxy`（:10249/metrics）、`k8s_apiserver`（:6443/metrics）、`k8s_state`（API nodes/pods）；目标缺失自动禁用 |
 | 告警 | kubelet runtime 错误、API server 5xx、节点 NotReady、Failed pods |
 
+### 已实现能力（M12：SNMP / 存储 / 长尾应用）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `snmp`（snmpwalk IF-MIB）、`proxysql`、`clickhouse`、`cockroachdb`、`pulsar`、`envoy`、`upsd`（NUT :3493）、`zfspool`、`dmcache`、`filecheck`、`supervisord`、`monit`；目标缺失自动禁用 |
+| 告警 | ZFS degraded、NUT 电池、ProxySQL slow、Envoy 5xx、文件缺失、Supervisord/Monit、SNMP ifDown、Cockroach live nodes |
+
 ### 开发
 
 ```bash

@@ -50,7 +50,7 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -260,6 +260,49 @@ collectors:
       token: ""
       timeout: 3s
       max_pods: 100
+    proxysql:
+      address: 127.0.0.1:6032
+      user: stats
+      password: stats
+      timeout: 2s
+    clickhouse:
+      url: http://127.0.0.1:8123
+      timeout: 3s
+    cockroachdb:
+      url: http://127.0.0.1:8080/_status/vars
+      timeout: 3s
+    pulsar:
+      url: http://127.0.0.1:8080/metrics
+      timeout: 3s
+    envoy:
+      url: ""                 # empty = :9901/stats/prometheus
+      timeout: 2s
+    upsd:
+      address: 127.0.0.1:3493
+      timeout: 2s
+    zfspool:
+      command: zpool
+      timeout: 3s
+    dmcache:
+      command: dmsetup
+      timeout: 3s
+    filecheck:
+      files: []               # empty = disabled
+      dirs: []
+    supervisord:
+      url: http://127.0.0.1:9001/RPC2
+      timeout: 2s
+    monit:
+      url: http://127.0.0.1:2812/_status?format=xml
+      user: ""
+      password: ""
+      timeout: 2s
+    snmp:
+      address: 127.0.0.1
+      community: public
+      version: 2c
+      command: snmpwalk
+      timeout: 3s
 
 plugins:
   enabled: true
