@@ -1285,3 +1285,107 @@ alarms:
     delay: down 2m multiplier 1.5 max 30m
     info: 1-Wire sensor temperature is high
     to: sysadmin
+
+  - name: ethtool_module_hot
+    on: ethtool.optical_module_temperature
+    class: Errors
+    type: System
+    component: NIC
+    lookup: last -30s unaligned of temperature
+    units: Celsius
+    every: 10s
+    warn: '$this > 70'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Optical module temperature is high
+    to: sysadmin
+
+  - name: intelgpu_engine_busy
+    on: intelgpu.engine_busy_perc
+    class: Utilization
+    type: System
+    component: GPU
+    lookup: last -30s unaligned of busy
+    units: '%'
+    every: 10s
+    warn: '$this > 95'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Intel GPU engine is saturated
+    to: sysadmin
+
+  - name: dcgm_gpu_hot
+    on: dcgm.gpu_temp
+    class: Errors
+    type: System
+    component: GPU
+    lookup: last -30s unaligned of *
+    units: Celsius
+    every: 10s
+    warn: '$this > 85'
+    delay: down 2m multiplier 1.5 max 30m
+    info: NVIDIA DCGM GPU temperature is high
+    to: sysadmin
+
+  - name: panos_session_util
+    on: panos.session_utilization
+    class: Resources
+    type: Firewall
+    component: PAN-OS
+    lookup: last -30s unaligned of utilization
+    units: percent
+    every: 10s
+    warn: '$this > 80'
+    delay: down 5m multiplier 1.5 max 1h
+    info: PAN-OS session table utilization is high
+    to: sysadmin
+
+  - name: powerstore_unhealthy
+    on: powerstore.cluster_health
+    class: Errors
+    type: Storage
+    component: PowerStore
+    lookup: last -30s unaligned of healthy
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Dell PowerStore cluster is not healthy
+    to: sysadmin
+
+  - name: powervault_unhealthy
+    on: powervault.system_health
+    class: Errors
+    type: Storage
+    component: PowerVault
+    lookup: last -30s unaligned of ok
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Dell PowerVault system health is not OK
+    to: sysadmin
+
+  - name: s3check_failed
+    on: s3check.status
+    class: Errors
+    type: Storage
+    component: S3
+    lookup: last -30s unaligned of failed
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: S3 check failed
+    to: sysadmin
+
+  - name: scaleio_capacity
+    on: scaleio.system_capacity
+    class: Resources
+    type: Storage
+    component: ScaleIO
+    lookup: last -30s unaligned of unused
+    units: KiB
+    every: 10s
+    warn: '$this < 1024'
+    delay: down 5m multiplier 1.5 max 1h
+    info: ScaleIO unused capacity is low
+    to: sysadmin

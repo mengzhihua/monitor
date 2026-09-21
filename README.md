@@ -189,6 +189,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `icecast`、`phpdaemon`、`pika`、`maxscale`、`nginxplus`、`nginxunit`、`docker_engine`、`riakkv`、`litespeed`、`boinc`、`spigotmc`、`w1sensor`；目标缺失自动禁用 |
 | 告警 | phpDaemon idle、MaxScale errors、NGINX Plus dropped、Docker health fails、Riak FSM、BOINC compute_error、SpigotMC TPS、w1sensor hot |
 
+### 已实现能力（M12 续 5：硬件 / REST 存储）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `ap`、`dockerhub`、`ethtool`、`intelgpu`、`logind`、`dcgm`、`panos`、`powerstore`、`powervault`、`s3check`、`scaleio`、`smbios_memory`；目标缺失自动禁用 |
+| 告警 | 光模块温度、Intel GPU busy、DCGM GPU 温度、PAN-OS session、PowerStore/PowerVault health、S3 check、ScaleIO capacity |
+
 ### 开发
 
 ```bash

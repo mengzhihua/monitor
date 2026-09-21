@@ -102,6 +102,10 @@ func ensureDim(reg *registry.Registry, chartID, dimID string, d *registry.Dimens
 	c.AddDimension(d)
 }
 
+func readBody(resp *http.Response) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
+
 func httpGetAuth(ctx context.Context, client *http.Client, url, user, pass string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
