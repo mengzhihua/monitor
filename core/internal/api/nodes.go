@@ -83,7 +83,7 @@ func (ro Role) allows(r *http.Request) bool {
 	case RoleTroubleshooter:
 		return r.Method == http.MethodGet
 	default:
-		return r.Method == http.MethodGet && r.URL.Path != "/api/v1/function"
+		return r.Method == http.MethodGet && r.URL.Path != "/api/v1/function" && r.URL.Path != "/api/v1/logs"
 	}
 }
 
@@ -144,6 +144,9 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
 	if v, ok := s.resolve(id); ok {
 		return v, true
 	}
+	if s.opt.Cluster != nil && s.opt.Cluster.Proxy(w, r, id) {
+		return nil, false
+	}
 	if s.opt.Nodes == nil {
 		http.Error(w, "not a hub: node= is unsupported", http.StatusNotFound)
 		return nil, false
@@ -177,6 +180,21 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 			for _, n := range s.opt.Nodes.List() {
 				out = append(out, n.Info(now))
 			}
+		}
+	}
+	if s.opt.Cluster != nil {
+		seen := map[string]bool{}
+		for _, n := range out {
+			seen[n.ID] = true
+		}
+		for _, inf := range s.opt.Cluster.PeerInfos() {
+			if seen[inf.ID] {
+				continue
+			}
+			if st := r.URL.Query().Get("status"); st != "" && inf.Status != st {
+				continue
+			}
+			out = append(out, inf)
 		}
 	}
 	writeJSON(w, map[string]any{"now": now.Unix(), "nodes": out})

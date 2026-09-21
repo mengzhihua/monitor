@@ -52,6 +52,8 @@ type Options struct {
 	Stream *stream.Client
 	// ExtraFunctions are hub-side functions (e.g. streaming) merged with collectors.
 	ExtraFunctions []collect.Function
+	// Cluster fans node lookups out to peer hubs.
+	Cluster *hub.Cluster
 }
 
 type Server struct {
@@ -64,6 +66,7 @@ type Server struct {
 	nets   []*net.IPNet
 	mux    *http.ServeMux
 	ingest *ingest.Mapper
+	otlp   *ingest.Mapper
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -71,7 +74,8 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		opt.Logger = slog.Default()
 	}
 	s := &Server{reg: reg, db: db, sched: sched, opt: opt, log: opt.Logger, mux: http.NewServeMux(),
-		ingest: ingest.NewMapper(ingest.Options{Prefix: "om", Plugin: "ingest", Module: "openmetrics", Family: "openmetrics"})}
+		ingest: ingest.NewMapper(ingest.Options{Prefix: "om", Plugin: "ingest", Module: "openmetrics", Family: "openmetrics"}),
+		otlp:   ingest.NewMapper(ingest.Options{Prefix: "otlp", Plugin: "ingest", Module: "otlp", Family: "otlp"})}
 	for _, c := range opt.AllowFrom {
 		if !strings.Contains(c, "/") {
 			if strings.Contains(c, ":") {
@@ -119,8 +123,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarm_log", s.handleAlarmLog)
 	m.HandleFunc("GET /api/v1/alarm_rules", s.handleAlarmRules)
 	m.HandleFunc("GET /api/v1/weights", s.handleWeights)
+	m.HandleFunc("GET /api/v1/logs", s.handleLogs)
 	m.HandleFunc("POST /api/v1/ingest/openmetrics", s.handleIngestOpenMetrics)
 	m.HandleFunc("PUT /api/v1/ingest/openmetrics", s.handleIngestOpenMetrics)
+	m.HandleFunc("POST /api/v1/ingest/otlp", s.handleIngestOTLP)
+	m.HandleFunc("POST /v1/metrics", s.handleIngestOTLP)
 	m.HandleFunc("GET /api/v1/nodes", s.handleNodes)
 	m.HandleFunc("DELETE /api/v1/nodes", s.handleForgetNode)
 	if s.opt.Nodes != nil {
@@ -159,7 +166,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics" {
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/v1/") {
 			u, ok := s.authenticate(r)
 			if !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -683,10 +690,83 @@ func (s *Server) handleIngestOpenMetrics(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]any{"samples": n, "parsed": len(samples)})
 }
 
+func (s *Server) handleIngestOTLP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	samples, err := ingest.ParseOTLP(body, r.Header.Get("Content-Type"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	n := s.otlp.Apply(s.reg, time.Now(), samples)
+	if strings.HasPrefix(r.URL.Path, "/v1/") {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"partialSuccess":{}}`)
+		return
+	}
+	writeJSON(w, map[string]any{"samples": n, "parsed": len(samples)})
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	args := map[string]string{"query": q.Get("query"), "source": q.Get("source"), "after": q.Get("after"), "before": q.Get("before"), "limit": q.Get("limit")}
+	if v.node != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		res, err := v.node.Call(ctx, "logs", args)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"function": "logs", "node": v.id, "time": time.Now().Unix(), "result": json.RawMessage(res)})
+		return
+	}
+	limit := 200
+	if n, _ := strconv.Atoi(q.Get("limit")); n > 0 {
+		limit = n
+	}
+	lq := collect.LogQuery{Source: q.Get("source"), Query: q.Get("query"), Limit: limit}
+	if n, _ := strconv.ParseInt(q.Get("after"), 10, 64); n != 0 {
+		lq.After = n
+	}
+	if n, _ := strconv.ParseInt(q.Get("before"), 10, 64); n != 0 {
+		lq.Before = n
+	}
+	rows := collect.QueryLogs(lq)
+	tab := collect.Table{Columns: []string{"time", "priority", "unit", "pid", "message"}, Total: len(rows), Rows: make([]any, len(rows))}
+	for i, row := range rows {
+		tab.Rows[i] = row
+	}
+	writeJSON(w, map[string]any{"function": "logs", "time": time.Now().Unix(), "result": tab})
+}
+
 func (s *Server) handleWeights(w http.ResponseWriter, r *http.Request) {
-	method := r.URL.Query().Get("method")
+	q := r.URL.Query()
+	method := q.Get("method")
 	if method == "" {
 		method = "anomaly-rate"
+	}
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	if method == "ks2" || method == "volume" {
+		now := time.Now().Unix()
+		before := parseTime(q.Get("before"), now, now)
+		after := parseTime(q.Get("after"), before, before-300)
+		baseBefore := parseTime(q.Get("baseline_before"), before, after)
+		baseAfter := parseTime(q.Get("baseline_after"), baseBefore, baseBefore-600)
+		weights := collect.Correlate(v.reg, v.db, method, after, before, baseAfter, baseBefore)
+		writeJSON(w, map[string]any{"method": method, "weights": weights, "count": len(weights),
+			"after": after, "before": before, "baseline_after": baseAfter, "baseline_before": baseBefore})
+		return
 	}
 	c := s.sched.Collector("ml")
 	wp, ok := c.(collect.WeightProvider)

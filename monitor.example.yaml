@@ -46,9 +46,11 @@ hub:
   max_nodes: 0             # 1000
   max_charts_per_node: 0   # 5000
   max_dims_per_chart: 0    # 1000
+  peers: []                # other hub base URLs, e.g. ["http://hub2:19999"]
+  peer_token: ""           # Bearer token presented to peers (usually their web.token)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached proc sensors netstat statsd prometheus httpcheck portcheck ping ml
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -95,6 +97,40 @@ collectors:
       enabled: true
       window: 120
       sigma: 3
+    mysql:
+      address: 127.0.0.1:3306
+      user: root
+      password: ""
+      timeout: 2s
+    postgres:
+      address: 127.0.0.1:5432
+      user: ""                 # empty = current OS user
+      password: ""
+      database: postgres
+      timeout: 2s
+    elasticsearch:
+      url: http://127.0.0.1:9200
+      user: ""
+      password: ""
+      timeout: 2s
+    rabbitmq:
+      url: http://127.0.0.1:15672
+      user: guest
+      password: guest
+      timeout: 2s
+    otlp:                    # OTLP HTTP metrics listener (JSON / protobuf)
+      listen: 127.0.0.1:4318
+    logs:                    # journald / Event Log / files + `logs` function
+      files: []              # extra files; defaults /var/log/syslog, /var/log/messages
+      top: 200
+    sslcheck:
+      timeout: 5s
+      jobs: []               # e.g. [{ name: web, target: example.com:443 }]
+    dnsquery:
+      timeout: 2s
+      jobs: []               # e.g. [{ name: cloudflare, record: cloudflare.com, server: 1.1.1.1 }]
+    nvidia:                  # nvidia-smi GPUs
+      command: nvidia-smi
     netstat:             # TCP states + `network-connections` function
       top: 500
 
@@ -151,10 +187,11 @@ health:
     feishu:
       webhook_url: ""    # 飞书自定义机器人
 
-# Push the latest sample of every chart (Netdata exporting engine).
-# Types: graphite (TCP line protocol), influx (InfluxDB 1.x /write), json (HTTP POST).
+# Types: graphite (TCP line protocol), influx (InfluxDB 1.x /write), json (HTTP POST),
+# prometheus (Prometheus remote write: snappy + protobuf).
 export:
   destinations: []
   # - { type: graphite, address: "127.0.0.1:2003", prefix: monitor, every: 10s }
   # - { type: influx, url: "http://127.0.0.1:8086/write?db=monitor", prefix: monitor, every: 10s }
   # - { type: json, url: "http://127.0.0.1:9000/ingest", every: 10s }
+  # - { type: prometheus, url: "http://127.0.0.1:9090/api/v1/write", prefix: monitor, every: 10s }

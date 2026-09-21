@@ -181,6 +181,7 @@ func run() error {
 		Logger:    log.With("component", "api"),
 	}
 	var nodes *hub.Nodes
+	var cluster *hub.Cluster
 	var srv *api.Server
 	if cfg.Mode == "hub" {
 		if len(cfg.Hub.APIKeys) == 0 {
@@ -201,6 +202,10 @@ func run() error {
 		}
 		apiOpt.Nodes = nodes
 		apiOpt.ExtraFunctions = []collect.Function{streamingFunction(nodes)}
+		if len(cfg.Hub.Peers) > 0 {
+			cluster = hub.NewCluster(cfg.Hub.Peers, cfg.Hub.PeerToken, log.With("component", "cluster"))
+			apiOpt.Cluster = cluster
+		}
 	}
 	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {
@@ -253,6 +258,10 @@ func run() error {
 		if nodes != nil {
 			wg.Add(1)
 			go func() { defer wg.Done(); nodes.Run(ctx) }()
+		}
+		if cluster != nil {
+			wg.Add(1)
+			go func() { defer wg.Done(); cluster.Run(ctx) }()
 		}
 		if exp := export.New(reg, cfg.Export.Destinations, log.With("component", "export")); !exp.Empty() {
 			wg.Add(1)

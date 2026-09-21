@@ -442,3 +442,43 @@ func TestIngestOpenMetricsAndWeights(t *testing.T) {
 		t.Fatalf("weights without ml = %d", resp.StatusCode)
 	}
 }
+
+func TestIngestOTLPAndWeightsKS2(t *testing.T) {
+	ts, reg := newTestServer(t, Options{Version: "test"})
+	now := time.Now().Truncate(time.Second)
+	for i := 0; i < 40; i++ {
+		v := float64(10)
+		if i >= 30 {
+			v = 50
+		}
+		_ = reg.Collect("system.ram", now.Add(time.Duration(i-39)*time.Second), map[string]float64{"used": v, "free": 1})
+	}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/ingest/otlp", strings.NewReader(`{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"demo_gauge","gauge":{"dataPoints":[{"asDouble":2}]}}]}]}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("otlp status %d", resp.StatusCode)
+	}
+	var charts struct {
+		Charts map[string]any `json:"charts"`
+	}
+	getJSON(t, ts.URL+"/api/v1/charts", &charts)
+	if _, ok := charts.Charts["otlp.demo_gauge"]; !ok {
+		t.Fatalf("otlp chart missing: %v", charts.Charts)
+	}
+	var w struct {
+		Method string `json:"method"`
+		Count  int    `json:"count"`
+	}
+	getJSON(t, ts.URL+"/api/v1/weights?method=volume&after=-10&before=0&baseline_after=-40&baseline_before=-10", &w)
+	if w.Method != "volume" {
+		t.Fatalf("weights = %+v", w)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/logs?source=file&limit=5", nil); resp.StatusCode != 200 {
+		t.Fatalf("logs status %d", resp.StatusCode)
+	}
+}

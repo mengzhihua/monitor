@@ -27,7 +27,7 @@ export type NodeStatus = 'live' | 'stale' | 'offline'
 export interface NodeInfo {
   id: string; hostname: string; os: string; arch: string; labels: Record<string, string> | null; update_every: number
   version: string; status: NodeStatus; local: boolean; first_seen: number; last_seen: number; last_data?: number
-  charts_count: number; alarms: { warning: number; critical: number }; functions?: string[]
+  charts_count: number; alarms: { warning: number; critical: number }; functions?: string[]; peer?: string
 }
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface DataResponse {
@@ -55,6 +55,11 @@ export interface FunctionInfo { name: string; help: string; timeout: number }
 /** Tabular function result (e.g. `processes`). */
 export interface FunctionTable { columns: string[]; rows: Record<string, unknown>[]; total: number }
 export interface FunctionResponse { function: string; time: number; result: FunctionTable | unknown }
+export interface Weight {
+  chart: string; context: string; title: string; score: number; anomaly_rate: number
+}
+export interface WeightsResponse { method: string; weights: Weight[]; count: number }
+export interface LogRow { time: number; priority: string; unit: string; pid: string; message: string }
 
 const base = ''
 const TOKEN_KEY = 'monitor.token'
@@ -124,6 +129,10 @@ export const api = {
   functions: () => get<FunctionInfo[]>(`/api/v1/functions${q({})}`),
   function: (name: string, args: Record<string, string> = {}) =>
     get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`),
+  weights: (method = 'anomaly-rate', extra: Record<string, string | number> = {}) =>
+    get<WeightsResponse>(`/api/v1/weights${q({ method, ...extra })}`),
+  logs: (args: Record<string, string> = {}) =>
+    get<FunctionResponse>(`/api/v1/logs${q(args)}`),
   data: (chart: string, after: number, before = 0, points = 0) =>
     get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`),
   liveURL(charts: string[] = []) {

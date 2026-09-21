@@ -19,7 +19,7 @@ import (
 )
 
 type Destination struct {
-	Type    string            `yaml:"type"` // graphite | influx | json
+	Type    string            `yaml:"type"` // graphite | influx | json | prometheus
 	Address string            `yaml:"address"`
 	URL     string            `yaml:"url"`
 	Prefix  string            `yaml:"prefix"`
@@ -100,6 +100,8 @@ func (e *Engine) flush(ctx context.Context, d Destination) error {
 		return e.flushInflux(ctx, d)
 	case "json":
 		return e.flushJSON(ctx, d)
+	case "prometheus", "prom", "remote_write", "prometheus-remote-write":
+		return e.flushPromRW(ctx, d)
 	default:
 		return fmt.Errorf("unknown exporter %q", d.Type)
 	}

@@ -78,6 +78,9 @@ type Hub struct {
 	MaxNodes         int `yaml:"max_nodes"`
 	MaxChartsPerNode int `yaml:"max_charts_per_node"`
 	MaxDimsPerChart  int `yaml:"max_dims_per_chart"`
+	// Cluster: other hubs this process queries for nodes it does not own.
+	Peers     []string `yaml:"peers"`
+	PeerToken string   `yaml:"peer_token"`
 }
 
 // ModuleDecoders adapts collectors.modules to the decoder callbacks the
