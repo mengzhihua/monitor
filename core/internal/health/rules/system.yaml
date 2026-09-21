@@ -1181,3 +1181,107 @@ alarms:
     delay: down 5m multiplier 1.5 max 1h
     info: VerneMQ socket close events are high
     to: sysadmin
+
+  - name: phpdaemon_no_idle
+    on: phpdaemon.alive_workers
+    class: Resources
+    type: Web
+    component: phpDaemon
+    lookup: last -30s unaligned of idle
+    units: workers
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: phpDaemon has no idle workers
+    to: sysadmin
+
+  - name: maxscale_errors
+    on: maxscale.poll_events
+    class: Errors
+    type: Database
+    component: MaxScale
+    lookup: sum -1m unaligned absolute of errors
+    units: events
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: MaxScale poll errors in the last minute
+    to: sysadmin
+
+  - name: nginxplus_dropped
+    on: nginxplus.client_connections_rate
+    class: Errors
+    type: Web
+    component: nginx
+    lookup: sum -1m unaligned absolute of dropped
+    units: connections
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: NGINX Plus dropped connections in the last minute
+    to: sysadmin
+
+  - name: docker_engine_health_fails
+    on: docker_engine.engine_daemon_health_checks_failed_total
+    class: Errors
+    type: Containers
+    component: Docker
+    lookup: sum -1m unaligned absolute of fails
+    units: events
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Docker Engine container health checks failed
+    to: sysadmin
+
+  - name: riakkv_fsm
+    on: riak.core.fsm_active
+    class: Resources
+    type: Database
+    component: Riak
+    lookup: last -30s unaligned of *
+    units: fsms
+    every: 10s
+    warn: '$this > 100'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Riak KV active FSMs are high
+    to: sysadmin
+
+  - name: boinc_compute_error
+    on: boinc.tasks_per_state
+    class: Errors
+    type: Service
+    component: BOINC
+    lookup: last -30s unaligned of compute_error
+    units: tasks
+    every: 10s
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: BOINC tasks in compute_error state
+    to: sysadmin
+
+  - name: spigotmc_low_tps
+    on: spigotmc.avg_tps
+    class: Performance
+    type: Service
+    component: SpigotMC
+    lookup: last -30s unaligned of 1min
+    units: ticks
+    every: 10s
+    warn: '$this < 18'
+    delay: down 2m multiplier 1.5 max 30m
+    info: SpigotMC 1-minute TPS is low
+    to: sysadmin
+
+  - name: w1sensor_hot
+    on: w1sensor.temperature
+    class: Errors
+    type: System
+    component: Sensor
+    lookup: last -30s unaligned of temperature
+    units: Celsius
+    every: 10s
+    warn: '$this > 80'
+    delay: down 2m multiplier 1.5 max 30m
+    info: 1-Wire sensor temperature is high
+    to: sysadmin

@@ -182,6 +182,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `storcli`、`nginxvts`、`tengine`、`nsd`、`dnsdist`、`dnsmasq_dhcp`、`isc_dhcpd`、`puppet`、`openvpn_status_log`、`rethinkdb`、`yugabytedb`、`vernemq`；目标缺失自动禁用 |
 | 告警 | StorCLI unhealthy、nginx VTS 5xx、Tengine 5xx、NSD drops、dnsdist drops、ISC dhcpd pool、Yugabyte over-limit、VerneMQ socket close |
 
+### 已实现能力（M12 续 4：Web / DB / 应用）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `icecast`、`phpdaemon`、`pika`、`maxscale`、`nginxplus`、`nginxunit`、`docker_engine`、`riakkv`、`litespeed`、`boinc`、`spigotmc`、`w1sensor`；目标缺失自动禁用 |
+| 告警 | phpDaemon idle、MaxScale errors、NGINX Plus dropped、Docker health fails、Riak FSM、BOINC compute_error、SpigotMC TPS、w1sensor hot |
+
 ### 开发
 
 ```bash
