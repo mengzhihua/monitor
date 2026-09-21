@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -108,4 +109,85 @@ func incDim(id string) *registry.Dimension {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+func jsonMap(b []byte) (map[string]any, error) {
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func nestFloat(v any, path ...string) float64 {
+	cur := v
+	for _, p := range path {
+		switch n := cur.(type) {
+		case map[string]any:
+			cur = n[p]
+		default:
+			return 0
+		}
+	}
+	switch n := cur.(type) {
+	case float64:
+		return n
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case string:
+		return firstFloat(n)
+	case bool:
+		if n {
+			return 1
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
+func nestString(v any, path ...string) string {
+	cur := v
+	for _, p := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur = m[p]
+	}
+	if s, ok := cur.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func nestMap(v any, path ...string) map[string]any {
+	cur := v
+	for _, p := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[p]
+	}
+	m, _ := cur.(map[string]any)
+	return m
+}
+
+func nestSlice(v any, path ...string) []any {
+	cur := v
+	for _, p := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[p]
+	}
+	s, _ := cur.([]any)
+	return s
 }
