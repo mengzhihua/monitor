@@ -50,7 +50,7 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -239,6 +239,332 @@ collectors:
       address: 127.0.0.1:9051
       password: ""
       timeout: 2s
+    cgroup:
+      cgroup_root: /sys/fs/cgroup
+      include: []
+      exclude: []
+      max: 200
+    k8s_kubelet:
+      url: ""                 # empty = :10255/metrics then :10250/metrics
+      token: ""
+      timeout: 2s
+    k8s_kubeproxy:
+      url: http://127.0.0.1:10249/metrics
+      timeout: 2s
+    k8s_apiserver:
+      url: ""                 # empty = in-cluster then :6443/metrics
+      token: ""
+      timeout: 3s
+    k8s_state:
+      url: ""                 # empty = in-cluster then :6443
+      token: ""
+      timeout: 3s
+      max_pods: 100
+    proxysql:
+      address: 127.0.0.1:6032
+      user: stats
+      password: stats
+      timeout: 2s
+    clickhouse:
+      url: http://127.0.0.1:8123
+      timeout: 3s
+    cockroachdb:
+      url: http://127.0.0.1:8080/_status/vars
+      timeout: 3s
+    pulsar:
+      url: http://127.0.0.1:8080/metrics
+      timeout: 3s
+    envoy:
+      url: ""                 # empty = :9901/stats/prometheus
+      timeout: 2s
+    upsd:
+      address: 127.0.0.1:3493
+      timeout: 2s
+    zfspool:
+      command: zpool
+      timeout: 3s
+    dmcache:
+      command: dmsetup
+      timeout: 3s
+    filecheck:
+      files: []               # empty = disabled
+      dirs: []
+    supervisord:
+      url: http://127.0.0.1:9001/RPC2
+      timeout: 2s
+    monit:
+      url: http://127.0.0.1:2812/_status?format=xml
+      user: ""
+      password: ""
+      timeout: 2s
+    snmp:
+      address: 127.0.0.1
+      community: public
+      version: 2c
+      command: snmpwalk
+      timeout: 3s
+    fluentd:
+      url: http://127.0.0.1:24220
+      timeout: 2s
+    logstash:
+      url: http://127.0.0.1:9600
+      timeout: 3s
+    cassandra:
+      url: ""                 # empty = :7072/metrics
+      timeout: 3s
+    ceph:
+      command: ceph
+      timeout: 5s
+    couchdb:
+      url: http://127.0.0.1:5984
+      user: ""
+      password: ""
+      timeout: 3s
+    couchbase:
+      url: http://127.0.0.1:8091
+      user: ""
+      password: ""
+      timeout: 3s
+    hddtemp:
+      address: 127.0.0.1:7634
+      timeout: 2s
+    openvpn:
+      address: 127.0.0.1:7505
+      password: ""
+      timeout: 2s
+    beanstalk:
+      address: 127.0.0.1:11300
+      timeout: 2s
+    uwsgi:
+      address: 127.0.0.1:1717
+      timeout: 2s
+    powerdns:
+      url: http://127.0.0.1:8081
+      api_key: ""
+      timeout: 2s
+    dnsmasq:
+      address: 127.0.0.1:53
+      timeout: 2s
+    megacli:
+      command: megacli
+      timeout: 5s
+    hpssa:
+      command: ssacli
+      timeout: 5s
+    adaptecraid:
+      command: arcconf
+      timeout: 5s
+    redfish:
+      url: ""                 # empty = https://127.0.0.1/redfish/v1
+      user: ""
+      password: ""
+      timeout: 5s
+    activemq:
+      url: http://127.0.0.1:8161
+      webadmin: admin
+      user: ""
+      password: ""
+      timeout: 3s
+    gearman:
+      address: 127.0.0.1:4730
+      timeout: 2s
+    geth:
+      url: ""                 # empty = :6060/debug/metrics/prometheus
+      timeout: 3s
+    ipfs:
+      url: http://127.0.0.1:5001
+      timeout: 3s
+    pihole:
+      url: http://127.0.0.1
+      token: ""
+      timeout: 3s
+    powerdns_recursor:
+      url: http://127.0.0.1:8082
+      api_key: ""
+      timeout: 2s
+    rspamd:
+      url: http://127.0.0.1:11334
+      timeout: 2s
+    typesense:
+      url: http://127.0.0.1:8108
+      api_key: ""
+      timeout: 2s
+    storcli:
+      command: storcli
+      timeout: 5s
+    nginxvts:
+      url: http://127.0.0.1/status/format/json
+      timeout: 2s
+    tengine:
+      url: http://127.0.0.1/us
+      timeout: 2s
+    nsd:
+      command: nsd-control
+      timeout: 3s
+    dnsdist:
+      url: http://127.0.0.1:8083
+      api_key: ""
+      timeout: 2s
+    dnsmasq_dhcp:
+      leases_path: ""         # empty = /var/lib/misc/dnsmasq.leases then /etc/pihole/dhcp.leases
+      conf_path: /etc/dnsmasq.conf
+    isc_dhcpd:
+      leases_path: ""         # empty = /var/lib/dhcp/dhcpd.leases
+      pools: []               # [{name: lan, networks: 192.168.1.0/24}]
+    puppet:
+      url: https://127.0.0.1:8140
+      timeout: 3s
+    openvpn_status_log:
+      log_path: ""            # empty = /var/log/openvpn/status.log
+    rethinkdb:
+      address: 127.0.0.1:28015
+      timeout: 2s
+    yugabytedb:
+      url: ""                 # empty = :13000/:9000/:7000/:12000 prometheus_metrics
+      timeout: 3s
+    vernemq:
+      url: http://127.0.0.1:8888/metrics
+      timeout: 3s
+    icecast:
+      url: http://127.0.0.1:8000
+      timeout: 2s
+    phpdaemon:
+      url: http://127.0.0.1:8509/FullStatus
+      timeout: 2s
+    pika:
+      address: 127.0.0.1:9221
+      password: ""
+      timeout: 2s
+    maxscale:
+      url: http://127.0.0.1:8989
+      user: ""
+      password: ""
+      timeout: 2s
+    nginxplus:
+      url: http://127.0.0.1
+      timeout: 2s
+    nginxunit:
+      url: http://127.0.0.1:8000
+      timeout: 2s
+    docker_engine:
+      url: ""                 # empty = :9323/metrics
+      timeout: 2s
+    riakkv:
+      url: http://127.0.0.1:8098/stats
+      timeout: 2s
+    litespeed:
+      reports_dir: /tmp/lshttpd
+    boinc:
+      address: 127.0.0.1:31416
+      password: ""
+      timeout: 2s
+    spigotmc:
+      address: 127.0.0.1:25575
+      password: ""
+      timeout: 2s
+    w1sensor:
+      sensors_path: /sys/bus/w1/devices
+    ap:
+      command: iw
+      timeout: 2s
+    dockerhub:
+      url: https://hub.docker.com/v2/repositories
+      repositories: []          # e.g. [netdata/netdata]
+      timeout: 3s
+    ethtool:
+      command: ethtool
+      optical_interfaces: ""    # space-separated ifaces with DDM, required
+      timeout: 2s
+    intelgpu:
+      command: intel_gpu_top
+      timeout: 3s
+    logind:
+      command: loginctl
+      timeout: 2s
+    dcgm:
+      url: ""                   # empty = :9400/metrics
+      timeout: 2s
+    panos:
+      url: https://127.0.0.1
+      api_key: ""
+      user: ""
+      password: ""
+      timeout: 3s
+    powerstore:
+      url: https://127.0.0.1
+      user: ""
+      password: ""
+      timeout: 3s
+    powervault:
+      url: https://127.0.0.1
+      user: manage
+      password: ""
+      timeout: 3s
+    s3check:
+      buckets: []               # [{name: logs, url: https://bucket.s3.amazonaws.com/health}]
+      timeout: 3s
+    scaleio:
+      url: https://127.0.0.1
+      user: ""
+      password: ""
+      timeout: 3s
+    smbios_memory:
+      command: dmidecode
+      timeout: 3s
+    vcsa:
+      url: https://127.0.0.1:5480
+      user: ""
+      password: ""
+      timeout: 5s
+    mssql:
+      address: 127.0.0.1,1433
+      user: sa
+      password: ""
+      command: sqlcmd
+      timeout: 5s
+    oracledb:
+      dsn: ""                   # user/pass@host:1521/service
+      command: sqlplus
+      timeout: 5s
+    sql:
+      driver: mysql
+      dsn: ""
+      query: ""
+      command: mysql
+      timeout: 5s
+    cloudwatch:
+      access_key: ""
+      secret_key: ""
+      region: us-east-1
+      namespace: AWS/EC2
+      metric_name: CPUUtilization
+      timeout: 10s
+    azure_monitor:
+      tenant_id: ""
+      client_id: ""
+      client_secret: ""
+      subscription_id: ""
+      resource_id: ""
+      metric: Percentage CPU
+      timeout: 10s
+    vsphere:
+      url: https://127.0.0.1/sdk
+      user: ""
+      password: ""
+      timeout: 8s
+    cato_networks:
+      url: https://api.catonetworks.com/api/v1/graphql2
+      api_key: ""
+      account_id: ""
+      timeout: 8s
+    snmp_traps:
+      listen: 127.0.0.1:9162    # non-root default
+    snmp_topology:
+      address: 127.0.0.1
+      community: public
+      version: "2c"
+      command: snmpwalk
+      timeout: 5s
 
 plugins:
   enabled: true
