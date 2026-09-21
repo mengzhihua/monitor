@@ -6,11 +6,11 @@
 
 ## 1. 现在有什么（M0–M6）
 
-约 **108** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense`。
+约 **120** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense` `storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq`。
 
 平台骨架已齐：三层 TSDB、Health 表达式、plugins.d、Child→Parent 流、Hub 查询扇出、RBAC、异常顾问（k-sigma / ks2 / volume）、Graphite/Influx/JSON/Prom remote write、Webhook/Slack/SMTP/钉钉/企微/飞书、Vue Dashboard。
 
-Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/apps/windows/freebsd 内部插件 + Cloud）。Monitor 原生覆盖大约 **13%** 的集成名、**核心 Agent 路径约 60%**（采集→存→告警→流→查）。
+Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/apps/windows/freebsd 内部插件 + Cloud）。Monitor 原生覆盖大约 **14%** 的集成名、**核心 Agent 路径约 60%**（采集→存→告警→流→查）。
 
 ## 2. 还差什么（按子系统）
 
@@ -31,9 +31,9 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | **M11** | kubelet / kube-proxy / k8s_state / k8s_apiserver |
 | 未做 | libvirt/proxmox 专用采集 |
 
-### 2.3 go.d 应用采集器（≈150，原生约 72）
+### 2.3 go.d 应用采集器（≈150，原生约 84）
 
-**已有：** apache, docker, dns_query, elasticsearch, httpcheck, memcached, mysql, nginx, nvidia_smi, php-fpm, ping, portcheck, postgres, prometheus, rabbitmq, redis, sslcheck/x509, systemd（部分）, whoisquery（M7）, haproxy（M7）, lighttpd（M7）, consul（M7）, mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm（M8）, zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs（M9）, postfix/exim/dovecot/fail2ban/weblog/squidlog/openldap/wireguard/samba/freeradius/tor（M10）, cgroup/k8s_kubelet/k8s_kubeproxy/k8s_apiserver/k8s_state（M11）, proxysql/clickhouse/cockroachdb/pulsar/envoy/upsd/zfspool/dmcache/filecheck/supervisord/monit/snmp（M12）, fluentd/logstash/cassandra/ceph/couchdb/couchbase/hddtemp/openvpn/beanstalk/uwsgi/powerdns/dnsmasq（M12 续）, megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense（M12 续 2）。
+**已有：** apache, docker, dns_query, elasticsearch, httpcheck, memcached, mysql, nginx, nvidia_smi, php-fpm, ping, portcheck, postgres, prometheus, rabbitmq, redis, sslcheck/x509, systemd（部分）, whoisquery（M7）, haproxy（M7）, lighttpd（M7）, consul（M7）, mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm（M8）, zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs（M9）, postfix/exim/dovecot/fail2ban/weblog/squidlog/openldap/wireguard/samba/freeradius/tor（M10）, cgroup/k8s_kubelet/k8s_kubeproxy/k8s_apiserver/k8s_state（M11）, proxysql/clickhouse/cockroachdb/pulsar/envoy/upsd/zfspool/dmcache/filecheck/supervisord/monit/snmp（M12）, fluentd/logstash/cassandra/ceph/couchdb/couchbase/hddtemp/openvpn/beanstalk/uwsgi/powerdns/dnsmasq（M12 续）, megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense（M12 续 2）, storcli/nginxvts/tengine/nsd/dnsdist/dnsmasq_dhcp/isc_dhcpd/puppet/openvpn_status_log/rethinkdb/yugabytedb/vernemq（M12 续 3）。
 
 **未做（按批次搬，每批原生实现 + 单测）：**
 
@@ -46,8 +46,9 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | **M11** | cgroup, k8s_kubelet, k8s_kubeproxy, k8s_apiserver, k8s_state |
 | **M12** | snmp, proxysql, clickhouse, cockroachdb, pulsar, envoy, upsd, zfspool, dmcache, filecheck, supervisord, monit |
 | **M12 续** | fluentd, logstash, cassandra, ceph, couchdb, couchbase, hddtemp, openvpn, beanstalk, uwsgi, powerdns, dnsmasq |
-| **M12 续 2（本轮）** | megacli, hpssa, adaptecraid, redfish, activemq, gearman, geth, ipfs, pihole, powerdns_recursor, rspamd, typesense |
-| **M12 续 3** | snmp_traps, snmp_topology, cloudwatch, azure, vsphere, storcli, nginxvts, tengine, nsd, dnsdist, dnsmasq_dhcp, isc_dhcpd, puppet, openvpn_status_log, yugabytedb, vernemq, rethinkdb, riakkv, icecast, phpdaemon, pika, maxscale, mssql, oracledb, 以及 init.go 其余模块 |
+| **M12 续 2** | megacli, hpssa, adaptecraid, redfish, activemq, gearman, geth, ipfs, pihole, powerdns_recursor, rspamd, typesense |
+| **M12 续 3（本轮）** | storcli, nginxvts, tengine, nsd, dnsdist, dnsmasq_dhcp, isc_dhcpd, puppet, openvpn_status_log, rethinkdb, yugabytedb, vernemq |
+| **M12 续 4** | snmp_traps, snmp_topology, cloudwatch, azure, vsphere, riakkv, icecast, phpdaemon, pika, maxscale, mssql, oracledb, nginxplus, nginxunit, docker_engine, 以及 init.go 其余模块 |
 
 未轮到原生实现之前：该软件若暴露 `/metrics`，用已有 `prometheus` 采集器即可先出图（图表 ID 为 `prom.*`，与 Netdata 原生 ID 不同）。
 
@@ -72,6 +73,7 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | **M12** | ZFS degraded、NUT 电池、ProxySQL slow、Envoy 5xx、文件缺失、Supervisord/Monit、SNMP ifDown、Cockroach live nodes |
 | **M12 续** | Fluentd retry、Logstash heap、Cassandra failures、Ceph ERR、CouchDB 5xx、Couchbase quota、HDD 温度、Beanstalk buried、uWSGI exceptions、PowerDNS latency |
 | **M12 续 2** | MegaRAID degraded、HPSSA nok、Adaptec LD critical、Redfish Critical、ActiveMQ backlog、Geth RPC fail、Recursor drops、Typesense unhealthy |
+| **M12 续 3** | StorCLI unhealthy、nginx VTS 5xx、Tengine 5xx、NSD drops、dnsdist drops、ISC dhcpd pool、Yugabyte over-limit、VerneMQ socket close |
 | 未做 | Netdata `health.d` 其余数百条模板；维护窗口日历；告警聚合摘要；MongoDB 导出；Kinesis/Pub/Sub |
 
 ### 2.6 Hub / Cloud
@@ -109,8 +111,9 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | **M11** | 通用 cgroup + k8s_kubelet/kubeproxy/k8s_state/k8s_apiserver | kind/minikube 可选手测 |
 | **M12 本轮** | snmp + proxysql/clickhouse/cockroachdb/pulsar/envoy/upsd/zfspool/dmcache/filecheck/supervisord/monit | 第一批长尾 12 个 |
 | **M12 续** | fluentd/logstash/cassandra/ceph/couchdb/couchbase/hddtemp/openvpn/beanstalk/uwsgi/powerdns/dnsmasq | 第二批长尾 12 个 |
-| **M12 续 2（本轮）** | megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense | 第三批长尾 12 个 |
-| **M12 续 3** | snmp_traps/topology、云厂商、storcli、init.go 其余 | 清单打勾 |
+| **M12 续 2** | megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense | 第三批长尾 12 个 |
+| **M12 续 3（本轮）** | storcli/nginxvts/tengine/nsd/dnsdist/dnsmasq_dhcp/isc_dhcpd/puppet/openvpn_status_log/rethinkdb/yugabytedb/vernemq | 第四批长尾 12 个 |
+| **M12 续 4** | snmp_traps/topology、云厂商、riakkv/icecast/phpdaemon/pika/maxscale/mssql/oracledb、init.go 其余 | 清单打勾 |
 | **M13** | 移植 Netdata health.d 规则全集；data context 聚合；`/api/v2` 子集 | 规则编译测试 |
 | **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
 | **M15** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
@@ -118,10 +121,10 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 
 M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
 
-## 4. 本轮（M12 续 2）交付清单
+## 4. 本轮（M12 续 3）交付清单
 
-1. 采集器：`megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense`  
-2. RAID CLI / BMC / 默认端口探测，目标缺失自动禁用  
-3. 内置规则：MegaRAID degraded、HPSSA nok、Adaptec LD critical、Redfish Critical、ActiveMQ backlog、Geth RPC fail、Recursor drops、Typesense unhealthy
+1. 采集器：`storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq`  
+2. CLI / HTTP / 租约文件探测，目标缺失自动禁用  
+3. 内置规则：StorCLI unhealthy、nginx VTS 5xx、Tengine 5xx、NSD drops、dnsdist drops、ISC dhcpd pool、Yugabyte over-limit、VerneMQ socket close
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。

@@ -175,6 +175,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `megacli`、`hpssa`、`adaptecraid`、`redfish`、`activemq`、`gearman`、`geth`、`ipfs`、`pihole`、`powerdns_recursor`、`rspamd`、`typesense`；目标缺失自动禁用 |
 | 告警 | MegaRAID degraded、HPSSA nok、Adaptec LD critical、Redfish Critical、ActiveMQ backlog、Geth RPC fail、Recursor drops、Typesense unhealthy |
 
+### 已实现能力（M12 续 3：DNS / Web / RAID / DB）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `storcli`、`nginxvts`、`tengine`、`nsd`、`dnsdist`、`dnsmasq_dhcp`、`isc_dhcpd`、`puppet`、`openvpn_status_log`、`rethinkdb`、`yugabytedb`、`vernemq`；目标缺失自动禁用 |
+| 告警 | StorCLI unhealthy、nginx VTS 5xx、Tengine 5xx、NSD drops、dnsdist drops、ISC dhcpd pool、Yugabyte over-limit、VerneMQ socket close |
+
 ### 开发
 
 ```bash

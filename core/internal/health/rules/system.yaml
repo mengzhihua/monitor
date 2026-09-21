@@ -1077,3 +1077,107 @@ alarms:
     delay: down 2m multiplier 1.5 max 30m
     info: Typesense health is not OK
     to: sysadmin
+
+  - name: storcli_controller_unhealthy
+    on: storcli.controller_health_status
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of unhealthy
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: StorCLI controller is unhealthy
+    to: sysadmin
+
+  - name: nginxvts_5xx
+    on: nginxvts.server_responses_total
+    class: Errors
+    type: Web
+    component: nginx
+    lookup: sum -1m unaligned absolute of 5xx
+    units: responses
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: nginx VTS 5xx responses in the last minute
+    to: sysadmin
+
+  - name: tengine_5xx
+    on: tengine.requests_per_response_code_family_total
+    class: Errors
+    type: Web
+    component: Tengine
+    lookup: sum -1m unaligned absolute of 5xx
+    units: requests
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Tengine 5xx requests in the last minute
+    to: sysadmin
+
+  - name: nsd_drops
+    on: nsd.drops
+    class: Errors
+    type: Service
+    component: NSD
+    lookup: sum -1m unaligned absolute of query
+    units: drops
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: NSD dropped queries in the last minute
+    to: sysadmin
+
+  - name: dnsdist_drops
+    on: dnsdist.queries_dropped
+    class: Errors
+    type: Service
+    component: dnsdist
+    lookup: sum -1m unaligned absolute of *
+    units: queries
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: dnsdist dropped queries in the last minute
+    to: sysadmin
+
+  - name: isc_dhcpd_pool_full
+    on: isc_dhcpd.dhcp_pool_utilization
+    class: Resources
+    type: System
+    component: DHCP
+    lookup: last -30s unaligned of utilization
+    units: percent
+    every: 10s
+    warn: '$this > 90'
+    delay: down 5m multiplier 1.5 max 1h
+    info: ISC dhcpd pool utilization is high
+    to: sysadmin
+
+  - name: yugabytedb_over_limit
+    on: yugabytedb.ysql_over_limit_connections
+    class: Errors
+    type: Database
+    component: YugabyteDB
+    lookup: sum -1m unaligned absolute of over_limit
+    units: rejects
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: YugabyteDB rejected YSQL connections over the limit
+    to: sysadmin
+
+  - name: vernemq_socket_errors
+    on: vernemq.node_socket_operations
+    class: Errors
+    type: Service
+    component: VerneMQ
+    lookup: sum -1m unaligned absolute of close
+    units: events
+    every: 1m
+    warn: '$this > 100'
+    delay: down 5m multiplier 1.5 max 1h
+    info: VerneMQ socket close events are high
+    to: sysadmin
