@@ -50,7 +50,7 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -171,6 +171,38 @@ collectors:
       timeout: 2s
     lvm:
       command: lvs
+      timeout: 3s
+    zookeeper:
+      address: 127.0.0.1:2181
+      timeout: 2s
+    nats:
+      url: http://127.0.0.1:8222
+      timeout: 2s
+    varnish:
+      command: varnishstat
+      timeout: 3s
+    squid:
+      url: ""                # empty = :3128/squid-internal-mgr/counters
+      timeout: 2s
+    tomcat:
+      url: ""                # empty = :8080/manager/status?XML
+      user: ""
+      password: ""
+      timeout: 2s
+    traefik:
+      url: ""                # empty = :8082/metrics then :8080/metrics
+      timeout: 2s
+    bind:
+      url: ""                # empty = :8053/json/v1/server
+      timeout: 2s
+    unbound:
+      command: unbound-control
+      timeout: 2s
+    coredns:
+      url: http://127.0.0.1:9153/metrics
+      timeout: 2s
+    hdfs:
+      url: ""                # empty = :9870/jmx then :50070/jmx
       timeout: 3s
 
 plugins:

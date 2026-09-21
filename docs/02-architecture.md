@@ -457,7 +457,8 @@ sequenceDiagram
 | **M6 生态** | 应用采集器扩充（mysql/pg/es/rabbitmq）、journald / Event Log 检索、OTLP、Hub 集群、Prometheus remote write、Metric Correlations（ks2/volume）、sslcheck/dns/nvidia | 生产可用 |
 | **M7 Agent 对齐** | proc conntrack/softnet/ipc/md/battery；haproxy/lighttpd/consul/whois；contexts/silence/alarm_variables/allmetrics csv·shell；OpenTSDB；Telegram/Discord/PagerDuty | 对标 Netdata 单机 Agent 剩余核心面 |
 | **M8 存储/时间/硬件** | proc ipv6/ipvs/nfs/zfs/btrfs/wireless/ksm/zram；mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm | 对标 Netdata 存储与时钟面 |
-| **M9–M12 采集器全集** | 其余 go.d（队列/K8s/SNMP/长尾），见 [04-netdata-gap.md](04-netdata-gap.md) | 850+ 集成名对齐 |
+| **M9 队列/DNS/代理** | zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs | 对标 Netdata 队列与边缘代理 |
+| **M10–M12 采集器全集** | 邮件/安全/日志、cgroup/k8s、SNMP/长尾，见 [04-netdata-gap.md](04-netdata-gap.md) | 850+ 集成名对齐 |
 | **M13 规则与查询** | health.d 规则全集、`data?context=`、`/api/v2` | 告警与跨图查询对齐 |
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
 | **M15–M16** | k-means ML、Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
@@ -490,5 +491,6 @@ sequenceDiagram
 | 全量差距与后续批次 | [04-netdata-gap.md](04-netdata-gap.md) | M7+ |
 | IPv6/IPVS/NFS/ZFS/Btrfs/KSM/zram | `internal/collect/proc_m8.go` | M8 |
 | mongodb / pgbouncer / chrony / ntpd / smartctl / nvme / apcupsd / lvm | `internal/collect` | M8 |
+| zookeeper / nats / varnish / squid / tomcat / traefik / bind / unbound / coredns / hdfs | `internal/collect` | M9 |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
 | （仅移动）五端原生客户端 | `app/` | M3 |
