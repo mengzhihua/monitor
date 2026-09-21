@@ -161,6 +161,48 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `snmp`（snmpwalk IF-MIB）、`proxysql`、`clickhouse`、`cockroachdb`、`pulsar`、`envoy`、`upsd`（NUT :3493）、`zfspool`、`dmcache`、`filecheck`、`supervisord`、`monit`；目标缺失自动禁用 |
 | 告警 | ZFS degraded、NUT 电池、ProxySQL slow、Envoy 5xx、文件缺失、Supervisord/Monit、SNMP ifDown、Cockroach live nodes |
 
+### 已实现能力（M12 续：日志栈 / 存储 / DNS）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `fluentd`（/api/plugins.json）、`logstash`（/_node/stats）、`cassandra`（JMX Prometheus :7072）、`ceph`（`ceph status --format json`）、`couchdb`、`couchbase`、`hddtemp`（:7634）、`openvpn`（management :7505）、`beanstalk`（:11300）、`uwsgi`（stats :1717）、`powerdns`（HTTP API）、`dnsmasq`（CHAOS TXT）；目标缺失自动禁用 |
+| 告警 | Fluentd retry、Logstash heap、Cassandra failures、Ceph ERR、CouchDB 5xx、Couchbase quota、HDD 温度、Beanstalk buried、uWSGI exceptions、PowerDNS latency |
+
+### 已实现能力（M12 续 2：RAID / BMC / 更多应用）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `megacli`、`hpssa`、`adaptecraid`、`redfish`、`activemq`、`gearman`、`geth`、`ipfs`、`pihole`、`powerdns_recursor`、`rspamd`、`typesense`；目标缺失自动禁用 |
+| 告警 | MegaRAID degraded、HPSSA nok、Adaptec LD critical、Redfish Critical、ActiveMQ backlog、Geth RPC fail、Recursor drops、Typesense unhealthy |
+
+### 已实现能力（M12 续 3：DNS / Web / RAID / DB）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `storcli`、`nginxvts`、`tengine`、`nsd`、`dnsdist`、`dnsmasq_dhcp`、`isc_dhcpd`、`puppet`、`openvpn_status_log`、`rethinkdb`、`yugabytedb`、`vernemq`；目标缺失自动禁用 |
+| 告警 | StorCLI unhealthy、nginx VTS 5xx、Tengine 5xx、NSD drops、dnsdist drops、ISC dhcpd pool、Yugabyte over-limit、VerneMQ socket close |
+
+### 已实现能力（M12 续 4：Web / DB / 应用）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `icecast`、`phpdaemon`、`pika`、`maxscale`、`nginxplus`、`nginxunit`、`docker_engine`、`riakkv`、`litespeed`、`boinc`、`spigotmc`、`w1sensor`；目标缺失自动禁用 |
+| 告警 | phpDaemon idle、MaxScale errors、NGINX Plus dropped、Docker health fails、Riak FSM、BOINC compute_error、SpigotMC TPS、w1sensor hot |
+
+### 已实现能力（M12 续 5：硬件 / REST 存储）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `ap`、`dockerhub`、`ethtool`、`intelgpu`、`logind`、`dcgm`、`panos`、`powerstore`、`powervault`、`s3check`、`scaleio`、`smbios_memory`；目标缺失自动禁用 |
+| 告警 | 光模块温度、Intel GPU busy、DCGM GPU 温度、PAN-OS session、PowerStore/PowerVault health、S3 check、ScaleIO capacity |
+
+### 已实现能力（M12 续 6：云 / SQL / SNMP traps）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `vcsa`（REST health）、`mssql`（sqlcmd）、`oracledb`（sqlplus）、`sql`（mysql/psql/sqlcmd/sqlplus）、`cloudwatch`（SigV4）、`azure_monitor`（OAuth）、`vsphere`（SOAP /sdk）、`cato_networks`（GraphQL）、`snmp_traps`（UDP）、`snmp_topology`（snmpwalk LLDP）；缺凭证或目标则自动禁用 |
+| 告警 | VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询 |
+
 ### 开发
 
 ```bash

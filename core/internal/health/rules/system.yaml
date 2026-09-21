@@ -842,3 +842,654 @@ alarms:
     delay: down 2m multiplier 1.5 max 30m
     info: CockroachDB live node count is zero
     to: sysadmin
+
+  - name: fluentd_retry
+    on: fluentd.retry_count
+    class: Errors
+    type: Service
+    component: Fluentd
+    lookup: max -1m unaligned of *
+    units: retries
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Fluentd plugin retry count is non-zero
+    to: sysadmin
+
+  - name: logstash_heap
+    on: logstash.jvm_mem_heap_used
+    class: Utilization
+    type: Service
+    component: Logstash
+    lookup: average -1m unaligned of in_use
+    units: '%'
+    every: 1m
+    warn: '$this > 80'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Logstash JVM heap is high
+    to: sysadmin
+
+  - name: cassandra_request_failures
+    on: cassandra.client_requests_failures_rate
+    class: Errors
+    type: Database
+    component: Cassandra
+    lookup: sum -1m unaligned absolute of *
+    units: failures
+    every: 1m
+    warn: '$this > 5'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Cassandra client request failures in the last minute
+    to: sysadmin
+
+  - name: ceph_cluster_unhealthy
+    on: ceph.cluster_status
+    class: Errors
+    type: System
+    component: Ceph
+    lookup: last -30s unaligned of err
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Ceph cluster health is ERR
+    to: sysadmin
+
+  - name: couchdb_5xx
+    on: couchdb.response_code_classes
+    class: Errors
+    type: Database
+    component: CouchDB
+    lookup: sum -1m unaligned absolute of 5xx
+    units: responses
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: CouchDB 5xx responses in the last minute
+    to: sysadmin
+
+  - name: couchbase_quota
+    on: couchbase.bucket_quota_percent_used
+    class: Utilization
+    type: Database
+    component: Couchbase
+    lookup: max -1m unaligned of *
+    units: '%'
+    every: 1m
+    warn: '$this > 90'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Couchbase bucket quota used is high
+    to: sysadmin
+
+  - name: hddtemp_hot
+    on: hddtemp.disk_temperature
+    class: Errors
+    type: System
+    component: Disk
+    lookup: max -1m unaligned of temperature
+    units: Celsius
+    every: 1m
+    warn: '$this > 55'
+    crit: '$this > 60'
+    delay: down 5m multiplier 1.5 max 1h
+    info: HDD temperature is high
+    to: sysadmin
+
+  - name: beanstalk_buried
+    on: beanstalk.current_jobs
+    class: Latency
+    type: Service
+    component: Beanstalk
+    lookup: last -30s unaligned of buried
+    units: jobs
+    every: 10s
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Beanstalk has buried jobs
+    to: sysadmin
+
+  - name: uwsgi_exceptions
+    on: uwsgi.exceptions
+    class: Errors
+    type: Service
+    component: uWSGI
+    lookup: sum -1m unaligned absolute of exceptions
+    units: exceptions
+    every: 1m
+    warn: '$this > 5'
+    delay: down 5m multiplier 1.5 max 1h
+    info: uWSGI exceptions in the last minute
+    to: sysadmin
+
+  - name: powerdns_latency
+    on: powerdns.latency
+    class: Latency
+    type: Service
+    component: PowerDNS
+    lookup: average -1m unaligned of latency
+    units: microseconds
+    every: 1m
+    warn: '$this > 50000'
+    delay: down 5m multiplier 1.5 max 1h
+    info: PowerDNS answer latency is high
+    to: sysadmin
+
+  - name: megacli_adapter_degraded
+    on: megacli.adapter_health_state
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of degraded
+    units: state
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: MegaRAID adapter is degraded
+    to: sysadmin
+
+  - name: hpssa_controller_nok
+    on: hpssa.controller_status
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of nok
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: HP Smart Array controller is not OK
+    to: sysadmin
+
+  - name: adaptecraid_ld_critical
+    on: adaptecraid.logical_device_status
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of critical
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Adaptec RAID logical device is critical
+    to: sysadmin
+
+  - name: redfish_system_critical
+    on: redfish.system_health_state
+    class: Errors
+    type: System
+    component: BMC
+    lookup: last -30s unaligned of critical
+    units: state
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Redfish system health is Critical
+    to: sysadmin
+
+  - name: activemq_unprocessed
+    on: activemq.unprocessed_messages
+    class: Latency
+    type: Service
+    component: ActiveMQ
+    lookup: last -30s unaligned of unprocessed
+    units: messages
+    every: 10s
+    warn: '$this > 1000'
+    delay: down 5m multiplier 1.5 max 1h
+    info: ActiveMQ unprocessed messages are high
+    to: sysadmin
+
+  - name: geth_rpc_failures
+    on: geth.rpc_calls
+    class: Errors
+    type: Service
+    component: Geth
+    lookup: sum -1m unaligned absolute of failed
+    units: calls
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Geth RPC failures in the last minute
+    to: sysadmin
+
+  - name: powerdns_recursor_drops
+    on: powerdns_recursor.drops
+    class: Errors
+    type: Service
+    component: PowerDNS
+    lookup: sum -1m unaligned absolute of *
+    units: drops
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: PowerDNS Recursor dropped queries in the last minute
+    to: sysadmin
+
+  - name: typesense_unhealthy
+    on: typesense.health_status
+    class: Availability
+    type: Database
+    component: Typesense
+    lookup: last -30s unaligned of ok
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Typesense health is not OK
+    to: sysadmin
+
+  - name: storcli_controller_unhealthy
+    on: storcli.controller_health_status
+    class: Errors
+    type: System
+    component: RAID
+    lookup: last -30s unaligned of unhealthy
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: StorCLI controller is unhealthy
+    to: sysadmin
+
+  - name: nginxvts_5xx
+    on: nginxvts.server_responses_total
+    class: Errors
+    type: Web
+    component: nginx
+    lookup: sum -1m unaligned absolute of 5xx
+    units: responses
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: nginx VTS 5xx responses in the last minute
+    to: sysadmin
+
+  - name: tengine_5xx
+    on: tengine.requests_per_response_code_family_total
+    class: Errors
+    type: Web
+    component: Tengine
+    lookup: sum -1m unaligned absolute of 5xx
+    units: requests
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Tengine 5xx requests in the last minute
+    to: sysadmin
+
+  - name: nsd_drops
+    on: nsd.drops
+    class: Errors
+    type: Service
+    component: NSD
+    lookup: sum -1m unaligned absolute of query
+    units: drops
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: NSD dropped queries in the last minute
+    to: sysadmin
+
+  - name: dnsdist_drops
+    on: dnsdist.queries_dropped
+    class: Errors
+    type: Service
+    component: dnsdist
+    lookup: sum -1m unaligned absolute of *
+    units: queries
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: dnsdist dropped queries in the last minute
+    to: sysadmin
+
+  - name: isc_dhcpd_pool_full
+    on: isc_dhcpd.dhcp_pool_utilization
+    class: Resources
+    type: System
+    component: DHCP
+    lookup: last -30s unaligned of utilization
+    units: percent
+    every: 10s
+    warn: '$this > 90'
+    delay: down 5m multiplier 1.5 max 1h
+    info: ISC dhcpd pool utilization is high
+    to: sysadmin
+
+  - name: yugabytedb_over_limit
+    on: yugabytedb.ysql_over_limit_connections
+    class: Errors
+    type: Database
+    component: YugabyteDB
+    lookup: sum -1m unaligned absolute of over_limit
+    units: rejects
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: YugabyteDB rejected YSQL connections over the limit
+    to: sysadmin
+
+  - name: vernemq_socket_errors
+    on: vernemq.node_socket_operations
+    class: Errors
+    type: Service
+    component: VerneMQ
+    lookup: sum -1m unaligned absolute of close
+    units: events
+    every: 1m
+    warn: '$this > 100'
+    delay: down 5m multiplier 1.5 max 1h
+    info: VerneMQ socket close events are high
+    to: sysadmin
+
+  - name: phpdaemon_no_idle
+    on: phpdaemon.alive_workers
+    class: Resources
+    type: Web
+    component: phpDaemon
+    lookup: last -30s unaligned of idle
+    units: workers
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: phpDaemon has no idle workers
+    to: sysadmin
+
+  - name: maxscale_errors
+    on: maxscale.poll_events
+    class: Errors
+    type: Database
+    component: MaxScale
+    lookup: sum -1m unaligned absolute of errors
+    units: events
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: MaxScale poll errors in the last minute
+    to: sysadmin
+
+  - name: nginxplus_dropped
+    on: nginxplus.client_connections_rate
+    class: Errors
+    type: Web
+    component: nginx
+    lookup: sum -1m unaligned absolute of dropped
+    units: connections
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: NGINX Plus dropped connections in the last minute
+    to: sysadmin
+
+  - name: docker_engine_health_fails
+    on: docker_engine.engine_daemon_health_checks_failed_total
+    class: Errors
+    type: Containers
+    component: Docker
+    lookup: sum -1m unaligned absolute of fails
+    units: events
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Docker Engine container health checks failed
+    to: sysadmin
+
+  - name: riakkv_fsm
+    on: riak.core.fsm_active
+    class: Resources
+    type: Database
+    component: Riak
+    lookup: last -30s unaligned of *
+    units: fsms
+    every: 10s
+    warn: '$this > 100'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Riak KV active FSMs are high
+    to: sysadmin
+
+  - name: boinc_compute_error
+    on: boinc.tasks_per_state
+    class: Errors
+    type: Service
+    component: BOINC
+    lookup: last -30s unaligned of compute_error
+    units: tasks
+    every: 10s
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: BOINC tasks in compute_error state
+    to: sysadmin
+
+  - name: spigotmc_low_tps
+    on: spigotmc.avg_tps
+    class: Performance
+    type: Service
+    component: SpigotMC
+    lookup: last -30s unaligned of 1min
+    units: ticks
+    every: 10s
+    warn: '$this < 18'
+    delay: down 2m multiplier 1.5 max 30m
+    info: SpigotMC 1-minute TPS is low
+    to: sysadmin
+
+  - name: w1sensor_hot
+    on: w1sensor.temperature
+    class: Errors
+    type: System
+    component: Sensor
+    lookup: last -30s unaligned of temperature
+    units: Celsius
+    every: 10s
+    warn: '$this > 80'
+    delay: down 2m multiplier 1.5 max 30m
+    info: 1-Wire sensor temperature is high
+    to: sysadmin
+
+  - name: ethtool_module_hot
+    on: ethtool.optical_module_temperature
+    class: Errors
+    type: System
+    component: NIC
+    lookup: last -30s unaligned of temperature
+    units: Celsius
+    every: 10s
+    warn: '$this > 70'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Optical module temperature is high
+    to: sysadmin
+
+  - name: intelgpu_engine_busy
+    on: intelgpu.engine_busy_perc
+    class: Utilization
+    type: System
+    component: GPU
+    lookup: last -30s unaligned of busy
+    units: '%'
+    every: 10s
+    warn: '$this > 95'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Intel GPU engine is saturated
+    to: sysadmin
+
+  - name: dcgm_gpu_hot
+    on: dcgm.gpu_temp
+    class: Errors
+    type: System
+    component: GPU
+    lookup: last -30s unaligned of *
+    units: Celsius
+    every: 10s
+    warn: '$this > 85'
+    delay: down 2m multiplier 1.5 max 30m
+    info: NVIDIA DCGM GPU temperature is high
+    to: sysadmin
+
+  - name: panos_session_util
+    on: panos.session_utilization
+    class: Resources
+    type: Firewall
+    component: PAN-OS
+    lookup: last -30s unaligned of utilization
+    units: percent
+    every: 10s
+    warn: '$this > 80'
+    delay: down 5m multiplier 1.5 max 1h
+    info: PAN-OS session table utilization is high
+    to: sysadmin
+
+  - name: powerstore_unhealthy
+    on: powerstore.cluster_health
+    class: Errors
+    type: Storage
+    component: PowerStore
+    lookup: last -30s unaligned of healthy
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Dell PowerStore cluster is not healthy
+    to: sysadmin
+
+  - name: powervault_unhealthy
+    on: powervault.system_health
+    class: Errors
+    type: Storage
+    component: PowerVault
+    lookup: last -30s unaligned of ok
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Dell PowerVault system health is not OK
+    to: sysadmin
+
+  - name: s3check_failed
+    on: s3check.status
+    class: Errors
+    type: Storage
+    component: S3
+    lookup: last -30s unaligned of failed
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: S3 check failed
+    to: sysadmin
+
+  - name: scaleio_capacity
+    on: scaleio.system_capacity
+    class: Resources
+    type: Storage
+    component: ScaleIO
+    lookup: last -30s unaligned of unused
+    units: KiB
+    every: 10s
+    warn: '$this < 1024'
+    delay: down 5m multiplier 1.5 max 1h
+    info: ScaleIO unused capacity is low
+    to: sysadmin
+
+  - name: vcsa_system_red
+    on: vcsa.system_health_status
+    class: Errors
+    type: System
+    component: vCenter
+    lookup: last -30s unaligned of red
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: VCSA overall system health is red
+    to: sysadmin
+
+  - name: mssql_blocked_processes
+    on: mssql.blocked_processes
+    class: Errors
+    type: Database
+    component: MSSQL
+    lookup: last -30s unaligned of blocked
+    units: processes
+    every: 10s
+    warn: '$this > 0'
+    delay: down 2m multiplier 1.5 max 30m
+    info: SQL Server has blocked processes
+    to: sysadmin
+
+  - name: oracledb_sessions
+    on: oracledb.sessions_utilization
+    class: Resources
+    type: Database
+    component: Oracle
+    lookup: last -30s unaligned of session_limit
+    units: percent
+    every: 10s
+    warn: '$this > 90'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Oracle session limit utilization is high
+    to: sysadmin
+
+  - name: vsphere_disconnected
+    on: vsphere.host_connection_state
+    class: Errors
+    type: System
+    component: vSphere
+    lookup: last -30s unaligned of disconnected
+    units: state
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: vSphere hosts are disconnected
+    to: sysadmin
+
+  - name: cato_site_down
+    on: cato_networks.site_connectivity_status
+    class: Errors
+    type: Network
+    component: Cato
+    lookup: last -30s unaligned of status
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Cato site connectivity is down
+    to: sysadmin
+
+  - name: snmp_traps_flood
+    on: snmp.trap.pipeline
+    class: Errors
+    type: System
+    component: SNMP
+    lookup: sum -1m unaligned absolute of received
+    units: events
+    every: 1m
+    warn: '$this > 100'
+    delay: down 5m multiplier 1.5 max 1h
+    info: SNMP trap receiver is flooded
+    to: sysadmin
+
+  - name: snmp_topology_none
+    on: snmp_topology.devices
+    class: Errors
+    type: System
+    component: SNMP
+    lookup: last -30s unaligned of registered
+    units: devices
+    every: 10s
+    warn: '$this < 1'
+    delay: down 5m multiplier 1.5 max 1h
+    info: SNMP topology has no registered neighbors
+    to: sysadmin
+
+  - name: sql_query_slow
+    on: sql.mysql_query_time
+    class: Latency
+    type: Database
+    component: SQL
+    lookup: last -30s unaligned of duration
+    units: ms
+    every: 10s
+    warn: '$this > 1000'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Generic SQL query is slow
+    to: sysadmin
