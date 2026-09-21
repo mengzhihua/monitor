@@ -49,21 +49,20 @@ echo "$index" | grep -i '<title>Monitor</title>' >/dev/null || fail "dashboard h
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/hub/spaces")
 [[ "$code" == "404" ]] || fail "hub spaces on agent: $code"
 
-# Hub claim / config / ring (second process)
-HUBPORT=$((PORT + 1))
+# Hub claim / config / ring (second process). Avoid PORT+1: default agent
+# smoke uses 19998 so +1 collides with the stock :19999 listener.
+HUBPORT=${HUBPORT:-18999}
 HUBDATA=$(mktemp -d)
 cat > "$HUBDATA/monitor.yaml" <<EOF
 mode: hub
 global:
   hostname: smoke-hub
   data_dir: $HUBDATA/data
-web:
-  listen: "127.0.0.1:$HUBPORT"
 hub:
   space: smoke
   room: edge
 EOF
-"$BIN" -config "$HUBDATA/monitor.yaml" -log-level warn &
+"$BIN" -config "$HUBDATA/monitor.yaml" -listen "127.0.0.1:$HUBPORT" -log-level warn &
 HPID=$!
 trap 'kill $PID $HPID 2>/dev/null || true; wait $PID 2>/dev/null || true; wait $HPID 2>/dev/null || true; rm -rf "$DATA" "$HUBDATA"' EXIT
 for i in $(seq 1 30); do
