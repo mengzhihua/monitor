@@ -1,7 +1,7 @@
 # monitord configuration. Copy to monitor.yaml (or pass -config <path>).
 # Every key is optional; the values below are the defaults.
 
-mode: agent            # agent | hub (hub: M3)
+mode: agent            # agent: collect + serve locally | hub: also accept streamed nodes (see `hub:` below)
 
 global:
   hostname: ""         # empty = OS hostname
@@ -19,7 +19,28 @@ db:
 web:
   listen: ":19999"
   allow_from: []       # CIDRs allowed to reach the API/UI, e.g. ["10.0.0.0/8", "127.0.0.1"]
-  token: ""            # if set, /api and /metrics require ?token= or "Authorization: Bearer"
+  token: ""            # if set, /api and /metrics require ?token= or "Authorization: Bearer" (admin)
+  users: []            # named credentials with roles; any token/users setting turns anonymous access off
+  # - { name: ops,   token: "change-me-1", role: admin }          # everything, incl. DELETE /api/v1/nodes
+  # - { name: oncall, token: "change-me-2", role: troubleshooter } # read + Functions (processes table…)
+  # - { name: tv,    token: "change-me-3", role: viewer }         # read-only metrics/alarms/nodes
+
+# Agent → Hub streaming (outbound WebSocket, so agents behind NAT only need to reach the hub).
+# Host info, chart definitions, per-second samples, alarm transitions and Functions are
+# forwarded; after a disconnect the gap is replicated from the local TSDB.
+stream:
+  enabled: false
+  destinations: []     # tried in order, e.g. ["wss://hub.example.com", "10.0.0.5:19999"] (path defaults to /api/v1/stream)
+  api_key: ""          # must be listed in the hub's hub.api_keys
+  insecure_skip_verify: false
+  timeout: 10s
+  replicate: 1h        # at most this much history is re-sent after reconnecting
+
+# Hub side (mode: hub): accept nodes. Each node gets its own registry + TSDB namespace;
+# query them with `?node=<id>` on the usual API and pick them in the dashboard.
+hub:
+  api_keys: []         # empty = ingestion disabled; e.g. ["change-me-stream-key"]
+  replicate: 24h       # max backfill accepted from agents
 
 collectors:
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis

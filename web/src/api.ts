@@ -18,13 +18,24 @@ export interface Info {
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
   plugins?: PluginStatus[]
   alarms: AlarmSummary | null
+  user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer' }
+  nodes_count?: number
+  streaming_enabled?: boolean
+  stream?: { enabled: boolean; connected: boolean; destination?: string; last_error?: string; sent: number; replicated: number; dropped: number }
 }
+export type NodeStatus = 'live' | 'stale' | 'offline'
+export interface NodeInfo {
+  id: string; hostname: string; os: string; arch: string; labels: Record<string, string> | null; update_every: number
+  version: string; status: NodeStatus; local: boolean; first_seen: number; last_seen: number; last_data?: number
+  charts_count: number; alarms: { warning: number; critical: number }; functions?: string[]
+}
+export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
   dimension_ids: string[]; dimension_names: string[]
   result: { labels: string[]; data: (number | null)[][] }
 }
-export interface LiveMsg { chart: string; t: number; v: Record<string, number> }
+export interface LiveMsg { node?: string; chart: string; t: number; v: Record<string, number> }
 export type AlarmStatus = 'REMOVED' | 'UNINITIALIZED' | 'UNDEFINED' | 'CLEAR' | 'WARNING' | 'CRITICAL'
 export interface Alarm {
   id: number; name: string; chart: string; context: string; family: string; class?: string; type?: string; component?: string
@@ -39,7 +50,7 @@ export interface AlarmLogEntry {
 }
 export interface AlarmSummary { normal: number; warning: number; critical: number; silent: number }
 export interface AlarmsResponse { hostname: string; now: number; summary: AlarmSummary; alarms: Record<string, Alarm> }
-export type LiveAlarmMsg = { alarm: AlarmLogEntry }
+export type LiveAlarmMsg = { node?: string; alarm: AlarmLogEntry }
 export interface FunctionInfo { name: string; help: string; timeout: number }
 /** Tabular function result (e.g. `processes`). */
 export interface FunctionTable { columns: string[]; rows: Record<string, unknown>[]; total: number }
@@ -88,22 +99,38 @@ async function get<T>(path: string): Promise<T> {
   return r.json() as Promise<T>
 }
 
+/**
+ * Selected node on a hub: '' is the hub itself, otherwise a remote node id.
+ * Every node-scoped request carries it as `node=`.
+ */
+export const selection = {
+  node: '',
+}
+
+function q(params: Record<string, string | number>): string {
+  const p = new URLSearchParams()
+  if (selection.node) p.set('node', selection.node)
+  for (const [k, v] of Object.entries(params)) p.set(k, String(v))
+  const s = p.toString()
+  return s ? `?${s}` : ''
+}
+
 export const api = {
   info: () => get<Info>('/api/v1/info'),
-  charts: () => get<ChartsResponse>('/api/v1/charts'),
-  alarms: () => get<AlarmsResponse>('/api/v1/alarms?all=true'),
-  alarmLog: (after = 0) => get<AlarmLogEntry[]>(`/api/v1/alarm_log?after=${after}`),
-  functions: () => get<FunctionInfo[]>('/api/v1/functions'),
-  function: (name: string, args: Record<string, string> = {}) => {
-    const q = new URLSearchParams({ function: name, ...args })
-    return get<FunctionResponse>(`/api/v1/function?${q}`)
-  },
+  nodes: () => get<NodesResponse>('/api/v1/nodes'),
+  charts: () => get<ChartsResponse>(`/api/v1/charts${q({})}`),
+  alarms: () => get<AlarmsResponse>(`/api/v1/alarms${q({ all: 'true' })}`),
+  alarmLog: (after = 0) => get<AlarmLogEntry[]>(`/api/v1/alarm_log${q({ after })}`),
+  functions: () => get<FunctionInfo[]>(`/api/v1/functions${q({})}`),
+  function: (name: string, args: Record<string, string> = {}) =>
+    get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`),
   data: (chart: string, after: number, before = 0, points = 0) =>
-    get<DataResponse>(`/api/v1/data?chart=${encodeURIComponent(chart)}&after=${after}&before=${before}&points=${points}`),
+    get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`),
   liveURL(charts: string[] = []) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const q = charts.length ? `?charts=${encodeURIComponent(charts.join(','))}` : ''
-    return `${proto}//${location.host}/api/v1/live${q}`
+    const params: Record<string, string> = {}
+    if (charts.length) params.charts = charts.join(',')
+    return `${proto}//${location.host}/api/v1/live${q(params)}`
   },
   /**
    * WebSocket subprotocols: browsers cannot set headers, so the token rides

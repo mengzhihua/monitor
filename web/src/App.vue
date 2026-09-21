@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info } from './api'
-import { ApiError, api, auth } from './api'
+import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from './api'
+import { ApiError, api, auth, selection } from './api'
 import { live } from './live'
 import MetricChart from './components/MetricChart.vue'
 import AlarmsPanel from './components/AlarmsPanel.vue'
@@ -21,7 +21,13 @@ const alarmLog = ref<AlarmLogEntry[]>([])
 const showAlarms = ref(false)
 const functions = ref<FunctionInfo[]>([])
 const showFunctions = ref(false)
-const healthOn = computed(() => info.value?.alarms != null)
+const nodes = ref<NodeInfo[]>([])
+const selectedNode = ref('')
+const NODE_KEY = 'monitor.node'
+const isHub = computed(() => info.value?.mode === 'hub')
+const currentNode = computed(() => nodes.value.find((n) => n.id === selectedNode.value) ?? null)
+/** Remote nodes have no local health engine; their alarms are mirrored from the agent. */
+const healthOn = computed(() => (selectedNode.value ? true : info.value?.alarms != null))
 const raised = computed(() => ({
   warning: alarms.value.filter((a) => a.status === 'WARNING').length,
   critical: alarms.value.filter((a) => a.status === 'CRITICAL').length,
@@ -52,10 +58,37 @@ const sections = computed(() => {
     .sort((a, b) => a.charts[0]!.priority - b.charts[0]!.priority)
 })
 
+async function refreshNodes() {
+  if (!isHub.value) return
+  try {
+    nodes.value = (await api.nodes()).nodes
+    if (selectedNode.value && !nodes.value.some((n) => n.id === selectedNode.value)) await selectNode('')
+  } catch { /* transient */ }
+}
+
+/** Switch the whole dashboard (charts, alarms, functions, live socket) to another node. */
+async function selectNode(id: string) {
+  if (id === selectedNode.value) return
+  selectedNode.value = id
+  selection.node = id
+  if (id) sessionStorage.setItem(NODE_KEY, id)
+  else sessionStorage.removeItem(NODE_KEY)
+  charts.value = []
+  alarms.value = []
+  alarmLog.value = []
+  functions.value = []
+  showFunctions.value = false
+  await refresh()
+  if (!needToken.value) live.restart()
+}
+
 async function refresh() {
+  const node = selectedNode.value
   try {
     const [i, c] = await Promise.all([api.info(), api.charts()])
     info.value = i
+    await refreshNodes()
+    if (selectedNode.value !== node) return // switched while in flight; a newer refresh owns the state
     const list = Object.values(c.charts)
     // keep object identity stable so chart components don't remount
     const byId = new Map(charts.value.map((x) => [x.id, x]))
@@ -71,6 +104,11 @@ async function refresh() {
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
       error.value = ''
+      return
+    }
+    if (e instanceof ApiError && e.status === 404 && selectedNode.value) {
+      // node was forgotten (or never existed on this hub): fall back to the hub itself
+      await selectNode('')
       return
     }
     error.value = String(e)
@@ -118,6 +156,9 @@ function fmtUptime(s: number) {
 let timer = 0
 onMounted(async () => {
   auth.fromURL()
+  const saved = new URL(location.href).searchParams.get('node') ?? sessionStorage.getItem(NODE_KEY) ?? ''
+  selectedNode.value = saved
+  selection.node = saved
   live.onState = (up) => (connected.value = up)
   live.onAlarm = onAlarmEvent
   await refresh()
@@ -131,12 +172,23 @@ onBeforeUnmount(() => clearInterval(timer))
   <header>
     <div class="brand">
       <span class="logo">◉</span> Monitor
-      <span v-if="info" class="host">{{ info.host.hostname }} · {{ info.host.os }}/{{ info.host.arch }}</span>
+      <span v-if="info && !currentNode" class="host">{{ info.host.hostname }} · {{ info.host.os }}/{{ info.host.arch }}</span>
+      <span v-else-if="currentNode" class="host">{{ currentNode.hostname }} · {{ currentNode.os }}/{{ currentNode.arch }}
+        <i :class="['node-status', currentNode.status]">{{ currentNode.status }}</i></span>
     </div>
     <div class="meta" v-if="info">
-      <span>{{ info.charts_count }} charts</span>
-      <span>{{ info.metrics_count }} metrics</span>
-      <span>up {{ fmtUptime(info.uptime) }}</span>
+      <select v-if="isHub" class="node-select" :value="selectedNode" @change="selectNode(($event.target as HTMLSelectElement).value)"
+        title="节点">
+        <option v-for="n in nodes" :key="n.id" :value="n.id">
+          {{ n.local ? '◆ ' : n.status === 'live' ? '● ' : n.status === 'stale' ? '◐ ' : '○ ' }}{{ n.hostname }}{{ n.local ? ' (hub)' : '' }}
+        </option>
+      </select>
+      <span v-if="isHub" class="nodes-count" title="在线节点 / 全部节点">{{ nodes.filter((n) => n.status === 'live').length }}/{{ nodes.length }} nodes</span>
+      <span v-if="info.stream" :class="['dot', info.stream.connected ? 'on' : 'off']"
+        :title="info.stream.connected ? '已上报到 ' + info.stream.destination : ('未连接 Hub' + (info.stream.last_error ? ': ' + info.stream.last_error : ''))">⇡</span>
+      <span>{{ currentNode ? currentNode.charts_count : info.charts_count }} charts</span>
+      <span v-if="!currentNode">{{ info.metrics_count }} metrics</span>
+      <span v-if="!currentNode">up {{ fmtUptime(info.uptime) }}</span>
       <button v-if="healthOn" class="alarms-btn" :class="{ crit: raised.critical, warn: !raised.critical && raised.warning, open: showAlarms }"
         @click="showAlarms = !showAlarms" title="告警">
         ⚠ <b v-if="raised.critical">{{ raised.critical }}</b><b v-else-if="raised.warning">{{ raised.warning }}</b><span v-else>0</span>
@@ -157,7 +209,7 @@ onBeforeUnmount(() => clearInterval(timer))
     <nav>
       <a v-for="s in sections" :key="s.name" :href="'#' + s.name" :class="{ active: activeSection === s.name }"
         @click="activeSection = s.name">{{ s.name }} <small>{{ s.charts.length }}</small></a>
-      <div class="collectors" v-if="info">
+      <div class="collectors" v-if="info && !currentNode">
         <div class="nav-title">采集器</div>
         <div v-for="c in info.collectors" :key="c.name" class="col" :class="{ bad: !c.enabled || c.error }">
           <span>{{ c.name }}</span>
@@ -189,7 +241,9 @@ onBeforeUnmount(() => clearInterval(timer))
           <MetricChart v-for="c in s.charts" :key="c.id" :chart="c" :window="windowSec" />
         </div>
       </section>
-      <p v-if="!charts.length && !error && !needToken" class="empty">等待数据…</p>
+      <p v-if="!charts.length && !error && !needToken" class="empty">
+        {{ currentNode && currentNode.status === 'offline' ? '节点离线，暂无数据。' : '等待数据…' }}
+      </p>
     </main>
   </div>
 </template>
@@ -201,6 +255,10 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; pa
 .host { color: #94a3b8; font-weight: 400; font-size: 13px; margin-left: 10px; }
 .meta { display: flex; gap: 14px; color: #94a3b8; font-size: 12px; flex: 1; }
 .dot.on { color: #22c55e; } .dot.off { color: #ef4444; }
+.node-select { max-width: 220px; }
+.nodes-count { color: #cbd5e1; }
+.node-status { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #1e293b; }
+.node-status.live { color: #22c55e; } .node-status.stale { color: #fbbf24; } .node-status.offline { color: #ef4444; }
 .alarms-btn { background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 12px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
 .alarms-btn.warn { background: #78350f; color: #fde68a; border-color: #b45309; }
 .alarms-btn.crit { background: #7f1d1d; color: #fecaca; border-color: #b91c1c; }

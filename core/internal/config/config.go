@@ -15,7 +15,9 @@ import (
 )
 
 type Config struct {
-	Mode   string `yaml:"mode"` // agent | hub (hub not implemented yet)
+	// Mode: "agent" collects the local host; "hub" additionally accepts
+	// streaming agents (hub.api_keys) and serves them under node=<id>.
+	Mode   string `yaml:"mode"`
 	Global struct {
 		Hostname    string `yaml:"hostname"`
 		UpdateEvery int    `yaml:"update_every"`
@@ -32,8 +34,11 @@ type Config struct {
 	Web struct {
 		Listen    string   `yaml:"listen"`
 		AllowFrom []string `yaml:"allow_from"` // CIDRs; empty = all
-		Token     string   `yaml:"token"`      // optional bearer token for the API
+		Token     string   `yaml:"token"`      // optional bearer token for the API (admin)
+		Users     []User   `yaml:"users"`      // named credentials with roles
 	} `yaml:"web"`
+	Stream     Stream `yaml:"stream"`
+	Hub        Hub    `yaml:"hub"`
 	Collectors struct {
 		Enabled  []string `yaml:"enabled"`  // empty = all
 		Disabled []string `yaml:"disabled"` // names to turn off
@@ -44,6 +49,29 @@ type Config struct {
 	} `yaml:"collectors"`
 	Health  Health  `yaml:"health"`
 	Plugins Plugins `yaml:"plugins"`
+}
+
+// User is an API credential: role admin | troubleshooter | viewer.
+type User struct {
+	Name  string `yaml:"name"`
+	Token string `yaml:"token"`
+	Role  string `yaml:"role"`
+}
+
+// Stream configures this agent's upstream connection to a hub.
+type Stream struct {
+	Enabled            bool          `yaml:"enabled"`
+	Destinations       []string      `yaml:"destinations"` // ws://hub:19999 (path optional), tried in order
+	APIKey             string        `yaml:"api_key"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
+	Timeout            time.Duration `yaml:"timeout"`
+	Replicate          time.Duration `yaml:"replicate"` // max history re-sent after reconnect
+}
+
+// Hub configures accepting streamed nodes (mode: hub).
+type Hub struct {
+	APIKeys   []string      `yaml:"api_keys"`  // credentials agents present; empty = no ingestion
+	Replicate time.Duration `yaml:"replicate"` // max backfill accepted from agents
 }
 
 // ModuleDecoders adapts collectors.modules to the decoder callbacks the
@@ -123,6 +151,9 @@ func Default() *Config {
 	c.DB.Tier1Retention = 90 * 24 * time.Hour
 	c.DB.Tier2Retention = 2 * 365 * 24 * time.Hour
 	c.Web.Listen = ":19999"
+	c.Stream.Timeout = 10 * time.Second
+	c.Stream.Replicate = time.Hour
+	c.Hub.Replicate = 24 * time.Hour
 	c.Health.Dir = "health.d"
 	c.Health.LogKeep = 1000
 	c.Plugins.Dir = "plugins.d"

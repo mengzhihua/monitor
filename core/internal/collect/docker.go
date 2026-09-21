@@ -2,6 +2,8 @@ package collect
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -296,15 +298,24 @@ func (d *dockerCollector) feed(reg *registry.Registry, c *dockerCont, st dockerS
 }
 
 // sanitizeID makes a chart-id-safe token out of a container/service name.
+// Names that needed rewriting get a short hash suffix so distinct names
+// ("a.b" vs "a_b") never collapse into the same ID.
 func sanitizeID(s string) string {
 	var b strings.Builder
+	changed := false
 	for _, r := range s {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
 			b.WriteRune(r)
 		default:
 			b.WriteByte('_')
+			changed = true
 		}
+	}
+	if changed {
+		sum := sha1.Sum([]byte(s))
+		b.WriteByte('_')
+		b.WriteString(hex.EncodeToString(sum[:3]))
 	}
 	return b.String()
 }

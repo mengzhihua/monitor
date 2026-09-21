@@ -20,7 +20,9 @@ import (
 //	{"chart":"system.cpu","t":1700000000,"v":{"user":12.3,"system":4.5}}
 //
 // Clients may send {"charts":["system.cpu","system.ram"]} at any time to
-// change their subscription; an empty list means all charts.
+// change their subscription; an empty list means all charts. On a hub,
+// ?node=<id> (or {"node":"id"}) selects which node's samples to receive;
+// remote samples carry "node":"<id>".
 type liveHub struct {
 	log      *slog.Logger
 	upgrader websocket.Upgrader
@@ -33,10 +35,12 @@ type liveConn struct {
 	ws     *websocket.Conn
 	send   chan []byte
 	mu     sync.RWMutex
+	node   string          // "" = local host
 	charts map[string]bool // nil = all
 }
 
 type liveMsg struct {
+	Node   string             `json:"node,omitempty"`
 	Chart  string             `json:"chart"`
 	T      int64              `json:"t"`
 	Values map[string]float64 `json:"v"`
@@ -80,20 +84,24 @@ func sameHostOrigin(r *http.Request) bool {
 }
 
 func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64) {
+	h.broadcastNode("", chartID, ts, values)
+}
+
+func (h *liveHub) broadcastNode(node, chartID string, ts int64, values map[string]float64) {
 	h.mu.RLock()
 	n := len(h.conns)
 	h.mu.RUnlock()
 	if n == 0 {
 		return
 	}
-	b, err := json.Marshal(liveMsg{Chart: chartID, T: ts, Values: values})
+	b, err := json.Marshal(liveMsg{Node: node, Chart: chartID, T: ts, Values: values})
 	if err != nil {
 		return
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.conns {
-		if !c.wants(chartID) {
+		if !c.wants(node, chartID) {
 			continue
 		}
 		select {
@@ -103,11 +111,15 @@ func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64)
 	}
 }
 
-// broadcastAll sends b to every client regardless of chart subscription.
-func (h *liveHub) broadcastAll(b []byte) {
+// broadcastAll sends b to every client watching node, regardless of chart
+// subscription.
+func (h *liveHub) broadcastAll(node string, b []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.conns {
+		if !c.wants(node, "") {
+			continue
+		}
 		select {
 		case c.send <- b:
 		default:
@@ -115,10 +127,19 @@ func (h *liveHub) broadcastAll(b []byte) {
 	}
 }
 
-func (c *liveConn) wants(chart string) bool {
+func (c *liveConn) wants(node, chart string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.charts == nil || c.charts[chart]
+	if c.node != node {
+		return false
+	}
+	return chart == "" || c.charts == nil || c.charts[chart]
+}
+
+func (c *liveConn) setNode(node string) {
+	c.mu.Lock()
+	c.node = node
+	c.mu.Unlock()
 }
 
 func (c *liveConn) setCharts(list []string) {
@@ -142,6 +163,9 @@ func (h *liveHub) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := &liveConn{ws: ws, send: make(chan []byte, 256)}
+	if n := r.URL.Query().Get("node"); n != "" && n != "local" {
+		c.node = n
+	}
 	if q := r.URL.Query().Get("charts"); q != "" {
 		c.setCharts(strings.Split(q, ","))
 	}
@@ -172,9 +196,17 @@ func (h *liveHub) reader(c *liveConn) {
 		_ = c.ws.SetReadDeadline(time.Now().Add(90 * time.Second))
 		var req struct {
 			Charts []string `json:"charts"`
+			Node   *string  `json:"node"`
 		}
 		if json.Unmarshal(msg, &req) == nil {
 			c.setCharts(req.Charts)
+			if req.Node != nil {
+				n := *req.Node
+				if n == "local" {
+					n = ""
+				}
+				c.setNode(n)
+			}
 		}
 	}
 }

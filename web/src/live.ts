@@ -1,5 +1,5 @@
 import type { AlarmLogEntry, LiveAlarmMsg, LiveMsg } from './api'
-import { api } from './api'
+import { api, selection } from './api'
 
 type Handler = (m: LiveMsg) => void
 
@@ -22,6 +22,8 @@ class Live {
     ws.onopen = () => { this.retry = 1000; this.connected = true; this.onState?.(true); this.flush() }
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data) as LiveMsg | LiveAlarmMsg
+      // the socket is scoped to one node; ignore anything else (e.g. after a switch)
+      if ((m.node ?? '') !== selection.node) return
       if ('alarm' in m) { this.onAlarm?.(m.alarm); return }
       this.handlers.get(m.chart)?.forEach((h) => h(m))
     }
@@ -33,7 +35,7 @@ class Live {
     ws.onerror = () => ws.close()
   }
 
-  /** Drop the current socket (e.g. after credentials change) and reconnect now. */
+  /** Drop the current socket (e.g. after credentials or node change) and reconnect now. */
   restart() {
     const ws = this.ws
     if (!ws) { this.start(); return }
