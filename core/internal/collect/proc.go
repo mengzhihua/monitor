@@ -14,7 +14,8 @@ import (
 // procCollector reads Linux /proc extras that gopsutil does not cover:
 // entropy, file descriptors, forks/interrupts from /proc/stat, PSI,
 // IPv4 protocol counters from /proc/net/snmp, conntrack, softnet, SysV IPC,
-// mdstat and power_supply. Init fails on other OSes.
+// mdstat, power_supply, IPv6 SNMP/sockstat, IPVS, NFS, ZFS ARC, Btrfs,
+// wireless, KSM and zram. Init fails on other OSes.
 type procCollector struct {
 	haveEntropy, haveFD, haveStat, haveSNMP bool
 	pressure                                []string // resource names that exist
@@ -24,6 +25,7 @@ type procCollector struct {
 	// roots are overridable in tests; empty = production paths.
 	mdPath, psRoot, connCount, connMax, connStat, softnet string
 	ipcShm, ipcMsg, ipcSem                                string
+	m8                                                    procM8
 }
 
 func init() {
@@ -70,8 +72,9 @@ func (p *procCollector) Init(reg *registry.Registry) error {
 		}
 	}
 	p.initExtras(reg)
+	p.initM8(reg)
 	if !p.haveStat && !p.haveEntropy && !p.haveFD && !p.haveSNMP && len(p.pressure) == 0 &&
-		!p.haveConntrack && !p.haveSoftnet && !p.haveIPC && !p.haveMD && !p.havePower {
+		!p.haveConntrack && !p.haveSoftnet && !p.haveIPC && !p.haveMD && !p.havePower && !p.m8.any() {
 		return errors.New("no /proc metrics available")
 	}
 	return nil
@@ -143,6 +146,7 @@ func (p *procCollector) Collect(_ context.Context, reg *registry.Registry, now t
 		}
 	}
 	p.collectExtras(reg, now)
+	p.collectM8(reg, now)
 	return nil
 }
 

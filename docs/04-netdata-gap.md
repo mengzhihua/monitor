@@ -6,7 +6,7 @@
 
 ## 1. 现在有什么（M0–M6）
 
-约 **38** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4 SNMP）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml`。
+约 **46** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm`。
 
 平台骨架已齐：三层 TSDB、Health 表达式、plugins.d、Child→Parent 流、Hub 查询扇出、RBAC、异常顾问（k-sigma / ks2 / volume）、Graphite/Influx/JSON/Prom remote write、Webhook/Slack/SMTP/钉钉/企微/飞书、Vue Dashboard。
 
@@ -20,7 +20,8 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | --- | --- | --- |
 | 有 | cpu/load/mem/disk/net/uptime、熵、fd、forks、intr、PSI、IPv4 SNMP、TCP 状态 | `system.go` `proc.go` `netstat.go` |
 | **M7** | conntrack、softnet、IPC、mdstat、power_supply | `/proc` `/sys` |
-| 未做 | IPv6 SNMP/sockstat、IPVS、NFS client/server、ZFS ARC、Btrfs、wireless、KSM、zram、InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetype、interrupts 明细、softirq 明细 | proc.plugin 其余 |
+| **M8** | IPv6 SNMP/sockstat、IPVS、NFS client/server、ZFS ARC、Btrfs、wireless、KSM、zram | `/proc` `/sys` |
+| 未做 | InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetype、interrupts 明细、softirq 明细 | proc.plugin 其余 |
 
 ### 2.2 容器 / cgroup
 
@@ -31,14 +32,15 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 
 ### 2.3 go.d 应用采集器（≈150，原生约 20）
 
-**已有：** apache, docker, dns_query, elasticsearch, httpcheck, memcached, mysql, nginx, nvidia_smi, php-fpm, ping, portcheck, postgres, prometheus, rabbitmq, redis, sslcheck/x509, systemd（部分）, whoisquery（M7）, haproxy（M7）, lighttpd（M7）, consul（M7）。
+**已有：** apache, docker, dns_query, elasticsearch, httpcheck, memcached, mysql, nginx, nvidia_smi, php-fpm, ping, portcheck, postgres, prometheus, rabbitmq, redis, sslcheck/x509, systemd（部分）, whoisquery（M7）, haproxy（M7）, lighttpd（M7）, consul（M7）, mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm（M8）。
 
 **未做（按批次搬，每批原生实现 + 单测）：**
 
 | 批次 | 采集器 |
 | --- | --- |
-| **M7（本轮）** | haproxy, lighttpd, consul, whoisquery |
-| **M8 存储/时间/硬件** | mongodb, pgbouncer, proxysql, clickhouse, cockroachdb, chrony, ntpd, smartctl, nvme, apcupsd, upsd, lvm, zfspool, dmcache |
+| **M7** | haproxy, lighttpd, consul, whoisquery |
+| **M8（本轮）** | mongodb, pgbouncer, chrony, ntpd, smartctl, nvme, apcupsd, lvm |
+| **M9 前补** | proxysql, clickhouse, cockroachdb, upsd, zfspool, dmcache（随 M9 或 M12 长尾） |
 | **M9 队列/搜索/代理** | zookeeper, kafka（JMX/Prom）、nats, pulsar, varnish, squid, tomcat, traefik, bind, unbound, coredns, envoy, hdfs |
 | **M10 邮件/安全/日志** | postfix, exim, dovecot, fail2ban, squidlog, weblog, openldap, freeradius, tor, wireguard |
 | **M11 K8s / 服务网格** | k8s_kubelet, k8s_kubeproxy, k8s_state, k8s_apiserver, consul（M7）, traefik（M9） |
@@ -60,6 +62,7 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 | --- | --- |
 | 有 | 表达式引擎、delay/hysteresis/repeat、约 20 条内置规则、6 个通知渠道、4 种导出 |
 | **M7** | 运行时静默 API；Telegram/Discord/PagerDuty；OpenTSDB；conntrack/md/haproxy/consul/battery/whois 规则 |
+| **M8** | ntpd/chrony 失步、Mongo 连接、UPS 电池、SMART 失败、NVMe 寿命、LVM 容量 |
 | 未做 | Netdata `health.d` 其余数百条模板；维护窗口日历；告警聚合摘要；MongoDB 导出；Kinesis/Pub/Sub |
 
 ### 2.6 Hub / Cloud
@@ -90,8 +93,8 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 
 | 批次 | 搬什么 | 完成标准 |
 | --- | --- | --- |
-| **M7 本轮** | proc 五件套；haproxy/lighttpd/consul/whoisquery；contexts/silence/variables/allmetrics csv·shell；OpenTSDB；Telegram/Discord/PagerDuty；Dashboard 静默 | `go test -race`、`vue-tsc`、`smoke.sh` |
-| **M8** | proc 剩余（ipv6/ipvs/nfs/zfs/btrfs/wireless/ksm/zram）；mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm | 同上 + 新采集器单测 |
+| **M7** | proc 五件套；haproxy/lighttpd/consul/whoisquery；contexts/silence/variables/allmetrics csv·shell；OpenTSDB；Telegram/Discord/PagerDuty；Dashboard 静默 | `go test -race`、`vue-tsc`、`smoke.sh` |
+| **M8 本轮** | proc 剩余（ipv6/ipvs/nfs/zfs/btrfs/wireless/ksm/zram）；mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm | 同上 + 新采集器单测 |
 | **M9** | zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs | 默认端口探测 |
 | **M10** | postfix/exim/fail2ban/weblog/openldap/wireguard/samba | 含日志类 |
 | **M11** | 通用 cgroup + k8s_kubelet/kubeproxy/k8s_state | kind/minikube 可选手测 |
@@ -103,13 +106,11 @@ Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/
 
 M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
 
-## 4. 本轮（M7）交付清单
+## 4. 本轮（M8）交付清单
 
-1. `proc`：conntrack、softnet、sysv ipc、mdstat、power_supply  
-2. 采集器：`haproxy` `lighttpd` `consul` `whoisquery`  
-3. API：`/api/v1/contexts`、`/api/v1/alarms/silence`、`/api/v1/alarm_variables`、allmetrics csv/shell  
-4. `export` OpenTSDB；通知 Telegram / Discord / PagerDuty  
-5. 内置规则 + 告警面板静默按钮  
-6. 本文档作为后续批次的对照表（随批次更新「已有」列）
+1. `proc`：IPv6 SNMP/sockstat、IPVS、NFS client/server、ZFS ARC、Btrfs、wireless、KSM、zram  
+2. 采集器：`mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm`  
+3. 内置规则：ntpd/chrony 失步、Mongo 连接、UPS 电池、SMART、NVMe 寿命、LVM 容量  
+4. 本文档对照表随批次把「未做」改成「有」
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。

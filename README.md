@@ -125,6 +125,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | Dashboard | 告警面板全部静默 / 单条静默 |
 | 差距清单 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 全量移植对照与 M8–M16 批次 |
 
+### 已实现能力（M8：proc 剩余 / 存储 / 时间 / 硬件）
+
+| 模块 | 说明 |
+| --- | --- |
+| Linux proc | IPv6 SNMP/sockstat、IPVS、NFS 客户端/服务端、ZFS ARC、Btrfs、wireless、KSM、zram |
+| 应用采集器 | `mongodb`（serverStatus）、`pgbouncer`、`chrony`、`ntpd`、`smartctl`、`nvme`、`apcupsd`、`lvm`；目标缺失自动禁用 |
+| 告警 | ntpd 失步、chrony 未同步、Mongo 连接、UPS 电池、SMART 失败、NVMe 寿命、LVM 容量 |
+
 ### 开发
 
 ```bash

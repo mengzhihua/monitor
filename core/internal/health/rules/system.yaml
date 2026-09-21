@@ -409,3 +409,96 @@ alarms:
     delay: down 1d multiplier 1.5 max 7d
     info: domain registration days until expiration
     to: sysadmin
+
+  - name: ntpd_unsynchronized
+    on: ntpd.sys_stratum
+    class: Availability
+    type: System
+    component: NTP
+    lookup: last -30s unaligned of stratum
+    units: stratum
+    every: 10s
+    warn: '$this > 15 || $this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: NTPd stratum is 0 or 16 (unsynchronised)
+    to: sysadmin
+
+  - name: chrony_unsynchronised
+    on: chrony.leap_status
+    class: Availability
+    type: System
+    component: NTP
+    lookup: last -30s unaligned of unsynchronised
+    units: 'status'
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Chrony leap status is unsynchronised
+    to: sysadmin
+
+  - name: mongodb_connections
+    on: mongodb.connections
+    class: Utilization
+    type: Database
+    component: MongoDB
+    lookup: average -1m unaligned of current
+    units: connections
+    every: 10s
+    warn: '$this > 80'
+    delay: down 5m multiplier 1.5 max 1h
+    info: MongoDB currently open connections
+    to: sysadmin
+
+  - name: apcupsd_on_battery
+    on: apcupsd.ups_status
+    class: Availability
+    type: System
+    component: UPS
+    lookup: last -10s unaligned of onbattery
+    units: 'status'
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 1m multiplier 1.5 max 15m
+    info: UPS is running on battery
+    to: sysadmin
+
+  - name: smartctl_failed
+    on: smartctl.device_smart_status
+    class: Errors
+    type: System
+    component: Disk
+    lookup: last -1m unaligned of failed
+    units: 'status'
+    every: 1m
+    crit: '$this > 0.5'
+    delay: down 15m multiplier 1.5 max 1h
+    info: disk SMART health check failed
+    to: sysadmin
+
+  - name: nvme_percentage_used
+    on: nvme.device_percentage_used
+    class: Utilization
+    type: System
+    component: Disk
+    lookup: last -1m unaligned of used
+    units: '%'
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (95))'
+    delay: down 1h multiplier 1.5 max 1d
+    info: NVMe percentage used (endurance)
+    to: sysadmin
+
+  - name: lvm_data_full
+    on: lvm.lv_data_percent
+    class: Utilization
+    type: System
+    component: Disk
+    lookup: last -1m unaligned of data
+    units: '%'
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: LVM logical volume data percent
+    to: sysadmin

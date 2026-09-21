@@ -50,7 +50,7 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -146,6 +146,32 @@ collectors:
     whoisquery:
       timeout: 10s
       jobs: []               # e.g. [{ name: example, domain: example.com }]
+    mongodb:
+      address: 127.0.0.1:27017
+      timeout: 2s
+    pgbouncer:
+      address: 127.0.0.1:6432
+      user: pgbouncer
+      password: ""
+      timeout: 2s
+    chrony:
+      command: chronyc
+      timeout: 2s
+    ntpd:
+      address: 127.0.0.1:123
+      timeout: 2s
+    smartctl:
+      command: smartctl
+      timeout: 5s
+    nvme:
+      command: nvme
+      timeout: 3s
+    apcupsd:
+      address: 127.0.0.1:3551
+      timeout: 2s
+    lvm:
+      command: lvs
+      timeout: 3s
 
 plugins:
   enabled: true

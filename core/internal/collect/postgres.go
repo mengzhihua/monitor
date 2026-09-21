@@ -171,7 +171,11 @@ func pgQuery(ctx context.Context, address, user, password, database string, time
 	if strings.HasPrefix(address, "unix://") {
 		network = "unix"
 		dir := strings.TrimPrefix(address, "unix://")
-		addr = strings.TrimRight(dir, "/") + "/.s.PGSQL.5432"
+		if strings.Contains(dir, ".s.PGSQL") {
+			addr = dir
+		} else {
+			addr = strings.TrimRight(dir, "/") + "/.s.PGSQL.5432"
+		}
 	}
 	conn, err := d.DialContext(ctx, network, addr)
 	if err != nil {
@@ -192,6 +196,41 @@ func pgQuery(ctx context.Context, address, user, password, database string, time
 	}
 	if err := pgWriteMsg(conn, 'Q', append([]byte(sql), 0)); err != nil {
 		return nil, err
+	}
+	rows, _, err := pgReadRows(conn)
+	return rows, err
+}
+
+func pgQueryWithCols(ctx context.Context, address, user, password, database string, timeout time.Duration, sql string) ([][]string, []string, error) {
+	d := net.Dialer{Timeout: timeout}
+	network, addr := "tcp", address
+	if strings.HasPrefix(address, "unix://") {
+		network = "unix"
+		dir := strings.TrimPrefix(address, "unix://")
+		if strings.Contains(dir, ".s.PGSQL") {
+			addr = dir
+		} else {
+			addr = strings.TrimRight(dir, "/") + "/.s.PGSQL.5432"
+		}
+	}
+	conn, err := d.DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(timeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	_ = conn.SetDeadline(deadline)
+	if err := pgWriteStartup(conn, user, database); err != nil {
+		return nil, nil, err
+	}
+	if err := pgAuth(conn, user, password); err != nil {
+		return nil, nil, err
+	}
+	if err := pgWriteMsg(conn, 'Q', append([]byte(sql), 0)); err != nil {
+		return nil, nil, err
 	}
 	return pgReadRows(conn)
 }
@@ -286,19 +325,21 @@ func pgMD5(user, password string, salt []byte) string {
 	return "md5" + hex.EncodeToString(outer[:])
 }
 
-func pgReadRows(r io.Reader) ([][]string, error) {
+func pgReadRows(r io.Reader) ([][]string, []string, error) {
 	var ncols int
+	var cols []string
 	var rows [][]string
 	for {
 		typ, payload, err := pgReadMsg(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		switch typ {
 		case 'T': // RowDescription
 			if len(payload) >= 2 {
 				ncols = int(binary.BigEndian.Uint16(payload[0:2]))
 			}
+			cols = pgParseColNames(payload)
 		case 'D': // DataRow
 			if len(payload) < 2 {
 				continue
@@ -317,7 +358,7 @@ func pgReadRows(r io.Reader) ([][]string, error) {
 					continue
 				}
 				if i+ln > len(payload) {
-					return nil, fmt.Errorf("postgres: truncated row")
+					return nil, nil, fmt.Errorf("postgres: truncated row")
 				}
 				row[c] = string(payload[i : i+ln])
 				i += ln
@@ -326,11 +367,29 @@ func pgReadRows(r io.Reader) ([][]string, error) {
 		case 'C', 'N', 'S', 'K':
 			continue
 		case 'E':
-			return nil, fmt.Errorf("postgres: %s", pgErr(payload))
+			return nil, nil, fmt.Errorf("postgres: %s", pgErr(payload))
 		case 'Z':
-			return rows, nil
+			return rows, cols, nil
 		}
 	}
+}
+
+func pgParseColNames(payload []byte) []string {
+	if len(payload) < 2 {
+		return nil
+	}
+	n := int(binary.BigEndian.Uint16(payload[0:2]))
+	i := 2
+	out := make([]string, 0, n)
+	for c := 0; c < n && i < len(payload); c++ {
+		end := i
+		for end < len(payload) && payload[end] != 0 {
+			end++
+		}
+		out = append(out, string(payload[i:end]))
+		i = end + 1 + 4 + 2 + 4 + 2 + 4 + 2 // skip tableoid, attr, typoid, typlen, typmod, format
+	}
+	return out
 }
 
 func pgErr(b []byte) string {
