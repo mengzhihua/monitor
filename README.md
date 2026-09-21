@@ -140,6 +140,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `zookeeper`（mntr :2181）、`nats`（/varz :8222）、`varnish`（varnishstat）、`squid`（cachemgr）、`tomcat`（status XML）、`traefik`（/metrics）、`bind`（stats JSON）、`unbound`（unbound-control）、`coredns`（:9153/metrics）、`hdfs`（NameNode JMX）；目标缺失自动禁用 |
 | 告警 | ZooKeeper outstanding、Tomcat/Traefik 错误、BIND SERVFAIL、CoreDNS panic、HDFS missing blocks |
 
+### 已实现能力（M10：邮件 / 安全 / 日志）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `postfix`（postqueue）、`exim`（-bpc）、`dovecot`（EXPORT :24242）、`fail2ban`、`weblog`（access.log）、`squidlog`、`openldap`（cn=Monitor）、`wireguard`（wg dump）、`samba`（smbstatus -P）、`freeradius`（radclient status）、`tor`（control :9051）；目标缺失自动禁用 |
+| 告警 | 邮件队列、Dovecot 认证失败、Fail2ban 封禁、web/squid 日志 5xx、FreeRADIUS reject |
+
 ### 开发
 
 ```bash

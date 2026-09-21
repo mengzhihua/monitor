@@ -1,7 +1,10 @@
 package collect
 
 import (
+	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -9,6 +12,60 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
+
+func execRun(timeout time.Duration) func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return exec.CommandContext(cctx, name, args...).Output()
+	}
+}
+
+type fileCursor struct {
+	path string
+	off  int64
+}
+
+func (f *fileCursor) skipToEnd() error {
+	st, err := os.Stat(f.path)
+	if err != nil {
+		return err
+	}
+	f.off = st.Size()
+	return nil
+}
+
+func (f *fileCursor) lines() ([]string, error) {
+	st, err := os.Stat(f.path)
+	if err != nil {
+		return nil, err
+	}
+	size := st.Size()
+	if size < f.off {
+		f.off = 0
+	}
+	if size == f.off {
+		return nil, nil
+	}
+	fh, err := os.Open(f.path)
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+	if _, err := fh.Seek(f.off, io.SeekStart); err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(io.LimitReader(fh, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	f.off += int64(len(b))
+	s := strings.TrimSuffix(string(b), "\n")
+	if s == "" {
+		return nil, nil
+	}
+	return strings.Split(s, "\n"), nil
+}
 
 // globMatch is a case-insensitive path.Match that never errors (a malformed
 // pattern simply does not match).
