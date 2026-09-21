@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -27,23 +28,46 @@ func httpGet(ctx context.Context, client *http.Client, url string) ([]byte, erro
 }
 
 func httpPost(ctx context.Context, client *http.Client, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	return httpDo(ctx, client, http.MethodPost, url, "", "", nil, "", "")
+}
+
+func httpPostBody(ctx context.Context, client *http.Client, url, contentType, body string, hdr map[string]string) ([]byte, error) {
+	return httpDo(ctx, client, http.MethodPost, url, contentType, body, hdr, "", "")
+}
+
+func httpDo(ctx context.Context, client *http.Client, method, url, contentType, body string, hdr map[string]string, user, pass string) ([]byte, error) {
+	var rdr io.Reader
+	if body != "" {
+		rdr = bytes.NewReader([]byte(body))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
 	if err != nil {
 		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range hdr {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	if user != "" {
+		req.SetBasicAuth(user, pass)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	out, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return body, fmt.Errorf("%s: %s", url, resp.Status)
+		return out, fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	return body, nil
+	return out, nil
 }
 
 func httpGetToken(ctx context.Context, client *http.Client, url, token string) ([]byte, error) {
@@ -100,6 +124,10 @@ func ensureDim(reg *registry.Registry, chartID, dimID string, d *registry.Dimens
 		d.ID = dimID
 	}
 	c.AddDimension(d)
+}
+
+func readBody(resp *http.Response) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
 func httpGetAuth(ctx context.Context, client *http.Client, url, user, pass string) ([]byte, error) {
