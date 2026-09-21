@@ -130,9 +130,9 @@ func TestParseNTPReply(t *testing.T) {
 	buf := make([]byte, 48)
 	buf[0] = 0x24
 	buf[1] = 3
-	buf[3] = 0xFA // precision -6
-	binary.BigEndian.PutUint32(buf[4:], 655)  // ~0.01s NTP short
-	binary.BigEndian.PutUint32(buf[8:], 131)  // ~0.002s NTP short
+	buf[3] = 0xFA                            // precision -6
+	binary.BigEndian.PutUint32(buf[4:], 655) // ~0.01s NTP short
+	binary.BigEndian.PutUint32(buf[8:], 131) // ~0.002s NTP short
 	binary.BigEndian.PutUint64(buf[32:], ntpTimestamp(t2))
 	binary.BigEndian.PutUint64(buf[40:], ntpTimestamp(t3))
 	s, err := parseNTPReply(buf, t1, t4)
