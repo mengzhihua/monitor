@@ -842,3 +842,134 @@ alarms:
     delay: down 2m multiplier 1.5 max 30m
     info: CockroachDB live node count is zero
     to: sysadmin
+
+  - name: fluentd_retry
+    on: fluentd.retry_count
+    class: Errors
+    type: Service
+    component: Fluentd
+    lookup: max -1m unaligned of *
+    units: retries
+    every: 1m
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Fluentd plugin retry count is non-zero
+    to: sysadmin
+
+  - name: logstash_heap
+    on: logstash.jvm_mem_heap_used
+    class: Utilization
+    type: Service
+    component: Logstash
+    lookup: average -1m unaligned of in_use
+    units: '%'
+    every: 1m
+    warn: '$this > 80'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Logstash JVM heap is high
+    to: sysadmin
+
+  - name: cassandra_request_failures
+    on: cassandra.client_requests_failures_rate
+    class: Errors
+    type: Database
+    component: Cassandra
+    lookup: sum -1m unaligned absolute of *
+    units: failures
+    every: 1m
+    warn: '$this > 5'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Cassandra client request failures in the last minute
+    to: sysadmin
+
+  - name: ceph_cluster_unhealthy
+    on: ceph.cluster_status
+    class: Errors
+    type: System
+    component: Ceph
+    lookup: last -30s unaligned of err
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Ceph cluster health is ERR
+    to: sysadmin
+
+  - name: couchdb_5xx
+    on: couchdb.response_code_classes
+    class: Errors
+    type: Database
+    component: CouchDB
+    lookup: sum -1m unaligned absolute of 5xx
+    units: responses
+    every: 1m
+    warn: '$this > 10'
+    delay: down 5m multiplier 1.5 max 1h
+    info: CouchDB 5xx responses in the last minute
+    to: sysadmin
+
+  - name: couchbase_quota
+    on: couchbase.bucket_quota_percent_used
+    class: Utilization
+    type: Database
+    component: Couchbase
+    lookup: max -1m unaligned of *
+    units: '%'
+    every: 1m
+    warn: '$this > 90'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Couchbase bucket quota used is high
+    to: sysadmin
+
+  - name: hddtemp_hot
+    on: hddtemp.disk_temperature
+    class: Errors
+    type: System
+    component: Disk
+    lookup: max -1m unaligned of temperature
+    units: Celsius
+    every: 1m
+    warn: '$this > 55'
+    crit: '$this > 60'
+    delay: down 5m multiplier 1.5 max 1h
+    info: HDD temperature is high
+    to: sysadmin
+
+  - name: beanstalk_buried
+    on: beanstalk.current_jobs
+    class: Latency
+    type: Service
+    component: Beanstalk
+    lookup: last -30s unaligned of buried
+    units: jobs
+    every: 10s
+    warn: '$this > 0'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Beanstalk has buried jobs
+    to: sysadmin
+
+  - name: uwsgi_exceptions
+    on: uwsgi.exceptions
+    class: Errors
+    type: Service
+    component: uWSGI
+    lookup: sum -1m unaligned absolute of exceptions
+    units: exceptions
+    every: 1m
+    warn: '$this > 5'
+    delay: down 5m multiplier 1.5 max 1h
+    info: uWSGI exceptions in the last minute
+    to: sysadmin
+
+  - name: powerdns_latency
+    on: powerdns.latency
+    class: Latency
+    type: Service
+    component: PowerDNS
+    lookup: average -1m unaligned of latency
+    units: microseconds
+    every: 1m
+    warn: '$this > 50000'
+    delay: down 5m multiplier 1.5 max 1h
+    info: PowerDNS answer latency is high
+    to: sysadmin

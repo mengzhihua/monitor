@@ -161,6 +161,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `snmp`（snmpwalk IF-MIB）、`proxysql`、`clickhouse`、`cockroachdb`、`pulsar`、`envoy`、`upsd`（NUT :3493）、`zfspool`、`dmcache`、`filecheck`、`supervisord`、`monit`；目标缺失自动禁用 |
 | 告警 | ZFS degraded、NUT 电池、ProxySQL slow、Envoy 5xx、文件缺失、Supervisord/Monit、SNMP ifDown、Cockroach live nodes |
 
+### 已实现能力（M12 续：日志栈 / 存储 / DNS）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `fluentd`（/api/plugins.json）、`logstash`（/_node/stats）、`cassandra`（JMX Prometheus :7072）、`ceph`（`ceph status --format json`）、`couchdb`、`couchbase`、`hddtemp`（:7634）、`openvpn`（management :7505）、`beanstalk`（:11300）、`uwsgi`（stats :1717）、`powerdns`（HTTP API）、`dnsmasq`（CHAOS TXT）；目标缺失自动禁用 |
+| 告警 | Fluentd retry、Logstash heap、Cassandra failures、Ceph ERR、CouchDB 5xx、Couchbase quota、HDD 温度、Beanstalk buried、uWSGI exceptions、PowerDNS latency |
+
 ### 开发
 
 ```bash
