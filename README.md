@@ -196,6 +196,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `ap`、`dockerhub`、`ethtool`、`intelgpu`、`logind`、`dcgm`、`panos`、`powerstore`、`powervault`、`s3check`、`scaleio`、`smbios_memory`；目标缺失自动禁用 |
 | 告警 | 光模块温度、Intel GPU busy、DCGM GPU 温度、PAN-OS session、PowerStore/PowerVault health、S3 check、ScaleIO capacity |
 
+### 已实现能力（M12 续 6：云 / SQL / SNMP traps）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集器 | `vcsa`（REST health）、`mssql`（sqlcmd）、`oracledb`（sqlplus）、`sql`（mysql/psql/sqlcmd/sqlplus）、`cloudwatch`（SigV4）、`azure_monitor`（OAuth）、`vsphere`（SOAP /sdk）、`cato_networks`（GraphQL）、`snmp_traps`（UDP）、`snmp_topology`（snmpwalk LLDP）；缺凭证或目标则自动禁用 |
+| 告警 | VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询 |
+
 ### 开发
 
 ```bash

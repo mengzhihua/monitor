@@ -1389,3 +1389,107 @@ alarms:
     delay: down 5m multiplier 1.5 max 1h
     info: ScaleIO unused capacity is low
     to: sysadmin
+
+  - name: vcsa_system_red
+    on: vcsa.system_health_status
+    class: Errors
+    type: System
+    component: vCenter
+    lookup: last -30s unaligned of red
+    units: status
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: VCSA overall system health is red
+    to: sysadmin
+
+  - name: mssql_blocked_processes
+    on: mssql.blocked_processes
+    class: Errors
+    type: Database
+    component: MSSQL
+    lookup: last -30s unaligned of blocked
+    units: processes
+    every: 10s
+    warn: '$this > 0'
+    delay: down 2m multiplier 1.5 max 30m
+    info: SQL Server has blocked processes
+    to: sysadmin
+
+  - name: oracledb_sessions
+    on: oracledb.sessions_utilization
+    class: Resources
+    type: Database
+    component: Oracle
+    lookup: last -30s unaligned of session_limit
+    units: percent
+    every: 10s
+    warn: '$this > 90'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Oracle session limit utilization is high
+    to: sysadmin
+
+  - name: vsphere_disconnected
+    on: vsphere.host_connection_state
+    class: Errors
+    type: System
+    component: vSphere
+    lookup: last -30s unaligned of disconnected
+    units: state
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: vSphere hosts are disconnected
+    to: sysadmin
+
+  - name: cato_site_down
+    on: cato_networks.site_connectivity_status
+    class: Errors
+    type: Network
+    component: Cato
+    lookup: last -30s unaligned of status
+    units: status
+    every: 10s
+    warn: '$this < 1'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Cato site connectivity is down
+    to: sysadmin
+
+  - name: snmp_traps_flood
+    on: snmp.trap.pipeline
+    class: Errors
+    type: System
+    component: SNMP
+    lookup: sum -1m unaligned absolute of received
+    units: events
+    every: 1m
+    warn: '$this > 100'
+    delay: down 5m multiplier 1.5 max 1h
+    info: SNMP trap receiver is flooded
+    to: sysadmin
+
+  - name: snmp_topology_none
+    on: snmp_topology.devices
+    class: Errors
+    type: System
+    component: SNMP
+    lookup: last -30s unaligned of registered
+    units: devices
+    every: 10s
+    warn: '$this < 1'
+    delay: down 5m multiplier 1.5 max 1h
+    info: SNMP topology has no registered neighbors
+    to: sysadmin
+
+  - name: sql_query_slow
+    on: sql.mysql_query_time
+    class: Latency
+    type: Database
+    component: SQL
+    lookup: last -30s unaligned of duration
+    units: ms
+    every: 10s
+    warn: '$this > 1000'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Generic SQL query is slow
+    to: sysadmin
