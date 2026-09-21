@@ -324,6 +324,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: "{server,client}-*"
           path: artifacts
           merge-multiple: true
       - name: checksums
