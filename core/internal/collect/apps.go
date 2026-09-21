@@ -33,17 +33,17 @@ var defaultAppGroups = []struct {
 	{"netdata", []string{"netdata", "apps.plugin", "go.d.plugin", "ebpf.plugin"}},
 	{"ssh", []string{"sshd", "ssh", "sshd-session"}},
 	{"kernel", []string{"kthreadd", "kworker*", "ksoftirqd*", "migration*", "rcu_*", "kswapd*", "cpuhp*", "idle_inject*", "watchdog*"}},
-	{"system", []string{"systemd*", "init", "launchd", "udevd", "dbus*", "polkitd", "cron*", "atd", "rsyslogd", "journald", "logind", "snapd", "svchost.exe", "wininit.exe", "services.exe", "lsass.exe", "csrss.exe", "smss.exe", "winlogon.exe", "System"}},
+	{"system", []string{"systemd*", "init", "launchd", "udevd", "dbus*", "polkitd", "cron*", "atd", "rsyslogd", "journald", "logind", "snapd", "svchost", "wininit", "services", "lsass", "csrss", "smss", "winlogon", "System"}},
 	{"containers", []string{"docker*", "containerd*", "runc*", "podman*", "crio*", "kubelet", "kube-*"}},
 	{"vms", []string{"qemu*", "kvm*", "VBox*", "vmware*", "libvirtd", "virtqemud"}},
 	{"database", []string{"mysqld", "mariadbd", "postgres*", "mongod", "redis-server", "valkey-server", "memcached", "clickhouse*", "etcd", "influxd", "elasticsearch", "java*elasticsearch"}},
 	{"httpd", []string{"nginx", "httpd", "apache2", "caddy", "traefik", "haproxy", "envoy", "lighttpd"}},
 	{"mq", []string{"kafka*", "rabbitmq*", "beam.smp", "mosquitto", "nats-server", "pulsar*"}},
 	{"dev", []string{"gopls", "go", "node", "npm", "python*", "java", "ruby", "php*", "code", "code-*", "Code Helper*", "idea*", "goland*", "webstorm*", "pycharm*", "cursor*"}},
-	{"shell", []string{"bash", "zsh", "sh", "fish", "dash", "tmux*", "screen", "cmd.exe", "powershell.exe", "pwsh*"}},
-	{"desktop", []string{"gnome-*", "kwin*", "plasma*", "Xorg", "Xwayland", "wayland*", "pipewire*", "pulseaudio", "WindowServer", "Finder", "Dock", "explorer.exe", "dwm.exe"}},
+	{"shell", []string{"bash", "zsh", "sh", "fish", "dash", "tmux*", "screen", "cmd", "powershell", "pwsh*"}},
+	{"desktop", []string{"gnome-*", "kwin*", "plasma*", "Xorg", "Xwayland", "wayland*", "pipewire*", "pulseaudio", "WindowServer", "Finder", "Dock", "explorer", "dwm"}},
 	{"browser", []string{"chrome*", "chromium*", "firefox*", "Google Chrome*", "Safari*", "com.apple.WebKit*", "msedge*", "brave*"}},
-	{"security", []string{"fail2ban*", "auditd", "clamd", "freshclam", "MsMpEng.exe", "falcon*"}},
+	{"security", []string{"fail2ban*", "auditd", "clamd", "freshclam", "MsMpEng", "falcon*"}},
 	{"backup", []string{"rsync", "restic", "borg", "rclone", "bacula*"}},
 	{"time", []string{"chronyd", "ntpd", "systemd-timesyncd", "timesyncd"}},
 	{"logs", []string{"fluent*", "vector", "filebeat", "promtail", "logstash", "loki"}},
@@ -109,7 +109,7 @@ func (a *appsCollector) Configure(decode func(v any) error) error {
 	sort.Strings(names)
 	seen := map[string]*appGroup{}
 	for _, n := range names {
-		g := &appGroup{name: n, patterns: a.cfg.Groups[n]}
+		g := &appGroup{name: n, patterns: stripExe(a.cfg.Groups[n])}
 		a.groups = append(a.groups, g)
 		seen[n] = g
 	}
@@ -125,6 +125,16 @@ func (a *appsCollector) Configure(decode func(v any) error) error {
 		}
 	}
 	return nil
+}
+
+// stripExe drops a trailing ".exe" from patterns: process names are matched
+// without the Windows executable suffix (see Collect).
+func stripExe(ps []string) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, strings.TrimSuffix(strings.TrimSuffix(p, ".exe"), ".EXE"))
+	}
+	return out
 }
 
 func (a *appsCollector) Init(reg *registry.Registry) error {

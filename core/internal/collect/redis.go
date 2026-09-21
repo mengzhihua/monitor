@@ -216,6 +216,9 @@ func (r *redisCollector) Collect(ctx context.Context, reg *registry.Registry, no
 	// db0:keys=12,expires=0,avg_ttl=0 → one dimension per database.
 	keys := map[string]float64{}
 	if ch, ok := reg.Chart("redis.keys"); ok {
+		for _, d := range ch.Dims() { // databases absent from INFO are empty
+			keys[d.ID] = 0
+		}
 		for k, v := range m {
 			if !strings.HasPrefix(k, "db") {
 				continue

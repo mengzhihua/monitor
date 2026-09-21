@@ -213,6 +213,40 @@ func (c *Chart) LastValues() (int64, map[string]float64) {
 	return c.lastT, out
 }
 
+// Ingest stores already-computed (post-algorithm) values for a chart, as
+// received from a remote agent, without applying dimension algorithms.
+func (r *Registry) Ingest(chartID string, sec int64, values map[string]float64) error {
+	c, ok := r.Chart(chartID)
+	if !ok {
+		return fmt.Errorf("registry: unknown chart %q", chartID)
+	}
+	vals := make(map[string]float64, len(values))
+	c.mu.Lock()
+	for id, v := range values {
+		if c.dimIx[id] == nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			continue
+		}
+		vals[id] = v
+		c.last[id] = v
+	}
+	if sec >= c.lastT {
+		c.lastT = sec
+	}
+	c.mu.Unlock()
+	if r.sink != nil {
+		for id, v := range vals {
+			r.sink.Append(SeriesID(chartID, id), sec, v)
+		}
+	}
+	r.mu.RLock()
+	subs := r.subs
+	r.mu.RUnlock()
+	for _, fn := range subs {
+		fn(chartID, sec, vals)
+	}
+	return nil
+}
+
 // Collect feeds one collection round of raw values for a chart. ts is the
 // collection time; raw values are keyed by dimension id. Dimensions missing from
 // raw produce no sample (a gap). Returns an error if the chart is unknown.
