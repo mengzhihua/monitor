@@ -274,3 +274,56 @@ alarms:
     delay: down 15m multiplier 1.5 max 1h
     info: TCP segments retransmitted in the last 10 minutes
     to: sysadmin
+
+  - name: mysql_threads_connected
+    on: mysql.threads
+    class: Utilization
+    type: Database
+    component: MySQL
+    lookup: average -1m unaligned of connected
+    units: threads
+    every: 10s
+    warn: '$this > 80'
+    delay: down 5m multiplier 1.5 max 1h
+    info: MySQL currently connected threads
+    to: sysadmin
+
+  - name: elasticsearch_cluster_red
+    on: elasticsearch.cluster_health_status
+    class: Availability
+    type: Database
+    component: Elasticsearch
+    lookup: last -10s unaligned of red
+    units: 'status'
+    every: 10s
+    crit: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Elasticsearch cluster status is red
+    to: sysadmin
+
+  - name: ssl_cert_expiration
+    on: sslcheck.time_until_expiration
+    class: Latency
+    type: Service
+    component: TLS
+    lookup: min -1m unaligned of days
+    units: days
+    every: 1m
+    warn: '$this < (($status >= $WARNING) ? (30) : (14))'
+    crit: '$this < (($status == $CRITICAL) ? (7) : (2))'
+    delay: down 1h multiplier 1.5 max 1d
+    info: TLS certificate days until expiration
+    to: sysadmin
+
+  - name: dnsquery_failed
+    on: dns_query.query_status
+    class: Availability
+    type: Service
+    component: DNS
+    lookup: average -1m unaligned of failure
+    units: 'failed'
+    every: 10s
+    warn: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: DNS query is failing
+    to: sysadmin

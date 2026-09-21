@@ -454,7 +454,7 @@ sequenceDiagram
 | **M3 客户端** | Flutter App 五端：登录、节点、Dashboard、告警、推送（APNs/FCM/自建）、mDNS 直连 | 应用商店/桌面安装包 |
 | **M4 Android 服务端** | gomobile AAR、Kotlin 前台服务与采集桥、Android 专用采集器与省电策略、Android 上运行 Hub 验证 | 安卓设备作为节点 / 小型 Hub |
 | **M5 智能与日志** | 边缘 ML 异常检测、异常顾问、OpenMetrics/StatsD 摄入、Prometheus 抓取、合成检查（HTTP/TCP/Ping）、导出器（Graphite/Influx/JSON）、apache/phpfpm/memcached | 对标 Netdata 完整 Agent 能力 |
-| **M6 生态** | 应用采集器扩充（mysql/pg/es/rabbitmq/kafka…）、journald / Event Log 检索、OTLP、Hub 集群、配置下发、审计、OIDC | 生产可用 |
+| **M6 生态** | 应用采集器扩充（mysql/pg/es/rabbitmq）、journald / Event Log 检索、OTLP、Hub 集群、Prometheus remote write、Metric Correlations（ks2/volume）、sslcheck/dns/nvidia | 生产可用 |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -475,9 +475,9 @@ sequenceDiagram
 | Netdata Cloud（Space/Room/RBAC/集中通知） | `internal/hub` | M2 |
 | Mobile App 告警推送 | `app/`（Flutter）+ Hub push | M3 |
 | ML anomaly detection / Anomaly Advisor / Metric Correlations | `internal/collect/ml.go` + `/api/v1/weights` | M5 |
-| Logs（journald / Event Log） | `internal/functions/logs` | M6 |
-| Exporting | `internal/export`（Graphite / Influx / JSON） | M5 |
-| Parent Cluster | `internal/stream/cluster` | M6 |
-| OpenMetrics / StatsD / OTLP | `internal/ingest` + `prometheus`/`statsd` collectors；OTLP 待 M6 | M5 / M6 |
+| Logs（journald / Event Log） | `internal/collect/logs.go` + `/api/v1/logs` | M6 |
+| Exporting | `internal/export`（Graphite / Influx / JSON / Prometheus remote write） | M5 / M6 |
+| Parent Cluster | `internal/hub/cluster.go` | M6 |
+| OpenMetrics / StatsD / OTLP | `internal/ingest` + `prometheus`/`statsd`/`otlp` collectors | M5 / M6 |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
 | （仅移动）五端原生客户端 | `app/` | M3 |

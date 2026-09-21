@@ -91,6 +91,7 @@ type Info struct {
 	ChartsCount int               `json:"charts_count"`
 	Alarms      map[string]int    `json:"alarms"`
 	Functions   []string          `json:"functions,omitempty"`
+	Peer        string            `json:"peer,omitempty"` // cluster: originating hub URL
 }
 
 // Nodes is the hub-side node set.
