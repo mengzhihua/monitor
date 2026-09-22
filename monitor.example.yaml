@@ -186,6 +186,11 @@ collectors:
     ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
       command: ipmitool
       timeout: 8s
+    windows:                 # Windows.plugin: process accounting + Perflib (WMI FormattedData)
+      command: sc            # services Function + windows.service_state.* charts
+      typeperf: typeperf     # optional cooked-counter scan; default off
+      typeperf_scan: false   # true = sequential typeperf -sc 1 (slow; WMI is the live path)
+      timeout: 8s
     db2:                     # IBM DB2 via db2 CLI (no CGO); requires dsn
       dsn: ""
       command: db2
