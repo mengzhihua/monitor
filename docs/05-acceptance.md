@@ -47,7 +47,8 @@ make test
 make verify-durability
 make bench
 make hub-load
-python3 scripts/soak.py --seconds 600 --output soak.json
+mkdir -p reports
+python3 scripts/soak.py --seconds 600 --output reports/soak.json
 cd web && npx playwright install chromium && npm run test:e2e
 cd ../app && flutter analyze && flutter test
 flutter test integration_test/secure_storage_test.dart -d macos
@@ -57,12 +58,13 @@ cd .. && make cross
 
 装有Chrome时可用`MONITOR_BROWSER_CHANNEL=chrome npm run test:e2e`。浏览器测试占用`127.0.0.1:19997`，配置和数据均为临时目录，不复用已有服务；冒烟使用19998/18999。各进程测试均清理自己启动的进程。
 
-`make acceptance`顺序运行构建、Go/Web测试、强杀恢复、Hub负载、持续采集、浏览器、Flutter单测及交叉编译。`MONITOR_SOAK_SECONDS`可调整验收时长；CI另保存负载JSON与浏览器截图/失败trace。原生Keychain测试须在macOS桌面环境单独运行。集成测试会生成测试应用，完成后需重新`flutter build macos --debug`交付主程序。
+`make acceptance`顺序运行构建、Go/Web测试、默认登录保护、强杀恢复、Hub负载、持续采集、浏览器、Flutter单测及交叉编译。`MONITOR_SOAK_SECONDS`可调整验收时长；CI另保存负载JSON与浏览器截图/失败trace。原生Keychain测试须在macOS桌面环境单独运行。集成测试会生成测试应用，完成后需重新`flutter build macos --debug`交付主程序。
 
 72小时测试可在稳定、禁止休眠的目标机器运行：
 
 ```sh
-python3 scripts/soak.py --seconds 259200 --output soak-72h.json
+mkdir -p reports
+python3 scripts/soak.py --seconds 259200 --output reports/soak-72h.json
 ```
 
 这条命令是待执行入口，**本轮没有运行满72小时**。系统Keychain/Keystore实现使用[flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage)；没有安全存储的环境只维持当前会话，绝不退回明文保存。macOS采用非共享Keychain，删除操作可重复调用；iOS Keychain能力已配置，仍须签名及真机验收。

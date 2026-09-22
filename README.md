@@ -2,7 +2,7 @@
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
-- **服务端** `monitord`（Go 单二进制，`--mode agent|hub`）：macOS / Linux / Windows / FreeBSD / Android
+- **服务端** `monitord`（Go 单二进制，配置 `mode: agent` 或 `mode: hub`）：macOS / Linux / Windows / FreeBSD / Android
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
 ## 文档
@@ -13,8 +13,10 @@
 | [docs/02-architecture.md](docs/02-architecture.md) | Monitor 架构设计：总体架构、技术选型、服务端模块（采集/TSDB/健康/ML/流式/API/Functions）、Hub、Android 服务端专项、客户端、仓库结构、路线图、能力对照表 |
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
+| [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
+| [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
-## 快速开始（M0）
+## 快速开始
 
 依赖：Go 1.25+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
 
@@ -34,9 +36,38 @@ cd core && go run ./cmd/monitord -listen :19999
 
 配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
 
-默认开启登录保护：未配置 `web.token`、`web.users`、OIDC 或 LDAP 时，首次启动生成独立的随机管理员密码，保存在 `<data_dir>/web-password`（Unix 权限 `0600`）。重启沿用该密码；升级旧的无认证部署也会启用登录。启动日志只提示文件位置，不输出密码。Web 和 Flutter 客户端均在密码/令牌框输入它；API 使用 `Authorization: Bearer <密码>`。Android 服务端可点击“查看登录密码”。
+### 默认登录密码
 
-已有认证配置保持生效，不会额外生成管理员密码。要自定义密码，在私有 `monitor.yaml` 中设置足够长的随机 `web.token` 并重启；忘记自动生成的密码时，停止服务、删除 `web-password`、重启后读取新密码。文件损坏或无法保存时服务拒绝启动。备份包含密码，请保护备份；Windows 请通过数据目录 ACL 限制其他用户读取。远程部署应通过 HTTPS 反向代理或可信加密网络访问，密码认证本身不加密 HTTP。
+未配置 `web.token`、`web.users`、OIDC 或 LDAP 时，首次启动会生成**每台部署独立的随机管理员密码**，无需用户名。重启沿用该密码；旧的无认证部署升级后也会要求登录。已有认证配置继续生效，不会额外生成管理员密码。
+
+密码位于 `<data_dir>/web-password`。`data_dir` 来自 `-data-dir` 或 `global.data_dir`，默认是**启动时工作目录**下的 `./data`，不是可执行文件所在目录。按上面的启动命令，在另一终端读取：
+
+```bash
+# macOS / Linux / FreeBSD，在启动命令所在目录执行
+cat ./data/web-password
+```
+
+```powershell
+# Windows PowerShell
+Get-Content .\data\web-password
+```
+
+在 Web 或 Flutter 客户端的“登录密码 / API token”输入框填写密码。Android **服务端**启动后点击“查看登录密码”，详见 [Android 服务端说明](android/README.md)。API 和 Prometheus 抓取使用 `Authorization: Bearer <密码>`；登录页静态资源及 `/healthz` 健康检查仍可公开访问，监控数据、日志、指标及实时连接需要认证。
+
+密码文件在 Unix 上使用 `0600` 权限，启动日志只提示位置，不打印密码。文件损坏或无法保存时服务拒绝启动。Windows 部署请通过数据目录 ACL 限制其他用户读取；备份包含该密码，应按敏感数据保管。
+
+### 修改或重置密码
+
+自定义密码：在服务器私有的 `monitor.yaml` 中设置一个足够长的随机值，然后重启服务。该配置不提交到 Git：
+
+```yaml
+web:
+  token: "替换为你生成的长随机密码"
+```
+
+重置**自动生成的密码**：先停止服务，删除实际数据目录中的 `web-password`，再启动并读取新文件。旧密码立即失效。若已配置 `web.token`、`web.users`、OIDC 或 LDAP，应修改对应的认证配置，删除文件不会重置这些凭据。
+
+远程部署应通过 HTTPS 反向代理或可信加密网络访问；密码认证本身不加密 HTTP。不要把真实密码写进 URL、文档或仓库。
 
 跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、freebsd(amd64/arm64)、android(arm64) 二进制。
 
@@ -390,20 +421,48 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 
 目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。Linux 客户端请先安装 `libegl1`（见上文）。
 
-## 仓库规划
+## 仓库结构
 
+```text
+.
+├── core/                       Go 服务端模块
+│   ├── cmd/monitord/           程序入口，Agent / Hub 共用
+│   └── internal/              采集、TSDB、认证/API、Hub、流协议等实现
+├── web/                        Vue Dashboard 源码与浏览器测试
+│   ├── src/
+│   └── e2e/
+├── app/                        Flutter 五端客户端
+│   ├── lib/
+│   ├── test/                  单元测试
+│   ├── integration_test/      原生安全存储测试
+│   └── android/ ios/ macos/ windows/ linux/   客户端平台工程
+├── android/                    独立 Android 服务端（Kotlin 前台服务）
+├── plugins.d/                  外部采集器示例
+├── scripts/                    构建、打包、版本处理和运行验收脚本
+├── docs/                       架构、协议、差距与验收记录
+├── .github/workflows/          CI 与 Release
+├── .agents/skills/             开发助手的本地验收指引
+├── monitor.example.yaml        可提交的配置模板
+└── Makefile                    根目录统一构建入口
 ```
-core/      Go：monitord（agent/hub）、monitorctl、gomobile 绑定
-web/       Vue3 Dashboard（embed 进 monitord）
-app/       Flutter 五端客户端
-android/   Android 服务端壳（Kotlin 前台服务，运行随包分发的 monitord）
-scripts/   smoke 测试、Android 服务端打包、macOS 分架构打包
-.github/   CI 与 Release 工作流
-plugins/   外部采集器（plugins.d 文本协议）
-proto/     节点↔Hub 流协议
-api/       OpenAPI 定义
-packaging/ 安装包与安装脚本
-```
+
+`app/android/` 构建 Flutter **客户端**；根目录 `android/` 构建 **服务端**，二者是独立应用。协议实现位于 `core/internal/stream/`，HTTP API 位于 `core/internal/api/`。详细职责见[架构文档 §8](docs/02-architecture.md#8-代码仓库结构monorepo)。
+
+### 生成文件与本地数据
+
+| 路径 | 用途 | Git 管理 |
+| --- | --- | --- |
+| `core/bin/` | 本机与跨平台服务端二进制 | 忽略 |
+| `core/internal/api/ui/dist/` | `web/` 构建产物，供 Go 嵌入 | 只保留 `.gitkeep` |
+| `app/build/`、`android/app/build/` | Flutter / Android 构建产物 | 忽略 |
+| `android/app/src/main/jniLibs/` | Android 服务端打包时生成的 Go 二进制 | 忽略 |
+| `dist/` | Release 压缩包、DMG、APK 等交付产物 | 忽略 |
+| `reports/` | 持续采集、Hub 负载等验收报告 | 忽略 |
+| `web/test-results/`、`web/playwright-report/` | 浏览器截图和测试报告 | 忽略 |
+| `data/`、`core/data/` | 本地监控数据和默认密码 | 忽略 |
+| `monitor.yaml`、`web-password` | 部署私有配置与凭据 | 忽略 |
+
+从根目录运行 `make all`，包括 `make -j all`，会先构建前端再编译服务端。`make core` 用于已准备好嵌入资源的场景（例如 CI 下载前端构建产物后）；直接使用它不会更新 Dashboard。`make clean` 只清理服务端二进制及嵌入的前端构建文件，不删除运行数据、配置或密码。
 
 ## 路线图
 

@@ -4,7 +4,9 @@ BIN      = core/bin
 
 .PHONY: all web core test lint run cross clean
 
-all: web core
+# Go embeds the generated dashboard. Keep this ordered even under make -j.
+all: web
+	$(MAKE) core
 
 ## web: build the Vue dashboard into core/internal/api/ui/dist (embedded by Go)
 web:

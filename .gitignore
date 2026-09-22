@@ -18,6 +18,14 @@ core/internal/api/ui/dist/*
 monitor.yaml
 web-password
 
+# Release packages and runtime acceptance reports
+/dist/
+/reports/
+
+# Python tooling caches
+__pycache__/
+*.py[cod]
+
 # Browser acceptance artifacts
 web/test-results/
 web/playwright-report/

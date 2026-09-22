@@ -65,17 +65,17 @@ jobs:
         run: python3 scripts/verify-default-auth.py
       - name: Hub capacity and restart
         if: runner.os == 'Linux'
-        run: python3 scripts/load-hub.py --output hub-load.json
+        run: |
+          mkdir -p reports
+          python3 scripts/load-hub.py --output reports/hub-load.json
       - name: Agent soak
         if: runner.os == 'Linux'
-        run: python3 scripts/soak.py --seconds 120 --output agent-soak.json
+        run: python3 scripts/soak.py --seconds 120 --output reports/agent-soak.json
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux' && always()
         with:
           name: runtime-acceptance
-          path: |
-            hub-load.json
-            agent-soak.json
+          path: reports/*.json
 
   browser:
     needs: web
