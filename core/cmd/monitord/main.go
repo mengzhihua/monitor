@@ -144,6 +144,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
+		if ml := sched.Collector("ml"); ml != nil {
+			if src, ok := ml.(health.AnomalySource); ok {
+				eng.SetAnomaly(src)
+			}
+		}
 	}
 
 	var pm *plugins.Manager
@@ -186,6 +191,7 @@ func run() error {
 			InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
 			Timeout:            cfg.Stream.Timeout,
 			Replicate:          cfg.Stream.Replicate,
+			Protocol:           cfg.Stream.Protocol,
 			Version:            version,
 			Functions:          sched.Functions,
 			Logger:             log.With("component", "stream"),
@@ -241,9 +247,17 @@ func run() error {
 			MaxNodes:         cfg.Hub.MaxNodes,
 			MaxChartsPerNode: cfg.Hub.MaxChartsPerNode,
 			MaxDimsPerChart:  cfg.Hub.MaxDimsPerChart,
-			Logger:           log.With("component", "hub"),
-			OnSample:         func(n, c string, t int64, v map[string]float64) { srv.PublishNodeSample(n, c, t, v) },
-			OnAlarm:          func(n string, e health.LogEntry) { srv.PublishNodeAlarm(n, e) },
+			Storage:          cfg.Hub.Storage,
+			NodeConfig: func(nodeID string) []string {
+				cfg, ok := org.GetConfig(nodeID)
+				if !ok {
+					return nil
+				}
+				return cfg.Disabled
+			},
+			Logger:   log.With("component", "hub"),
+			OnSample: func(n, c string, t int64, v map[string]float64) { srv.PublishNodeSample(n, c, t, v) },
+			OnAlarm:  func(n string, e health.LogEntry) { srv.PublishNodeAlarm(n, e) },
 		})
 		if err != nil {
 			return fmt.Errorf("hub: %w", err)

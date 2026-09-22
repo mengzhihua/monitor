@@ -479,13 +479,13 @@ sequenceDiagram
 | **M17 剩余缺口** | proc 剩余、libvirt/proxmox/ebpf、manage/health、v2 group_by=node、维护窗口、Kinesis/Pub/Sub、LDAP/share/ACLK、Vue context | `go test -race`、`vue-tsc`、`smoke.sh` |
 | **M18 原生插件** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q + alert_transitions | 合入 main |
 | **M19 内核深度（合入）** | eBPF 程序族、perf.plugin、debugfs extfrag/audit、idlejitter、apps user/group、nfacct | `go test -race`、`vue-tsc`、`smoke.sh` |
-| **M20 日志与查看器** | journald 跟随流、Windows Events 分页、macos.plugin、network-viewer、systemd-units 出图 | 同上 |
-| **M21 Windows.plugin** | Perflib IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows CI fixture |
+| **M20 日志与查看器（本轮）** | journald 跟随流、Windows Events 分页、macos.plugin、network-viewer、systemd-units 出图 | 同上 |
+| **M21 Windows.plugin（合入）** | Perflib IIS/应用池/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/传感器/AD/Exchange/services 图 | Windows CI fixture |
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
-| **M23 IBM 与残留（合入）** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 无驱动禁用 |
-| **M24 查询 API 深度** | `/api/v3`、`group_by=dimension`、`alert_config`、每维 anomaly | API 单测 |
-| **M25 Hub Cloud 产品** | ACLK 语义补齐、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 双节点冒烟 |
-| **M26 集成目录（本轮）** | 点名 Prometheus 原生 ID 包装（etcd/minio/vault/…）；catalog API；其余 `prom.*` | `go test -race`、`vue-tsc`、`smoke.sh` |
+| **M23 IBM 与残留（合入）** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 合入 main |
+| **M24 查询 API 深度（合入）** | `/api/v3` 子集、`group_by=dimension`、`alert_config` CRUD、每维 anomaly bit | `go test -race`、`vue-tsc`、`smoke.sh` |
+| **M25 Hub Cloud 产品（合入）** | ACLK MQTT-over-WSS、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 冒烟 + Vue |
+| **M26 集成目录（合入）** | 点名 Prometheus 原生 ID 包装（etcd/minio/vault/…）；catalog API；其余 `prom.*` | `go test -race`、`vue-tsc`、`smoke.sh` |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -543,5 +543,5 @@ sequenceDiagram
 | Windows.plugin Perflib | `internal/collect/windows.go` | M21 |
 | freebsd.plugin ZFS/ipfw/net.inet | `internal/collect/freebsd.go` + `freebsd_m22.go` | M22 |
 | ibm.d / pandas / lxc/ecs/containerd | `internal/collect` | M23 |
-| API v3 / group_by=dimension / alert_config | `internal/api` | M24 |
-| Cloud 控制台 / 图上异常高亮 | `web/` + `internal/hub` | M25 |
+| API v3 / group_by=dimension / alert_config / 每维 anomaly | `internal/api` + `collect/ml.go` + Vue MetricChart | M24 |
+| Cloud 控制台 / 图上异常高亮 / ACLK MQTT | `web/` + `internal/hub` + `internal/stream` | M25 |

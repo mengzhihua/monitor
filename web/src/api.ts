@@ -1,9 +1,10 @@
-export interface Dimension { id: string; name: string; algorithm: string; hidden?: boolean }
+export interface Dimension { id: string; name: string; algorithm: string; hidden?: boolean; anomaly?: boolean }
 export interface Chart {
   id: string; context: string; family: string; title: string; units: string
   chart_type: 'line' | 'area' | 'stacked'; priority: number; update_every: number
   plugin: string; module: string; labels: Record<string, string> | null
   dimensions: Dimension[]; first_entry: number; last_entry: number
+  anomaly?: boolean
 }
 export interface ChartsResponse { hostname: string; update_every: number; charts_count: number; charts: Record<string, Chart> }
 export interface PluginStatus {
@@ -22,7 +23,8 @@ export interface Info {
   user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer' }
   nodes_count?: number
   streaming_enabled?: boolean
-  stream?: { enabled: boolean; connected: boolean; destination?: string; last_error?: string; sent: number; replicated: number; dropped: number }
+  stream?: { enabled: boolean; connected: boolean; destination?: string; last_error?: string; sent: number; replicated: number; dropped: number; protocol?: string; claimed?: boolean }
+  aclk?: { available: boolean; online: boolean; protocol?: string; claimed?: boolean; destination?: string; storage?: string; nodes?: number; live?: number; capabilities?: string[] }
 }
 export type NodeStatus = 'live' | 'stale' | 'offline'
 export interface NodeInfo {
@@ -30,6 +32,7 @@ export interface NodeInfo {
   version: string; status: NodeStatus; local: boolean; first_seen: number; last_seen: number; last_data?: number
   charts_count: number; alarms: { warning: number; critical: number }; functions?: string[]; peer?: string
   space_id?: string; room_id?: string; replica?: boolean
+  aclk?: boolean; protocol?: string
 }
 export interface Space { id: string; name: string; created: number }
 export interface Room { id: string; name: string; space_id: string; nodes?: string[] }
@@ -39,6 +42,10 @@ export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
   dimension_ids: string[]; dimension_names: string[]
+  dimension_anomaly?: number[]
+  anomaly?: number[]
+  group_by?: string
+  api?: number
   result: { labels: string[]; data: (number | null)[][] }
 }
 export interface LiveMsg { node?: string; chart: string; t: number; v: Record<string, number> }
@@ -64,10 +71,26 @@ export interface FunctionInfo { name: string; help: string; timeout: number }
 export interface FunctionTable { columns: string[]; rows: Record<string, unknown>[]; total: number }
 export interface FunctionResponse { function: string; time: number; result: FunctionTable | unknown }
 export interface Weight {
-  chart: string; context: string; title: string; score: number; anomaly_rate: number
+  chart: string; context: string; title: string; dimension?: string; score: number; anomaly_rate: number
 }
-export interface WeightsResponse { method: string; weights: Weight[]; count: number }
+export interface WeightsResponse { method: string; group?: string; weights: Weight[]; count: number }
 export interface LogRow { time: number; priority: string; unit: string; pid: string; message: string }
+export interface ConsoleNode {
+  id: string; hostname: string; status: string; aclk?: boolean; protocol?: string
+  charts_count?: number; last_seen?: number; alarms?: { warning: number; critical: number }
+}
+export interface ConsoleRoom {
+  id: string; name: string; nodes: ConsoleNode[]
+  alarms: { warning: number; critical: number }
+  alarm_list?: { name: string; chart: string; status: string }[]
+}
+export interface ConsoleSpace { id: string; name: string; created?: number; rooms: ConsoleRoom[] }
+export interface ConsoleResponse {
+  spaces: ConsoleSpace[]
+  unassigned?: ConsoleNode[]
+  routing?: { roles?: Record<string, string[]>; channels?: { name: string; configured?: boolean }[] }
+  aclk: { available?: boolean; online?: boolean; protocol?: string; storage?: string; nodes?: number; live?: number }
+}
 
 const base = ''
 const TOKEN_KEY = 'monitor.token'
@@ -181,6 +204,7 @@ export const api = {
   issueClaim: (spaceID: string, roomID: string, ttl = '24h') =>
     post<Claim>('/api/v1/hub/claim-tokens', { space_id: spaceID, room_id: roomID, ttl }),
   putNodeConfig: (cfg: NodeConfig) => send<NodeConfig>('PUT', `/api/v1/hub/config?node=${encodeURIComponent(cfg.node_id)}`, cfg),
+  console: () => get<ConsoleResponse>('/api/v1/hub/console'),
   oidcLoginURL: () => '/api/v1/auth/oidc/login',
   liveURL(charts: string[] = []) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'

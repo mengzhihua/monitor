@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,10 @@ type Options struct {
 	Logger           *slog.Logger
 	// ExtraKeys are stream credentials minted at runtime (claim tokens).
 	ExtraKeys func() []string
+	// NodeConfig returns disabled collectors for a node (hub → agent TypeConfig).
+	NodeConfig func(nodeID string) []string
+	// Storage is "full" (default, hub keeps samples) or "proxy" (query live agent).
+	Storage string
 	// OnSample/OnAlarm mirror node activity to the live WebSocket feed.
 	OnSample func(nodeID, chartID string, ts int64, values map[string]float64)
 	OnAlarm  func(nodeID string, e health.LogEntry)
@@ -77,6 +82,7 @@ type Node struct {
 	replica   bool
 	spaceID   string
 	roomID    string
+	protocol  string // "stream" | "mqtt"
 }
 
 // Info is the JSON view of a node.
@@ -100,6 +106,8 @@ type Info struct {
 	SpaceID     string            `json:"space_id,omitempty"`
 	RoomID      string            `json:"room_id,omitempty"`
 	Replica     bool              `json:"replica,omitempty"`
+	ACLK        bool              `json:"aclk,omitempty"`
+	Protocol    string            `json:"protocol,omitempty"`
 	Contexts    map[string]any    `json:"contexts,omitempty"`
 }
 
@@ -461,7 +469,7 @@ func (nd *Node) Info(now time.Time) Info {
 	inf := Info{ID: nd.ID, Hostname: nd.Host.Hostname, OS: nd.Host.OS, Arch: nd.Host.Arch, Labels: nd.Host.Labels,
 		UpdateEvery: nd.Host.UpdateEvery, Version: nd.Version, Status: nd.statusLocked(now), FirstSeen: nd.FirstSeen,
 		LastSeen: nd.LastSeen, LastData: nd.lastData, ChartsCount: len(nd.reg.Charts()), Alarms: map[string]int{"warning": 0, "critical": 0},
-		SpaceID: nd.spaceID, RoomID: nd.roomID, Replica: nd.replica}
+		SpaceID: nd.spaceID, RoomID: nd.roomID, Replica: nd.replica, ACLK: nd.conn != nil, Protocol: nd.protocol}
 	for _, a := range nd.alarms {
 		switch a.Status {
 		case health.StatusWarning:
@@ -586,6 +594,51 @@ func (nd *Node) Call(ctx context.Context, name string, args map[string]string) (
 		}
 		return res.Result, nil
 	}
+}
+
+func (nd *Node) Query(ctx context.Context, args map[string]string) (json.RawMessage, error) {
+	nd.mu.Lock()
+	s := nd.conn
+	if s == nil {
+		nd.mu.Unlock()
+		return nil, errors.New("node is offline")
+	}
+	nd.nextCall++
+	id := nd.nextCall
+	ch := make(chan stream.Frame, 1)
+	nd.calls[id] = ch
+	nd.mu.Unlock()
+	defer func() {
+		nd.mu.Lock()
+		delete(nd.calls, id)
+		nd.mu.Unlock()
+	}()
+	if err := s.send(stream.Frame{Type: stream.TypeQuery, CallID: id, Name: "data", Args: args}); err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Error != "" {
+			return nil, errors.New(res.Error)
+		}
+		return res.Result, nil
+	}
+}
+
+func (nd *Node) Online() bool {
+	nd.mu.Lock()
+	defer nd.mu.Unlock()
+	return nd.conn != nil
+}
+
+func (n *Nodes) Storage() string {
+	s := strings.ToLower(strings.TrimSpace(n.opt.Storage))
+	if s == "" {
+		return "full"
+	}
+	return s
 }
 
 func (nd *Node) deliverResult(f stream.Frame) {

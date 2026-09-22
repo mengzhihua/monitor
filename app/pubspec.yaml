@@ -1,6 +1,8 @@
 name: monitor_app
 description: "A new Flutter project."
 publish_to: 'none'
+# Release CI overwrites this line to match the Git tag (e.g. 0.1.20+10020)
+# so data/flutter_assets/version.json is not left at 0.1.0.
 version: 0.1.0
 
 environment:

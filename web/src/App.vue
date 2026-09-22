@@ -9,6 +9,7 @@ import FunctionsPanel from './components/FunctionsPanel.vue'
 import LogsPanel from './components/LogsPanel.vue'
 import WeightsPanel from './components/WeightsPanel.vue'
 import HubPanel from './components/HubPanel.vue'
+import CloudPanel from './components/CloudPanel.vue'
 import ContextsPanel from './components/ContextsPanel.vue'
 
 const info = ref<Info | null>(null)
@@ -28,6 +29,7 @@ const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
 const showHub = ref(false)
+const showCloud = ref(false)
 const showContexts = ref(false)
 const oidcAvailable = ref(false)
 const nodes = ref<NodeInfo[]>([])
@@ -224,6 +226,7 @@ onBeforeUnmount(() => { clearInterval(timer); live.stop() })
         title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
       <button class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
+      <button v-if="isHub" class="alarms-btn" :class="{ open: showCloud }" @click="showCloud = !showCloud" title="Cloud 控制台">Cloud</button>
       <button class="alarms-btn" :class="{ open: showWeights }" @click="showWeights = !showWeights" title="异常顾问 / 关联分析">Σ</button>
       <button class="alarms-btn" :class="{ open: showContexts }" @click="showContexts = !showContexts" title="Context 总览">Ctx</button>
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
@@ -274,6 +277,7 @@ onBeforeUnmount(() => { clearInterval(timer); live.stop() })
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { filter = id; showWeights = false }" />
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
+      <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { filter = id; showCloud = false }" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>此服务需要身份验证，请输入访问令牌或使用 OIDC 登录。</p>
         <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />

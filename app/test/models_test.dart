@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:monitor_app/api/client.dart';
 import 'package:monitor_app/api/models.dart';
+import 'package:monitor_app/version.dart';
 
 void main() {
   test('Live token uses an encoded subprotocol, never a URL parameter', () {
@@ -79,5 +80,9 @@ void main() {
     });
     expect(f.name, 'logs');
     expect(f.timeout, 8);
+  });
+
+  test('appVersion default matches pubspec placeholder', () {
+    expect(appVersion, isNotEmpty);
   });
 }

@@ -87,7 +87,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 
 func publicAPI(path string) bool {
 	switch path {
-	case "/api/v1/auth/oidc/status", stream.Path, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
+	case "/api/v1/auth/oidc/status", stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
 		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap":
 		return true
 	}
@@ -106,7 +106,14 @@ func (ro Role) allows(r *http.Request) bool {
 	case RoleTroubleshooter:
 		return r.Method == http.MethodGet
 	default:
-		return r.Method == http.MethodGet && r.URL.Path != "/api/v1/function" && r.URL.Path != "/api/v1/logs"
+		if r.Method != http.MethodGet {
+			return false
+		}
+		switch r.URL.Path {
+		case "/api/v1/function", "/api/v3/function", "/api/v1/logs":
+			return false
+		}
+		return true
 	}
 }
 

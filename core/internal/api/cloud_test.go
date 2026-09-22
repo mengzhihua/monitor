@@ -296,3 +296,34 @@ func testOIDCLogin(t *testing.T, mode string) {
 		t.Fatal("logout did not revoke session")
 	}
 }
+
+func TestHubConsole(t *testing.T) {
+	hs, _, org := newHubOrg(t)
+	spaces := org.Spaces()
+	if len(spaces) == 0 {
+		t.Fatal("no spaces")
+	}
+	var cons struct {
+		Spaces []struct {
+			Name  string `json:"name"`
+			Rooms []struct {
+				Name  string `json:"name"`
+				Nodes []any  `json:"nodes"`
+			} `json:"rooms"`
+		} `json:"spaces"`
+		ACLK struct {
+			Available bool   `json:"available"`
+			Protocol  string `json:"protocol"`
+		} `json:"aclk"`
+		Routing struct {
+			Channels []any `json:"channels"`
+		} `json:"routing"`
+	}
+	getJSON(t, hs.URL+"/api/v1/hub/console", &cons)
+	if !cons.ACLK.Available || cons.ACLK.Protocol != "stream+mqtt" || len(cons.Spaces) == 0 || cons.Spaces[0].Name != "prod" {
+		t.Fatalf("console = %+v", cons)
+	}
+	if len(cons.Spaces[0].Rooms) == 0 || cons.Spaces[0].Rooms[0].Name != "edge" {
+		t.Fatalf("rooms = %+v", cons.Spaces[0].Rooms)
+	}
+}

@@ -62,10 +62,10 @@ func (m *mqCollector) Init(reg *registry.Registry) error {
 	}
 	m.seen = map[string]bool{}
 	for _, ch := range []*registry.Chart{
-		{ID: "mq.queue_managers", Context: "mq.queue_managers", Title: "IBM MQ queue managers", Units: "managers", Family: "mq", Type: registry.Stacked, Priority: 64300,
-			Dimensions: []*registry.Dimension{{ID: "running"}, {ID: "stopped"}}},
-		{ID: "mq.queues", Context: "mq.queues", Title: "IBM MQ local queues", Units: "queues", Family: "mq", Priority: 64310,
-			Dimensions: []*registry.Dimension{{ID: "local"}}},
+		{ID: "mq.qmgr.status", Context: "mq.qmgr.status", Title: "Queue Manager Status", Units: "status", Family: "mq", Priority: 64300,
+			Dimensions: []*registry.Dimension{{ID: "status"}}},
+		{ID: "mq.queues.overview", Context: "mq.queues.overview", Title: "Queues Monitoring Status", Units: "queues", Family: "mq", Priority: 64310,
+			Dimensions: []*registry.Dimension{{ID: "monitored"}}},
 	} {
 		ch.Plugin, ch.Module = "ibm.d", "mq"
 		reg.AddChart(ch)
@@ -78,17 +78,31 @@ func (m *mqCollector) Collect(ctx context.Context, reg *registry.Registry, now t
 	if err != nil {
 		return err
 	}
-	states := map[string]float64{"running": 0, "stopped": 0}
+	selected := m.cfg.QueueManager
+	if selected == "" && len(qms) == 1 {
+		selected = qms[0].Name
+	}
 	for _, q := range qms {
+		st := 0.0
 		if strings.EqualFold(q.Status, "Running") {
-			states["running"]++
-		} else {
-			states["stopped"]++
+			st = 1
+		}
+		if selected != "" && q.Name == selected {
+			_ = reg.Collect("mq.qmgr.status", now, map[string]float64{"status": st})
+		}
+		if len(qms) > 1 {
+			id := "mq.qmgr.status." + sanitizeID(q.Name)
+			if !m.seen[id] {
+				m.seen[id] = true
+				ch := sysChart(id, "mq", "Queue Manager Status "+q.Name, "status", 64300, &registry.Dimension{ID: "status"})
+				ch.Context, ch.Plugin, ch.Module = "mq.qmgr.status", "ibm.d", "mq"
+				reg.AddChart(ch)
+			}
+			_ = reg.Collect(id, now, map[string]float64{"status": st})
 		}
 	}
-	_ = reg.Collect("mq.queue_managers", now, states)
 
-	qm := m.cfg.QueueManager
+	qm := selected
 	if qm == "" && len(qms) > 0 {
 		qm = qms[0].Name
 	}
@@ -96,18 +110,41 @@ func (m *mqCollector) Collect(ctx context.Context, reg *registry.Registry, now t
 	if err != nil {
 		return err
 	}
-	_ = reg.Collect("mq.queues", now, map[string]float64{"local": float64(len(queues))})
+	_ = reg.Collect("mq.queues.overview", now, map[string]float64{"monitored": float64(len(queues))})
 	for _, q := range queues {
-		id := "mq.queue_depth." + sanitizeID(q.Name)
-		if !m.seen[id] {
-			m.seen[id] = true
-			ch := sysChart(id, "mq", "IBM MQ queue depth "+q.Name, "messages", 64320, &registry.Dimension{ID: "curdepth"})
-			ch.Context, ch.Plugin, ch.Module = "mq.queue_depth", "ibm.d", "mq"
-			reg.AddChart(ch)
+		sid := sanitizeID(q.Name)
+		m.ensureQueueCharts(reg, q.Name, sid)
+		pct := 0.0
+		if q.MaxDepth > 0 {
+			pct = q.Depth * 100 / q.MaxDepth
 		}
-		_ = reg.Collect(id, now, map[string]float64{"curdepth": q.Depth})
+		_ = reg.Collect("mq.queue.depth."+sid, now, map[string]float64{"current": q.Depth, "max": q.MaxDepth})
+		_ = reg.Collect("mq.queue.depth_percentage."+sid, now, map[string]float64{"percentage": pct})
+		_ = reg.Collect("mq.queue.messages."+sid, now, map[string]float64{"enqueued": q.MsgIn, "dequeued": q.MsgOut})
+		_ = reg.Collect("mq.queue.connections."+sid, now, map[string]float64{"input": q.IPProcs, "output": q.OPProcs})
 	}
 	return nil
+}
+
+func (m *mqCollector) ensureQueueCharts(reg *registry.Registry, name, sid string) {
+	depthID := "mq.queue.depth." + sid
+	if m.seen[depthID] {
+		return
+	}
+	m.seen[depthID] = true
+	add := func(id, ctx, title, units string, prio int, dims ...*registry.Dimension) {
+		ch := sysChart(id, "mq", title+" "+name, units, prio, dims...)
+		ch.Context, ch.Plugin, ch.Module = ctx, "ibm.d", "mq"
+		reg.AddChart(ch)
+	}
+	add(depthID, "mq.queue.depth", "Queue Depth", "messages", 64320,
+		&registry.Dimension{ID: "current"}, &registry.Dimension{ID: "max"})
+	add("mq.queue.depth_percentage."+sid, "mq.queue.depth_percentage", "Queue Depth Percentage", "percentage", 64321,
+		&registry.Dimension{ID: "percentage"})
+	add("mq.queue.messages."+sid, "mq.queue.messages", "Queue Messages", "messages/s", 64322,
+		incDim("enqueued"), incDim("dequeued"))
+	add("mq.queue.connections."+sid, "mq.queue.connections", "Queue Connections", "connections", 64323,
+		&registry.Dimension{ID: "input"}, &registry.Dimension{ID: "output"})
 }
 
 type mqManager struct {
@@ -115,14 +152,24 @@ type mqManager struct {
 }
 
 type mqQueue struct {
-	Name  string
-	Depth float64
+	Name     string
+	Depth    float64
+	MaxDepth float64
+	IPProcs  float64
+	OPProcs  float64
+	MsgIn    float64
+	MsgOut   float64
 }
 
 var (
 	reDspmq   = regexp.MustCompile(`QMNAME\(([^)]+)\)\s+STATUS\(([^)]+)\)`)
 	reMQQueue = regexp.MustCompile(`QUEUE\(([^)]+)\)`)
 	reMQDepth = regexp.MustCompile(`CURDEPTH\((\d+)\)`)
+	reMQMax   = regexp.MustCompile(`MAXDEPTH\((\d+)\)`)
+	reMQIP    = regexp.MustCompile(`IPPROCS\((\d+)\)`)
+	reMQOP    = regexp.MustCompile(`OPPROCS\((\d+)\)`)
+	reMQIn    = regexp.MustCompile(`MSGIN\((\d+)\)`)
+	reMQOut   = regexp.MustCompile(`MSGOUT\((\d+)\)`)
 )
 
 func parseDspmq(b []byte) []mqManager {
@@ -137,19 +184,43 @@ func parseDspmq(b []byte) []mqManager {
 }
 
 func parseRunmqscQueues(b []byte) []mqQueue {
+	byName := map[string]*mqQueue{}
+	var order []string
 	blocks := strings.Split(string(b), "QUEUE(")
-	var out []mqQueue
 	for _, blk := range blocks[1:] {
 		nameM := reMQQueue.FindStringSubmatch("QUEUE(" + blk)
-		depthM := reMQDepth.FindStringSubmatch(blk)
 		if len(nameM) != 2 {
 			continue
 		}
-		q := mqQueue{Name: nameM[1]}
-		if len(depthM) == 2 {
-			q.Depth = firstFloat(depthM[1])
+		name := nameM[1]
+		q, ok := byName[name]
+		if !ok {
+			q = &mqQueue{Name: name}
+			byName[name] = q
+			order = append(order, name)
 		}
-		out = append(out, q)
+		if m := reMQDepth.FindStringSubmatch(blk); len(m) == 2 {
+			q.Depth = firstFloat(m[1])
+		}
+		if m := reMQMax.FindStringSubmatch(blk); len(m) == 2 {
+			q.MaxDepth = firstFloat(m[1])
+		}
+		if m := reMQIP.FindStringSubmatch(blk); len(m) == 2 {
+			q.IPProcs = firstFloat(m[1])
+		}
+		if m := reMQOP.FindStringSubmatch(blk); len(m) == 2 {
+			q.OPProcs = firstFloat(m[1])
+		}
+		if m := reMQIn.FindStringSubmatch(blk); len(m) == 2 {
+			q.MsgIn = firstFloat(m[1])
+		}
+		if m := reMQOut.FindStringSubmatch(blk); len(m) == 2 {
+			q.MsgOut = firstFloat(m[1])
+		}
+	}
+	out := make([]mqQueue, len(order))
+	for i, n := range order {
+		out[i] = *byName[n]
 	}
 	return out
 }
@@ -178,6 +249,10 @@ func (m *mqCollector) managers(ctx context.Context) ([]mqManager, error) {
 	return qms, nil
 }
 
+// QSTATUS accepts CURDEPTH/IPPROCS/OPPROCS; MSGIN/MSGOUT are RESET QSTATS
+// (or PCF) and must not be used as QSTATUS selectors or runmqsc fails.
+const mqRunmqsc = "DISPLAY QSTATUS(*) CURDEPTH IPPROCS OPPROCS\nDISPLAY QUEUE(*) MAXDEPTH\n"
+
 func (m *mqCollector) queueStatus(ctx context.Context, qm string) ([]mqQueue, error) {
 	run := m.run
 	if run == nil {
@@ -185,7 +260,7 @@ func (m *mqCollector) queueStatus(ctx context.Context, qm string) ([]mqQueue, er
 			cctx, cancel := context.WithTimeout(ctx, m.cfg.Timeout)
 			defer cancel()
 			cmd := exec.CommandContext(cctx, name, args...)
-			cmd.Stdin = strings.NewReader("DISPLAY QSTATUS(*) CURDEPTH\n")
+			cmd.Stdin = strings.NewReader(mqRunmqsc)
 			return cmd.Output()
 		}
 	}

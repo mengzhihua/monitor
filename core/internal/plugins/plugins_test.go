@@ -185,8 +185,11 @@ exit 0
 	}
 	waitFor(t, func() bool {
 		st := byName()
-		return st["flaky"].Restarts >= 2 && st["missing"].State == StateFailed && st["sub"].State == StateDisabled
-	}, "flaky restarted twice, missing failed, sub ran from the plugins dir")
+		sink.mu.Lock()
+		n := len(sink.rows["flaky.v|v"])
+		sink.mu.Unlock()
+		return n >= 2 && st["flaky"].Restarts >= 2 && st["missing"].State == StateFailed && st["sub"].State == StateDisabled
+	}, "flaky restarted twice with samples, missing failed, sub ran from the plugins dir")
 	st := byName()
 	if st["sub"].Command != filepath.Join(dir, "vendor", "sub.plugin") {
 		t.Fatalf("relative sub-directory command = %q", st["sub"].Command)

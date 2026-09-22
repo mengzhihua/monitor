@@ -4,6 +4,8 @@
 package health
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,23 +35,23 @@ import (
 //     info: average CPU utilization over the last 10 minutes
 //     to: sysadmin
 type RuleSpec struct {
-	Name     string            `yaml:"name"`
-	On       string            `yaml:"on"`
-	Class    string            `yaml:"class"`
-	Type     string            `yaml:"type"`
-	Compon   string            `yaml:"component"`
-	Lookup   string            `yaml:"lookup"`
-	Calc     string            `yaml:"calc"`
-	Every    string            `yaml:"every"`
-	Units    string            `yaml:"units"`
-	Warn     string            `yaml:"warn"`
-	Crit     string            `yaml:"crit"`
-	Delay    string            `yaml:"delay"`
-	Repeat   string            `yaml:"repeat"`
-	Info     string            `yaml:"info"`
-	To       string            `yaml:"to"`
-	Labels   map[string]string `yaml:"chart_labels"`
-	Disabled bool              `yaml:"disabled"`
+	Name     string            `yaml:"name" json:"name"`
+	On       string            `yaml:"on" json:"on"`
+	Class    string            `yaml:"class" json:"class,omitempty"`
+	Type     string            `yaml:"type" json:"type,omitempty"`
+	Compon   string            `yaml:"component" json:"component,omitempty"`
+	Lookup   string            `yaml:"lookup" json:"lookup,omitempty"`
+	Calc     string            `yaml:"calc" json:"calc,omitempty"`
+	Every    string            `yaml:"every" json:"every,omitempty"`
+	Units    string            `yaml:"units" json:"units,omitempty"`
+	Warn     string            `yaml:"warn" json:"warn,omitempty"`
+	Crit     string            `yaml:"crit" json:"crit,omitempty"`
+	Delay    string            `yaml:"delay" json:"delay,omitempty"`
+	Repeat   string            `yaml:"repeat" json:"repeat,omitempty"`
+	Info     string            `yaml:"info" json:"info,omitempty"`
+	To       string            `yaml:"to" json:"to,omitempty"`
+	Labels   map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
+	Disabled bool              `yaml:"disabled" json:"disabled,omitempty"`
 }
 
 type ruleFile struct {
@@ -63,6 +65,7 @@ type Lookup struct {
 	Dimensions []string      // empty = all
 	Percentage bool          // result as % of the sum of all dimensions
 	AbsValue   bool
+	AnomalyBit bool   // query 0–100 anomaly rates instead of raw values
 	MinMax     string // "min2max": max-min of the window
 }
 
@@ -137,7 +140,17 @@ func Compile(spec RuleSpec, source string) (*Rule, error) {
 	return r, nil
 }
 
-// ParseLookup parses "<method> <-duration> [unaligned] [absolute] [percentage] [of dim1,dim2]".
+// Hash is a stable id for GET /api/v3/alert_config?hash= (Netdata-style).
+func (r *Rule) Hash() string {
+	if r == nil {
+		return ""
+	}
+	b, _ := yaml.Marshal(r.Spec)
+	sum := sha256.Sum256([]byte(r.Source + "\x00" + r.Spec.Name + "\x00" + string(b)))
+	return hex.EncodeToString(sum[:8])
+}
+
+// ParseLookup parses "<method> <-duration> [unaligned] [absolute] [percentage] [anomaly-bit] [of dim1,dim2]".
 func ParseLookup(s string) (*Lookup, error) {
 	f := strings.Fields(s)
 	if len(f) < 2 {
@@ -177,6 +190,8 @@ func ParseLookup(s string) (*Lookup, error) {
 			l.AbsValue = true
 		case "percentage", "percent":
 			l.Percentage = true
+		case "anomaly-bit", "anomaly_bit", "anomalybit":
+			l.AnomalyBit = true
 		case "of":
 			rest := strings.Join(f[i+1:], "")
 			if rest != "" && rest != "*" {

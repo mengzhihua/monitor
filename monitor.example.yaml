@@ -46,6 +46,7 @@ stream:
   insecure_skip_verify: false
   timeout: 10s
   replicate: 1h        # at most this much history is re-sent after reconnecting
+  protocol: stream     # stream = JSON /api/v1/stream; mqtt or aclk = MQTT 3.1.1 over WSS /api/v1/aclk
 
 # Hub side (mode: hub): accept nodes. Each node gets its own registry + TSDB namespace;
 # query them with `?node=<id>` on the usual API and pick them in the dashboard.
@@ -61,9 +62,10 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token); also required on POST /api/v1/hub/ring
   space: default           # created on first hub start if org.json is empty
   room: default
+  storage: full            # full = hub keeps samples; proxy = live-query the agent (TypeQuery)
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi idlejitter perf nfacct db2 as400 mq websphere pandas go_expvar am2320 lxc ecs containerd
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi idlejitter perf nfacct db2 as400 mq websphere pandas go_expvar am2320 lxc ecs containerd macos
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -71,7 +73,7 @@ collectors:
       cmdline: false   # also match patterns against the full command line
       top: 200         # max rows returned by the `processes` function
       groups: {}       # extra/overriding groups: name → glob patterns, e.g. { myapp: ["myapp*", "worker-*"] }
-    systemd:           # linux, cgroup v2: per-service cpu/mem/io from /sys/fs/cgroup/system.slice
+    systemd:           # cgroup cpu/mem/io plus systemctl unit state (systemd.service_units)
       cgroup_root: /sys/fs/cgroup
       slices: [system.slice]
       include: []      # unit-name globs; empty = all
@@ -142,10 +144,14 @@ collectors:
       timeout: 2s
     otlp:                    # OTLP HTTP metrics listener (JSON / protobuf)
       listen: 127.0.0.1:4318
-    logs:                    # journald / Event Log / files + `logs` function
+    logs:                    # journald follow / Event Log / unified log / files + `logs` function
       files: []              # extra files; defaults /var/log/syslog, /var/log/messages
       channels: []           # Windows ETW / Event Log channels, e.g. [System, Application]
       top: 200
+      follow: true           # journalctl -f; false keeps one-shot queries
+    macos:                   # Darwin memory pressure / swap / thermal / battery; other OS auto-disable
+      command: sysctl
+      timeout: 3s
     libvirt:                 # virsh list + domstats; missing virsh auto-disables
       command: virsh
       timeout: 5s
@@ -185,6 +191,11 @@ collectors:
       timeout: 5s
     ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
       command: ipmitool
+      timeout: 8s
+    windows:                 # Windows.plugin: process accounting + Perflib (WMI FormattedData)
+      command: sc            # services Function + windows.service_state.* charts
+      typeperf: typeperf     # optional cooked-counter scan; default off
+      typeperf_scan: false   # true = sequential typeperf -sc 1 (slow; WMI is the live path)
       timeout: 8s
     db2:                     # IBM DB2 via db2 CLI (no CGO); requires dsn
       dsn: ""
@@ -228,7 +239,7 @@ collectors:
       jobs: []               # e.g. [{ name: cloudflare, record: cloudflare.com, server: 1.1.1.1 }]
     nvidia:                  # nvidia-smi GPUs
       command: nvidia-smi
-    netstat:             # TCP states + `network-connections` function
+    netstat:             # TCP states + `network-connections` (inode, cmdline)
       top: 500
     haproxy:
       url: ""                # empty = try :8404/;csv then /stats;csv

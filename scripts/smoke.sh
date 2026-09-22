@@ -27,6 +27,7 @@ echo "$info" | grep '"charts_count":[1-9]' >/dev/null || fail "no charts: $info"
 
 charts=$(curl -sf "http://127.0.0.1:$PORT/api/v1/charts") || fail "charts"
 echo "$charts" | grep '"system.cpu"' >/dev/null || fail "system.cpu missing"
+echo "$charts" | grep '"system.ram"' >/dev/null || fail "system.ram missing"
 curl -sf "http://127.0.0.1:$PORT/api/v1/charts" | grep '"system.idlejitter"' >/dev/null || fail "system.idlejitter missing"
 
 curl -sf "http://127.0.0.1:$PORT/api/v1/contexts" | grep '"contexts"' >/dev/null || fail "contexts"
@@ -39,12 +40,26 @@ curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_count" | grep '"count"' >/dev/null
 curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_summary" | grep '"status"' >/dev/null || fail "alarm_summary"
 curl -sf "http://127.0.0.1:$PORT/api/v1/manage/health" | grep '"enabled"' >/dev/null || fail "manage health"
 curl -sf "http://127.0.0.1:$PORT/api/v1/info" | grep '"aclk"' >/dev/null || fail "info aclk"
+curl -sf "http://127.0.0.1:$PORT/api/v1/info" | python3 -c "import json,sys; a=json.load(sys.stdin)['aclk']; assert 'protocol' in a and 'capabilities' in a, a" || fail "info aclk fields"
+curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5" | grep '"anomaly"' >/dev/null || fail "data anomaly"
+curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=volume&group=chart&top=5&after=-10&before=0&baseline_after=-40&baseline_before=-10" | grep '"group"' >/dev/null || fail "weights group"
 curl -sf "http://127.0.0.1:$PORT/api/v2/nodes?contexts=true" | grep '"contexts"' >/dev/null || fail "v2 nodes contexts"
 curl -sf "http://127.0.0.1:$PORT/api/v2/q?chart=system.ram&after=-5" | grep '"points"' >/dev/null || fail "v2 q"
-curl -sf "http://127.0.0.1:$PORT/api/v2/alert_transitions" | grep '"transitions"' >/dev/null || fail "alert_transitions"
+curl -sf "http://127.0.0.1:$PORT/api/v3/info" | grep '"api":3' >/dev/null || fail "v3 info"
+curl -sf "http://127.0.0.1:$PORT/api/v3/data?chart=system.ram&after=-5" | grep '"api":3' >/dev/null || fail "v3 data"
+curl -sf "http://127.0.0.1:$PORT/api/v3/data?context=system.ram&group_by=dimension&after=-5" | grep '"dimension_ids"' >/dev/null || fail "group_by dimension"
+curl -sf "http://127.0.0.1:$PORT/api/v3/alert_config" | grep '"configs"' >/dev/null || fail "alert_config"
+curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5" | grep '"dimension_anomaly"' >/dev/null || fail "dimension_anomaly"
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
 curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"
+curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=logs" | grep '"cursor"' >/dev/null || fail "logs function"
+curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=network-connections" | grep '"inode"' >/dev/null || fail "network-connections inode"
+collectors=$(curl -sf "http://127.0.0.1:$PORT/api/v1/collectors") || fail "collectors"
+echo "$collectors" | grep '"name":"macos"' >/dev/null || fail "collector macos missing"
+echo "$collectors" | grep '"name":"db2"' >/dev/null || fail "collector db2 missing"
+echo "$collectors" | grep '"name":"containerd"' >/dev/null || fail "collector containerd missing"
+echo "$collectors" | grep '"name":"mq"' >/dev/null || fail "collector mq missing"
 curl -sf "http://127.0.0.1:$PORT/api/v1/prometheus/catalog" | grep '"etcd"' >/dev/null || fail "prometheus catalog"
 
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
@@ -58,6 +73,8 @@ echo "$index" | grep -i '<title>Monitor</title>' >/dev/null || fail "dashboard h
 # Agent has no org store → hub cloud routes 404
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/hub/spaces")
 [[ "$code" == "404" ]] || fail "hub spaces on agent: $code"
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/hub/console")
+[[ "$code" == "404" ]] || fail "hub console on agent: $code"
 
 # Hub claim / config / ring (second process). Avoid PORT+1: default agent
 # smoke uses 19998 so +1 collides with the stock :19999 listener.
@@ -112,6 +129,9 @@ ring = req("POST", "/api/v1/hub/ring", {
 assert ring.get("replica") is True, ring
 nodes = get("/api/v1/nodes")["nodes"]
 assert any(n.get("id") == "peer-agent" and n.get("replica") for n in nodes), nodes
+cons = get("/api/v1/hub/console")
+assert cons.get("spaces") and cons["spaces"][0]["name"] == "smoke", cons
+assert cons.get("aclk", {}).get("protocol") == "stream+mqtt", cons
 print("HUB_SMOKE=1")
 PY
 )" || fail "hub claim/config/ring"

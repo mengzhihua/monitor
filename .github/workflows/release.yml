@@ -217,7 +217,9 @@ jobs:
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
         working-directory: app
-      - run: flutter build apk --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+      - name: stamp Flutter version
+        run: python3 scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" --pubspec app/pubspec.yaml
+      - run: flutter build apk --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}" --dart-define=APP_VERSION=${{ needs.meta.outputs.version }}
         working-directory: app
       - run: |
           mkdir -p dist
@@ -233,18 +235,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.meta.outputs.ref }}" }
-      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libegl1-mesa-dev
       - uses: subosito/flutter-action@v2
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
         working-directory: app
-      - run: flutter build linux --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+      - name: stamp Flutter version
+        run: python3 scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" --pubspec app/pubspec.yaml
+      - run: flutter build linux --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}" --dart-define=APP_VERSION=${{ needs.meta.outputs.version }}
         working-directory: app
       - run: |
           set -euo pipefail
           name="monitor-app-${{ needs.meta.outputs.tag }}-linux-amd64"
           mkdir -p dist
           cp -r app/build/linux/x64/release/bundle "dist/$name"
+          python3 scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" \
+            --json "dist/$name/data/flutter_assets/version.json"
+          cp app/linux/README.md "dist/$name/README.md"
           tar czf "dist/$name.tar.gz" -C dist "$name"
           rm -rf "dist/$name"
       - uses: actions/upload-artifact@v4
@@ -264,11 +271,14 @@ jobs:
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
         working-directory: app
-      - run: flutter build windows --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+      - name: stamp Flutter version
+        run: python scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" --pubspec app/pubspec.yaml
+      - run: flutter build windows --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}" --dart-define=APP_VERSION=${{ needs.meta.outputs.version }}
         working-directory: app
       - shell: pwsh
         run: |
           $name = "monitor-app-${{ needs.meta.outputs.tag }}-windows-amd64"
+          python scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" --json "app/build/windows/x64/runner/Release/data/flutter_assets/version.json"
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path "app/build/windows/x64/runner/Release/*" -DestinationPath "dist/$name.zip"
       - uses: actions/upload-artifact@v4
@@ -286,8 +296,26 @@ jobs:
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
         working-directory: app
-      - run: flutter build macos --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+      - name: stamp Flutter version
+        run: python3 scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" --pubspec app/pubspec.yaml
+      - run: flutter build macos --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}" --dart-define=APP_VERSION=${{ needs.meta.outputs.version }}
         working-directory: app
+      - name: stamp embedded version.json
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, sys
+          root = pathlib.Path("app/build/macos/Build/Products/Release")
+          files = list(root.rglob("version.json"))
+          if not files:
+              sys.exit("no version.json under %s" % root)
+          for f in files:
+              subprocess.check_call([
+                  "python3", "scripts/stamp_app_version.py",
+                  "${{ needs.meta.outputs.version }}",
+                  "${{ needs.meta.outputs.build_number }}",
+                  "--json", str(f),
+              ])
+          PY
       - name: package arm64 (Apple Silicon) and amd64 (Intel)
         run: ./scripts/package-macos-app.sh app/build/macos/Build/Products/Release/*.app dist "monitor-app-${{ needs.meta.outputs.tag }}"
       - uses: actions/upload-artifact@v4
@@ -305,7 +333,9 @@ jobs:
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
         working-directory: app
-      - run: flutter build ios --release --no-codesign --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}"
+      - name: stamp Flutter version
+        run: python3 scripts/stamp_app_version.py "${{ needs.meta.outputs.version }}" "${{ needs.meta.outputs.build_number }}" --pubspec app/pubspec.yaml
+      - run: flutter build ios --release --no-codesign --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}" --dart-define=APP_VERSION=${{ needs.meta.outputs.version }}
         working-directory: app
       - name: package unsigned ipa
         run: |
@@ -360,6 +390,9 @@ jobs:
             | Linux x64 | `monitor-app-*-linux-amd64.tar.gz` |
             | Android | `monitor-app-*-android.apk` |
             | iOS (unsigned; sideload with your own signing) | `monitor-app-*-ios-unsigned.ipa` |
+
+            Linux desktop needs `libEGL.so.1` (otherwise `./monitor` exits immediately):
+            `sudo apt install libegl1 libgtk-3-0` (Debian/Ubuntu) or `sudo dnf install mesa-libEGL gtk3` (Fedora).
 
             macOS/iOS/Windows packages are not code-signed or notarized yet; on macOS run
             `xattr -dr com.apple.quarantine <app>` after unpacking. `SHA256SUMS.txt` lists all checksums.

@@ -34,6 +34,11 @@ type kmModel struct {
 	ok     bool
 }
 
+type anomBit struct {
+	ts   int64
+	rate float64 // 0 or 100
+}
+
 type dimML struct {
 	values    []float64 // ring of last Window values
 	diffs     []float64 // first-diff ring (max MaxTrain)
@@ -45,6 +50,7 @@ type dimML struct {
 	anom      bool
 	votes     float64 // 0..1 fraction of models calling anomalous
 	chart     string
+	bits      []anomBit // recent 0/100 flags (capped at Window)
 }
 
 type mlCollector struct {
@@ -144,6 +150,14 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 		st.prev, st.hasPrev = v, true
 		m.maybeTrain(st, ts)
 		st.anom, st.votes = m.detect(st)
+		rate := 0.0
+		if st.anom {
+			rate = 100
+		}
+		st.bits = append(st.bits, anomBit{ts: ts, rate: rate})
+		if cap := m.cfg.Window; cap > 0 && len(st.bits) > cap {
+			st.bits = st.bits[len(st.bits)-cap:]
+		}
 	}
 }
 
@@ -294,6 +308,50 @@ func (m *mlCollector) Weights(method string) []Weight {
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > 50 {
 		out = out[:50]
+	}
+	return out
+}
+
+// Rate is the latest 0–100 anomaly bit for one dimension (health.AnomalySource).
+func (m *mlCollector) Rate(chart, dim string) (float64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.dims[registry.SeriesID(chart, dim)]
+	if st == nil {
+		return 0, false
+	}
+	rate := 0.0
+	if st.anom {
+		rate = 100
+	}
+	return rate, true
+}
+
+// RatesBetween returns stored 0–100 bits whose timestamps fall in [after, before].
+func (m *mlCollector) RatesBetween(chart, dim string, after, before int64) []float64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.dims[registry.SeriesID(chart, dim)]
+	if st == nil {
+		return nil
+	}
+	var out []float64
+	for _, b := range st.bits {
+		if b.ts >= after && b.ts <= before {
+			out = append(out, b.rate)
+		}
+	}
+	return out
+}
+
+func (m *mlCollector) DimAnomalies() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]bool{}
+	for id, st := range m.dims {
+		if st != nil && st.anom {
+			out[id] = true
+		}
 	}
 	return out
 }

@@ -7,8 +7,8 @@
 // Frames are JSON objects with a "type" discriminator (one frame per
 // WebSocket text message):
 //
-//	agent → hub: hello, chart, chart_del, data, alarm, alarms, func_result, pong
-//	hub → agent: welcome, func_call, error, ping
+//	agent → hub: hello, chart, chart_del, data, alarm, alarms, func_result, query_result
+//	hub → agent: welcome, func_call, query, config, error, ping
 package stream
 
 import (
@@ -19,20 +19,28 @@ import (
 )
 
 const (
-	// Path is the hub endpoint agents connect to.
+	// Path is the JSON-frame hub endpoint agents connect to.
 	Path = "/api/v1/stream"
+	// PathACLK is MQTT-over-WebSocket (Netdata ACLK semantics) on the same Frame payloads.
+	PathACLK = "/api/v1/aclk"
 
-	TypeHello      = "hello"
-	TypeWelcome    = "welcome"
-	TypeChart      = "chart"
-	TypeChartDel   = "chart_del"
-	TypeData       = "data"
-	TypeAlarm      = "alarm"
-	TypeAlarms     = "alarms" // full snapshot of the agent's current alarm state
-	TypeFuncCall   = "func_call"
-	TypeFuncResult = "func_result"
-	TypeError      = "error"
+	TypeHello       = "hello"
+	TypeWelcome     = "welcome"
+	TypeChart       = "chart"
+	TypeChartDel    = "chart_del"
+	TypeData        = "data"
+	TypeAlarm       = "alarm"
+	TypeAlarms      = "alarms" // full snapshot of the agent's current alarm state
+	TypeFuncCall    = "func_call"
+	TypeFuncResult  = "func_result"
+	TypeQuery       = "query"        // hub → agent: live metric query (Cloud proxy storage)
+	TypeQueryResult = "query_result" // agent → hub
+	TypeConfig      = "config"       // hub → agent: disabled collectors overlay
+	TypeError       = "error"
 )
+
+// ACLKCapabilities is advertised in hello / info.aclk.
+var ACLKCapabilities = []string{"stream", "functions", "alarms", "config", "query"}
 
 // Frame is the union of every message; only the fields relevant to Type are
 // populated.
@@ -40,9 +48,15 @@ type Frame struct {
 	Type string `json:"type"`
 
 	// hello
-	Host      *registry.Host `json:"host,omitempty"`
-	Version   string         `json:"version,omitempty"`
-	Functions []FunctionInfo `json:"functions,omitempty"`
+	Host         *registry.Host `json:"host,omitempty"`
+	Version      string         `json:"version,omitempty"`
+	Functions    []FunctionInfo `json:"functions,omitempty"`
+	Capabilities []string       `json:"capabilities,omitempty"`
+	Protocol     string         `json:"protocol,omitempty"` // "stream" | "mqtt"
+	Claimed      bool           `json:"claimed,omitempty"`
+
+	// config (hub → agent)
+	Disabled []string `json:"disabled,omitempty"`
 
 	// welcome: last sample time the hub holds per chart, so the agent can
 	// replicate only what is missing. ReplicateFrom bounds how far back.

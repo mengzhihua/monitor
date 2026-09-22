@@ -103,6 +103,8 @@ func (n *netstatCollector) Functions() []Function {
 }
 
 // ConnRow is one line of the network-connections function.
+// Columns follow Netdata network-viewer: protocol, addresses, state, pid,
+// process name, cmdline, inode. Lookup failures leave name/cmdline/inode empty.
 type ConnRow struct {
 	Protocol string `json:"protocol"`
 	State    string `json:"state"`
@@ -110,6 +112,8 @@ type ConnRow struct {
 	Remote   string `json:"remote"`
 	PID      int32  `json:"pid"`
 	Name     string `json:"name"`
+	Cmdline  string `json:"cmdline"`
+	Inode    string `json:"inode"`
 }
 
 func (n *netstatCollector) connections(ctx context.Context, args map[string]string) (Table, error) {
@@ -127,7 +131,9 @@ func (n *netstatCollector) connections(ctx context.Context, args map[string]stri
 	if err != nil {
 		return Table{}, err
 	}
+	inodes := procNetInodes(nil)
 	names := map[int32]string{}
+	cmds := map[int32]string{}
 	wantState := strings.ToUpper(args["state"])
 	wantProto := strings.ToLower(args["protocol"])
 	rows := make([]ConnRow, 0, len(conns))
@@ -139,17 +145,23 @@ func (n *netstatCollector) connections(ctx context.Context, args map[string]stri
 		if wantState != "" && !strings.EqualFold(c.Status, wantState) {
 			continue
 		}
-		name := names[c.Pid]
-		if name == "" && c.Pid > 0 {
+		name, cmd := names[c.Pid], cmds[c.Pid]
+		if name == "" && cmd == "" && c.Pid > 0 {
 			if p, err := process.NewProcessWithContext(ctx, c.Pid); err == nil {
 				name, _ = p.NameWithContext(ctx)
+				cmd, _ = p.CmdlineWithContext(ctx)
 			}
-			names[c.Pid] = name
+			names[c.Pid], cmds[c.Pid] = name, cmd
 		}
+		if len(cmd) > 200 {
+			cmd = cmd[:200]
+		}
+		local, remote := fmtAddr(c.Laddr), fmtAddr(c.Raddr)
 		rows = append(rows, ConnRow{
 			Protocol: proto, State: c.Status,
-			Local: fmtAddr(c.Laddr), Remote: fmtAddr(c.Raddr),
-			PID: c.Pid, Name: name,
+			Local: local, Remote: remote,
+			PID: c.Pid, Name: name, Cmdline: cmd,
+			Inode: inodes[local+"|"+remote],
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -165,7 +177,7 @@ func (n *netstatCollector) connections(ctx context.Context, args map[string]stri
 	if len(rows) > n.top {
 		rows = rows[:n.top]
 	}
-	out := Table{Columns: []string{"protocol", "state", "local", "remote", "pid", "name"}, Total: total}
+	out := Table{Columns: []string{"protocol", "state", "local", "remote", "pid", "name", "cmdline", "inode"}, Total: total}
 	out.Rows = make([]any, len(rows))
 	for i, r := range rows {
 		out.Rows[i] = r

@@ -235,7 +235,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 模块 | 说明 |
 | --- | --- |
 | FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；M22 补 syscalls/pgfaults/swapio/RAM/ZFS ARC/ipfw/net.inet*/gstat/df/netstat；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
-| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI `Win32_PerfRawData_PerfOS_System` + gopsutil）；Function `windows-services`（`sc query`）；非 Windows 自动禁用 |
+| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI + gopsutil）；Perflib 主路径 WMI `Win32_PerfFormattedData_*`（可选 `typeperf_scan`）→ CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS 站点/应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、传感器、`cpu.temperature`、AD/ADCS/ADFS、Exchange、Terminal Services、`powersupply.capacity`；`windows.service_state.*` 出图 + Function `windows-services`；角色/对象缺失自动跳过；非 Windows 自动禁用 |
 | Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
 | Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
 
@@ -268,6 +268,25 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 其它 | `idlejitter`（`system.idlejitter`）；`nfacct`；apps `cpu/mem/processes` 按 user / user group |
 | 告警 | oomkill、extfrag 高、audit backlog |
 
+### 已实现能力（M20：日志与查看器）
+
+| 模块 | 说明 |
+| --- | --- |
+| journald | `journalctl -f` 跟随（可关）；Function 过滤 unit / priority / boot / cursor |
+| Windows Events | `wevtutil` XPath + EventRecordID 游标；非 Windows 不调用 |
+| macOS | `macos` 内存压力 / swap / 温度档 / 电池；`log show` 统一日志；其它系统自动禁用 |
+| 网络 | `network-connections` 增加 cmdline、inode |
+| systemd | `systemd.service_units` / `systemd.service_restarts`；Function 带单位状态 |
+| 告警 | `systemd_units_failed` |
+
+### 已实现能力（M21：Windows Perflib）
+
+| 模块 | 说明 |
+| --- | --- |
+| Perflib | 直播 WMI `Win32_PerfFormattedData_*`（无 CGO PDH；`typeperf_scan` 可选）：`system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS 站点 + `iis.application_pool_*`、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature`、`system.hw.sensor.temperature.*`、AD/ADCS/ADFS、Exchange、RDS、`powersupply.capacity` |
+| 服务 | 每服务 `windows.service_state.*` 状态图 + 汇总 `windows.services`；Function `windows-services` 仍可用 |
+| 告警 | `system_m21.yaml`：CPU 队列、IIS 404、ASP.NET 排队、热区温度、Exchange poison queue、电池容量 |
+
 ### 已实现能力（M22：freebsd.plugin 剩余）
 
 | 模块 | 说明 |
@@ -283,9 +302,27 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 
 | 模块 | 说明 |
 | --- | --- |
-| ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
+| ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc；`mq.queue.depth` current/max、`mq.qmgr.status`）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
 | python.d 残留 | `pandas`（JSON/CSV 首行，不 eval Python）、`go_expvar`（`/debug/vars` memstats）、`am2320`（sysfs I2C） |
 | 容器 | `lxc`（lxc-ls / cgroup）、`ecs`（task metadata v4）、`containerd`（ctr）；Functions `lxc-containers` / `ecs-containers` / `containerd-containers` |
+
+### 已实现能力（M24：查询 API 深度）
+
+| 模块 | 说明 |
+| --- | --- |
+| `/api/v3` | info / data / q / contexts / context / nodes / weights / alerts / alert_transitions / alert_config / functions / badge / allmetrics（`api: 3`） |
+| 分组 | `group_by=dimension` 按维度合并实例；`group_by=node,dimension` 列名为 `node.dim` |
+| alert_config | `GET\|PUT\|POST\|DELETE /api/v3/alert_config` YAML/JSON 规则 CRUD，`?hash=` / `?name=` |
+| 每维 anomaly | data 的 `dimension_anomaly`（0–100）与 `anomaly`（0/1）；`options=anomaly-bit` 返回 0–100；health `lookup: … anomaly-bit`；Dashboard 异常维度标红 |
+
+### 已实现能力（M25：ACLK / Cloud 控制台 / 异常高亮 / Correlations）
+
+| 模块 | 说明 |
+| --- | --- |
+| ACLK | MQTT 3.1.1 over WSS（`GET /api/v1/aclk`）承载既有 JSON Frame；默认仍是 `/api/v1/stream`。`stream.protocol: mqtt\|aclk`；Hub `hub.storage: full\|proxy`（proxy 走 TypeQuery 反查 Agent） |
+| Cloud 控制台 | `GET /api/v1/hub/console`：Space→Room→节点拓扑、ACLK 摘要、告警路由；Vue Cloud 面板 |
+| 异常高亮 | 每维 anomaly bit：`/charts` `/chart` `/data.anomaly`；图上红色加粗 |
+| Correlations | `weights?method=ks2\|volume&group=chart\|context\|dimension&top=`；完整窗口/分数条/点选筛选 UI |
 
 ### 已实现能力（M26：Prometheus 点名原生 ID）
 
@@ -315,6 +352,15 @@ flutter run -d macos      # 或 linux / windows / <android-device> / <ios-device
 flutter analyze && flutter test
 ```
 
+Linux 桌面运行需要 GTK 3 和 **libEGL**（缺 `libEGL.so.1` 会立刻退出）：
+
+```bash
+# Debian / Ubuntu
+sudo apt install libegl1 libgtk-3-0
+# Fedora
+sudo dnf install mesa-libEGL gtk3
+```
+
 ### Android 服务端（M4 起步）
 
 `android/` 是原生 Kotlin 壳：前台服务拉起随包分发的静态 `monitord`（`jniLibs/arm64-v8a/libmonitord.so`），可设置监听端口、可选上报到 Hub、开机自启，并直接打开内嵌 Dashboard。Android 沙箱限制 `/proc/net` 等接口，网络类图表可能缺失；日志走 `logcat`。
@@ -336,7 +382,7 @@ flutter analyze && flutter test
 git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 ```
 
-目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。
+目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。Linux 客户端请先安装 `libegl1`（见上文）。
 
 ## 仓库规划
 
@@ -355,9 +401,9 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0–M19、M22、M23 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → FreeBSD 插件剩余 → IBM/pandas/容器运行时。
+M0–M19、M21–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
 
-后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面。本 PR 为 **M26 点名 Prometheus 原生 ID**。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+本轮：M20 日志与查看器（journald 跟随、Windows Events 分页、macOS、network-viewer、systemd 单位状态）。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
 
 ## 开发验收
 

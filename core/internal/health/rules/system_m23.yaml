@@ -27,11 +27,11 @@ alarms:
     to: sysadmin
 
   - name: mq_queue_depth
-    on: mq.queue_depth
+    on: mq.queue.depth
     class: Latency
     type: Database
     component: IBM MQ
-    lookup: average -1m unaligned of curdepth
+    lookup: average -1m unaligned of current
     units: messages
     every: 10s
     warn: '$this > (($status >= $WARNING) ? (1000) : (5000))'
