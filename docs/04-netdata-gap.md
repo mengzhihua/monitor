@@ -5,10 +5,10 @@
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
 > **不要重做 go.d**：`init.go` 除故意跳过的 `testrandom` 外已打勾。
 
-## 0. 现状一句话（M0–M19、M21–M26 合入 main；M20 本轮）
+## 0. 现状一句话（M0–M26 已合入 main）
 
 Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
-剩下主要是 **真 eBPF CO-RE**。M20 补日志跟随、Windows Events 分页、macOS 主机图与统一日志、network-viewer 列、systemd 单位状态。
+计划内批次（M19–M26）均已合入。剩余深度项是 **真 eBPF CO-RE**（可选 CGO build tag）以及文档 §2.7 里明确延后的项。
 
 | 面 | 完成度 | 说明 |
 | --- | --- | --- |
@@ -123,6 +123,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | **M17** | proc 剩余 + libvirt/proxmox/ebpf 近似；manage/health；维护窗口；Kinesis/Pub/Sub；LDAP/share | 合入 |
 | **M18** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q | 合入 |
 | **M19** | eBPF 程序族、perf、extfrag/audit、idlejitter、apps user/group、nfacct | 合入 |
+| **M20** | journald 跟随、Windows Events 分页、macos、network-viewer、systemd 单位状态 | 合入 |
 | **M22** | freebsd.plugin 剩余：sysctl/ZFS ARC/ipfw/net.inet*/gstat/df | 合入 |
 | **M23** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 合入 |
 | **M26** | Prometheus 点名 profile 原生 ID + `/api/v1/prometheus/catalog` | 合入 |
@@ -133,7 +134,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | 批次 | 搬什么 | 为什么现在做 | 完成标准（额外） |
 | --- | --- | --- | --- |
 | **M19（合入）** | eBPF 程序族、perf、extfrag/audit、idlejitter、apps user/group、nfacct | Linux 与 Netdata 差异最大的一块 | fixture + smoke `system.idlejitter` |
-| **M20 日志与查看器（本轮）** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | fixture；`GOOS=darwin go test -c`；smoke `logs` / `network-connections` |
+| **M20 日志与查看器（合入）** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | fixture；`GOOS=darwin go test -c`；smoke `logs` / `network-connections` |
 | **M21 Windows.plugin（合入）** | Perflib 全家桶（见 §2.3 / §4.5） | 与 M19/M20 并行 | WMI/typeperf fixture；无角色则跳过 |
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
 | **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 图表 ID 对齐 `mq.queue.depth` / `db2.bufferpool_hit_ratio` / `as400.memory_pool_usage`；无驱动禁用 |
@@ -158,7 +159,11 @@ flowchart LR
 
 M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定后再动查询协议。M25 依赖 M24。M23 可随时插空。
 
-## 4. 本轮（M20）交付清单
+## 4. 本轮之后
+
+M19–M26 计划批次已全部合入。后续可选深度见 §2.7（真 eBPF CO-RE、profile.plugin、Kafka 原生协议等），不再按 MNN 强制排期。
+
+## 4.0 M20（已合入 main）
 
 1. journald：`journalctl -f` 跟随（`follow: false` 退回按次查询）；Function 支持 `unit` / `priority` / `boot` / `cursor`
 2. Windows Events：`wevtutil /q` XPath，游标为 EventRecordID，after/before 写入 TimeCreated；非 Windows 不执行
@@ -167,7 +172,7 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 5. systemd-units：`systemctl show` → `systemd.service_units`、`systemd.service_restarts`；Function `services` 增加 active_state / nrestarts；无 systemctl 时保留 cgroup 图
 6. health.d `system_m20.yaml`：`systemd_units_failed`
 
-## 4.0 M24（已合入 main）
+## 4.0b M24（已合入 main）
 
 1. `/api/v3` 子集：info / data / q / contexts / context / nodes / weights / alerts / alert_transitions / alert_config / functions / function / badge.svg / allmetrics；payload `api: 3`
 2. `group_by=dimension`（同 context 下按维度 ID 合并实例）；`group_by=node,dimension`（列名为 `node.dim`）

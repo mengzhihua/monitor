@@ -401,6 +401,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0–M19、M21–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
+M0–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → 日志/查看器 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
 
-本轮：M20 日志与查看器（journald 跟随、Windows Events 分页、macOS、network-viewer、systemd 单位状态）。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续可选：真 eBPF CO-RE、profile.plugin 等（见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) §2.7）。
