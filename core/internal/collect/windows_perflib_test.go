@@ -26,6 +26,10 @@ func TestSplitPerfPath(t *testing.T) {
 	if obj != ".net clr locksandthreads" || inst != "_global_" || !strings.Contains(ctr, "queue length") {
 		t.Fatalf("clr %q %q %q", obj, inst, ctr)
 	}
+	obj, inst, ctr = splitPerfPath(`\APP_POOL_WAS(DefaultAppPool)\Current Application Pool State`)
+	if obj != "app_pool_was" || inst != "defaultapppool" || ctr != "current application pool state" {
+		t.Fatalf("app pool %q %q %q", obj, inst, ctr)
+	}
 }
 
 func TestParseTypeperfCSV(t *testing.T) {
@@ -57,6 +61,20 @@ func TestWindowsPerflibFixture(t *testing.T) {
 	s := perflibSnap{}
 	parseTypeperfCSV(s, []byte(typeperfCSVFixture))
 	s[perflibKey("battery", "_total", "estimatedchargeremaining")] = 88
+	s[perflibKey("battery", "_total", "designvoltage")] = 11100
+	s[perflibKey("app_pool_was", "defaultapppool", "current application pool state")] = 3
+	s[perflibKey("app_pool_was", "defaultapppool", "current worker processes")] = 2
+	s[perflibKey("app_pool_was", "defaultapppool", "total worker processes created")] = 4
+	s[perflibKey("app_pool_was", "defaultapppool", "maximum worker processes")] = 4
+	s[perflibKey("app_pool_was", "defaultapppool", "recent worker process failures")] = 0
+	s[perflibKey("app_pool_was", "defaultapppool", "total worker process failures")] = 1
+	s[perflibKey("app_pool_was", "defaultapppool", "total worker process ping failures")] = 0
+	s[perflibKey("app_pool_was", "defaultapppool", "total worker process startup failures")] = 0
+	s[perflibKey("app_pool_was", "defaultapppool", "total worker process shutdown failures")] = 0
+	s[perflibKey("app_pool_was", "defaultapppool", "total application pool recycles")] = 3
+	s[perflibKey("app_pool_was", "defaultapppool", "current application pool uptime")] = 3600
+	s[perflibKey("msacpi_thermalzonetemperature", "acpi_tz00", "currenttemperature")] = 3000
+	s[perflibKey("win32_temperatureprobe", "cpu0", "currentreading")] = 45
 	c := &windowsCollector{
 		cfg: windowsConfig{Command: "sc", Timeout: time.Second},
 		snap: func(context.Context) (windowsSnap, error) {
@@ -97,7 +115,13 @@ func TestWindowsPerflibFixture(t *testing.T) {
 		"exchange.rpc_requests",
 		"windows.terminal_services.sessions",
 		"windows.power.charge",
+		"powersupply.capacity",
 		"windows.service_state.EventLog",
+		"iis.application_pool_current_status.defaultapppool",
+		"iis.application_pool_recycles.defaultapppool",
+		"cpu.temperature",
+		"system.hw.sensor.temperature.histogram",
+		"system.hw.sensor.temperature.input.cpu0",
 	}
 	for _, id := range want {
 		if _, ok := reg.Chart(id); !ok {
@@ -135,6 +159,66 @@ func TestWindowsPerflibFixture(t *testing.T) {
 	if v["running"] != 1 || v["stopped"] != 1 {
 		t.Fatalf("services = %v", v)
 	}
+	ch, _ = reg.Chart("iis.application_pool_current_status.defaultapppool")
+	_, v = ch.LastValues()
+	if v["running"] != 1 || v["uninitialized"] != 0 {
+		t.Fatalf("app pool state = %v", v)
+	}
+	ch, _ = reg.Chart("cpu.temperature")
+	_, v = ch.LastValues()
+	if v["cpu0"] != 45 {
+		t.Fatalf("cpu.temperature = %v", v)
+	}
+	ch, _ = reg.Chart("powersupply.capacity")
+	_, v = ch.LastValues()
+	if v["capacity"] != 88 {
+		t.Fatalf("capacity = %v", v)
+	}
+}
+
+func TestAppPoolStateVals(t *testing.T) {
+	v := appPoolStateVals(3)
+	if v["running"] != 1 || v["disabled"] != 0 {
+		t.Fatalf("%v", v)
+	}
+	if appPoolStateVals(0)["running"] != 0 {
+		t.Fatal("unknown state should stay zero")
+	}
+}
+
+func TestLivePerflibSkipsTypeperfByDefault(t *testing.T) {
+	called := 0
+	c := &windowsCollector{
+		cfg: windowsConfig{Timeout: time.Second},
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			called++
+			return nil, nil
+		},
+	}
+	if _, err := c.livePerflib(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called != 0 {
+		t.Fatalf("typeperf invoked %d times; WMI is the live path", called)
+	}
+}
+
+func TestTypeperfScanInvokesTypeperf(t *testing.T) {
+	called := 0
+	c := &windowsCollector{
+		cfg: windowsConfig{Typeperf: "typeperf", TypeperfScan: true, Timeout: time.Second},
+		run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			called++
+			if name != "typeperf" || len(args) < 2 || args[0] != "-sc" {
+				t.Fatalf("unexpected %s %v", name, args)
+			}
+			return nil, nil
+		},
+	}
+	_, _ = c.livePerflib(context.Background())
+	if called != len(perflibObjects) {
+		t.Fatalf("typeperf calls = %d want %d", called, len(perflibObjects))
+	}
 }
 
 func TestThermalCelsius(t *testing.T) {
@@ -143,5 +227,8 @@ func TestThermalCelsius(t *testing.T) {
 	}
 	if g := thermalCelsius(42); g != 42 {
 		t.Fatalf("celsius passthrough = %v", g)
+	}
+	if g := thermalCelsius(3000); g < 26.8 || g > 27.0 {
+		t.Fatalf("tenths kelvin = %v", g)
 	}
 }

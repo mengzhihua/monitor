@@ -235,7 +235,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 模块 | 说明 |
 | --- | --- |
 | FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
-| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI + gopsutil）；Perflib（typeperf / WMI FormattedData）→ CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、Terminal Services；`windows.service_state.*` 出图 + Function `windows-services`；角色/对象缺失自动跳过；非 Windows 自动禁用 |
+| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI + gopsutil）；Perflib 主路径 WMI `Win32_PerfFormattedData_*`（可选 `typeperf_scan`）→ CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS 站点/应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、传感器、`cpu.temperature`、AD/ADCS/ADFS、Exchange、Terminal Services、`powersupply.capacity`；`windows.service_state.*` 出图 + Function `windows-services`；角色/对象缺失自动跳过；非 Windows 自动禁用 |
 | Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
 | Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
 
@@ -262,9 +262,9 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 
 | 模块 | 说明 |
 | --- | --- |
-| Perflib | `typeperf`（无 CGO PDH）+ WMI `Win32_PerfFormattedData_*`：`system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、RDS |
+| Perflib | 直播 WMI `Win32_PerfFormattedData_*`（无 CGO PDH；`typeperf_scan` 可选）：`system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS 站点 + `iis.application_pool_*`、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature`、`system.hw.sensor.temperature.*`、AD/ADCS/ADFS、Exchange、RDS、`powersupply.capacity` |
 | 服务 | 每服务 `windows.service_state.*` 状态图 + 汇总 `windows.services`；Function `windows-services` 仍可用 |
-| 告警 | `system_m21.yaml`：CPU 队列、IIS 404、ASP.NET 排队、热区温度、Exchange poison queue |
+| 告警 | `system_m21.yaml`：CPU 队列、IIS 404、ASP.NET 排队、热区温度、Exchange poison queue、电池容量 |
 
 ### 开发
 

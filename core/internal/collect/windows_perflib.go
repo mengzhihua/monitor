@@ -91,6 +91,22 @@ var perflibObjects = []string{
 }
 
 func (w *windowsCollector) livePerflib(ctx context.Context) (perflibSnap, error) {
+	s := perflibSnap{}
+	// typeperf -sc 1 waits ~1s per object. Sequential scans of the
+	// ~25-object catalog stall Init/Collect (~25s) and Windows CI smoke.
+	// WMI Win32_PerfFormattedData_* is the live path; typeperf remains
+	// for fixtures and an explicit typeperf_scan opt-in.
+	if w.cfg.TypeperfScan {
+		w.scanTypeperf(ctx, s)
+	}
+	wmiFillPerflib(s)
+	if s.empty() {
+		return nil, nil
+	}
+	return s, nil
+}
+
+func (w *windowsCollector) scanTypeperf(ctx context.Context, s perflibSnap) {
 	run := w.run
 	if run == nil {
 		run = execRun(w.cfg.Timeout)
@@ -99,7 +115,6 @@ func (w *windowsCollector) livePerflib(ctx context.Context) (perflibSnap, error)
 	if cmd == "" {
 		cmd = "typeperf"
 	}
-	s := perflibSnap{}
 	for _, obj := range perflibObjects {
 		if ctx.Err() != nil {
 			break
@@ -110,11 +125,6 @@ func (w *windowsCollector) livePerflib(ctx context.Context) (perflibSnap, error)
 		}
 		parseTypeperfCSV(s, out)
 	}
-	wmiFillPerflib(s)
-	if s.empty() {
-		return nil, nil
-	}
-	return s, nil
 }
 
 func parseTypeperfCSV(dst perflibSnap, raw []byte) {
@@ -247,6 +257,7 @@ func (w *windowsCollector) applyPerflib(reg *registry.Registry, s perflibSnap) {
 	w.ensureDisks(reg, s)
 	w.ensureNets(reg, s)
 	w.ensureIIS(reg, s)
+	w.ensureIISAppPool(reg, s)
 	w.ensureASP(reg, s)
 	w.ensureNetFramework(reg, s)
 	w.ensureHyperV(reg, s)
@@ -259,6 +270,7 @@ func (w *windowsCollector) applyPerflib(reg *registry.Registry, s perflibSnap) {
 	w.ensureExchange(reg, s)
 	w.ensureTerminal(reg, s)
 	w.ensureBattery(reg, s)
+	w.ensureSensors(reg, s)
 }
 
 func (w *windowsCollector) collectPerflib(reg *registry.Registry, now time.Time, s perflibSnap) {
@@ -273,6 +285,7 @@ func (w *windowsCollector) collectPerflib(reg *registry.Registry, now time.Time,
 	w.collectDisks(reg, now, s)
 	w.collectNets(reg, now, s)
 	w.collectIIS(reg, now, s)
+	w.collectIISAppPool(reg, now, s)
 	w.collectASP(reg, now, s)
 	w.collectNetFramework(reg, now, s)
 	w.collectHyperV(reg, now, s)
@@ -285,6 +298,7 @@ func (w *windowsCollector) collectPerflib(reg *registry.Registry, now time.Time,
 	w.collectExchange(reg, now, s)
 	w.collectTerminal(reg, now, s)
 	w.collectBattery(reg, now, s)
+	w.collectSensors(reg, now, s)
 }
 
 func (w *windowsCollector) ensureMem(reg *registry.Registry, s perflibSnap) {
@@ -507,6 +521,81 @@ func (w *windowsCollector) collectIIS(reg *registry.Registry, now time.Time, s p
 	}
 }
 
+func appPoolStateVals(state float64) map[string]float64 {
+	vals := map[string]float64{
+		"uninitialized": 0, "initialized": 0, "running": 0,
+		"disabling": 0, "disabled": 0, "shutdown_pending": 0, "delete_pending": 0,
+	}
+	names := []string{"", "uninitialized", "initialized", "running", "disabling", "disabled", "shutdown_pending", "delete_pending"}
+	i := int(state)
+	if i >= 1 && i < len(names) {
+		vals[names[i]] = 1
+	}
+	return vals
+}
+
+func (w *windowsCollector) ensureIISAppPool(reg *registry.Registry, s perflibSnap) {
+	for _, inst := range s.instances("app_pool_was") {
+		if skipDiskInst(inst) {
+			continue
+		}
+		id := sanitizeID(inst)
+		lbl := map[string]string{"app": inst}
+		title := "IIS app pool " + inst
+		w.winEnsure(reg, "iis.application_pool_current_status."+id, "iis.application_pool_current_status", "iis",
+			title+" status", "status", 21100, []*registry.Dimension{
+				{ID: "uninitialized"}, {ID: "initialized"}, {ID: "running"}, {ID: "disabling"},
+				{ID: "disabled"}, {ID: "shutdown_pending"}, {ID: "delete_pending"},
+			}, lbl)
+		w.winEnsure(reg, "iis.application_pool_current_worker_processes."+id, "iis.application_pool_current_worker_processes", "iis",
+			title+" worker processes", "processes", 21110, []*registry.Dimension{{ID: "running"}}, lbl)
+		w.winEnsure(reg, "iis.application_pool_worker_processes_created."+id, "iis.application_pool_worker_processes_created", "iis",
+			title+" workers created", "processes/s", 21120, []*registry.Dimension{incDim("created")}, lbl)
+		w.winEnsure(reg, "iis.application_pool_maximum_worker_processes."+id, "iis.application_pool_maximum_worker_processes", "iis",
+			title+" max workers", "processes", 21130, []*registry.Dimension{{ID: "created"}}, lbl)
+		w.winEnsure(reg, "iis.application_pool_recent_worker_process_failures."+id, "iis.application_pool_recent_worker_process_failures", "iis",
+			title+" recent failures", "failures/s", 21140, []*registry.Dimension{incDim("failures")}, lbl)
+		w.winEnsure(reg, "iis.application_pool_worker_process_failures."+id, "iis.application_pool_worker_process_failures", "iis",
+			title+" worker failures", "failures/s", 21150, []*registry.Dimension{
+				incDim("crash"), incDim("ping"), incDim("startup"), incDim("shutdown"),
+			}, lbl)
+		w.winEnsure(reg, "iis.application_pool_recycles."+id, "iis.application_pool_recycles", "iis",
+			title+" recycles", "recycles/s", 21160, []*registry.Dimension{incDim("recycles")}, lbl)
+		w.winEnsure(reg, "iis.application_pool_uptime."+id, "iis.application_pool_uptime", "iis",
+			title+" uptime", "seconds", 21170, []*registry.Dimension{{ID: "uptime"}}, lbl)
+	}
+}
+
+func (w *windowsCollector) collectIISAppPool(reg *registry.Registry, now time.Time, s perflibSnap) {
+	for _, inst := range s.instances("app_pool_was") {
+		if skipDiskInst(inst) {
+			continue
+		}
+		id := sanitizeID(inst)
+		st, _ := s.get("app_pool_was", inst, "current application pool state")
+		_ = reg.Collect("iis.application_pool_current_status."+id, now, appPoolStateVals(st))
+		wp, _ := s.get("app_pool_was", inst, "current worker processes")
+		_ = reg.Collect("iis.application_pool_current_worker_processes."+id, now, map[string]float64{"running": wp})
+		created, _ := s.get("app_pool_was", inst, "total worker processes created")
+		_ = reg.Collect("iis.application_pool_worker_processes_created."+id, now, map[string]float64{"created": created})
+		maxw, _ := s.get("app_pool_was", inst, "maximum worker processes")
+		_ = reg.Collect("iis.application_pool_maximum_worker_processes."+id, now, map[string]float64{"created": maxw})
+		recent, _ := s.get("app_pool_was", inst, "recent worker process failures")
+		_ = reg.Collect("iis.application_pool_recent_worker_process_failures."+id, now, map[string]float64{"failures": recent})
+		crash, _ := s.get("app_pool_was", inst, "total worker process failures")
+		ping, _ := s.get("app_pool_was", inst, "total worker process ping failures")
+		start, _ := s.get("app_pool_was", inst, "total worker process startup failures")
+		shut, _ := s.get("app_pool_was", inst, "total worker process shutdown failures")
+		_ = reg.Collect("iis.application_pool_worker_process_failures."+id, now, map[string]float64{
+			"crash": crash, "ping": ping, "startup": start, "shutdown": shut,
+		})
+		rec, _ := s.get("app_pool_was", inst, "total application pool recycles")
+		_ = reg.Collect("iis.application_pool_recycles."+id, now, map[string]float64{"recycles": rec})
+		up, _ := s.get("app_pool_was", inst, "current application pool uptime")
+		_ = reg.Collect("iis.application_pool_uptime."+id, now, map[string]float64{"uptime": up})
+	}
+}
+
 func (w *windowsCollector) ensureASP(reg *registry.Registry, s perflibSnap) {
 	if _, ok := s.get("asp.net", "", "application restarts"); ok {
 		w.winEnsure(reg, "aspnet.application_restarts", "aspnet.application_restarts", "aspnet", "ASP.NET application restarts", "restarts",
@@ -674,7 +763,10 @@ func (w *windowsCollector) ensureThermal(reg *registry.Registry, s perflibSnap) 
 }
 
 func thermalCelsius(v float64) float64 {
-	if v > 200 { // Kelvin (Netdata windows.plugin)
+	if v > 1000 { // ACPI tenths of Kelvin (MSAcpi_ThermalZoneTemperature)
+		return v/10 - 273.15
+	}
+	if v > 200 { // Kelvin (Netdata Perflib Thermal Zone Information)
 		return v - 273.15
 	}
 	return v
@@ -832,13 +924,128 @@ func (w *windowsCollector) ensureBattery(reg *registry.Registry, s perflibSnap) 
 	if _, ok := s.get("battery", "_total", "estimatedchargeremaining"); ok {
 		w.winEnsure(reg, "windows.power.charge", "windows.power.charge", "power", "Battery charge remaining", "%",
 			28500, []*registry.Dimension{{ID: "charge"}}, nil)
+		w.winEnsure(reg, "powersupply.capacity", "powersupply.capacity", "power", "Battery capacity", "percentage",
+			28501, []*registry.Dimension{{ID: "capacity"}}, nil)
+	}
+	if _, ok := s.get("battery", "_total", "designvoltage"); ok {
+		w.winEnsure(reg, "powersupply.voltage", "powersupply.voltage", "power", "Power supply voltage", "V",
+			28502, []*registry.Dimension{{ID: "now", Divisor: 1000}}, nil)
 	}
 }
 
 func (w *windowsCollector) collectBattery(reg *registry.Registry, now time.Time, s perflibSnap) {
 	if v, ok := s.get("battery", "_total", "estimatedchargeremaining"); ok {
 		_ = reg.Collect("windows.power.charge", now, map[string]float64{"charge": v})
+		_ = reg.Collect("powersupply.capacity", now, map[string]float64{"capacity": v})
 	}
+	if v, ok := s.get("battery", "_total", "designvoltage"); ok {
+		_ = reg.Collect("powersupply.voltage", now, map[string]float64{"now": v})
+	}
+}
+
+type winSensorReading struct {
+	id, name string
+	celsius  float64
+}
+
+func perflibSensorReadings(s perflibSnap) []winSensorReading {
+	var out []winSensorReading
+	add := func(obj, ctr string) {
+		for _, inst := range s.instances(obj) {
+			v, ok := s.get(obj, inst, ctr)
+			if !ok || v == 0 {
+				continue
+			}
+			name := firstNonEmpty(inst, obj)
+			out = append(out, winSensorReading{id: sanitizeID(name), name: name, celsius: thermalCelsius(v)})
+		}
+	}
+	add("msacpi_thermalzonetemperature", "currenttemperature")
+	add("win32_temperatureprobe", "currentreading")
+	add("thermal zone information", "temperature")
+	return out
+}
+
+var sensorHistBounds = []float64{40, 50, 60, 70, 80, 85, 90, 95, 100}
+
+func sensorHistogramDims() []*registry.Dimension {
+	dims := make([]*registry.Dimension, 0, len(sensorHistBounds)+1)
+	for _, b := range sensorHistBounds {
+		dims = append(dims, &registry.Dimension{ID: strconv.FormatFloat(b, 'f', 0, 64)})
+	}
+	dims = append(dims, &registry.Dimension{ID: "+Inf"})
+	return dims
+}
+
+func sensorHistogramVals(temps []winSensorReading) map[string]float64 {
+	vals := map[string]float64{"+Inf": 0}
+	for _, b := range sensorHistBounds {
+		vals[strconv.FormatFloat(b, 'f', 0, 64)] = 0
+	}
+	for _, t := range temps {
+		placed := false
+		for _, b := range sensorHistBounds {
+			if t.celsius <= b {
+				vals[strconv.FormatFloat(b, 'f', 0, 64)]++
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			vals["+Inf"]++
+		}
+	}
+	return vals
+}
+
+func (w *windowsCollector) ensureSensors(reg *registry.Registry, s perflibSnap) {
+	temps := perflibSensorReadings(s)
+	if len(temps) == 0 {
+		return
+	}
+	cpuDims := make([]*registry.Dimension, 0, len(temps))
+	seen := map[string]bool{}
+	for _, t := range temps {
+		if seen[t.id] {
+			continue
+		}
+		seen[t.id] = true
+		lbl := map[string]string{"label": t.name}
+		w.winEnsure(reg, "system.hw.sensor.temperature.input."+t.id, "system.hw.sensor.temperature.input", "sensors",
+			"Sensor "+t.name+" temperature", "Cel", 28610, []*registry.Dimension{{ID: "input"}}, lbl)
+		cpuDims = append(cpuDims, &registry.Dimension{ID: t.id, Name: t.name})
+	}
+	w.winEnsure(reg, "system.hw.sensor.temperature.histogram", "system.hw.sensor.temperature.histogram", "sensors",
+		"Temperature sensor distribution", "sensors", 28620, sensorHistogramDims(), nil)
+	if _, ok := reg.Chart("cpu.temperature"); !ok {
+		w.winEnsure(reg, "cpu.temperature", "cpu.temperature", "cpu", "Core temperature", "Celsius",
+			28600, cpuDims, nil)
+	} else if ch, ok := reg.Chart("cpu.temperature"); ok {
+		for _, d := range cpuDims {
+			ch.AddDimension(d)
+		}
+	}
+}
+
+func (w *windowsCollector) collectSensors(reg *registry.Registry, now time.Time, s perflibSnap) {
+	temps := perflibSensorReadings(s)
+	if len(temps) == 0 {
+		return
+	}
+	cpuVals := map[string]float64{}
+	if ch, ok := reg.Chart("cpu.temperature"); ok {
+		for _, t := range temps {
+			if ch.Dimension(t.id) == nil {
+				ch.AddDimension(&registry.Dimension{ID: t.id, Name: t.name})
+			}
+			cpuVals[t.id] = t.celsius
+		}
+		_ = reg.Collect("cpu.temperature", now, cpuVals)
+	}
+	for _, t := range temps {
+		_ = reg.Collect("system.hw.sensor.temperature.input."+t.id, now, map[string]float64{"input": t.celsius})
+	}
+	_ = reg.Collect("system.hw.sensor.temperature.histogram", now, sensorHistogramVals(temps))
 }
 
 func serviceStateDims() []*registry.Dimension {

@@ -175,9 +175,10 @@ collectors:
     ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
       command: ipmitool
       timeout: 8s
-    windows:                 # Windows.plugin: process accounting + Perflib (typeperf / WMI)
+    windows:                 # Windows.plugin: process accounting + Perflib (WMI FormattedData)
       command: sc            # services Function + windows.service_state.* charts
-      typeperf: typeperf     # cooked counters; missing object/role auto-skips
+      typeperf: typeperf     # optional cooked-counter scan; default off
+      typeperf_scan: false   # true = sequential typeperf -sc 1 (slow; WMI is the live path)
       timeout: 8s
     sslcheck:
       timeout: 5s

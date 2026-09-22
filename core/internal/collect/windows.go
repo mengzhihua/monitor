@@ -17,9 +17,10 @@ import (
 
 // windowsConfig is collectors.modules.windows (Netdata windows.plugin).
 type windowsConfig struct {
-	Command  string        `yaml:"command"`  // sc.exe for the services function
-	Typeperf string        `yaml:"typeperf"` // typeperf.exe for Perflib (no CGO PDH)
-	Timeout  time.Duration `yaml:"timeout"`
+	Command      string        `yaml:"command"`       // sc.exe for the services function
+	Typeperf     string        `yaml:"typeperf"`      // typeperf.exe for optional Perflib scan
+	TypeperfScan bool          `yaml:"typeperf_scan"` // sequential typeperf -sc 1 (slow; default off)
+	Timeout      time.Duration `yaml:"timeout"`
 }
 
 // windowsSnap is one sample of Windows process accounting.

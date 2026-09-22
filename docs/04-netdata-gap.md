@@ -57,15 +57,15 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 
 ### 2.3 Windows.plugin（Perflib 全家桶）
 
-**M21 已有：** `system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、Terminal Services、`windows.service_state.*` + `windows.services` 汇总。数据源：`typeperf`（无 CGO PDH）+ WMI `Win32_PerfFormattedData_*`；对象/角色不存在则跳过。
+**M21 已有：** `system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS 站点与应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature` / `system.hw.sensor.temperature.*`、AD/ADCS/ADFS、Exchange、Terminal Services、`windows.service_state.*` + `windows.services` 汇总、`powersupply.capacity`。数据源：WMI `Win32_PerfFormattedData_*` 主路径（无 CGO PDH）；`typeperf -sc 1` 仅 `typeperf_scan: true` 时启用。对象/角色不存在则跳过。
 
 | 状态 | Perflib / 模块 | 图表族 |
 | --- | --- | --- |
 | **M21** | processor queue / memory pool / objects / storage / network | `system.cpu_queue` `mem.system_pool_size` `windows.logical_disk.*` `windows.physical_disk.*` `windows.net.*` |
-| **M21** | web-service（IIS）、asp、netframework | `iis.website_*` `aspnet.*` `netframework.clr_*` |
+| **M21** | web-service（IIS）、APP_POOL_WAS、asp、netframework | `iis.website_*` `iis.application_pool_*` `aspnet.*` `netframework.clr_*` |
 | **M21** | hyperv、smb、thermalzone、numa、terminal-services | `hyperv.vm_cpu` `smb.server_shares_*` `system.thermalzone_temperature` `mem.numa_node_mem_usage` `windows.terminal_services.sessions` |
 | **M21** | ad / adcs / adfs / exchange | 角色存在时自动启用 |
-| **M21** | GetServicesStatus 出图、GetPowerSupply（电池） | `windows.service_state.*` `windows.power.charge` |
+| **M21** | GetServicesStatus 出图、GetPowerSupply、GetSensors、GetHardwareInfo | `windows.service_state.*` `windows.power.charge` `powersupply.capacity` `cpu.temperature` `system.hw.sensor.temperature.*` |
 
 ### 2.4 freebsd.plugin 剩余
 
@@ -132,7 +132,7 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | **M16** | Windows/FreeBSD 骨架、Flutter Functions、Android logcat | 合入 |
 | **M17** | proc 剩余 + libvirt/proxmox/ebpf 近似；manage/health；维护窗口；Kinesis/Pub/Sub；LDAP/share | 合入 |
 | **M18** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q | 合入 |
-| **M21（本轮）** | Windows Perflib：CPU 队列/内核池/磁盘/网卡/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 出图 | `go test -race`、Windows CI fixture |
+| **M21（本轮）** | Windows Perflib：WMI 主路径 + IIS 应用池/传感器/硬件温度 | `go test -race`、Windows CI fixture |
 
 ### 3.2 后续批次（M19–M26）
 
@@ -168,9 +168,9 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 Windows.plugin Perflib 全家桶，不碰 go.d，不扩 eBPF/FreeBSD。
 
-1. `typeperf -sc 1` 按对象通配查询（无 CGO PDH）；对象缺失跳过
-2. WMI `Win32_PerfFormattedData_PerfOS_{System,Memory,Objects}` 与 `Win32_Battery` 回填
-3. 图表：CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、RDS
+1. WMI `Win32_PerfFormattedData_*` 为直播路径（无 CGO PDH）；缺失类写入 skip map，后续 Collect 不再查。`typeperf -sc 1` 仅 `typeperf_scan: true` 时按对象通配查询
+2. 核心 OS（System/Memory/Objects/Processor/LogicalDisk/PhysicalDisk/Network）+ 可选角色（IIS/ASP.NET/.NET/Hyper-V/SMB/NTDS/…）+ `Win32_Battery` / `MSAcpi_ThermalZoneTemperature` / `Win32_TemperatureProbe`
+3. 图表：CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS 站点与应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature`、传感器 histogram、AD/ADCS/ADFS、Exchange、RDS、`powersupply.capacity`
 4. `sc query` → `windows.service_state.{name}` + 汇总 `windows.services`
 5. health.d `system_m21.yaml`
 
