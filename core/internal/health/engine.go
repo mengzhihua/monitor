@@ -615,7 +615,6 @@ func (e *Engine) notify(entry LogEntry) {
 
 func (e *Engine) dispatch() {
 	for entry := range e.notifyCh {
-		delivered := false
 		for _, n := range e.notifiersFor(entry.Recipient) {
 			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := n.Notify(cctx, entry)
@@ -624,11 +623,8 @@ func (e *Engine) dispatch() {
 				e.log.Error("notify failed", "via", n.Name(), "alarm", entry.Name, "err", err)
 				continue
 			}
-			delivered = true
-			e.notified.Add(1)
-		}
-		if delivered {
 			e.markNotified(entry)
+			e.notified.Add(1)
 		}
 	}
 }
