@@ -1,7 +1,8 @@
 // Package tsdb is an embedded tiered time-series store. Tier 0 keeps
 // full-resolution samples: an in-memory active block per series that is
 // Gorilla-compressed into one file per block once it is full (or on
-// checkpoint/close). Retention is enforced by deleting whole block files.
+// capacity). Checkpoints preserve unfinished blocks in a single atomic image.
+// Retention removes expired blocks and prunes unfinished samples.
 package tsdb
 
 import (
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,17 +71,20 @@ type series struct {
 }
 
 type Store struct {
-	checkpointMu  sync.RWMutex
-	persistenceMu sync.Mutex
-	persistence   PersistenceStatus
-	opt           Options
-	log           *slog.Logger
-	mu            sync.RWMutex
-	series        map[string]*series
-	tiers         []*tier
-	stop          chan struct{}
-	wg            sync.WaitGroup
-	closed        bool
+	checkpointMu    sync.RWMutex
+	flushMu         sync.Mutex
+	revision        atomic.Uint64
+	flushedRevision uint64
+	persistenceMu   sync.Mutex
+	persistence     PersistenceStatus
+	opt             Options
+	log             *slog.Logger
+	mu              sync.RWMutex
+	series          map[string]*series
+	tiers           []*tier
+	stop            chan struct{}
+	wg              sync.WaitGroup
+	closed          bool
 }
 
 func Open(opt Options) (*Store, error) {
@@ -112,6 +117,9 @@ func Open(opt Options) (*Store, error) {
 		}
 		s.log.Info("tsdb: tier loaded", "tier", i+1, "every", spec.Every, "series", len(t.series), "blocks", n)
 		s.tiers = append(s.tiers, t)
+	}
+	if err := s.loadCheckpoint(); err != nil {
+		return nil, err
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -182,29 +190,44 @@ func (s *Store) getOrCreate(id string) *series {
 
 // Append implements registry.Sink.
 func (s *Store) Append(id string, ts int64, v float64) {
+	s.checkpointMu.RLock()
 	sr := s.getOrCreate(id)
 	sr.mu.Lock()
 	if ts <= sr.last {
 		sr.mu.Unlock()
-		return // out of order / duplicate second: drop
+		s.checkpointMu.RUnlock()
+		return
 	}
 	sr.last = ts
 	sr.ts = append(sr.ts, ts)
 	sr.vals = append(sr.vals, v)
 	sr.dirty = true
 	full := len(sr.ts) >= s.opt.BlockSize
+	// Keep one series ordered across all tiers, even with concurrent producers.
+	type pendingTier struct {
+		t  *tier
+		sr *tierSeries
+	}
+	var pending []pendingTier
+	for _, t := range s.tiers {
+		tsr := t.getOrCreate(id)
+		if t.append(tsr, ts, v) {
+			pending = append(pending, pendingTier{t, tsr})
+		}
+	}
 	sr.mu.Unlock()
+	s.revision.Add(1)
+	s.checkpointMu.RUnlock()
+	// Archiving does not change logical data. A concurrent checkpoint can capture
+	// either side; recovery deduplicates buffers against completed block files.
 	if full {
 		if err := s.flushSeries(sr); err != nil {
 			s.log.Error("tsdb: flush failed", "series", id, "err", err)
 		}
 	}
-	for _, t := range s.tiers {
-		tsr := t.getOrCreate(id)
-		if t.append(tsr, ts, v) {
-			if err := t.flush(tsr); err != nil {
-				s.log.Error("tsdb: tier flush failed", "tier", t.idx, "series", id, "err", err)
-			}
+	for _, p := range pending {
+		if err := p.t.flush(p.sr); err != nil {
+			s.log.Error("tsdb: tier flush failed", "tier", p.t.idx, "series", id, "err", err)
 		}
 	}
 }
@@ -223,6 +246,9 @@ func (s *Store) Series() []string {
 
 // Query returns raw points with after <= ts <= before, ascending.
 func (s *Store) Query(id string, after, before int64) ([]Point, error) {
+	if s.opt.Retention > 0 {
+		after = max(after, time.Now().Add(-s.opt.Retention).Unix())
+	}
 	s.mu.RLock()
 	sr := s.series[id]
 	s.mu.RUnlock()
@@ -308,11 +334,13 @@ func (s *Store) flushSeries(sr *series) error {
 	return nil
 }
 
-// Flush writes every active block to disk.
+// Flush persists one consistent image of all unfinished raw and rollup blocks.
+// Sampling pauses only while the in-memory image is copied, not during I/O.
 func (s *Store) Flush() (flushErr error) {
-	s.checkpointMu.Lock()
-	defer s.checkpointMu.Unlock()
-	started := time.Now().Unix()
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	startedAt := time.Now()
+	started := startedAt.Unix()
 	defer func() {
 		s.persistenceMu.Lock()
 		defer s.persistenceMu.Unlock()
@@ -322,53 +350,22 @@ func (s *Store) Flush() (flushErr error) {
 		}
 		s.persistence.LastCheckpoint = started
 		s.persistence.Finished = time.Now().Unix()
+		s.persistence.DurationSeconds = time.Since(startedAt).Seconds()
 		s.persistence.Error = ""
 	}()
-	s.mu.RLock()
-	all := make([]*series, 0, len(s.series))
-	for _, sr := range s.series {
-		all = append(all, sr)
+	s.checkpointMu.Lock()
+	revision := s.revision.Load()
+	if revision == s.flushedRevision {
+		s.checkpointMu.Unlock()
+		return nil
 	}
-	s.mu.RUnlock()
-	var jobs []func() error
-	for _, sr := range all {
-		jobs = append(jobs, func() error { return s.flushSeries(sr) })
+	image := s.checkpointImage()
+	s.checkpointMu.Unlock()
+	if err := s.writeCheckpoint(image); err != nil {
+		return err
 	}
-	for _, t := range s.tiers {
-		for _, sr := range t.all() {
-			jobs = append(jobs, func() error {
-				if err := t.flush(sr); err != nil {
-					return err
-				}
-				return t.saveOpen(sr)
-			})
-		}
-	}
-	var firstErr error
-	var errMu sync.Mutex
-	var wg sync.WaitGroup
-	work := make(chan func() error)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for job := range work {
-				if err := job(); err != nil {
-					errMu.Lock()
-					if firstErr == nil {
-						firstErr = err
-					}
-					errMu.Unlock()
-				}
-			}
-		}()
-	}
-	for _, job := range jobs {
-		work <- job
-	}
-	close(work)
-	wg.Wait()
-	return firstErr
+	s.flushedRevision = revision
+	return nil
 }
 
 func (s *Store) loop() {
@@ -390,6 +387,7 @@ func (s *Store) loop() {
 			for _, t := range s.tiers {
 				t.enforceRetention(time.Now())
 			}
+			s.revision.Add(1)
 		case <-cp:
 			if err := s.Flush(); err != nil {
 				s.log.Error("tsdb: checkpoint failed", "err", err)
@@ -399,6 +397,8 @@ func (s *Store) loop() {
 }
 
 func (s *Store) enforceRetention() {
+	s.checkpointMu.Lock()
+	defer s.checkpointMu.Unlock()
 	if s.opt.Retention <= 0 && s.opt.RetentionSize <= 0 {
 		return
 	}
@@ -421,6 +421,14 @@ func (s *Store) enforceRetention() {
 	var refs []ref
 	for _, sr := range all {
 		sr.mu.Lock()
+		if cutoff > 0 {
+			n := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] >= cutoff })
+			if n > 0 {
+				sr.ts = sr.ts[n:]
+				sr.vals = sr.vals[n:]
+				s.revision.Add(1)
+			}
+		}
 		keep := sr.blocks[:0]
 		for _, b := range sr.blocks {
 			if cutoff > 0 && b.end < cutoff {
@@ -608,6 +616,8 @@ func readBlockData(path string) (blockMeta, []byte, error) {
 
 // PersistenceStatus distinguishes a completed checkpoint from its configured cadence.
 type PersistenceStatus struct {
+	CheckpointBytes int64   `json:"checkpoint_bytes"`
+	DurationSeconds float64 `json:"duration_seconds"`
 	LastCheckpoint  int64   `json:"last_checkpoint"`
 	Finished        int64   `json:"finished"`
 	Error           string  `json:"error,omitempty"`
@@ -619,5 +629,8 @@ func (s *Store) Persistence() PersistenceStatus {
 	defer s.persistenceMu.Unlock()
 	out := s.persistence
 	out.IntervalSeconds = s.opt.Checkpoint.Seconds()
+	if stat, err := os.Stat(filepath.Join(s.opt.Dir, checkpointFile)); err == nil {
+		out.CheckpointBytes = stat.Size()
+	}
 	return out
 }

@@ -305,6 +305,11 @@ func (t *tier) enforceRetention(now time.Time) {
 	cutoff := now.Add(-t.spec.Retention).Unix()
 	for _, sr := range t.all() {
 		sr.mu.Lock()
+		n := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS+t.spec.Every > cutoff })
+		sr.done = sr.done[n:]
+		if sr.open != nil && sr.open.TS+t.spec.Every <= cutoff {
+			sr.open = nil
+		}
 		keep := sr.blocks[:0]
 		for _, b := range sr.blocks {
 			if b.end+t.spec.Every <= cutoff {
