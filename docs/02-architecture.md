@@ -485,7 +485,7 @@ sequenceDiagram
 | **M23 IBM 与残留（合入）** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 无驱动禁用 |
 | **M24 查询 API 深度** | `/api/v3`、`group_by=dimension`、`alert_config`、每维 anomaly | API 单测 |
 | **M25 Hub Cloud 产品（本轮）** | ACLK MQTT-over-WSS、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 冒烟 + Vue |
-| **M26 集成目录** | 仅点名需要原生 ID 的 Prometheus 包装；文档化 prom.* vs 原生 | 不重复 go.d |
+| **M26 集成目录（合入）** | 点名 Prometheus 原生 ID 包装（etcd/minio/vault/…）；catalog API；其余 `prom.*` | `go test -race`、`vue-tsc`、`smoke.sh` |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -537,6 +537,7 @@ sequenceDiagram
 | EDAC / SLAB / zswap / RAPL / DRM / bcache / timex | `internal/collect/proc_m18.go` | M18 |
 | cups / xenstat / ioping / nftables / podman / ipmi | `internal/collect` | M18 |
 | Kafka REST | `internal/export` | M18 |
+| Prometheus 点名原生 ID 包装 | `internal/collect/prom_profile.go` | M26 |
 | eBPF 程序族 / perf / extfrag / idlejitter | `internal/collect` | M19 |
 | journald 流 / macos / network-viewer / systemd-units | `internal/collect` | M20 |
 | Windows.plugin Perflib | `internal/collect/windows.go` | M21 |

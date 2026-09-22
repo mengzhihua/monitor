@@ -185,7 +185,7 @@ func (p *procCollector) collectEDAC(reg *registry.Registry, now time.Time) {
 		if !p.m18.edacSeen[id] {
 			p.m18.edacSeen[id] = true
 			ch := sysChart(id, "edac", "EDAC memory controller "+mc, "errors", 1440, incDim("ce"), incDim("ue"))
-			ch.Plugin, ch.Module = "proc", "edac"
+			ch.Plugin, ch.Module, ch.Context = "proc", "edac", "mem.edac_mc"
 			reg.AddChart(ch)
 		}
 		_ = reg.Collect(id, now, map[string]float64{"ce": ce, "ue": ue})
@@ -203,7 +203,7 @@ func (p *procCollector) collectEDAC(reg *registry.Registry, now time.Time) {
 			if !p.m18.edacSeen[did] {
 				p.m18.edacSeen[did] = true
 				ch := sysChart(did, "edac", "EDAC DIMM "+mc+"/"+dimm.Name(), "errors", 1441, incDim("ce"), incDim("ue"))
-				ch.Plugin, ch.Module = "proc", "edac"
+				ch.Plugin, ch.Module, ch.Context = "proc", "edac", "mem.edac_dimm"
 				reg.AddChart(ch)
 			}
 			_ = reg.Collect(did, now, map[string]float64{"ce": dce, "ue": due})
@@ -232,7 +232,7 @@ func (p *procCollector) collectPowercap(reg *registry.Registry, now time.Time) {
 			// energy_uj incremental / 1e6 = Joules/s = Watts
 			ch := sysChart(id, "powercap", "Powercap "+name, "Watts", 1450,
 				&registry.Dimension{ID: "power", Algorithm: registry.Incremental, Divisor: 1_000_000})
-			ch.Plugin, ch.Module = "proc", "powercap"
+			ch.Plugin, ch.Module, ch.Context = "proc", "powercap", "cpu.powercap"
 			reg.AddChart(ch)
 		}
 		_ = reg.Collect(id, now, map[string]float64{"power": uj})
@@ -260,7 +260,7 @@ func (p *procCollector) collectDRM(reg *registry.Registry, now time.Time) {
 			if !p.m18.drmSeen[id] {
 				p.m18.drmSeen[id] = true
 				ch := sysChart(id, "drm", "GPU busy "+card, "percentage", 1460, &registry.Dimension{ID: "busy"})
-				ch.Plugin, ch.Module = "proc", "drm"
+				ch.Plugin, ch.Module, ch.Context = "proc", "drm", "drm.gpu_busy"
 				reg.AddChart(ch)
 			}
 			_ = reg.Collect(id, now, map[string]float64{"busy": busy})
@@ -270,7 +270,7 @@ func (p *procCollector) collectDRM(reg *registry.Registry, now time.Time) {
 			if !p.m18.drmSeen[id] {
 				p.m18.drmSeen[id] = true
 				ch := sysChart(id, "drm", "GPU frequency "+card, "MHz", 1461, &registry.Dimension{ID: "freq"})
-				ch.Plugin, ch.Module = "proc", "drm"
+				ch.Plugin, ch.Module, ch.Context = "proc", "drm", "drm.gpu_freq"
 				reg.AddChart(ch)
 			}
 			_ = reg.Collect(id, now, map[string]float64{"freq": freq})
@@ -294,11 +294,11 @@ func (p *procCollector) collectBcache(reg *registry.Registry, now time.Time) {
 		if !p.m18.bcacheSeen[id] {
 			p.m18.bcacheSeen[id] = true
 			ch := sysChart(id, "bcache", "bcache hits "+e.Name(), "events/s", 1470, incDim("hits"), incDim("misses"))
-			ch.Plugin, ch.Module = "proc", "bcache"
+			ch.Plugin, ch.Module, ch.Context = "proc", "bcache", "bcache.hits"
 			reg.AddChart(ch)
 			ratio := sysChart("bcache.hit_ratio."+sanitizeID(e.Name()), "bcache", "bcache hit ratio "+e.Name(), "percentage", 1471,
 				&registry.Dimension{ID: "ratio"})
-			ratio.Plugin, ratio.Module = "proc", "bcache"
+			ratio.Plugin, ratio.Module, ratio.Context = "proc", "bcache", "bcache.hit_ratio"
 			reg.AddChart(ratio)
 		}
 		_ = reg.Collect(id, now, map[string]float64{"hits": hits, "misses": miss})

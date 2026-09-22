@@ -893,3 +893,45 @@ func TestHubConsoleOnAgentIs404(t *testing.T) {
 		t.Fatalf("agent console %d", resp.StatusCode)
 	}
 }
+
+func TestPrometheusCatalogAPI(t *testing.T) {
+	ts, _ := newTestServer(t, Options{Version: "test"})
+	var cat struct {
+		Policy   string `json:"policy"`
+		Profiles []struct {
+			Name   string   `json:"name"`
+			Kind   string   `json:"kind"`
+			Charts []string `json:"charts"`
+		} `json:"profiles"`
+		Dedicated []struct {
+			Name      string `json:"name"`
+			Collector string `json:"collector"`
+		} `json:"dedicated"`
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/prometheus/catalog", &cat); resp.StatusCode != 200 {
+		t.Fatalf("catalog %d", resp.StatusCode)
+	}
+	if cat.Policy == "" || len(cat.Profiles) < 10 || len(cat.Dedicated) < 5 {
+		t.Fatalf("%+v", cat)
+	}
+	found := false
+	for _, p := range cat.Profiles {
+		if p.Name == "etcd" && p.Kind == "profile" {
+			for _, c := range p.Charts {
+				if c == "etcd.has_leader" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("etcd.has_leader missing: %+v", cat.Profiles)
+	}
+	var cols map[string]any
+	if resp := getJSON(t, ts.URL+"/api/v1/collectors", &cols); resp.StatusCode != 200 {
+		t.Fatalf("collectors %d", resp.StatusCode)
+	}
+	if cols["prometheus_profiles"] == nil {
+		t.Fatalf("collectors missing prometheus_profiles: %v", cols)
+	}
+}

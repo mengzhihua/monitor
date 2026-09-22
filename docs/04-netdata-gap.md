@@ -5,10 +5,10 @@
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
 > **不要重做 go.d**：`init.go` 除故意跳过的 `testrandom` 外已打勾。
 
-## 0. 现状一句话（M0–M19、M22、M23 合入 main；M25 本轮）
+## 0. 现状一句话（M0–M19、M22、M23、M26 合入 main；M25 本轮）
 
 Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
-剩下主要是 **Windows Perflib、日志/查看器、真 eBPF CO-RE**。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 补内核深度（eBPF 程序族 / perf / idlejitter 等便携近似）；本轮 M25 补 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
+剩下主要是 **Windows Perflib、日志/查看器、真 eBPF CO-RE**。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M26 点名 Prometheus 原生 ID 已合入。本轮 M25 补 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
 
 | 面 | 完成度 | 说明 |
 | --- | --- | --- |
@@ -18,7 +18,7 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | Windows.plugin | **骨架** | 进程/线程/句柄 + Function `windows-services`；缺 Perflib 全家桶 |
 | freebsd.plugin | **完成（M22）** | sysctl 全家桶 + ZFS ARC/trim + ipfw + gstat/df/netstat 近似；非 FreeBSD 自动禁用 |
 | Hub / Cloud | **产品面（M25）** | claim/Space/Room/OIDC/环复制/LDAP/share + ACLK MQTT-over-WSS + Cloud 控制台 + 图上异常高亮 + Correlations UI |
-| 850+ Prometheus 集成名 | **过渡覆盖** | 走已有 `prometheus` 采集器（`prom.*` ID），不逐个原生化 |
+| 850+ Prometheus 集成名 | **M26 点名包装** | 具名 profile 出原生 ID（etcd/minio/vault/…）；其余仍 `prom.*`；已有采集器的不重复包装 |
 
 约 **178** 个内置采集器。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **21%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在真 eBPF CO-RE 与 Windows Perflib。
 
@@ -93,6 +93,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | **有（M25）** | 每维 anomaly bit（`charts`/`chart`/`data.anomaly`）；Metric Correlations 完整 UI（group/top/窗口/分数条/点选筛选） |
 | **有（M25）** | ACLK：MQTT 3.1.1 over WSS（`/api/v1/aclk`）承载既有 JSON Frame；JSON `/api/v1/stream` 仍是默认 |
 | **有（M25）** | Cloud 控制台：`GET /api/v1/hub/console` + Vue 面板（Space/Room 拓扑、ACLK、告警路由） |
+| **有（M26）** | `GET /api/v1/prometheus/catalog`；prometheus job `profile`/`fallback` |
 
 ### 2.7 明确不做 / 延后
 
@@ -100,7 +101,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | --- | --- |
 | go.d 已实现模块 | **不再移植** |
 | `testrandom` | 永远跳过 |
-| 850+ Prometheus 集成名 | 继续用 `prometheus` 采集器；只有客户点名原生 chart ID 才单开 |
+| 850+ Prometheus 集成名 | **M26** 点名 profile 已出原生 ID；其余继续 `prom.*`，不要逐个手写 |
 | charts.d bash 编排器 | 已有 plugins.d；不内嵌 bash 解释器 |
 | 真 CGO eBPF CO-RE | 后续可选 `cilium/ebpf-go` build tag；默认静态二进制仍无 CGO |
 | Netdata Cloud SaaS 账号体系 | 用自建 Hub 对等，不对接 netdata.cloud 账号 |
@@ -137,7 +138,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 无驱动/无 socket 禁用 |
 | **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
 | **M25 Hub Cloud 产品（本轮）** | 真 ACLK（MQTT over WSS）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
-| **M26 集成目录** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | 文档 + 可选 codegen，不扩 go.d 重复 |
+| **M26 集成目录（合入）** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | `GET /api/v1/prometheus/catalog`；fixture 抓取 |
 
 ### 3.3 批次依赖
 
@@ -158,7 +159,7 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 ## 4. 本轮（M25）交付清单
 
-Hub Cloud 产品面。不碰 go.d；M19/M22/M23 已在 main。
+Hub Cloud 产品面。不碰 go.d；M19/M22/M23/M26 已在 main。
 
 1. **ACLK MQTT-over-WSS**
    - `/api/v1/aclk`：MQTT 3.1.1 CONNECT/CONNACK/PUBLISH/SUBSCRIBE/PING，payload 仍是既有 JSON `stream.Frame`
@@ -177,7 +178,17 @@ Hub Cloud 产品面。不碰 go.d；M19/M22/M23 已在 main。
    - 故障窗 / 基线窗、分数条、点选筛选图表
 5. **测试**：MQTT round-trip、ACLK 端到端、console、correlate group、data anomaly；smoke 覆盖新路径
 
-## 4.0 M19（已合入 main）
+## 4.0 M26（已合入 main）
+
+点名 Prometheus 包装，不扩 go.d、不重做已有原生采集器。
+
+1. `prometheus` 采集器 `profiles: auto|off` + job `profile` / `fallback`
+2. 内置 profile：etcd、minio、vault、jenkins、grafana、prometheus、alertmanager、kafka、blackbox、gitlab、harbor、argocd、cert_manager、cilium、istio、vllm、litellm；显式：fastapi、go_runtime、python_gc
+3. 未匹配族仍为 `prom.*`；`GET /api/v1/prometheus/catalog` 列出 profile / dedicated / fallback
+4. health.d `system_m26.yaml`（etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列）
+5. 目录见本节与 catalog API；850+ 其余集成不手写
+
+## 4.1 M19（已合入 main）
 
 1. eBPF 程序族：`ebpf.cachestat/dcstat/fd/vfs/oomkill/process/shm/swap/disk/mount/hardirq`（kprobe_profile 优先，否则 `/proc` 近似）；bpftool 库存图保留；无源则禁用子图
 2. `perf`：`perf stat -a -x,` → `perf.cpu` / `perf.instructions` / `perf.cache_misses`；无权限禁用
@@ -187,7 +198,7 @@ Hub Cloud 产品面。不碰 go.d；M19/M22/M23 已在 main。
 6. `nfacct`：`netfilter.nfacct_packets/bytes.{name}`
 7. health.d `system_m19.yaml`
 
-## 4.1 M22（已合入 main）
+## 4.2 M22（已合入 main）
 
 freebsd.plugin 剩余，不碰 go.d。
 
@@ -199,7 +210,7 @@ freebsd.plugin 剩余，不碰 go.d。
 6. **health.d** `system_m22.yaml`：`zfs_memory_throttle` / `freebsd_ipfw_drops` / `freebsd_softnet_drops`
 7. **测试**：sysctl+ipfw+gstat+df+netstat fixture 两拍；`GOOS=freebsd go test -c`
 
-## 4.2 M23（已合入 main）
+## 4.3 M23（已合入 main）
 
 与 M19–M22 并行落地。默认无 CGO；Init 失败即禁用。
 

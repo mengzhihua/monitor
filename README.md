@@ -94,7 +94,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 模块 | 说明 |
 | --- | --- |
 | OpenMetrics 摄入 | `POST /api/v1/ingest/openmetrics` 解析 Prometheus / OpenMetrics 文本，按 metric 建图、按 label 建维度（上限 500 图 × 200 维） |
-| Prometheus 抓取 | `collectors.modules.prometheus.jobs` 定期拉取任意 `/metrics`，图表前缀 `prom.` |
+| Prometheus 抓取 | `collectors.modules.prometheus.jobs` 定期拉取任意 `/metrics`；点名 profile 出原生 ID，其余前缀 `prom.` |
 | StatsD | 默认监听 `127.0.0.1:8125` UDP，`name:value\|c\|g\|ms` → `statsd.counter/gauge/timer` |
 | 合成检查 | `httpcheck`（状态/耗时/长度/状态码/证书到期）、`portcheck`（TCP）、`ping`（ICMP 或 TCP RTT） |
 | 导出 | `export.destinations`：Graphite TCP、InfluxDB line protocol、JSON HTTP、OpenTSDB、Prometheus remote write、MongoDB |
@@ -296,6 +296,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 异常高亮 | 每维 anomaly bit：`/charts` `/chart` `/data.anomaly`；图上红色加粗 |
 | Correlations | `weights?method=ks2\|volume&group=chart\|context\|dimension&top=`；完整窗口/分数条/点选筛选 UI |
 
+### 已实现能力（M26：Prometheus 点名原生 ID）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集 | `prometheus.jobs[].profile` 把 etcd/minio/vault/jenkins/grafana/prometheus/alertmanager/kafka/blackbox/gitlab/harbor/argocd/cert-manager/cilium/istio/vllm/litellm 等族映射成原生图表 ID；fastapi/go_runtime/python_gc 需显式 `profile`；其余仍 `prom.*` |
+| API | `GET /api/v1/prometheus/catalog` 列出 profile / 已有原生采集器 / fallback 策略 |
+| 告警 | etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列 |
+
 ### 开发
 
 ```bash
@@ -356,6 +364,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0–M19、M22、M23 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → FreeBSD 插件剩余 → IBM/pandas/容器运行时。M25 补齐 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
+M0–M19、M22、M23、M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 点名 Prometheus 原生 ID。M25 补齐 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
 
-后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M26 集成目录。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
