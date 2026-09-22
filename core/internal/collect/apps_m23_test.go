@@ -115,6 +115,19 @@ func TestAS400CollectorFixture(t *testing.T) {
 	}
 }
 
+func TestParseMemoryPools(t *testing.T) {
+	got := parseMemoryPools([]byte("*MACHINE 100\n*BASE 200\n*INTERACT 50\n*SPOOL 25\ninteractive 5\n"))
+	if got["pool_machine"] != 100 || got["pool_base"] != 200 || got["pool_interactive"] != 50 || got["pool_spool"] != 25 {
+		t.Fatalf("%v", got)
+	}
+	if strings.Contains(as400SQL, "MACHINE_POOL") || strings.Contains(as400SQL, "BASE_POOL") {
+		t.Fatal("SYSTEM_STATUS SQL must not select non-existent pool columns")
+	}
+	if !strings.Contains(as400PoolSQL, "MEMORY_POOL_INFO") {
+		t.Fatal("pool SQL should query MEMORY_POOL_INFO")
+	}
+}
+
 func TestMQParseAndCollect(t *testing.T) {
 	qms := parseDspmq([]byte("QMNAME(QM1)                                           STATUS(Running)\nQMNAME(QM2) STATUS(Ended)\n"))
 	if len(qms) != 2 || qms[0].Name != "QM1" || qms[1].Status != "Ended" {
@@ -176,6 +189,42 @@ func TestMQParseAndCollect(t *testing.T) {
 	_, pvals := pch.LastValues()
 	if pvals["percentage"] != 9 {
 		t.Fatalf("pct %v", pvals)
+	}
+	if strings.Contains(mqRunmqsc, "MSGIN") || strings.Contains(mqRunmqsc, "MSGOUT") {
+		t.Fatal("QSTATUS must not select MSGIN/MSGOUT")
+	}
+}
+
+func TestMQMultipleQueueManagers(t *testing.T) {
+	m := &mqCollector{cfg: mqConfig{Command: "dspmq", Runmqsc: "runmqsc", Timeout: time.Second}}
+	m.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "dspmq" {
+			return []byte("QMNAME(QM1) STATUS(Running)\nQMNAME(QM2) STATUS(Ended)\n"), nil
+		}
+		return []byte("QUEUE(APP.Q)\nCURDEPTH(1)\nMAXDEPTH(10)\n"), nil
+	}
+	reg := registry.New(&registry.Host{Hostname: "t", UpdateEvery: 1}, nil)
+	if err := m.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Collect(context.Background(), reg, time.Unix(1_700_000_000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	ch1, ok := reg.Chart("mq.qmgr.status." + sanitizeID("QM1"))
+	if !ok {
+		t.Fatal("missing QM1 status")
+	}
+	_, v1 := ch1.LastValues()
+	if v1["status"] != 1 {
+		t.Fatalf("QM1 %v", v1)
+	}
+	ch2, ok := reg.Chart("mq.qmgr.status." + sanitizeID("QM2"))
+	if !ok {
+		t.Fatal("missing QM2 status")
+	}
+	_, v2 := ch2.LastValues()
+	if v2["status"] != 0 {
+		t.Fatalf("QM2 %v", v2)
 	}
 }
 

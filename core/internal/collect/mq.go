@@ -78,13 +78,31 @@ func (m *mqCollector) Collect(ctx context.Context, reg *registry.Registry, now t
 	if err != nil {
 		return err
 	}
-	st := 0.0
-	if len(qms) > 0 && strings.EqualFold(qms[0].Status, "Running") {
-		st = 1
+	selected := m.cfg.QueueManager
+	if selected == "" && len(qms) == 1 {
+		selected = qms[0].Name
 	}
-	_ = reg.Collect("mq.qmgr.status", now, map[string]float64{"status": st})
+	for _, q := range qms {
+		st := 0.0
+		if strings.EqualFold(q.Status, "Running") {
+			st = 1
+		}
+		if selected != "" && q.Name == selected {
+			_ = reg.Collect("mq.qmgr.status", now, map[string]float64{"status": st})
+		}
+		if len(qms) > 1 {
+			id := "mq.qmgr.status." + sanitizeID(q.Name)
+			if !m.seen[id] {
+				m.seen[id] = true
+				ch := sysChart(id, "mq", "Queue Manager Status "+q.Name, "status", 64300, &registry.Dimension{ID: "status"})
+				ch.Context, ch.Plugin, ch.Module = "mq.qmgr.status", "ibm.d", "mq"
+				reg.AddChart(ch)
+			}
+			_ = reg.Collect(id, now, map[string]float64{"status": st})
+		}
+	}
 
-	qm := m.cfg.QueueManager
+	qm := selected
 	if qm == "" && len(qms) > 0 {
 		qm = qms[0].Name
 	}
@@ -231,7 +249,9 @@ func (m *mqCollector) managers(ctx context.Context) ([]mqManager, error) {
 	return qms, nil
 }
 
-const mqRunmqsc = "DISPLAY QSTATUS(*) CURDEPTH IPPROCS OPPROCS MSGIN MSGOUT\nDISPLAY QUEUE(*) MAXDEPTH\n"
+// QSTATUS accepts CURDEPTH/IPPROCS/OPPROCS; MSGIN/MSGOUT are RESET QSTATS
+// (or PCF) and must not be used as QSTATUS selectors or runmqsc fails.
+const mqRunmqsc = "DISPLAY QSTATUS(*) CURDEPTH IPPROCS OPPROCS\nDISPLAY QUEUE(*) MAXDEPTH\n"
 
 func (m *mqCollector) queueStatus(ctx context.Context, qm string) ([]mqQueue, error) {
 	run := m.run

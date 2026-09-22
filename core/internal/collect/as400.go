@@ -97,6 +97,9 @@ func (a *as400Collector) Collect(ctx context.Context, reg *registry.Registry, no
 	_ = reg.Collect("as400.network_connections", now, map[string]float64{
 		"remote": s["remote"], "total": s["net_total"],
 	})
+	for k, v := range a.memoryPools(ctx) {
+		s[k] = v
+	}
 	_ = reg.Collect("as400.memory_pool_usage", now, map[string]float64{
 		"machine": s["pool_machine"], "base": s["pool_base"],
 		"interactive": s["pool_interactive"], "spool": s["pool_spool"],
@@ -117,25 +120,18 @@ SELECT 'waiting', JOBS_WAITING FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'used', SYSTEM_ASP_USED FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'remote', REMOTE_CONNECTIONS FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'net_total', TOTAL_CONNECTIONS FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
-SELECT 'pool_machine', MACHINE_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
-SELECT 'pool_base', BASE_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
-SELECT 'pool_interactive', INTERACTIVE_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
-SELECT 'pool_spool', SPOOL_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'temp_current', CURRENT_TEMPORARY_STORAGE FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'temp_maximum', MAXIMUM_TEMPORARY_STORAGE FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 `
 
-func (a *as400Collector) status(ctx context.Context) (map[string]float64, error) {
-	run := a.run
-	if run == nil {
-		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			cctx, cancel := context.WithTimeout(ctx, a.cfg.Timeout)
-			defer cancel()
-			cmd := exec.CommandContext(cctx, name, args...)
-			cmd.Stdin = strings.NewReader(as400SQL)
-			return cmd.Output()
-		}
-	}
+// Named memory pools are rows in MEMORY_POOL_INFO, not columns on SYSTEM_STATUS.
+const as400PoolSQL = `SELECT 'pool_machine', CURRENT_SIZE FROM QSYS2.MEMORY_POOL_INFO WHERE POOL_NAME = '*MACHINE';
+SELECT 'pool_base', CURRENT_SIZE FROM QSYS2.MEMORY_POOL_INFO WHERE POOL_NAME = '*BASE';
+SELECT 'pool_interactive', CURRENT_SIZE FROM QSYS2.MEMORY_POOL_INFO WHERE POOL_NAME IN ('*INTERACT', '*INTERACTIVE');
+SELECT 'pool_spool', CURRENT_SIZE FROM QSYS2.MEMORY_POOL_INFO WHERE POOL_NAME = '*SPOOL';
+`
+
+func (a *as400Collector) isqlArgs() []string {
 	args := []string{"-b", "-d", a.cfg.DSN}
 	if a.cfg.User != "" {
 		args = append(args, a.cfg.User)
@@ -143,7 +139,22 @@ func (a *as400Collector) status(ctx context.Context) (map[string]float64, error)
 			args = append(args, a.cfg.Password)
 		}
 	}
-	b, err := run(ctx, a.cfg.Command, args...)
+	return args
+}
+
+func (a *as400Collector) execSQL(ctx context.Context, sql string) ([]byte, error) {
+	if a.run != nil {
+		return a.run(ctx, a.cfg.Command, a.isqlArgs()...)
+	}
+	cctx, cancel := context.WithTimeout(ctx, a.cfg.Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, a.cfg.Command, a.isqlArgs()...)
+	cmd.Stdin = strings.NewReader(sql)
+	return cmd.Output()
+}
+
+func (a *as400Collector) status(ctx context.Context) (map[string]float64, error) {
+	b, err := a.execSQL(ctx, as400SQL)
 	if err != nil {
 		return nil, fmt.Errorf("as400: %w", err)
 	}
@@ -160,10 +171,6 @@ func (a *as400Collector) status(ctx context.Context) (map[string]float64, error)
 	alias := map[string]string{
 		"current_temporary_storage": "temp_current",
 		"maximum_temporary_storage": "temp_maximum",
-		"machine_pool":              "pool_machine",
-		"base_pool":                 "pool_base",
-		"interactive_pool":          "pool_interactive",
-		"spool_pool":                "pool_spool",
 	}
 	for k, dst := range alias {
 		if v, ok := out[k]; ok {
@@ -173,4 +180,36 @@ func (a *as400Collector) status(ctx context.Context) (map[string]float64, error)
 		}
 	}
 	return out, nil
+}
+
+func (a *as400Collector) memoryPools(ctx context.Context) map[string]float64 {
+	b, err := a.execSQL(ctx, as400PoolSQL)
+	if err != nil {
+		return nil
+	}
+	return parseMemoryPools(b)
+}
+
+func parseMemoryPools(b []byte) map[string]float64 {
+	out := map[string]float64{}
+	for k, v := range parseSQLKV(b) {
+		raw := strings.TrimSpace(k)
+		lk := strings.ToLower(strings.TrimPrefix(raw, "*"))
+		fromStar := strings.HasPrefix(raw, "*")
+		fromPool := strings.HasPrefix(lk, "pool_")
+		if !fromStar && !fromPool {
+			continue
+		}
+		switch strings.TrimPrefix(lk, "pool_") {
+		case "machine":
+			out["pool_machine"] = v
+		case "base":
+			out["pool_base"] = v
+		case "interact", "interactive":
+			out["pool_interactive"] = v
+		case "spool":
+			out["pool_spool"] = v
+		}
+	}
+	return out
 }
