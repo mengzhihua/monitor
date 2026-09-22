@@ -1,0 +1,38 @@
+# M22 freebsd.plugin remainder: ZFS ARC, ipfw, net.inet, page faults, syscalls.
+# Rules bind only when the matching chart exists (collector auto-disables off FreeBSD).
+alarms:
+  - name: zfs_memory_throttle
+    on: zfs.memory_ops
+    class: Errors
+    type: System
+    component: ZFS
+    lookup: sum -10m unaligned of throttled
+    units: events
+    every: 1m
+    warn: '$this > (($status >= $WARNING) ? (0) : (10))'
+    info: ZFS had to limit ARC growth in the last 10 minutes
+    to: sysadmin
+
+  - name: freebsd_ipfw_drops
+    on: ipfw.packets
+    class: Errors
+    type: Firewall
+    component: ipfw
+    lookup: sum -1m unaligned of 65535
+    units: packets/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (10) : (100))'
+    info: ipfw default deny rule (65535) matching packets
+    to: sysadmin
+
+  - name: freebsd_softnet_drops
+    on: system.softnet_stat
+    class: Errors
+    type: System
+    component: Network
+    lookup: average -1m unaligned of qdrops
+    units: events/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (10) : (50))'
+    info: FreeBSD netisr queue drops
+    to: sysadmin
