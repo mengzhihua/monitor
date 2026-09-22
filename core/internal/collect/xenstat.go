@@ -77,14 +77,14 @@ func (x *xenstatCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		if !x.seen[id] {
 			x.seen[id] = true
 			cpu := sysChart("xen.cpu."+id, "xen", "Xen CPU "+d.Name, "seconds", 37010, incDim("cpu"))
-			cpu.Plugin, cpu.Module = "xenstat", "xenstat"
+			cpu.Plugin, cpu.Module, cpu.Context = "xenstat", "xenstat", "xen.cpu"
 			reg.AddChart(cpu)
 			mem := sysChart("xen.mem."+id, "xen", "Xen memory "+d.Name, "MiB", 37020, &registry.Dimension{ID: "mem"})
-			mem.Plugin, mem.Module = "xenstat", "xenstat"
+			mem.Plugin, mem.Module, mem.Context = "xenstat", "xenstat", "xen.mem"
 			reg.AddChart(mem)
 			st := sysChart("xen.state."+id, "xen", "Xen domain "+d.Name+" running", "boolean", 37005,
 				&registry.Dimension{ID: "running"})
-			st.Plugin, st.Module = "xenstat", "xenstat"
+			st.Plugin, st.Module, st.Context = "xenstat", "xenstat", "xen.state"
 			reg.AddChart(st)
 		}
 		running := 0.0

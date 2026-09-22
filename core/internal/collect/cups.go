@@ -85,7 +85,7 @@ func (c *cupsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			c.seen[id] = true
 			ch := sysChart(id, "cups", "CUPS destination "+d.Name, "state", 36010,
 				&registry.Dimension{ID: "idle"}, &registry.Dimension{ID: "printing"}, &registry.Dimension{ID: "stopped"})
-			ch.Plugin, ch.Module = "cups", "cups"
+			ch.Plugin, ch.Module, ch.Context = "cups", "cups", "cups.dest_state"
 			reg.AddChart(ch)
 		}
 		vals := map[string]float64{"idle": 0, "printing": 0, "stopped": 0}
