@@ -57,7 +57,7 @@ type Configurable interface {
 
 // Function is an on-demand routine exposed via /api/v1/function (e.g. a live
 // process table). Collectors implementing FunctionProvider are asked for
-// theirs at scheduler construction.
+// theirs after each successful Init.
 type Function struct {
 	Name    string `json:"name"`
 	Help    string `json:"help"`
@@ -117,6 +117,7 @@ type Status struct {
 type running struct {
 	c            Collector
 	status       Status
+	functions    []Function // protected by mu; published after successful Init
 	mu           sync.Mutex
 	opMu         sync.Mutex // serializes Init, Collect and Stop
 	factory      Factory
@@ -188,6 +189,9 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 			log.Info("collector: disabled", "name", n, "reason", err)
 		} else {
 			r.initialized = true
+			if fp, ok := c.(FunctionProvider); ok {
+				r.functions = fp.Functions()
+			}
 		}
 		s.cols = append(s.cols, r)
 	}
@@ -206,21 +210,16 @@ func configure(c Collector, decode func(v any) error) error {
 }
 
 // Functions lists the on-demand functions offered by enabled collectors.
+// Reading the published descriptors does not need opMu: a slow Collect must
+// not make a function temporarily disappear from API, Hub or stream clients.
 func (s *Scheduler) Functions() []Function {
 	var out []Function
 	for _, r := range s.cols {
-		if !r.opMu.TryLock() {
-			continue
-		}
 		r.mu.Lock()
-		enabled := r.status.Enabled
-		r.mu.Unlock()
-		if enabled {
-			if fp, ok := r.c.(FunctionProvider); ok {
-				out = append(out, fp.Functions()...)
-			}
+		if r.status.Enabled && r.initialized {
+			out = append(out, r.functions...)
 		}
-		r.opMu.Unlock()
+		r.mu.Unlock()
 	}
 	return out
 }
@@ -263,6 +262,7 @@ func (s *Scheduler) SetEnabled(name string, on bool) bool {
 		}
 		r.desired = on
 		r.status.Enabled = false
+		r.functions = nil
 		r.retryAt = time.Time{}
 		r.backoff = 0
 		r.configFailed = false
@@ -292,6 +292,7 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 		return false
 	}
 	r.c = r.factory()
+	r.functions = nil
 	err := configure(r.c, r.decode)
 	r.configFailed = err != nil
 	if err == nil {
@@ -316,6 +317,9 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	}
 	r.initialized = true
 	r.status.Enabled = true
+	if fp, ok := r.c.(FunctionProvider); ok {
+		r.functions = fp.Functions()
+	}
 	r.status.Error = ""
 	r.backoff = 0
 	return true

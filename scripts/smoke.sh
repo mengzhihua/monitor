@@ -56,16 +56,7 @@ curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5" | grep '
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
 curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"
-# The scheduler omits a function while its collector is busy. Retry only that
-# transient 404; authentication failures and other HTTP errors still fail.
-for i in $(seq 1 50); do
-  code=$(curl -s -o "$DATA/logs-result.json" -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/function?function=logs")
-  [[ "$code" == "200" ]] && break
-  [[ "$code" == "404" ]] || fail "logs function HTTP $code"
-  sleep 0.2
-done
-[[ "$code" == "200" ]] || fail "logs function unavailable"
-grep '"cursor"' "$DATA/logs-result.json" >/dev/null || fail "logs function columns"
+curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=logs" | grep '"cursor"' >/dev/null || fail "logs function"
 curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=network-connections" | grep '"inode"' >/dev/null || fail "network-connections inode"
 collectors=$(curl -sf "http://127.0.0.1:$PORT/api/v1/collectors") || fail "collectors"
 echo "$collectors" | grep '"name":"macos"' >/dev/null || fail "collector macos missing"

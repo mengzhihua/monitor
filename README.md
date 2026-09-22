@@ -81,7 +81,7 @@ web:
 | TSDB tier1/tier2 | 每分钟 / 每小时降采样层（每桶 min/max/sum/last/count，均值 = sum/count），写入时同步折叠、按层独立保留（默认 90 天 / 2 年）、重启恢复；`/api/v1/data` 按 `(before-after)/points` 自动选层（`tier=auto|0|1|2` 可强制），粗层无数据时自动回退到细层；`/api/v1/info.db.tiers` 暴露各层 update_every/保留/序列/块/字节 |
 | plugins.d | 外部采集器进程（任意语言）通过 stdout 文本协议接入：`CHART/DIMENSION/CLABEL/BEGIN/SET/END/FLUSH/VARIABLE/DISABLE/EXIT`；自动发现 `plugins.d/*.plugin`，也可在 `plugins.list` 显式声明；崩溃自动重启（1s→60s 指数退避）、无输出看门狗、进程组回收、`DISABLE` 自禁用；状态在 `/api/v1/collectors.plugins` 与 `/api/v1/info.plugins` |
 | 应用/服务采集器 | `apps`：进程按应用分组 → `apps.cpu/mem/processes/threads/io_*`；`systemd`：cgroup v2 每服务 CPU/内存/IO；`docker`：每容器 cpu/mem/net/blkio；`nginx`（stub_status）；`apache`（server-status?auto）；`phpfpm`；`redis`（内置 RESP）；`memcached`（STATS）。目标不可达时自动禁用 |
-| Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`、`services`、`logs`、`containers`、`disks`、`mounts`、`network-interfaces`；Hub 上 `streaming` |
+| Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`、`services`、`logs`、`containers`、`disks`、`mounts`、`network-interfaces`；采集忙碌时仍保持函数入口可用，手动禁用后撤销；Hub 上 `streaming` |
 | API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/contexts` `/collectors` `/functions` `/function` `/weights` `/logs`；`POST /api/v1/ingest/openmetrics` `/otlp`；`/api/v1/alarms` `/alarm_log` `/alarm_rules` `/alarm_variables` `/alarms/silence`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；默认密码认证与可选 `allow_from` CIDR 访问控制 |
 | Dashboard | Vue3 + uPlot，按 family 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板，Functions 面板（进程/连接/服务表） |
 
