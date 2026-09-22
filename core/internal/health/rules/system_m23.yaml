@@ -19,7 +19,7 @@ alarms:
     type: System
     component: IBM i
     lookup: average -1m unaligned of utilization
-    units: %
+    units: "%"
     every: 10s
     warn: '$this > (($status >= $WARNING) ? (80) : (90))'
     crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
