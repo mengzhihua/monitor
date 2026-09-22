@@ -139,6 +139,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarm_transitions", s.handleAlertTransitions)
 	m.HandleFunc("GET /api/v2/badge.svg", s.handleBadge)
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
+	m.HandleFunc("GET /api/v1/prometheus/catalog", s.handlePrometheusCatalog)
 	m.HandleFunc("GET /api/v1/functions", s.handleFunctions)
 	m.HandleFunc("GET /api/v1/function", s.handleFunction)
 	m.HandleFunc("GET /api/v1/live", s.handleLive)
@@ -581,7 +582,16 @@ func (s *Server) writePromCharts(w http.ResponseWriter, host, node string, chart
 }
 
 func (s *Server) handleCollectors(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"available": collect.Available(), "status": s.sched.Status(), "plugins": s.pluginStatus()})
+	writeJSON(w, map[string]any{
+		"available":           collect.Available(),
+		"status":              s.sched.Status(),
+		"plugins":             s.pluginStatus(),
+		"prometheus_profiles": collect.PromProfileNames(),
+	})
+}
+
+func (s *Server) handlePrometheusCatalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, collect.PromCatalog())
 }
 
 type functionInfo struct {

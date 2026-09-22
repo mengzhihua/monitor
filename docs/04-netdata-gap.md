@@ -18,7 +18,7 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | Windows.plugin | **骨架** | 进程/线程/句柄 + Function `windows-services`；缺 Perflib 全家桶 |
 | freebsd.plugin | **骨架** | ctxt/intr/softirq/forks/wired/laundry/IPC/温度；缺 ZFS/ipfw/net.inet*/devstat |
 | Hub / Cloud | **骨架** | claim/Space/Room/OIDC/环复制/LDAP/share；缺真 ACLK MQTT 与 Cloud 控制台 |
-| 850+ Prometheus 集成名 | **过渡覆盖** | 走已有 `prometheus` 采集器（`prom.*` ID），不逐个原生化 |
+| 850+ Prometheus 集成名 | **M26 点名包装** | 具名 profile 出原生 ID（etcd/minio/vault/…）；其余仍 `prom.*`；已有采集器的不重复包装 |
 
 约 **165** 个内置采集器。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **18%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在内核探针与平台插件。
 
@@ -98,6 +98,7 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | 状态 | 能力 |
 | --- | --- |
 | 有 | v1 全套常用端点；v2 contexts/nodes/data/q/badge；`group_by=node`；alert_transitions；manage/health |
+| **M26** | `GET /api/v1/prometheus/catalog`；prometheus job `profile`/`fallback` |
 | **未做** | `/api/v3`；`group_by=dimension`；`alert_config`（单条规则 CRUD）；chart 异常高亮（每维 anomaly bit） |
 | **未做** | Metric Correlations 完整 UI（现在只有 Weights 面板窗口输入） |
 | 近似 | `info.aclk` 语义字段；流仍是 WebSocket，**不是 MQTT over WSS** |
@@ -109,7 +110,7 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | --- | --- |
 | go.d 已实现模块 | **不再移植** |
 | `testrandom` | 永远跳过 |
-| 850+ Prometheus 集成名 | 继续用 `prometheus` 采集器；只有客户点名原生 chart ID 才单开 |
+| 850+ Prometheus 集成名 | **M26** 点名 profile 已出原生 ID；其余继续 `prom.*`，不要逐个手写 |
 | charts.d bash 编排器 | 已有 plugins.d；不内嵌 bash 解释器 |
 | 真 CGO eBPF CO-RE | M19 先 `cilium/ebpf-go` **可选 tag** + bpftool/tracefs 回退；默认静态二进制仍无 CGO |
 | Netdata Cloud SaaS 账号体系 | 用自建 Hub 对等，不对接 netdata.cloud 账号 |
@@ -146,7 +147,7 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | **M23 IBM 与残留应用** | ibm.d db2/as400/mq/websphere（CGO 或 CLI）；pandas/go_expvar/am2320；lxc/ecs/containerd；可选 Kafka 协议采集 | 长尾，不挡主路径 | 无驱动/无 socket 禁用；cgo 用 build tag |
 | **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
 | **M25 Hub Cloud 产品** | 真 ACLK（MQTT over WSS 或保持 WS 并完整对等语义）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
-| **M26 集成目录** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | 文档 + 可选 codegen，不扩 go.d 重复 |
+| **M26 集成目录（本轮）** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | `GET /api/v1/prometheus/catalog`；fixture 抓取 |
 
 ### 3.3 批次依赖
 
@@ -165,25 +166,15 @@ flowchart LR
 
 M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定后再动查询协议。M25 依赖 M24。M23 可随时插空。
 
-## 4. 下一轮（M19）交付清单
+## 4. 本轮（M26）交付清单
 
-内核深度，不碰 go.d，不扩 Windows/FreeBSD（留给 M21/M22）。
+点名 Prometheus 包装，不扩 go.d、不重做已有原生采集器。
 
-1. **eBPF 程序族（便携优先）**
-   - 新文件建议：`core/internal/collect/ebpf_progs.go`（或按 program 拆）
-   - 数据源优先级：`/sys/kernel/debug/tracing` / bpffs 统计 → `bpftool prog show --json` 扩展 → 可选 `cilium/ebpf-go`（`//go:build linux,cgo,ebpf`）
-   - 图表 ID 对齐 Netdata：`ebpf.cachestat` `ebpf.dcstat` `ebpf.disk` `ebpf.fd` `ebpf.vfs` `ebpf.oomkill` `ebpf.process` `ebpf.shm` `ebpf.swap` `ebpf.sync` `ebpf.mdflush` `ebpf.mount` `ebpf.hardirq` 等
-   - 无 `CAP_BPF` / debugfs 则保持现有 bpftool 库存图，程序族禁用而不是整模块失败
-2. **perf.plugin**
-   - `perf stat -a -x,` 或 `unix.PerfEventOpen`（linux-only 文件）
-   - 图：`perf.cpu`（cycles/instructions/cache-misses/branch-misses）
-   - 容器无 perf_event_paranoid 权限 → Init 失败禁用
-3. **debugfs 剩余**：NUMA `extfrag`、kernel `audit` backlog
-4. **idlejitter**：用户态 sleep 抖动，图 `system.idlejitter`
-5. **apps user/group**：`apps.cpu_user` / `apps.cpu_group`（以及 mem 对应）；groups 来自 `/etc/passwd`+`/etc/group` 或 gopsutil
-6. **nfacct**：若 `nfacct list` 可用则出 `netfilter.nfacct`；否则保持 nftables
-7. **health.d** `system_m19.yaml`：oomkill、extfrag 高、perf 不可用不必告警（采集禁用即可）
-8. **测试**：纯 fixture，不在 CI 加载真实 kprobe；`GOOS=linux` 单测 + 其它 OS stub
+1. `prometheus` 采集器 `profiles: auto|off` + job `profile` / `fallback`
+2. 内置 profile：etcd、minio、vault、jenkins、grafana、prometheus、alertmanager、kafka、blackbox、gitlab、harbor、argocd、cert_manager、cilium、istio、vllm、litellm；显式：fastapi、go_runtime、python_gc
+3. 未匹配族仍为 `prom.*`；`GET /api/v1/prometheus/catalog` 列出 profile / dedicated / fallback
+4. health.d `system_m26.yaml`（etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列）
+5. 目录见本节与 catalog API；850+ 其余集成不手写
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 

@@ -94,7 +94,9 @@ collectors:
       timeout: 2s
     prometheus:          # scrape any OpenMetrics / Prometheus /metrics
       timeout: 5s
-      jobs: []           # e.g. [{ name: node, url: http://127.0.0.1:9100/metrics }]
+      profiles: auto     # auto: unique prefixes (etcd_, minio_, …) get native chart IDs; off = always prom.*
+      jobs: []           # e.g. [{ name: etcd, url: http://127.0.0.1:2379/metrics, profile: etcd }]
+                         # unnamed / unmatched families stay prom.*; GET /api/v1/prometheus/catalog
     statsd:              # UDP StatsD listener (counters/gauges/timers)
       listen: 127.0.0.1:8125
     httpcheck:           # synthetic HTTP checks
