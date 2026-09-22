@@ -175,6 +175,40 @@ collectors:
     ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
       command: ipmitool
       timeout: 8s
+    db2:                     # IBM DB2 via db2 CLI (no CGO); requires dsn
+      dsn: ""
+      command: db2
+      timeout: 8s
+    as400:                   # IBM i via isql/unixODBC; requires dsn
+      dsn: ""
+      command: isql
+      timeout: 8s
+    mq:                      # IBM MQ via dspmq/runmqsc
+      queue_manager: ""
+      command: dspmq
+      runmqsc: runmqsc
+      timeout: 5s
+    websphere:               # WebSphere PMI JSON or Prometheus /metrics
+      url: http://127.0.0.1:9080/metrics
+      timeout: 5s
+    pandas:                  # fetch JSON/CSV first row as charts (no Python eval)
+      timeout: 5s
+      jobs: []               # e.g. [{ name: demo, url: http://host/stats.json, format: json }]
+    go_expvar:               # Go /debug/vars memstats
+      url: http://127.0.0.1:6060/debug/vars
+      timeout: 3s
+    am2320:                  # AM2320 I2C via sysfs; missing sensor auto-disables
+      path: ""
+    lxc:                     # lxc-ls -f or cgroup lxc dirs
+      command: lxc-ls
+      timeout: 5s
+    ecs:                     # AWS ECS task metadata v4 (ECS_CONTAINER_METADATA_URI_V4)
+      url: ""
+      timeout: 3s
+    containerd:              # ctr containers/tasks ls
+      command: ctr
+      namespace: default
+      timeout: 5s
     sslcheck:
       timeout: 5s
       jobs: []               # e.g. [{ name: web, target: example.com:443 }]

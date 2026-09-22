@@ -269,6 +269,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 磁盘/挂载/网卡 | `gstat` / `df -kP` / `netstat -ibn` 近似 devstat / getmntinfo / getifaddrs；gopsutil 已占用同 ID 则跳过 |
 | health | `zfs_memory_throttle`、`freebsd_ipfw_drops`、`freebsd_softnet_drops` |
 
+### 已实现能力（M23：IBM / pandas / 容器运行时）
+
+| 模块 | 说明 |
+| --- | --- |
+| ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
+| python.d 残留 | `pandas`（JSON/CSV 首行，不 eval Python）、`go_expvar`（`/debug/vars` memstats）、`am2320`（sysfs I2C） |
+| 容器 | `lxc`（lxc-ls / cgroup）、`ecs`（task metadata v4）、`containerd`（ctr）；Functions `lxc-containers` / `ecs-containers` / `containerd-containers` |
+
 ### 开发
 
 ```bash
@@ -331,4 +339,4 @@ packaging/ 安装包与安装脚本
 
 M0–M18 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐。
 
-后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M23 IBM/残留 → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。M22 freebsd.plugin 剩余见本页。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。M22 freebsd.plugin 剩余见本页；M23 IBM/残留已合入 main。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
