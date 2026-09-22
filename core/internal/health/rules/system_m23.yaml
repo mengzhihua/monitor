@@ -1,0 +1,64 @@
+# M23: IBM (CLI/HTTP, no CGO), pandas/go_expvar/am2320, LXC/ECS/containerd.
+alarms:
+  - name: db2_deadlocks
+    on: db2.deadlocks
+    class: Errors
+    type: Database
+    component: DB2
+    lookup: average -1m unaligned of deadlocks
+    units: deadlocks/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (0) : (0))'
+    crit: '$this > (($status == $CRITICAL) ? (0.1) : (1))'
+    info: DB2 deadlocks are accumulating
+    to: sysadmin
+
+  - name: as400_cpu
+    on: as400.cpu_utilization
+    class: Utilization
+    type: System
+    component: IBM i
+    lookup: average -1m unaligned of utilization
+    units: "%"
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+    info: IBM i CPU utilization is high
+    to: sysadmin
+
+  - name: mq_queue_depth
+    on: mq.queue_depth
+    class: Latency
+    type: Database
+    component: IBM MQ
+    lookup: average -1m unaligned of curdepth
+    units: messages
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (1000) : (5000))'
+    crit: '$this > (($status == $CRITICAL) ? (5000) : (20000))'
+    info: IBM MQ local queue depth is high
+    to: sysadmin
+
+  - name: websphere_heap
+    on: websphere.jvm_heap
+    class: Utilization
+    type: Database
+    component: WebSphere
+    lookup: average -1m unaligned of used
+    units: MiB
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (1024) : (2048))'
+    info: WebSphere JVM heap used is high
+    to: sysadmin
+
+  - name: ecs_task_unhealthy
+    on: ecs.containers
+    class: Availability
+    type: Containers
+    component: ECS
+    lookup: last -10s unaligned of running
+    units: containers
+    every: 10s
+    warn: '$this < 1'
+    info: ECS task has no running containers
+    to: sysadmin
