@@ -155,6 +155,14 @@ type Options struct {
 	SilenceAll bool
 	Enabled    *bool // nil/true = evaluate; false = pause the engine
 	Windows    []MaintenanceWindow
+	// Anomaly supplies per-dimension 0–100 rates for lookup `anomaly-bit`.
+	Anomaly AnomalySource
+}
+
+// AnomalySource is implemented by the ML collector (duck-typed; no import cycle).
+type AnomalySource interface {
+	Rate(chart, dim string) (float64, bool)
+	RatesBetween(chart, dim string, after, before int64) []float64
 }
 
 // Engine evaluates rules and tracks alarms for one host.
@@ -187,6 +195,7 @@ type Engine struct {
 	enabled      bool
 	maintUntil   int64
 	windows      []MaintenanceWindow
+	anomaly      AnomalySource
 }
 
 // logUpdate is appended to alarm-log.jsonl when a previously written entry
@@ -210,7 +219,8 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	}
 	e := &Engine{opt: opt, reg: reg, db: db, log: opt.Logger, now: opt.Now, rules: opt.Rules,
 		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256),
-		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows}
+		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows,
+		anomaly: opt.Anomaly}
 	if opt.Enabled != nil {
 		e.enabled = *opt.Enabled
 	}
@@ -271,8 +281,72 @@ func (e *Engine) loadLog(path string) error {
 	return sc.Err()
 }
 
-// Rules returns the compiled rule set.
-func (e *Engine) Rules() []*Rule { return e.rules }
+// Rules returns a snapshot of the compiled rule set.
+func (e *Engine) Rules() []*Rule {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]*Rule, len(e.rules))
+	copy(out, e.rules)
+	return out
+}
+
+// SetAnomaly installs the ML bit source used by lookup `anomaly-bit`.
+func (e *Engine) SetAnomaly(src AnomalySource) {
+	e.mu.Lock()
+	e.anomaly = src
+	e.mu.Unlock()
+}
+
+// UpsertRule replaces a rule of the same name or appends it, then drops bound
+// alarm instances so Tick/bind recreates them against the new spec.
+func (e *Engine) UpsertRule(r *Rule) {
+	if r == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	replaced := false
+	for i, old := range e.rules {
+		if old.Spec.Name == r.Spec.Name {
+			e.rules[i] = r
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		e.rules = append(e.rules, r)
+	}
+	for k, a := range e.alarms {
+		if a.Name == r.Spec.Name {
+			delete(e.alarms, k)
+		}
+	}
+}
+
+// RemoveRule drops a rule and its bound alarms. Returns false if unknown.
+func (e *Engine) RemoveRule(name string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	kept := e.rules[:0]
+	found := false
+	for _, r := range e.rules {
+		if r.Spec.Name == name {
+			found = true
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if !found {
+		return false
+	}
+	e.rules = kept
+	for k, a := range e.alarms {
+		if a.Name == name {
+			delete(e.alarms, k)
+		}
+	}
+	return true
+}
 
 // Now returns the engine clock (overridable in tests via Options.Now).
 func (e *Engine) Now() time.Time { return e.now() }
@@ -698,22 +772,36 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 	var sum, total float64
 	var matched bool
 	var minSum, maxSum float64
+	e.mu.RLock()
+	src := e.anomaly
+	e.mu.RUnlock()
 	for _, d := range dims {
-		pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
-		if err != nil || len(pts) == 0 {
-			continue
-		}
-		vals := make([]float64, 0, len(pts))
-		for _, p := range pts {
-			if !math.IsNaN(p.Value) {
-				vals = append(vals, p.Value)
+		var vals []float64
+		if l.AnomalyBit {
+			if src != nil {
+				vals = src.RatesBetween(c.ID, d.ID, after, before)
+			}
+		} else {
+			pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			if err != nil || len(pts) == 0 {
+				continue
+			}
+			vals = make([]float64, 0, len(pts))
+			for _, p := range pts {
+				if !math.IsNaN(p.Value) {
+					vals = append(vals, p.Value)
+				}
 			}
 		}
 		if len(vals) == 0 {
 			continue
 		}
 		var v float64
-		if l.Method == tsdb.GroupSum {
+		if !l.AnomalyBit && l.Method == tsdb.GroupSum {
+			pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			if err != nil {
+				continue
+			}
 			v = integrate(pts, int64(c.UpdateEvery))
 		} else {
 			v = reduce(vals, l.Method)

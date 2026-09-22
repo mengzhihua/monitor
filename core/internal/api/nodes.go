@@ -103,7 +103,14 @@ func (ro Role) allows(r *http.Request) bool {
 	case RoleTroubleshooter:
 		return r.Method == http.MethodGet
 	default:
-		return r.Method == http.MethodGet && r.URL.Path != "/api/v1/function" && r.URL.Path != "/api/v1/logs"
+		if r.Method != http.MethodGet {
+			return false
+		}
+		switch r.URL.Path {
+		case "/api/v1/function", "/api/v3/function", "/api/v1/logs":
+			return false
+		}
+		return true
 	}
 }
 

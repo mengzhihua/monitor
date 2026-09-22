@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { Chart } from '../api'
@@ -11,6 +11,8 @@ const props = defineProps<{ chart: Chart; window: number }>()
 const el = ref<HTMLDivElement>()
 const latest = ref<Record<string, number>>({})
 const error = ref('')
+const anomaly = ref<Record<string, number>>({})
+const anomalous = computed(() => Object.values(anomaly.value).some((v) => v >= 50))
 
 let plot: uPlot | null = null
 let unsub: (() => void) | null = null
@@ -64,11 +66,12 @@ function makeOpts(width: number): uPlot.Options {
   for (let sidx = 1; sidx <= dims.length; sidx++) {
     const di = dimIndex(sidx)
     const id = dims[di]!
-    const color = palette[di % palette.length]!
+    const color = (anomaly.value[id] ?? 0) >= 50 ? '#ef4444' : palette[di % palette.length]!
+    const strokeWidth = (anomaly.value[id] ?? 0) >= 50 ? 2 : 1
     series.push({
       label: props.chart.dimensions.find((d) => d.id === id)?.name ?? id,
       stroke: color,
-      width: 1,
+      width: strokeWidth,
       fill: st || props.chart.chart_type === 'area' ? color + (st ? 'cc' : '33') : undefined,
       spanGaps: false,
       value: (_u, _v, s, idx) => (idx == null ? '-' : fmt(raw[dimIndex(s)]?.[idx])),
@@ -104,6 +107,12 @@ async function load() {
     const d = await api.data(props.chart.id, -props.window, 0, Math.ceil(props.window / step()))
     times = d.result.data.map((r) => r[0] as number)
     const idx = new Map(d.dimension_ids.map((id, i) => [id, i + 1]))
+    const bits: Record<string, number> = {}
+    ;(d.dimension_anomaly ?? []).forEach((v, i) => {
+      const id = d.dimension_ids[i]
+      if (id) bits[id] = v
+    })
+    anomaly.value = bits
     raw = dims.map((id) => {
       const col = idx.get(id)
       return d.result.data.map((r) => (col == null ? null : (r[col] as number | null)))
@@ -172,6 +181,7 @@ watch(defFingerprint, load)
       <div>
         <span class="title">{{ chart.title }}</span>
         <span class="id">{{ chart.id }}</span>
+        <span v-if="anomalous" class="anom">ANOM</span>
       </div>
       <span class="units">{{ chart.units }}</span>
     </div>
@@ -185,6 +195,7 @@ watch(defFingerprint, load)
 .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
 .title { font-weight: 600; font-size: 14px; }
 .id { color: #64748b; font-size: 11px; margin-left: 8px; font-family: ui-monospace, monospace; }
+.anom { margin-left: 8px; font-size: 10px; font-weight: 700; color: #fecaca; background: #7f1d1d; border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em; }
 .units { color: #94a3b8; font-size: 12px; }
 .plot { width: 100%; }
 .err { color: #f87171; font-size: 12px; margin-top: 4px; }

@@ -258,6 +258,15 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
 | API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
 
+### 已实现能力（M24：查询 API 深度）
+
+| 模块 | 说明 |
+| --- | --- |
+| `/api/v3` | info / data / q / contexts / context / nodes / weights / alerts / alert_transitions / alert_config / functions / badge / allmetrics（`api: 3`） |
+| 分组 | `group_by=dimension` 按维度合并实例；`group_by=node,dimension` 列名为 `node.dim` |
+| alert_config | `GET\|PUT\|POST\|DELETE /api/v3/alert_config` YAML/JSON 规则 CRUD，`?hash=` / `?name=` |
+| 每维 anomaly | data 的 `dimension_anomaly`；`options=anomaly-bit` 返回 0–100；health `lookup: … anomaly-bit`；Dashboard 异常维度标红 |
+
 ### 开发
 
 ```bash
@@ -320,4 +329,4 @@ packaging/ 安装包与安装脚本
 
 M0–M18 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐。
 
-后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M22 freebsd.plugin → M23 IBM/残留 → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M22 freebsd.plugin → M23 IBM/残留 → **M24 API v3（本轮）** → M25 Cloud 产品面 → M26 集成目录。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。

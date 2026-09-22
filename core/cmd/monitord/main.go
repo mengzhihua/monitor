@@ -121,6 +121,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
+		if ml := sched.Collector("ml"); ml != nil {
+			if src, ok := ml.(health.AnomalySource); ok {
+				eng.SetAnomaly(src)
+			}
+		}
 	}
 
 	var pm *plugins.Manager

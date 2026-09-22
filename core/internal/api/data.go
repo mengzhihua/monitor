@@ -27,21 +27,65 @@ func (s *Server) handleDataV2(w http.ResponseWriter, r *http.Request) {
 	s.serveData(w, r, 2)
 }
 
+func (s *Server) handleDataV3(w http.ResponseWriter, r *http.Request) {
+	s.serveData(w, r, 3)
+}
+
 func (s *Server) handleContextsV2(w http.ResponseWriter, r *http.Request) {
+	s.serveContexts(w, r, 2)
+}
+
+func (s *Server) handleContextsV3(w http.ResponseWriter, r *http.Request) {
+	s.serveContexts(w, r, 3)
+}
+
+func (s *Server) serveContexts(w http.ResponseWriter, r *http.Request, api int) {
 	v, ok := s.target(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, s.contextsPayload(v, 2))
+	writeJSON(w, s.contextsPayload(v, api))
 }
 
 func (s *Server) handleNodesV2(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.nodesPayload(r, 2))
 }
 
+func (s *Server) handleNodesV3(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.nodesPayload(r, 3))
+}
+
+func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	id := r.URL.Query().Get("context")
+	if id == "" {
+		id = r.URL.Query().Get("id")
+	}
+	if id == "" {
+		http.Error(w, "context required", http.StatusBadRequest)
+		return
+	}
+	payload := s.contextsPayload(v, 3)
+	contexts, _ := payload["contexts"].(map[string]*ctxInfo)
+	info, ok := contexts[id]
+	if !ok {
+		http.Error(w, "context not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"api": 3, "id": id, "context": info})
+}
+
 func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	q := r.URL.Query()
-	if strings.EqualFold(q.Get("group_by"), "node") {
+	gb := parseGroupBy(q.Get("group_by"))
+	if hasGroup(gb, "node") {
+		if hasGroup(gb, "dimension") {
+			s.serveDataByNodeDim(w, r, api)
+			return
+		}
 		s.serveDataByNode(w, r, api)
 		return
 	}
@@ -57,18 +101,42 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	writeData(w, q, out)
 }
 
+func parseGroupBy(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func hasGroup(flags []string, name string) bool {
+	for _, f := range flags {
+		if f == name {
+			return true
+		}
+		if name == "dimension" && (f == "dimensions" || f == "dim") {
+			return true
+		}
+	}
+	return false
+}
+
+func wantsAnomalyBit(opts string) bool {
+	opts = strings.ToLower(opts)
+	return strings.Contains(opts, "anomaly-bit") || strings.Contains(opts, "anomaly_bit")
+}
+
 func (s *Server) serveDataByNode(w http.ResponseWriter, r *http.Request, api int) {
 	q := r.URL.Query()
 	q.Del("group_by")
-	views := []*view{}
-	if v, ok := s.resolve(""); ok {
-		views = append(views, v)
-	}
-	if s.opt.Nodes != nil {
-		for _, n := range s.opt.Nodes.List() {
-			views = append(views, &view{id: n.ID, hostname: n.Host.Hostname, reg: n.Registry(), db: n.DB(), node: n})
-		}
-	}
+	views := s.dataViews()
 	if len(views) == 0 {
 		http.Error(w, "no nodes", http.StatusNotFound)
 		return
@@ -165,7 +233,111 @@ func (s *Server) serveDataByNode(w http.ResponseWriter, r *http.Request, api int
 	}
 	out := &dataResult{
 		API: api, ID: ctx, Name: ctx, Context: ctx, Units: parts[0].units, ChartType: parts[0].ctype,
-		DimensionIDs: ids, DimensionNames: names, Min: minV, Max: maxV,
+		DimensionIDs: ids, DimensionNames: names, Min: minV, Max: maxV, GroupBy: "node",
+		Labels: append([]string{"time"}, names...), Rows: rows,
+	}
+	writeData(w, q, out)
+}
+
+func (s *Server) dataViews() []*view {
+	views := []*view{}
+	if v, ok := s.resolve(""); ok {
+		views = append(views, v)
+	}
+	if s.opt.Nodes != nil {
+		for _, n := range s.opt.Nodes.List() {
+			views = append(views, &view{id: n.ID, hostname: n.Host.Hostname, reg: n.Registry(), db: n.DB(), node: n})
+		}
+	}
+	return views
+}
+
+func viewLabel(v *view) string {
+	if v.hostname != "" {
+		return v.hostname
+	}
+	if v.id != "" {
+		return v.id
+	}
+	return "local"
+}
+
+// serveDataByNodeDim is group_by=node,dimension: one column per node×dimension.
+func (s *Server) serveDataByNodeDim(w http.ResponseWriter, r *http.Request, api int) {
+	q := r.URL.Query()
+	q.Del("group_by")
+	views := s.dataViews()
+	if len(views) == 0 {
+		http.Error(w, "no nodes", http.StatusNotFound)
+		return
+	}
+	type part struct {
+		label  string
+		result *dataResult
+	}
+	var parts []part
+	for _, v := range views {
+		d, _, errMsg := s.queryData(v, q, api)
+		if errMsg != "" || d == nil || len(d.Rows) == 0 {
+			continue
+		}
+		parts = append(parts, part{label: viewLabel(v), result: d})
+	}
+	if len(parts) == 0 {
+		http.Error(w, "no data", http.StatusNotFound)
+		return
+	}
+	nTimes := len(parts[0].result.Rows)
+	var ids, names []string
+	var anom []float64
+	for _, p := range parts {
+		for i, id := range p.result.DimensionIDs {
+			ids = append(ids, p.label+"."+id)
+			name := id
+			if i < len(p.result.DimensionNames) && p.result.DimensionNames[i] != "" {
+				name = p.result.DimensionNames[i]
+			}
+			names = append(names, p.label+"."+name)
+			if i < len(p.result.Anomaly) {
+				anom = append(anom, p.result.Anomaly[i])
+			} else {
+				anom = append(anom, 0)
+			}
+		}
+	}
+	rows := make([][]any, nTimes)
+	minV, maxV := math.Inf(1), math.Inf(-1)
+	for i := 0; i < nTimes; i++ {
+		row := []any{parts[0].result.Rows[i][0]}
+		for _, p := range parts {
+			src := p.result.Rows
+			if i >= len(src) {
+				for range p.result.DimensionIDs {
+					row = append(row, nil)
+				}
+				continue
+			}
+			for _, cell := range src[i][1:] {
+				row = append(row, cell)
+				if f, ok := cell.(float64); ok {
+					if f < minV {
+						minV = f
+					}
+					if f > maxV {
+						maxV = f
+					}
+				}
+			}
+		}
+		rows[i] = row
+	}
+	if math.IsInf(minV, 0) {
+		minV, maxV = 0, 0
+	}
+	head := parts[0].result
+	out := &dataResult{
+		API: api, ID: head.ID, Name: head.Name, Context: head.Context, Units: head.Units, ChartType: head.ChartType,
+		DimensionIDs: ids, DimensionNames: names, Min: minV, Max: maxV, Anomaly: anom, GroupBy: "node,dimension",
 		Labels: append([]string{"time"}, names...), Rows: rows,
 	}
 	writeData(w, q, out)
@@ -191,10 +363,12 @@ type dataResult struct {
 	Max             float64
 	Labels          []string
 	Rows            [][]any
+	Anomaly         []float64 // per-dimension current 0–100 bits
+	GroupBy         string
 }
 
 func (d *dataResult) jsonMap() map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"api":               d.API,
 		"node":              d.Node,
 		"id":                d.ID,
@@ -211,10 +385,15 @@ func (d *dataResult) jsonMap() map[string]any {
 		"group":             d.Group,
 		"dimension_ids":     d.DimensionIDs,
 		"dimension_names":   d.DimensionNames,
+		"dimension_anomaly": d.Anomaly,
 		"min":               round3(d.Min),
 		"max":               round3(d.Max),
 		"result":            map[string]any{"labels": d.Labels, "data": d.Rows},
 	}
+	if d.GroupBy != "" {
+		m["group_by"] = d.GroupBy
+	}
+	return m
 }
 
 func chartsForData(reg *registry.Registry, chartID, ctx string) ([]*registry.Chart, string) {
@@ -360,6 +539,57 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 		names = append(names, d.name)
 	}
 
+	src := s.anomaly()
+	anom := make([]float64, len(dims))
+	if src != nil {
+		for i, d := range dims {
+			var sum, n float64
+			for _, c := range d.charts {
+				if r, ok := src.Rate(c.ID, d.id); ok {
+					sum += r
+					n++
+				}
+			}
+			if n > 0 {
+				anom[i] = sum / n
+			}
+		}
+	}
+	bit := wantsAnomalyBit(opts)
+	units := headUnits(charts)
+	if bit {
+		units = "%"
+		for di, d := range dims {
+			for i, t := range times {
+				end := t
+				if step > 0 {
+					end = t + step
+				}
+				if i+1 < len(times) {
+					end = times[i+1]
+				}
+				var rates []float64
+				if src != nil {
+					for _, c := range d.charts {
+						rates = append(rates, src.RatesBetween(c.ID, d.id, t, end)...)
+					}
+				}
+				if i >= len(values[di]) {
+					continue
+				}
+				if len(rates) == 0 {
+					values[di][i] = 0
+					continue
+				}
+				s := 0.0
+				for _, r := range rates {
+					s += r
+				}
+				values[di][i] = s / float64(len(rates))
+			}
+		}
+	}
+
 	rows := make([][]any, 0, len(times))
 	minV, maxV := math.Inf(1), math.Inf(-1)
 	lastFilled := 0
@@ -409,12 +639,38 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 			}
 		}
 	}
+	gb := strings.ToLower(strings.TrimSpace(q.Get("group_by")))
+	if gb == "" && len(charts) > 1 {
+		gb = "dimension"
+	}
 	return &dataResult{
-		API: api, Node: v.id, ID: id, Name: id, Context: ctx, Units: head.Units,
+		API: api, Node: v.id, ID: id, Name: id, Context: ctx, Units: units,
 		ChartType: head.Type, UpdateEvery: everySec, ViewUpdateEvery: step, Tier: tier,
 		After: resAfter, Before: resBefore, Group: group, DimensionIDs: ids, DimensionNames: names,
 		Min: minV, Max: maxV, Labels: append([]string{"time"}, names...), Rows: rows,
+		Anomaly: anom, GroupBy: gb,
 	}, 0, ""
+}
+
+func headUnits(charts []*registry.Chart) string {
+	if len(charts) == 0 {
+		return ""
+	}
+	return charts[0].Units
+}
+
+func (s *Server) anomaly() health.AnomalySource {
+	if s.opt.Anomaly != nil {
+		return s.opt.Anomaly
+	}
+	if s.sched != nil {
+		if c := s.sched.Collector("ml"); c != nil {
+			if src, ok := c.(health.AnomalySource); ok {
+				return src
+			}
+		}
+	}
+	return nil
 }
 
 // sumAligned adds same-index values across series (NaN skipped). One series is a no-op.
