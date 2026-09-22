@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -92,8 +93,13 @@ func (p *pandasCollector) Init(reg *registry.Registry) error {
 		if len(row) == 0 {
 			return fmt.Errorf("pandas job %q: no numeric columns", j.Name)
 		}
-		dims := make([]*registry.Dimension, 0, len(row))
+		keys := make([]string, 0, len(row))
 		for k := range row {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		dims := make([]*registry.Dimension, 0, len(keys))
+		for _, k := range keys {
 			dims = append(dims, &registry.Dimension{ID: sanitizeID(k)})
 		}
 		id := "pandas." + sanitizeID(j.Name)

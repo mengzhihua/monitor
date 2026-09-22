@@ -70,6 +70,10 @@ func (a *as400Collector) Init(reg *registry.Registry) error {
 			Dimensions: []*registry.Dimension{{ID: "used"}}},
 		{ID: "as400.network_connections", Context: "as400.network_connections", Title: "Network connections", Units: "connections", Family: "network", Priority: 64260,
 			Dimensions: []*registry.Dimension{{ID: "remote"}, {ID: "total"}}},
+		{ID: "as400.memory_pool_usage", Context: "as400.memory_pool_usage", Title: "Memory Pool Usage", Units: "bytes", Family: "memory", Type: registry.Stacked, Priority: 64270,
+			Dimensions: []*registry.Dimension{{ID: "machine"}, {ID: "base"}, {ID: "interactive"}, {ID: "spool"}}},
+		{ID: "as400.temporary_storage", Context: "as400.temporary_storage", Title: "Temporary Storage", Units: "MiB", Family: "storage", Priority: 64280,
+			Dimensions: []*registry.Dimension{{ID: "current"}, {ID: "maximum"}}},
 	} {
 		ch.Plugin, ch.Module = "ibm.d", "as400"
 		reg.AddChart(ch)
@@ -93,6 +97,13 @@ func (a *as400Collector) Collect(ctx context.Context, reg *registry.Registry, no
 	_ = reg.Collect("as400.network_connections", now, map[string]float64{
 		"remote": s["remote"], "total": s["net_total"],
 	})
+	_ = reg.Collect("as400.memory_pool_usage", now, map[string]float64{
+		"machine": s["pool_machine"], "base": s["pool_base"],
+		"interactive": s["pool_interactive"], "spool": s["pool_spool"],
+	})
+	_ = reg.Collect("as400.temporary_storage", now, map[string]float64{
+		"current": s["temp_current"], "maximum": s["temp_maximum"],
+	})
 	return nil
 }
 
@@ -106,6 +117,12 @@ SELECT 'waiting', JOBS_WAITING FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'used', SYSTEM_ASP_USED FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'remote', REMOTE_CONNECTIONS FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 SELECT 'net_total', TOTAL_CONNECTIONS FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
+SELECT 'pool_machine', MACHINE_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
+SELECT 'pool_base', BASE_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
+SELECT 'pool_interactive', INTERACTIVE_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
+SELECT 'pool_spool', SPOOL_POOL FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
+SELECT 'temp_current', CURRENT_TEMPORARY_STORAGE FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
+SELECT 'temp_maximum', MAXIMUM_TEMPORARY_STORAGE FROM TABLE(QSYS2.SYSTEM_STATUS()) X;
 `
 
 func (a *as400Collector) status(ctx context.Context) (map[string]float64, error) {
@@ -139,6 +156,21 @@ func (a *as400Collector) status(ctx context.Context) (map[string]float64, error)
 	}
 	if v, ok := out["total_jobs"]; ok {
 		out["total"] = v
+	}
+	alias := map[string]string{
+		"current_temporary_storage": "temp_current",
+		"maximum_temporary_storage": "temp_maximum",
+		"machine_pool":              "pool_machine",
+		"base_pool":                 "pool_base",
+		"interactive_pool":          "pool_interactive",
+		"spool_pool":                "pool_spool",
+	}
+	for k, dst := range alias {
+		if v, ok := out[k]; ok {
+			if _, have := out[dst]; !have {
+				out[dst] = v
+			}
+		}
 	}
 	return out, nil
 }

@@ -65,8 +65,12 @@ func (d *db2Collector) Init(reg *registry.Registry) error {
 				{ID: "waits", Algorithm: inc}, {ID: "timeouts", Algorithm: inc}, {ID: "escalations", Algorithm: inc}}},
 		{ID: "db2.deadlocks", Context: "db2.deadlocks", Title: "Database Deadlocks", Units: "deadlocks/s", Family: "locks", Priority: 64130,
 			Dimensions: []*registry.Dimension{{ID: "deadlocks", Algorithm: inc}}},
-		{ID: "db2.log_utilization", Context: "db2.log_utilization", Title: "Transaction Log Utilization", Units: "percent", Family: "log", Type: registry.Area, Priority: 64140,
-			Dimensions: []*registry.Dimension{{ID: "used"}}},
+		{ID: "db2.log_utilization", Context: "db2.log_utilization", Title: "Transaction Log Utilization", Units: "percentage", Family: "log", Type: registry.Area, Priority: 64140,
+			Dimensions: []*registry.Dimension{{ID: "utilization"}}},
+		{ID: "db2.log_space", Context: "db2.log_space", Title: "Transaction Log Space", Units: "bytes", Family: "log", Type: registry.Stacked, Priority: 64141,
+			Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "available"}}},
+		{ID: "db2.bufferpool_hit_ratio", Context: "db2.bufferpool_hit_ratio", Title: "Bufferpool Hit Ratio", Units: "percentage", Family: "bufferpool", Type: registry.Stacked, Priority: 64145,
+			Dimensions: []*registry.Dimension{{ID: "hits"}, {ID: "misses"}}},
 		{ID: "db2.service_health", Context: "db2.service_health", Title: "Service Health Status", Units: "status", Family: "health", Priority: 64150,
 			Dimensions: []*registry.Dimension{{ID: "connection"}, {ID: "database"}}},
 	} {
@@ -93,7 +97,25 @@ func (d *db2Collector) Collect(ctx context.Context, reg *registry.Registry, now 
 		"waits": s["waits"], "timeouts": s["timeouts"], "escalations": s["escalations"],
 	})
 	_ = reg.Collect("db2.deadlocks", now, map[string]float64{"deadlocks": s["deadlocks"]})
-	_ = reg.Collect("db2.log_utilization", now, map[string]float64{"used": s["used"]})
+	util := s["utilization"]
+	if util == 0 {
+		util = s["used"]
+	}
+	_ = reg.Collect("db2.log_utilization", now, map[string]float64{"utilization": util})
+	logUsed := s["log_used"]
+	logAvail := s["log_avail"]
+	if logUsed == 0 {
+		logUsed = s["total_log_used"]
+	}
+	if logAvail == 0 {
+		logAvail = s["total_log_available"]
+	}
+	_ = reg.Collect("db2.log_space", now, map[string]float64{"used": logUsed, "available": logAvail})
+	hits, misses := s["hits"], s["misses"]
+	if tot := hits + misses; tot > 0 {
+		hits, misses = hits*100/tot, misses*100/tot
+	}
+	_ = reg.Collect("db2.bufferpool_hit_ratio", now, map[string]float64{"hits": hits, "misses": misses})
 	_ = reg.Collect("db2.service_health", now, map[string]float64{"connection": 1, "database": 1})
 	return nil
 }
@@ -105,7 +127,11 @@ SELECT 'waits ' || TRIM(CHAR(LOCK_WAITS)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
 SELECT 'timeouts ' || TRIM(CHAR(LOCK_TIMEOUTS)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
 SELECT 'escalations ' || TRIM(CHAR(LOCK_ESCALS)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
 SELECT 'deadlocks ' || TRIM(CHAR(DEADLOCKS)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
-SELECT 'used ' || TRIM(CHAR(TOTAL_LOG_USED*100.0/NULLIF(TOTAL_LOG_AVAILABLE+TOTAL_LOG_USED,0))) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
+SELECT 'utilization ' || TRIM(CHAR(TOTAL_LOG_USED*100.0/NULLIF(TOTAL_LOG_AVAILABLE+TOTAL_LOG_USED,0))) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
+SELECT 'log_used ' || TRIM(CHAR(TOTAL_LOG_USED)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
+SELECT 'log_avail ' || TRIM(CHAR(TOTAL_LOG_AVAILABLE)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
+SELECT 'hits ' || TRIM(CHAR(POOL_DATA_L_READS-POOL_DATA_P_READS)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
+SELECT 'misses ' || TRIM(CHAR(POOL_DATA_P_READS)) FROM TABLE(MON_GET_DATABASE(-2)) AS t;
 `
 
 func (d *db2Collector) status(ctx context.Context) (map[string]float64, error) {
@@ -137,7 +163,9 @@ func parseDB2KV(b []byte) map[string]float64 {
 		"appls_cur_cons": "total", "connections": "total",
 		"appls_in_db2": "active", "lock_waits": "waits",
 		"lock_timeouts": "timeouts", "lock_escals": "escalations",
-		"log_util": "used", "log_utilization": "used",
+		"log_util": "utilization", "log_utilization": "utilization",
+		"total_log_used": "log_used", "total_log_available": "log_avail",
+		"pool_hits": "hits", "pool_misses": "misses",
 	}
 	for k, v := range alias {
 		if _, ok := out[k]; ok {
