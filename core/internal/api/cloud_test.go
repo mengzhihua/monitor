@@ -2,10 +2,17 @@ package api
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -136,18 +143,65 @@ func TestHubRingReplica(t *testing.T) {
 }
 
 func TestOIDCLogin(t *testing.T) {
+	for _, mode := range []string{"valid", "issuer", "audience", "expired", "nonce", "signature", "subject", "missing"} {
+		t.Run(mode, func(t *testing.T) { testOIDCLogin(t, mode) })
+	}
+}
+func testOIDCLogin(t *testing.T, mode string) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nonce, challenge string
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/openid-configuration":
 			_ = json.NewEncoder(w).Encode(map[string]string{
+				"issuer":                 "http://" + r.Host,
+				"jwks_uri":               "http://" + r.Host + "/keys",
 				"authorization_endpoint": "http://" + r.Host + "/authorize",
 				"token_endpoint":         "http://" + r.Host + "/token",
 				"userinfo_endpoint":      "http://" + r.Host + "/userinfo",
 			})
+		case "/keys":
+			_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, Algorithm: "RS256", Use: "sig"}}})
 		case "/authorize":
+			nonce = r.URL.Query().Get("nonce")
+			challenge = r.URL.Query().Get("code_challenge")
 			http.Redirect(w, r, r.URL.Query().Get("redirect_uri")+"?code=abc&state="+r.URL.Query().Get("state"), http.StatusFound)
 		case "/token":
-			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at-1"})
+			digest := sha256.Sum256([]byte(r.FormValue("code_verifier")))
+			if r.FormValue("code_verifier") == "" || base64.RawURLEncoding.EncodeToString(digest[:]) != challenge {
+				http.Error(w, "PKCE missing", 400)
+				return
+			}
+			claims := map[string]any{"iss": "http://" + r.Host, "sub": "u1", "aud": "cid", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(), "nonce": nonce}
+			switch mode {
+			case "issuer":
+				claims["iss"] = "https://other.example"
+			case "audience":
+				claims["aud"] = "other"
+			case "expired":
+				claims["exp"] = time.Now().Add(-time.Hour).Unix()
+			case "nonce":
+				claims["nonce"] = "wrong"
+			case "subject":
+				claims["sub"] = "other"
+			}
+			signing := signer
+			if mode == "signature" {
+				other, _ := rsa.GenerateKey(rand.Reader, 2048)
+				signing, _ = jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: other}, nil)
+			}
+			raw, _ := jwt.Signed(signing).Claims(claims).Serialize()
+			if mode == "missing" {
+				raw = ""
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at-1", "id_token": raw})
 		case "/userinfo":
 			_ = json.NewEncoder(w).Encode(map[string]string{"sub": "u1", "email": "ops@example.com"})
 		default:
@@ -163,7 +217,7 @@ func TestOIDCLogin(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	reg := registry.New(&registry.Host{ID: "id", Hostname: "h", UpdateEvery: 1}, db)
 	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
-	srv, err := New(reg, db, sched, Options{StartedAt: time.Now(), Token: "admin-tok",
+	srv, err := New(reg, db, sched, Options{StartedAt: time.Now(),
 		OIDC: &OIDCConfig{Issuer: idp.URL, ClientID: "cid", ClientSecret: "sec",
 			RedirectURL: "http://hub.example/api/v1/auth/oidc/callback", Role: "viewer"}})
 	if err != nil {
@@ -174,7 +228,8 @@ func TestOIDCLogin(t *testing.T) {
 	t.Cleanup(ts.Close)
 	srv.oidc.cfg.RedirectURL = ts.URL + "/api/v1/auth/oidc/callback"
 
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Get(ts.URL + "/api/v1/auth/oidc/login")
 	if err != nil {
 		t.Fatal(err)
@@ -193,9 +248,19 @@ func TestOIDCLogin(t *testing.T) {
 	if cb == "" {
 		t.Fatal("idp did not bounce to callback")
 	}
-	resp, err = http.Get(cb)
+	resp, err = client.Get(cb)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if mode != "valid" {
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("invalid %s accepted: %d", mode, resp.StatusCode)
+		}
+		if len(srv.oidc.sessions) != 0 {
+			t.Fatal("invalid login minted a session")
+		}
+		return
 	}
 	var out struct {
 		Token string `json:"token"`
@@ -216,5 +281,18 @@ func TestOIDCLogin(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("session info %d", resp.StatusCode)
+	}
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/auth/oidc/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+out.Token)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatalf("logout %d", resp.StatusCode)
+	}
+	if _, ok := srv.oidc.session(out.Token); ok {
+		t.Fatal("logout did not revoke session")
 	}
 }

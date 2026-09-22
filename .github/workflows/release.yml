@@ -18,7 +18,7 @@ on:
 
 env:
   FLUTTER_VERSION: "3.35.4"
-  GO_VERSION: "1.23"
+  GO_VERSION: "1.27.1"
 
 permissions:
   contents: write
@@ -94,7 +94,7 @@ jobs:
         with: { ref: "${{ needs.meta.outputs.ref }}" }
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci

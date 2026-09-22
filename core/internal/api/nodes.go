@@ -57,7 +57,7 @@ func validateUsers(us []User) error {
 // authenticate maps the request credential to a user. With no token and no
 // users configured the API is open and callers act as admin.
 func (s *Server) authenticate(r *http.Request) (User, bool) {
-	if s.opt.Token == "" && len(s.opt.Users) == 0 {
+	if s.opt.Token == "" && len(s.opt.Users) == 0 && s.oidc == nil {
 		return anonymous, true
 	}
 	tok := requestToken(r)
@@ -82,7 +82,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 
 func publicAPI(path string) bool {
 	switch path {
-	case stream.Path, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
+	case "/api/v1/auth/oidc/status", stream.Path, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
 		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback":
 		return true
 	}
@@ -92,6 +92,9 @@ func publicAPI(path string) bool {
 // allows is the RBAC matrix: reads for everyone, Functions from
 // troubleshooter up, mutations admin only.
 func (ro Role) allows(r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/oidc/logout" {
+		return true
+	}
 	switch ro {
 	case RoleAdmin:
 		return true

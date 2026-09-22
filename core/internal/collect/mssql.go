@@ -85,17 +85,30 @@ func (m *mssqlCollector) Collect(ctx context.Context, reg *registry.Registry, no
 	if err != nil {
 		return err
 	}
-	_ = reg.Collect("mssql.user_connections", now, map[string]float64{"user": s["user_connections"]})
-	_ = reg.Collect("mssql.session_connections", now, map[string]float64{"user": s["session_user"], "internal": s["session_internal"]})
-	_ = reg.Collect("mssql.blocked_processes", now, map[string]float64{"blocked": s["blocked_processes"]})
-	_ = reg.Collect("mssql.batch_requests", now, map[string]float64{"batch": s["batch_requests"]})
-	_ = reg.Collect("mssql.compilations", now, map[string]float64{"compilations": s["sql_compilations"]})
-	_ = reg.Collect("mssql.recompilations", now, map[string]float64{"recompilations": s["sql_recompilations"]})
-	_ = reg.Collect("mssql.buffer_cache_hit_ratio", now, map[string]float64{"hit_ratio": s["buffer_cache_hit_ratio"]})
+	for chart, dims := range map[string]map[string]string{
+		"user_connections":       {"user": "user_connections"},
+		"session_connections":    {"user": "session_user", "internal": "session_internal"},
+		"blocked_processes":      {"blocked": "blocked_processes"},
+		"batch_requests":         {"batch": "batch_requests"},
+		"compilations":           {"compilations": "sql_compilations"},
+		"recompilations":         {"recompilations": "sql_recompilations"},
+		"buffer_cache_hit_ratio": {"hit_ratio": "buffer_cache_hit_ratio"},
+	} {
+		values := map[string]float64{}
+		for dim, key := range dims {
+			if value, ok := s[key]; ok {
+				values[dim] = value
+			}
+		}
+		if len(values) > 0 {
+			_ = reg.Collect("mssql."+chart, now, values)
+		}
+	}
+
 	return nil
 }
 
-const mssqlQuery = `SET NOCOUNT ON; SELECT RTRIM(counter_name), cntr_value FROM sys.dm_os_performance_counters WHERE RTRIM(counter_name) IN ('User Connections','Processes blocked','Batch Requests/sec','SQL Compilations/sec','SQL Re-Compilations/sec','Buffer cache hit ratio','User connection count','Internal connection count');`
+const mssqlQuery = `SET NOCOUNT ON; SELECT RTRIM(counter_name), cntr_value FROM sys.dm_os_performance_counters WHERE RTRIM(counter_name) IN ('User Connections','Processes blocked','Batch Requests/sec','SQL Compilations/sec','SQL Re-Compilations/sec','Buffer cache hit ratio','Buffer cache hit ratio base','User connection count','Internal connection count');`
 
 func (m *mssqlCollector) status(ctx context.Context) (map[string]float64, error) {
 	run := m.run
@@ -112,22 +125,23 @@ func (m *mssqlCollector) status(ctx context.Context) (map[string]float64, error)
 		return nil, fmt.Errorf("mssql: no counters")
 	}
 	alias := map[string]string{
-		"user connections":          "user_connections",
-		"processes blocked":         "blocked_processes",
-		"batch requests/sec":        "batch_requests",
-		"sql compilations/sec":      "sql_compilations",
-		"sql re-compilations/sec":   "sql_recompilations",
-		"buffer cache hit ratio":    "buffer_cache_hit_ratio",
-		"user connection count":     "session_user",
-		"internal connection count": "session_internal",
-		"user_connections":          "user_connections",
-		"blocked_processes":         "blocked_processes",
-		"batch_requests":            "batch_requests",
-		"sql_compilations":          "sql_compilations",
-		"sql_recompilations":        "sql_recompilations",
-		"buffer_cache_hit_ratio":    "buffer_cache_hit_ratio",
-		"session_user":              "session_user",
-		"session_internal":          "session_internal",
+		"user connections":            "user_connections",
+		"processes blocked":           "blocked_processes",
+		"batch requests/sec":          "batch_requests",
+		"sql compilations/sec":        "sql_compilations",
+		"sql re-compilations/sec":     "sql_recompilations",
+		"buffer cache hit ratio":      "buffer_cache_hit_ratio",
+		"buffer cache hit ratio base": "buffer_cache_hit_ratio_base",
+		"user connection count":       "session_user",
+		"internal connection count":   "session_internal",
+		"user_connections":            "user_connections",
+		"blocked_processes":           "blocked_processes",
+		"batch_requests":              "batch_requests",
+		"sql_compilations":            "sql_compilations",
+		"sql_recompilations":          "sql_recompilations",
+		"buffer_cache_hit_ratio":      "buffer_cache_hit_ratio",
+		"session_user":                "session_user",
+		"session_internal":            "session_internal",
 	}
 	norm := map[string]float64{}
 	for k, v := range out {
@@ -137,6 +151,13 @@ func (m *mssqlCollector) status(ctx context.Context) (map[string]float64, error)
 	}
 	if len(norm) == 0 {
 		return nil, fmt.Errorf("mssql: no known counters")
+	}
+	numerator, present := norm["buffer_cache_hit_ratio"]
+	base := norm["buffer_cache_hit_ratio_base"]
+	delete(norm, "buffer_cache_hit_ratio")
+	delete(norm, "buffer_cache_hit_ratio_base")
+	if present && base > 0 && numerator >= 0 && numerator <= base {
+		norm["buffer_cache_hit_ratio"] = 100 * numerator / base
 	}
 	return norm, nil
 }

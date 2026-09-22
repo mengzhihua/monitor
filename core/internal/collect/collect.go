@@ -109,9 +109,17 @@ type Status struct {
 }
 
 type running struct {
-	c      Collector
-	status Status
-	mu     sync.Mutex
+	c            Collector
+	status       Status
+	mu           sync.Mutex
+	opMu         sync.Mutex // serializes Init, Collect and Stop
+	factory      Factory
+	decode       func(any) error
+	desired      bool
+	initialized  bool
+	configFailed bool
+	retryAt      time.Time
+	backoff      time.Duration
 }
 
 // Scheduler ticks every reg.Host.UpdateEvery seconds and runs all collectors
@@ -121,7 +129,7 @@ type Scheduler struct {
 	log     *slog.Logger
 	timeout time.Duration
 	cols    []*running
-	funcs   []Function
+	initWG  sync.WaitGroup
 }
 
 // NewScheduler instantiates the selected collectors, configures and
@@ -153,21 +161,27 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 			continue
 		}
 		if opt.Disabled[n] {
-			s.cols = append(s.cols, &running{c: f(), status: Status{Name: n}})
+			s.cols = append(s.cols, &running{c: f(), factory: f, decode: opt.Modules[n], status: Status{Name: n}})
 			continue
 		}
 		c := f()
-		r := &running{c: c, status: Status{Name: n, Enabled: true}}
+		r := &running{c: c, factory: f, decode: opt.Modules[n], desired: true, status: Status{Name: n, Enabled: true}}
 		err := configure(c, opt.Modules[n])
+		r.configFailed = err != nil
 		if err == nil {
 			err = c.Init(reg)
 		}
 		if err != nil {
 			r.status.Enabled = false
 			r.status.Error = err.Error()
+			r.backoff = 5 * time.Second
+			r.retryAt = time.Now().Add(r.backoff)
+			if st, ok := c.(Stopper); ok {
+				st.Stop()
+			}
 			log.Info("collector: disabled", "name", n, "reason", err)
-		} else if fp, ok := c.(FunctionProvider); ok {
-			s.funcs = append(s.funcs, fp.Functions()...)
+		} else {
+			r.initialized = true
 		}
 		s.cols = append(s.cols, r)
 	}
@@ -187,8 +201,21 @@ func configure(c Collector, decode func(v any) error) error {
 
 // Functions lists the on-demand functions offered by enabled collectors.
 func (s *Scheduler) Functions() []Function {
-	out := make([]Function, len(s.funcs))
-	copy(out, s.funcs)
+	var out []Function
+	for _, r := range s.cols {
+		if !r.opMu.TryLock() {
+			continue
+		}
+		r.mu.Lock()
+		enabled := r.status.Enabled
+		r.mu.Unlock()
+		if enabled {
+			if fp, ok := r.c.(FunctionProvider); ok {
+				out = append(out, fp.Functions()...)
+			}
+		}
+		r.opMu.Unlock()
+	}
 	return out
 }
 
@@ -205,8 +232,11 @@ func (s *Scheduler) Status() []Status {
 // Collector returns a live collector by name (even if it failed to Init).
 func (s *Scheduler) Collector(name string) Collector {
 	for _, r := range s.cols {
-		if r.c.Name() == name {
-			return r.c
+		if r.status.Name == name {
+			r.opMu.Lock()
+			c := r.c
+			r.opMu.Unlock()
+			return c
 		}
 	}
 	return nil
@@ -215,18 +245,74 @@ func (s *Scheduler) Collector(name string) Collector {
 // SetEnabled turns a collector on or off at runtime (hub config push).
 func (s *Scheduler) SetEnabled(name string, on bool) bool {
 	for _, r := range s.cols {
-		if r.c.Name() != name {
+		if r.status.Name != name {
 			continue
 		}
+		r.opMu.Lock()
+		defer r.opMu.Unlock()
 		r.mu.Lock()
-		r.status.Enabled = on
-		if on {
-			r.status.Error = ""
+		defer r.mu.Unlock()
+		if r.desired == on {
+			return true
 		}
-		r.mu.Unlock()
+		r.desired = on
+		r.status.Enabled = false
+		r.retryAt = time.Time{}
+		r.backoff = 0
+		r.configFailed = false
+		if !on && r.initialized {
+			if st, ok := r.c.(Stopper); ok {
+				st.Stop()
+			}
+			r.initialized = false
+		}
 		return true
 	}
 	return false
+}
+
+// prepare retries unavailable dependencies with bounded exponential backoff.
+// The caller holds opMu; disabled modules are never probed automatically.
+func (s *Scheduler) prepare(r *running, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.desired || r.configFailed {
+		return false
+	}
+	if r.initialized {
+		return true
+	}
+	if now.Before(r.retryAt) {
+		return false
+	}
+	r.c = r.factory()
+	err := configure(r.c, r.decode)
+	r.configFailed = err != nil
+	if err == nil {
+		err = r.c.Init(s.reg)
+	}
+	if err != nil {
+		if st, ok := r.c.(Stopper); ok {
+			st.Stop()
+		}
+		r.status.Error = err.Error()
+		r.status.Enabled = false
+		if r.backoff == 0 {
+			r.backoff = 5 * time.Second
+		} else {
+			r.backoff *= 2
+		}
+		if r.backoff > time.Minute {
+			r.backoff = time.Minute
+		}
+		r.retryAt = now.Add(r.backoff)
+		return false
+	}
+	r.initialized = true
+	r.status.Enabled = true
+	r.status.Error = ""
+	r.backoff = 0
+	return true
 }
 
 // Run blocks until ctx is done. The first tick is aligned to the next whole
@@ -254,22 +340,48 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) stop() {
+	s.initWG.Wait()
 	for _, r := range s.cols {
+		r.opMu.Lock()
 		if st, ok := r.c.(Stopper); ok {
 			st.Stop()
 		}
+		r.opMu.Unlock()
 	}
 }
 
 func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 	var wg sync.WaitGroup
 	for _, r := range s.cols {
-		if !r.status.Enabled {
-			continue
-		}
 		wg.Add(1)
 		go func(r *running) {
 			defer wg.Done()
+			if !r.opMu.TryLock() {
+				return
+			}
+			defer r.opMu.Unlock()
+			if ctx.Err() != nil {
+				return
+			}
+			r.mu.Lock()
+			ready := r.desired && r.initialized
+			retry := r.desired && !r.initialized && !r.configFailed && !now.Before(r.retryAt)
+			r.mu.Unlock()
+			if !ready {
+				if retry {
+					// Probe dependencies without holding up healthy collectors' next tick.
+					s.initWG.Add(1)
+					go func() {
+						defer s.initWG.Done()
+						r.opMu.Lock()
+						defer r.opMu.Unlock()
+						if ctx.Err() == nil {
+							s.prepare(r, now)
+						}
+					}()
+				}
+				return
+			}
 			cctx, cancel := context.WithTimeout(ctx, s.timeout)
 			defer cancel()
 			start := time.Now()

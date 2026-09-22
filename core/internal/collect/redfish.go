@@ -12,6 +12,7 @@ import (
 
 // redfishConfig is collectors.modules.redfish (BMC Redfish Systems).
 type redfishConfig struct {
+	TLS      CollectorTLS  `yaml:"tls"`
 	URL      string        `yaml:"url"`
 	User     string        `yaml:"user"`
 	Password string        `yaml:"password"`
@@ -47,7 +48,11 @@ func (r *redfishCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	r.client = insecureClient(r.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(r.cfg.Timeout, r.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	r.client = client
 	r.seen = map[string]bool{}
 	base := strings.TrimRight(r.cfg.URL, "/")
 	if base == "" {

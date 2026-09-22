@@ -653,3 +653,12 @@ export:
   # - { type: prometheus, url: "http://127.0.0.1:9090/api/v1/write", prefix: monitor, every: 10s }
   # - { type: opentsdb, url: "http://127.0.0.1:4242/api/put", prefix: monitor, every: 10s }
   # - { type: mongodb, address: "127.0.0.1:27017", database: netdata, collection: metrics, prefix: monitor, every: 10s }
+
+# HTTPS collectors (Kubernetes, Redfish, Puppet, PAN-OS, PowerStore/PowerVault,
+# ScaleIO, VCSA, vSphere) verify server certificates by default.
+# Add beneath the relevant collectors.modules.<name> mapping:
+#   tls:
+#     ca_file: /path/to/private-ca.pem
+#     insecure_skip_verify: false
+# Existing self-signed endpoints must configure their CA (preferred), or
+# explicitly opt into insecure_skip_verify: true for isolated test deployments.

@@ -13,6 +13,7 @@ import (
 
 // k8sKubeproxyConfig is collectors.modules.k8s_kubeproxy.
 type k8sKubeproxyConfig struct {
+	TLS     CollectorTLS  `yaml:"tls"`
 	URL     string        `yaml:"url"`
 	Timeout time.Duration `yaml:"timeout"`
 }
@@ -45,7 +46,11 @@ func (k *k8sKubeproxyCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	k.client = insecureClient(k.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(k.cfg.Timeout, k.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	k.client = client
 	urls := []string{k.cfg.URL}
 	if k.cfg.URL == "" {
 		urls = []string{"http://127.0.0.1:10249/metrics"}

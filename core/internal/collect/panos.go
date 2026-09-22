@@ -13,6 +13,7 @@ import (
 
 // panosConfig is collectors.modules.panos (PAN-OS XML API).
 type panosConfig struct {
+	TLS      CollectorTLS  `yaml:"tls"`
 	URL      string        `yaml:"url"`
 	APIKey   string        `yaml:"api_key"`
 	User     string        `yaml:"user"`
@@ -49,7 +50,11 @@ func (p *panosCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	p.client = insecureClient(p.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(p.cfg.Timeout, p.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	p.client = client
 	base := strings.TrimRight(p.cfg.URL, "/")
 	if base == "" {
 		base = "https://127.0.0.1"

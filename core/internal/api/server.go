@@ -102,6 +102,13 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	}
 	s.live = newLiveHub(reg, s.log)
 	s.oidc = newOIDC(opt.OIDC)
+	if s.oidc != nil {
+		switch Role(s.oidc.cfg.Role) {
+		case RoleAdmin, RoleViewer, RoleTroubleshooter:
+		default:
+			return nil, fmt.Errorf("invalid OIDC role %q", s.oidc.cfg.Role)
+		}
+	}
 	s.routes()
 	return s, nil
 }
@@ -162,6 +169,8 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/hub/config", s.handleHubConfig)
 	m.HandleFunc("GET /api/v1/agent/config", s.handleAgentConfig)
 	m.HandleFunc("POST /api/v1/hub/ring", s.handleRing)
+	m.HandleFunc("GET /api/v1/auth/oidc/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]bool{"enabled": s.oidc != nil}) })
+	m.HandleFunc("POST /api/v1/auth/oidc/logout", s.handleOIDCLogout)
 	m.HandleFunc("GET /api/v1/auth/oidc/login", s.handleOIDCLogin)
 	m.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
 	if s.opt.Nodes != nil {

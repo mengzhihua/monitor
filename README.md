@@ -16,7 +16,7 @@
 
 ## 快速开始（M0）
 
-依赖：Go 1.23+、Node 22+（仅构建 Dashboard 时需要）。
+依赖：Go 1.25+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
 
 ```bash
 make all          # 1) 构建 Vue Dashboard 并嵌入  2) 编译 core/bin/monitord

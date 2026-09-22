@@ -14,6 +14,7 @@ import (
 
 // powervaultConfig is collectors.modules.powervault (ME4/ME5 MCI REST).
 type powervaultConfig struct {
+	TLS      CollectorTLS  `yaml:"tls"`
 	URL      string        `yaml:"url"`
 	User     string        `yaml:"user"`
 	Password string        `yaml:"password"`
@@ -49,7 +50,11 @@ func (p *powervaultCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	p.client = insecureClient(p.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(p.cfg.Timeout, p.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	p.client = client
 	base := strings.TrimRight(p.cfg.URL, "/")
 	if base == "" {
 		base = "https://127.0.0.1"

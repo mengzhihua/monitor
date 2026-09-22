@@ -153,6 +153,15 @@ function onAlarmEvent(e: AlarmLogEntry) {
   }
 }
 
+async function logout() {
+  try {
+    const response = await fetch('/api/v1/auth/oidc/logout', { method: 'POST', headers: { Authorization: `Bearer ${auth.token}` } })
+    if (!response.ok && response.status !== 401) throw new Error('退出失败，请重试')
+    auth.token = ''
+    location.reload()
+  } catch (e) { error.value = String(e) }
+}
+
 async function submitToken() {
   auth.token = tokenInput.value.trim()
   tokenInput.value = ''
@@ -173,7 +182,7 @@ onMounted(async () => {
   selection.node = saved
   live.onState = (up) => (connected.value = up)
   live.onAlarm = onAlarmEvent
-  fetch('/api/v1/auth/oidc/login', { redirect: 'manual' }).then((r) => { oidcAvailable.value = r.status === 302 }).catch(() => {})
+  fetch('/api/v1/auth/oidc/status').then((r) => r.json()).then((s) => { oidcAvailable.value = s.enabled === true }).catch(() => {})
   await refresh()
   if (!needToken.value) live.start()
   timer = window.setInterval(refresh, 30000)
@@ -219,6 +228,7 @@ onBeforeUnmount(() => clearInterval(timer))
         <option v-for="w in windows" :key="w.v" :value="w.v">{{ w.label }}</option>
       </select>
     </div>
+    <button v-if="info && auth.token" @click="logout">退出登录</button>
   </header>
 
   <div class="layout">
@@ -250,7 +260,7 @@ onBeforeUnmount(() => clearInterval(timer))
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { filter = id; showWeights = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
-        <p>此 Agent 已启用访问令牌（web.token），请输入后继续。</p>
+        <p>此服务需要身份验证，请输入访问令牌或使用 OIDC 登录。</p>
         <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />
         <button type="submit">进入</button>
         <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>

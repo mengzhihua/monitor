@@ -12,6 +12,7 @@ import (
 
 // puppetConfig is collectors.modules.puppet (status API).
 type puppetConfig struct {
+	TLS     CollectorTLS  `yaml:"tls"`
 	URL     string        `yaml:"url"`
 	Timeout time.Duration `yaml:"timeout"`
 }
@@ -44,7 +45,11 @@ func (p *puppetCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	p.client = insecureClient(p.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(p.cfg.Timeout, p.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	p.client = client
 	base := strings.TrimRight(p.cfg.URL, "/")
 	if base == "" {
 		base = "https://127.0.0.1:8140"
