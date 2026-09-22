@@ -46,3 +46,22 @@ func (e *Engine) flushPubSub(ctx context.Context, d Destination) error {
 	}
 	return e.post(ctx, url, "application/json", body, d.Headers)
 }
+
+// flushKafka POSTs Kafka REST proxy JSON (application/vnd.kafka.json.v2+json).
+func (e *Engine) flushKafka(ctx context.Context, d Destination) error {
+	url := d.URL
+	if url == "" {
+		return fmt.Errorf("kafka: url required")
+	}
+	var recs []map[string]any
+	for _, p := range e.snapshot() {
+		recs = append(recs, map[string]any{
+			"value": map[string]any{"host": e.host, "prefix": d.Prefix, "chart": p.chart, "dimension": p.dim, "value": p.value, "timestamp": p.ts},
+		})
+	}
+	body, err := json.Marshal(map[string]any{"records": recs})
+	if err != nil {
+		return err
+	}
+	return e.post(ctx, url, "application/vnd.kafka.json.v2+json", body, d.Headers)
+}

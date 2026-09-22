@@ -476,7 +476,8 @@ sequenceDiagram
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
 | **M15 ML / Functions / 导出** | k-means、containers/disks/mounts/ifaces、Mongo 导出 | weights 对比 |
 | **M16 平台** | Windows/FreeBSD 采集、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
-| **M17 剩余缺口（本轮）** | proc 剩余、libvirt/proxmox/ebpf、manage/health、v2 group_by=node、维护窗口、Kinesis/Pub/Sub、LDAP/share/ACLK、Vue context | `go test -race`、`vue-tsc`、`smoke.sh` |
+| **M17 剩余缺口** | proc 剩余、libvirt/proxmox/ebpf、manage/health、v2 group_by=node、维护窗口、Kinesis/Pub/Sub、LDAP/share/ACLK、Vue context | `go test -race`、`vue-tsc`、`smoke.sh` |
+| **M18 原生插件（本轮）** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q + alert_transitions | `go test -race`、`vue-tsc`、`smoke.sh` |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -525,3 +526,6 @@ sequenceDiagram
 | libvirt / proxmox / ebpf | `internal/collect` | M17 |
 | manage/health / alarm_summary / share / LDAP | `internal/api` | M17 |
 | Kinesis / Pub/Sub | `internal/export` | M17 |
+| EDAC / SLAB / zswap / RAPL / DRM / bcache / timex | `internal/collect/proc_m18.go` | M18 |
+| cups / xenstat / ioping / nftables / podman / ipmi | `internal/collect` | M18 |
+| Kafka REST | `internal/export` | M18 |

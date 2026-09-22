@@ -795,4 +795,10 @@ func TestManageHealthShareLDAPAndSummary(t *testing.T) {
 	if resp := getJSON(t, ts.URL+"/api/v2/data?context=system.ram&group_by=node&after=-5", nil); resp.StatusCode != 200 && resp.StatusCode != 404 {
 		t.Fatalf("group_by status %d", resp.StatusCode)
 	}
+	if resp := getJSON(t, ts.URL+"/api/v2/q?chart=system.ram&after=-5", nil); resp.StatusCode != 200 && resp.StatusCode != 404 {
+		t.Fatalf("v2 q %d", resp.StatusCode)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v2/alert_transitions", nil); resp.StatusCode != 200 {
+		t.Fatalf("alert_transitions %d", resp.StatusCode)
+	}
 }

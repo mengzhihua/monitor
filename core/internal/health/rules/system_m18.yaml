@@ -1,0 +1,63 @@
+# M18 native Linux plugins: EDAC, slab, zswap, RAPL, CUPS, Xen, IOPing, nftables, IPMI.
+alarms:
+  - name: edac_uncorrectable
+    on: mem.edac_mc
+    class: Errors
+    type: System
+    component: Memory
+    lookup: average -1m unaligned of ue
+    units: errors/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (0) : (0))'
+    crit: '$this > (($status == $CRITICAL) ? (0) : (1))'
+    info: EDAC uncorrectable ECC errors
+    to: sysadmin
+
+  - name: clock_unsync
+    on: system.clock_status
+    class: Errors
+    type: System
+    component: Clock
+    lookup: last -10s unaligned of unsync
+    units: boolean
+    every: 10s
+    warn: '$this == 1'
+    info: system clock is not synchronized (adjtimex STA_UNSYNC)
+    to: sysadmin
+
+  - name: ipmi_sensor_critical
+    on: ipmi.sensor_state
+    class: Errors
+    type: System
+    component: IPMI
+    lookup: last -10s unaligned of critical
+    units: sensors
+    every: 10s
+    warn: '$this > 0'
+    crit: '$this > 1'
+    info: IPMI sensors in critical state
+    to: sysadmin
+
+  - name: xen_domain_down
+    on: xen.state
+    class: Availability
+    type: System
+    component: Xen
+    lookup: last -10s unaligned of running
+    units: status
+    every: 10s
+    warn: '$this == 0'
+    info: Xen domain is not running
+    to: sysadmin
+
+  - name: cups_printer_stopped
+    on: cups.dests
+    class: Availability
+    type: System
+    component: CUPS
+    lookup: last -10s unaligned of stopped
+    units: dests
+    every: 30s
+    warn: '$this > 0'
+    info: CUPS destinations are stopped
+    to: sysadmin

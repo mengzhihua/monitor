@@ -16,7 +16,8 @@ import (
 // IPv4 protocol counters from /proc/net/snmp, conntrack, softnet, SysV IPC,
 // mdstat, power_supply, IPv6 SNMP/sockstat, IPVS, NFS, ZFS ARC, Btrfs,
 // wireless, KSM and zram, InfiniBand, QoS/tc, SCTP, UDP-Lite, synproxy,
-// NUMA, pagetypeinfo and per-IRQ / softirq detail. Init fails on other OSes.
+// NUMA, pagetypeinfo, per-IRQ / softirq, EDAC, SLAB, zswap, RAPL, DRM, bcache
+// and adjtimex. Init fails on other OSes.
 type procCollector struct {
 	haveEntropy, haveFD, haveStat, haveSNMP bool
 	pressure                                []string // resource names that exist
@@ -28,6 +29,7 @@ type procCollector struct {
 	ipcShm, ipcMsg, ipcSem                                string
 	m8                                                    procM8
 	m17                                                   procM17
+	m18                                                   procM18
 }
 
 func init() {
@@ -76,8 +78,9 @@ func (p *procCollector) Init(reg *registry.Registry) error {
 	p.initExtras(reg)
 	p.initM8(reg)
 	p.initM17(reg)
+	p.initM18(reg)
 	if !p.haveStat && !p.haveEntropy && !p.haveFD && !p.haveSNMP && len(p.pressure) == 0 &&
-		!p.haveConntrack && !p.haveSoftnet && !p.haveIPC && !p.haveMD && !p.havePower && !p.m8.any() && !p.m17.any() {
+		!p.haveConntrack && !p.haveSoftnet && !p.haveIPC && !p.haveMD && !p.havePower && !p.m8.any() && !p.m17.any() && !p.m18.any() {
 		return errors.New("no /proc metrics available")
 	}
 	return nil
@@ -151,6 +154,7 @@ func (p *procCollector) Collect(_ context.Context, reg *registry.Registry, now t
 	p.collectExtras(reg, now)
 	p.collectM8(reg, now)
 	p.collectM17(reg, now)
+	p.collectM18(reg, now)
 	return nil
 }
 

@@ -113,6 +113,8 @@ func (e *Engine) flush(ctx context.Context, d Destination) error {
 		return e.flushKinesis(ctx, d)
 	case "pubsub", "pub/sub", "google-pubsub":
 		return e.flushPubSub(ctx, d)
+	case "kafka":
+		return e.flushKafka(ctx, d)
 	default:
 		return fmt.Errorf("unknown exporter %q", d.Type)
 	}

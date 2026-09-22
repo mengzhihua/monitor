@@ -12,7 +12,7 @@
 | [docs/01-netdata-capability-study.md](docs/01-netdata-capability-study.md) | Netdata 能力调研：组件、数据流水线、平台覆盖、部署拓扑、安全模型 |
 | [docs/02-architecture.md](docs/02-architecture.md) | Monitor 架构设计：总体架构、技术选型、服务端模块（采集/TSDB/健康/ML/流式/API/Functions）、Hub、Android 服务端专项、客户端、仓库结构、路线图、能力对照表 |
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
-| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M17 移植计划 |
+| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M18 移植计划 |
 
 ## 快速开始（M0）
 
@@ -249,6 +249,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 导出 / 通知 | Kinesis / Pub/Sub HTTP JSON；`health.notify.push`；维护窗口日历 |
 | Dashboard | Context 总览、静默倒计时、ks2/volume 窗口输入、Hub 只读分享链接 |
 | 日志 | Windows ETW / Event Log `channel=` 参数 |
+
+### 已实现能力（M18：原生插件补齐）
+
+| 模块 | 说明 |
+| --- | --- |
+| Linux proc | EDAC ECC、SLAB、zswap、RAPL powercap、DRM GPU busy/freq、bcache、adjtimex 时钟同步状态 |
+| 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
+| API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
 
 ### 开发
 

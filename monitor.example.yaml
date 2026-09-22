@@ -63,7 +63,7 @@ hub:
   room: default
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -156,6 +156,25 @@ collectors:
     ebpf:                    # bpftool prog show; missing bpftool auto-disables
       command: bpftool
       timeout: 5s
+    cups:                    # lpstat printers/jobs; missing lpstat auto-disables
+      command: lpstat
+      timeout: 5s
+    xenstat:                 # xl list; missing xl auto-disables
+      command: xl
+      timeout: 5s
+    ioping:                  # disk latency; requires device
+      command: ioping
+      device: ""
+      timeout: 5s
+    nftables:                # nft list counters; missing nft auto-disables
+      command: nft
+      timeout: 5s
+    podman:                  # Podman REST (Docker-compatible)
+      address: ""            # default unix:///run/podman/podman.sock
+      timeout: 5s
+    ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
+      command: ipmitool
+      timeout: 8s
     sslcheck:
       timeout: 5s
       jobs: []               # e.g. [{ name: web, target: example.com:443 }]
@@ -666,7 +685,7 @@ health:
 # Types: graphite (TCP line protocol), influx (InfluxDB 1.x /write), json (HTTP POST),
 # prometheus (Prometheus remote write: snappy + protobuf), opentsdb (/api/put JSON),
 # mongodb (OP_MSG insert into database.collection), kinesis (PutRecords JSON),
-# pubsub (Google Pub/Sub publish JSON).
+# pubsub (Google Pub/Sub publish JSON), kafka (Kafka REST proxy JSON records).
 export:
   destinations: []
   # - { type: graphite, address: "127.0.0.1:2003", prefix: monitor, every: 10s }
@@ -677,3 +696,4 @@ export:
   # - { type: mongodb, address: "127.0.0.1:27017", database: netdata, collection: metrics, prefix: monitor, every: 10s }
   # - { type: kinesis, url: "https://kinesis.example/streams/monitor/record", prefix: monitor, every: 10s }
   # - { type: pubsub, url: "https://pubsub.googleapis.com/v1/projects/p/topics/monitor:publish", every: 10s }
+  # - { type: kafka, url: "http://127.0.0.1:8082/topics/monitor", prefix: monitor, every: 10s }
