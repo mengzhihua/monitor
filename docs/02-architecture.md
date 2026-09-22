@@ -481,8 +481,8 @@ sequenceDiagram
 | **M19 内核深度（下一轮）** | eBPF 程序族、perf.plugin、debugfs extfrag/audit、idlejitter、apps user/group、nfacct | `go test -race`、`vue-tsc`、`smoke.sh` |
 | **M20 日志与查看器** | journald 跟随流、Windows Events 分页、macos.plugin、network-viewer、systemd-units 出图 | 同上 |
 | **M21 Windows.plugin** | Perflib IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows CI fixture |
-| **M22 freebsd.plugin** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
-| **M23 IBM 与残留（本轮）** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 无驱动禁用 |
+| **M22 freebsd.plugin（本轮）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
+| **M23 IBM 与残留（合入）** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 无驱动禁用 |
 | **M24 查询 API 深度** | `/api/v3`、`group_by=dimension`、`alert_config`、每维 anomaly | API 单测 |
 | **M25 Hub Cloud 产品** | ACLK 语义补齐、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 双节点冒烟 |
 | **M26 集成目录** | 仅点名需要原生 ID 的 Prometheus 包装；文档化 prom.* vs 原生 | 不重复 go.d |
@@ -540,7 +540,7 @@ sequenceDiagram
 | eBPF 程序族 / perf / extfrag / idlejitter | `internal/collect` | M19 |
 | journald 流 / macos / network-viewer / systemd-units | `internal/collect` | M20 |
 | Windows.plugin Perflib | `internal/collect/windows.go` | M21 |
-| freebsd.plugin ZFS/ipfw/net.inet | `internal/collect/freebsd.go` | M22 |
+| freebsd.plugin ZFS/ipfw/net.inet | `internal/collect/freebsd.go` + `freebsd_m22.go` | M22 |
 | ibm.d / pandas / lxc/ecs/containerd | `internal/collect` | M23 |
 | API v3 / group_by=dimension / alert_config | `internal/api` | M24 |
 | Cloud 控制台 / 图上异常高亮 | `web/` + `internal/hub` | M25 |
