@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 
-/// Server connection + selected node, persisted in SharedPreferences.
+/// Server URL and selected node persist; credentials remain in memory only.
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server.url';
   static const _kToken = 'server.token';
@@ -34,7 +34,8 @@ class AppState extends ChangeNotifier {
     final url = p.getString(_kUrl);
     if (url == null || url.isEmpty) return;
     selectedNode = p.getString(_kNode) ?? 'local';
-    await connect(ServerConfig(baseUrl: url, token: p.getString(_kToken) ?? ''));
+    await p.remove(_kToken); // Remove credentials saved by earlier versions.
+    await connect(ServerConfig(baseUrl: url));
   }
 
   Future<bool> connect(ServerConfig cfg) async {
@@ -50,7 +51,7 @@ class AppState extends ChangeNotifier {
       info = i;
       final p = await SharedPreferences.getInstance();
       await p.setString(_kUrl, cfg.baseUrl);
-      await p.setString(_kToken, cfg.token);
+      await p.remove(_kToken);
       await refreshNodes();
       return true;
     } catch (e) {

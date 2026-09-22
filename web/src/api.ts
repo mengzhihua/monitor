@@ -17,6 +17,7 @@ export interface Info {
   host: { id: string; hostname: string; os: string; arch: string; labels: Record<string, string>; update_every: number }
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
   plugins?: PluginStatus[]
+  db?: { persistence?: { last_checkpoint: number; finished: number; interval_seconds: number; error?: string } }
   alarms: AlarmSummary | null
   user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer' }
   nodes_count?: number

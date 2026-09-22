@@ -27,8 +27,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
     final url = _url.text.trim().replaceAll(RegExp(r'/+$'), '');
-    await widget.state
-        .connect(ServerConfig(baseUrl: url, token: _token.text.trim()));
+    await widget.state.connect(
+      ServerConfig(baseUrl: url, token: _token.text.trim()),
+    );
   }
 
   @override
@@ -48,9 +49,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 children: [
                   const Icon(Icons.monitor_heart, size: 64),
                   const SizedBox(height: 8),
-                  Text('Monitor',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineMedium),
+                  Text(
+                    'Monitor',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
                   const SizedBox(height: 24),
                   TextFormField(
                     controller: _url,
@@ -74,6 +77,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     obscureText: true,
                     decoration: const InputDecoration(
                       labelText: 'API token (optional)',
+                      helperText: 'Token is kept only until this app closes.',
                       border: OutlineInputBorder(),
                     ),
                     onFieldSubmitted: (_) => _submit(),
@@ -82,9 +86,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   if (st.error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(st.error!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
+                      child: Text(
+                        st.error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ),
                   FilledButton(
                     onPressed: st.loading ? null : _submit,
@@ -92,7 +99,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         ? const SizedBox(
                             height: 18,
                             width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Text('Connect'),
                   ),
                 ],

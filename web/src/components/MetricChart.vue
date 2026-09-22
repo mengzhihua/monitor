@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { Chart } from '../api'
@@ -11,6 +11,12 @@ const props = defineProps<{ chart: Chart; window: number }>()
 const el = ref<HTMLDivElement>()
 const latest = ref<Record<string, number>>({})
 const error = ref('')
+const clock = ref(Date.now()/1000)
+const lastSample = ref(props.chart.last_entry || 0)
+const stale = computed(() => !lastSample.value || clock.value-lastSample.value > Math.max(15, 3*step()))
+let loadGeneration = 0
+let disposed = false
+let refreshTimer: number | undefined
 
 let plot: uPlot | null = null
 let unsub: (() => void) | null = null
@@ -96,12 +102,14 @@ function makeOpts(width: number): uPlot.Options {
 }
 
 async function load() {
+  const generation = ++loadGeneration
   error.value = ''
   dims = visibleDims()
   try {
     // One bucket per collection period, otherwise slow charts come back as
     // mostly-null 1s rows and uPlot draws nothing between isolated samples.
-    const d = await api.data(props.chart.id, -props.window, 0, Math.ceil(props.window / step()))
+    const d = await api.data(props.chart.id, -props.window, 0, Math.min(1200, Math.ceil(props.window / step())))
+    if (disposed || generation !== loadGeneration) return
     times = d.result.data.map((r) => r[0] as number)
     const idx = new Map(d.dimension_ids.map((id, i) => [id, i + 1]))
     raw = dims.map((id) => {
@@ -115,6 +123,7 @@ async function load() {
       latest.value = lv
     }
   } catch (e) {
+    if (disposed || generation !== loadGeneration) return
     error.value = String(e)
     times = []
     raw = dims.map(() => [])
@@ -130,6 +139,9 @@ function render() {
 }
 
 function onLive(t: number, v: Record<string, number>) {
+  lastSample.value = Math.max(lastSample.value, t)
+  latest.value = v
+  if (props.window > 3600) return // long windows refresh downsampled history; never grow per-second arrays
   if (times.length && t <= times[times.length - 1]!) return
   // a missed collection period becomes a single null so uPlot breaks the line
   if (times.length && t - times[times.length - 1]! > 2 * step()) {
@@ -154,12 +166,14 @@ let ro: ResizeObserver | null = null
 
 onMounted(() => {
   load()
+  refreshTimer = window.setInterval(() => { clock.value = Date.now()/1000; load() }, 30000)
   unsub = live.subscribe(props.chart.id, (m) => onLive(m.t, m.v))
   ro = new ResizeObserver(() => { if (plot && el.value) plot.setSize({ width: el.value.clientWidth, height: 180 }) })
   ro.observe(el.value!)
 })
-onBeforeUnmount(() => { unsub?.(); ro?.disconnect(); plot?.destroy() })
+onBeforeUnmount(() => { disposed = true; ++loadGeneration; clearInterval(refreshTimer); unsub?.(); ro?.disconnect(); plot?.destroy() })
 watch(() => props.window, load)
+watch(() => props.chart.last_entry, (t) => { lastSample.value = Math.max(lastSample.value, t || 0) })
 /** Anything that feeds makeOpts/buildData/load: a changed definition needs a full reload. */
 const defFingerprint = () =>
   [props.chart.chart_type, props.chart.update_every, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}`)].join('\u0001')
@@ -173,6 +187,7 @@ watch(defFingerprint, load)
         <span class="title">{{ chart.title }}</span>
         <span class="id">{{ chart.id }}</span>
       </div>
+      <span v-if="stale" class="err" :title="lastSample ? new Date(lastSample * 1000).toLocaleString() : '尚无样本'">{{ lastSample ? '数据过期' : '暂无数据' }}</span>
       <span class="units">{{ chart.units }}</span>
     </div>
     <div ref="el" class="plot"></div>

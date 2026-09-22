@@ -45,6 +45,9 @@ const windows = [
   { label: '5 分钟', v: 300 },
   { label: '15 分钟', v: 900 },
   { label: '1 小时', v: 3600 },
+  { label: '6 小时', v: 21600 },
+  { label: '24 小时', v: 86400 },
+  { label: '7 天', v: 604800 },
 ]
 
 /** Group charts by the first segment of the chart id (system, cpu, mem, disk…). */
@@ -237,7 +240,7 @@ onBeforeUnmount(() => clearInterval(timer))
         @click="activeSection = s.name">{{ s.name }} <small>{{ s.charts.length }}</small></a>
       <div class="collectors" v-if="info && !currentNode">
         <div class="nav-title">采集器</div>
-        <div v-for="c in info.collectors" :key="c.name" class="col" :class="{ bad: !c.enabled || c.error }">
+        <div v-for="c in info.collectors" :key="c.name" class="col" :class="{ bad: !c.enabled || c.error }" :title="c.error || (c.enabled ? '采集正常' : '已禁用或等待依赖恢复')">
           <span>{{ c.name }}</span>
           <small>{{ c.enabled ? (c.error ? 'error' : c.last_run_ms + 'ms') : 'off' }}</small>
         </div>
@@ -253,6 +256,14 @@ onBeforeUnmount(() => clearInterval(timer))
     </nav>
 
     <main>
+      <div v-if="isHub" class="node-overview" aria-label="节点健康总览">
+        <button v-for="n in nodes" :key="n.id" @click="selectNode(n.id)" :class="['node-card', n.status]">
+          <b>{{ n.hostname }}</b><span>{{ n.status === 'live' ? '在线' : n.status === 'stale' ? '数据过期' : '离线' }}</span>
+          <small>{{ n.charts_count }} 图表 · {{ n.alarms?.critical || 0 }} 严重告警{{ n.replica ? ' · 副本' : '' }}</small>
+          <small v-if="n.last_data">最后数据：{{ new Date(n.last_data * 1000).toLocaleString() }}</small>
+        </button>
+      </div>
+      <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
       <AlarmsPanel v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" @close="showAlarms = false" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
@@ -279,6 +290,9 @@ onBeforeUnmount(() => clearInterval(timer))
 </template>
 
 <style scoped>
+.node-overview { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+.node-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px; background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:12px; cursor:pointer; }
+.node-card.stale, .node-card.offline { border-color:#f59e0b; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 16px; background: #0b1120; border-bottom: 1px solid #1e293b; position: sticky; top: 0; z-index: 10; }
 .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
 .logo { color: #22c55e; }
