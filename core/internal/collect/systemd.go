@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -23,13 +24,17 @@ type systemdConfig struct {
 	Slices     []string `yaml:"slices"`      // default [system.slice]
 	Include    []string `yaml:"include"`     // globs on unit name; empty = all
 	Exclude    []string `yaml:"exclude"`
-	Max        int      `yaml:"max"` // cap on tracked services (default 200)
+	Max        int      `yaml:"max"`     // cap on tracked services (default 200)
+	Command    string   `yaml:"command"` // systemctl; missing command skips unit-state charts
 }
 
 type systemdCollector struct {
-	cfg   systemdConfig
-	hasIO bool
-	units map[string]bool
+	cfg       systemdConfig
+	hasIO     bool
+	hasCgroup bool
+	hasUnits  bool
+	units     map[string]bool
+	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
 func init() {
@@ -51,6 +56,9 @@ func (s *systemdCollector) Configure(decode func(v any) error) error {
 	if s.cfg.Max <= 0 {
 		s.cfg.Max = 200
 	}
+	if s.cfg.Command == "" {
+		s.cfg.Command = "systemctl"
+	}
 	return nil
 }
 
@@ -60,32 +68,45 @@ func (s *systemdCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && s.run == nil {
 		return errors.New("systemd collector is linux-only")
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.CgroupRoot, "cgroup.controllers")); err != nil {
-		return fmt.Errorf("cgroup v2 unified hierarchy not found at %s", s.cfg.CgroupRoot)
-	}
-	units := s.scan()
-	if len(units) == 0 {
-		return fmt.Errorf("no *.service cgroups under %s", s.cfg.CgroupRoot)
-	}
-	s.units = map[string]bool{}
-	for _, u := range units {
-		if _, err := os.Stat(filepath.Join(u.dir, "io.stat")); err == nil {
-			s.hasIO = true
-			break
+	if _, err := os.Stat(filepath.Join(s.cfg.CgroupRoot, "cgroup.controllers")); err == nil {
+		units := s.scan()
+		if len(units) > 0 {
+			s.hasCgroup = true
+			s.units = map[string]bool{}
+			for _, u := range units {
+				if _, err := os.Stat(filepath.Join(u.dir, "io.stat")); err == nil {
+					s.hasIO = true
+					break
+				}
+			}
+			reg.AddChart(&registry.Chart{ID: "systemd.cpu", Family: "systemd", Title: "systemd services CPU utilization", Units: "percentage",
+				Type: registry.Stacked, Priority: 20000, Plugin: "systemd", Module: "systemd"})
+			reg.AddChart(&registry.Chart{ID: "systemd.mem", Family: "systemd", Title: "systemd services memory", Units: "MiB",
+				Type: registry.Stacked, Priority: 20010, Plugin: "systemd", Module: "systemd"})
+			if s.hasIO {
+				reg.AddChart(&registry.Chart{ID: "systemd.io_read", Family: "systemd", Title: "systemd services disk reads", Units: "KiB/s",
+					Type: registry.Stacked, Priority: 20020, Plugin: "systemd", Module: "systemd"})
+				reg.AddChart(&registry.Chart{ID: "systemd.io_write", Family: "systemd", Title: "systemd services disk writes", Units: "KiB/s",
+					Type: registry.Stacked, Priority: 20030, Plugin: "systemd", Module: "systemd"})
+			}
 		}
 	}
-	reg.AddChart(&registry.Chart{ID: "systemd.cpu", Family: "systemd", Title: "systemd services CPU utilization", Units: "percentage",
-		Type: registry.Stacked, Priority: 20000, Plugin: "systemd", Module: "systemd"})
-	reg.AddChart(&registry.Chart{ID: "systemd.mem", Family: "systemd", Title: "systemd services memory", Units: "MiB",
-		Type: registry.Stacked, Priority: 20010, Plugin: "systemd", Module: "systemd"})
-	if s.hasIO {
-		reg.AddChart(&registry.Chart{ID: "systemd.io_read", Family: "systemd", Title: "systemd services disk reads", Units: "KiB/s",
-			Type: registry.Stacked, Priority: 20020, Plugin: "systemd", Module: "systemd"})
-		reg.AddChart(&registry.Chart{ID: "systemd.io_write", Family: "systemd", Title: "systemd services disk writes", Units: "KiB/s",
-			Type: registry.Stacked, Priority: 20030, Plugin: "systemd", Module: "systemd"})
+	if rows, err := s.unitRows(context.Background()); err == nil && len(rows) > 0 {
+		s.hasUnits = true
+		reg.AddChart(&registry.Chart{ID: "systemd.service_units", Family: "systemd", Title: "systemd service units by state",
+			Units: "units", Type: registry.Stacked, Priority: 20040, Plugin: "systemd", Module: "systemd",
+			Dimensions: []*registry.Dimension{
+				{ID: "active"}, {ID: "inactive"}, {ID: "activating"}, {ID: "deactivating"}, {ID: "failed"}, {ID: "other"},
+			}})
+		reg.AddChart(&registry.Chart{ID: "systemd.service_restarts", Family: "systemd", Title: "systemd service restarts",
+			Units: "restarts", Priority: 20041, Plugin: "systemd", Module: "systemd",
+			Dimensions: []*registry.Dimension{{ID: "restarts"}}})
+	}
+	if !s.hasCgroup && !s.hasUnits {
+		return fmt.Errorf("no systemd cgroups or systemctl units")
 	}
 	return nil
 }
@@ -146,7 +167,17 @@ func (s *systemdCollector) wanted(name string) bool {
 	return false
 }
 
-func (s *systemdCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
+func (s *systemdCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if s.hasCgroup {
+		s.collectCgroup(reg, now)
+	}
+	if s.hasUnits {
+		s.collectUnits(ctx, reg, now)
+	}
+	return nil
+}
+
+func (s *systemdCollector) collectCgroup(reg *registry.Registry, now time.Time) {
 	cpu := map[string]float64{}
 	mem := map[string]float64{}
 	rd := map[string]float64{}
@@ -186,7 +217,26 @@ func (s *systemdCollector) Collect(_ context.Context, reg *registry.Registry, no
 		_ = reg.Collect("systemd.io_read", now, rd)
 		_ = reg.Collect("systemd.io_write", now, wr)
 	}
-	return nil
+}
+
+func (s *systemdCollector) collectUnits(ctx context.Context, reg *registry.Registry, now time.Time) {
+	rows, err := s.unitRows(ctx)
+	if err != nil {
+		return
+	}
+	counts := map[string]float64{"active": 0, "inactive": 0, "activating": 0, "deactivating": 0, "failed": 0, "other": 0}
+	var restarts float64
+	for _, r := range rows {
+		st := strings.ToLower(r.ActiveState)
+		if _, ok := counts[st]; ok && st != "other" {
+			counts[st]++
+		} else {
+			counts["other"]++
+		}
+		restarts += float64(r.NRestarts)
+	}
+	_ = reg.Collect("systemd.service_units", now, counts)
+	_ = reg.Collect("systemd.service_restarts", now, map[string]float64{"restarts": restarts})
 }
 
 // readKV parses "key value" lines (cpu.stat, memory.stat).
@@ -256,7 +306,7 @@ func readIOStat(path string) (rd, wr float64, ok bool) {
 func (s *systemdCollector) Functions() []Function {
 	return []Function{{
 		Name:    "services",
-		Help:    "Linux systemd services (cgroup v2 cpu/memory)",
+		Help:    "Linux systemd services (state, restarts, cgroup cpu/memory)",
 		Timeout: 10,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
 			return s.services(args), nil
@@ -265,23 +315,52 @@ func (s *systemdCollector) Functions() []Function {
 }
 
 type ServiceRow struct {
-	Name   string  `json:"name"`
-	CPU    float64 `json:"cpu_usec"` // cumulative
-	Memory uint64  `json:"memory"`   // bytes
+	Name          string  `json:"name"`
+	ActiveState   string  `json:"active_state"`
+	SubState      string  `json:"sub_state"`
+	Result        string  `json:"result"`
+	NRestarts     int     `json:"nrestarts"`
+	UnitFileState string  `json:"unit_file_state"`
+	CPU           float64 `json:"cpu_usec"` // cumulative
+	Memory        uint64  `json:"memory"`   // bytes
 }
 
 func (s *systemdCollector) services(args map[string]string) Table {
-	units := s.scan()
-	rows := make([]ServiceRow, 0, len(units))
-	for _, u := range units {
-		row := ServiceRow{Name: u.name}
-		if m, err := readUint(filepath.Join(u.dir, "memory.current")); err == nil {
-			row.Memory = uint64(m)
+	byName := map[string]*ServiceRow{}
+	var order []string
+	add := func(name string) *ServiceRow {
+		if r, ok := byName[name]; ok {
+			return r
 		}
-		if st := readKV(filepath.Join(u.dir, "cpu.stat")); st != nil {
-			row.CPU = st["usage_usec"]
+		r := &ServiceRow{Name: name}
+		byName[name] = r
+		order = append(order, name)
+		return r
+	}
+	if s.hasCgroup || s.cfg.CgroupRoot != "" {
+		for _, u := range s.scan() {
+			row := add(u.name)
+			if m, err := readUint(filepath.Join(u.dir, "memory.current")); err == nil {
+				row.Memory = uint64(m)
+			}
+			if st := readKV(filepath.Join(u.dir, "cpu.stat")); st != nil {
+				row.CPU = st["usage_usec"]
+			}
 		}
-		rows = append(rows, row)
+	}
+	if rows, err := s.unitRows(context.Background()); err == nil {
+		for _, u := range rows {
+			row := add(u.Name)
+			row.ActiveState = u.ActiveState
+			row.SubState = u.SubState
+			row.Result = u.Result
+			row.NRestarts = u.NRestarts
+			row.UnitFileState = u.UnitFileState
+		}
+	}
+	rows := make([]ServiceRow, 0, len(order))
+	for _, name := range order {
+		rows = append(rows, *byName[name])
 	}
 	sortBy := args["sort"]
 	sort.Slice(rows, func(i, j int) bool {
@@ -290,6 +369,8 @@ func (s *systemdCollector) services(args map[string]string) Table {
 			return rows[i].Name < rows[j].Name
 		case "cpu":
 			return rows[i].CPU > rows[j].CPU
+		case "restarts":
+			return rows[i].NRestarts > rows[j].NRestarts
 		default:
 			if rows[i].Memory != rows[j].Memory {
 				return rows[i].Memory > rows[j].Memory
@@ -297,10 +378,75 @@ func (s *systemdCollector) services(args map[string]string) Table {
 			return rows[i].Name < rows[j].Name
 		}
 	})
-	out := Table{Columns: []string{"name", "cpu_usec", "memory"}, Total: len(rows)}
+	out := Table{Columns: []string{"name", "active_state", "sub_state", "result", "nrestarts", "unit_file_state", "cpu_usec", "memory"}, Total: len(rows)}
 	out.Rows = make([]any, len(rows))
 	for i, r := range rows {
 		out.Rows[i] = r
 	}
 	return out
+}
+
+func (s *systemdCollector) unitRows(ctx context.Context) ([]ServiceRow, error) {
+	cmd := s.cfg.Command
+	if cmd == "" {
+		cmd = "systemctl"
+	}
+	out, err := s.exec(ctx, cmd, "show", "--type=service", "--all", "--no-pager",
+		"--property=Id,ActiveState,SubState,Result,NRestarts,UnitFileState")
+	if err != nil {
+		return nil, err
+	}
+	return parseSystemctlShow(out), nil
+}
+
+func (s *systemdCollector) exec(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if s.run != nil {
+		return s.run(ctx, name, args...)
+	}
+	if _, err := exec.LookPath(name); err != nil {
+		return nil, err
+	}
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return exec.CommandContext(cctx, name, args...).Output()
+}
+
+func parseSystemctlShow(b []byte) []ServiceRow {
+	var rows []ServiceRow
+	var cur ServiceRow
+	flush := func() {
+		if cur.Name == "" && cur.ActiveState == "" {
+			return
+		}
+		cur.Name = strings.TrimSuffix(cur.Name, ".service")
+		rows = append(rows, cur)
+		cur = ServiceRow{}
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			flush()
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "Id":
+			cur.Name = v
+		case "ActiveState":
+			cur.ActiveState = v
+		case "SubState":
+			cur.SubState = v
+		case "Result":
+			cur.Result = v
+		case "NRestarts":
+			cur.NRestarts, _ = strconv.Atoi(v)
+		case "UnitFileState":
+			cur.UnitFileState = v
+		}
+	}
+	flush()
+	return rows
 }

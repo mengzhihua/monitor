@@ -268,6 +268,17 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 其它 | `idlejitter`（`system.idlejitter`）；`nfacct`；apps `cpu/mem/processes` 按 user / user group |
 | 告警 | oomkill、extfrag 高、audit backlog |
 
+### 已实现能力（M20：日志与查看器）
+
+| 模块 | 说明 |
+| --- | --- |
+| journald | `journalctl -f` 跟随（可关）；Function 过滤 unit / priority / boot / cursor |
+| Windows Events | `wevtutil` XPath + EventRecordID 游标；非 Windows 不调用 |
+| macOS | `macos` 内存压力 / swap / 温度档 / 电池；`log show` 统一日志；其它系统自动禁用 |
+| 网络 | `network-connections` 增加 cmdline、inode |
+| systemd | `systemd.service_units` / `systemd.service_restarts`；Function 带单位状态 |
+| 告警 | `systemd_units_failed` |
+
 ### 已实现能力（M21：Windows Perflib）
 
 | 模块 | 说明 |
@@ -390,8 +401,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-## 路线图
+M0–M19、M21–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
 
-M0–M19、M21、M22、M23、M25、M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → Prometheus 点名原生 ID → ACLK MQTT / Cloud 控制台 / Correlations。
-
-后续：M20 日志/查看器 → **M24 API v3（本轮）**。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+本轮：M20 日志与查看器（journald 跟随、Windows Events 分页、macOS、network-viewer、systemd 单位状态）。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。

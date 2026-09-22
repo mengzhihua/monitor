@@ -3,7 +3,6 @@ package collect
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,22 +10,31 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-// logsConfig is collectors.modules.logs (journald / Event Log / files).
+// logsConfig is collectors.modules.logs (journald / Event Log / unified log / files).
 type logsConfig struct {
 	Files    []string `yaml:"files"`
 	Channels []string `yaml:"channels"` // Windows Event Log / ETW channel names
 	Top      int      `yaml:"top"`      // max rows returned by the logs function
+	Follow   *bool    `yaml:"follow"`   // journalctl -f; nil or true follows, false is one-shot only
 }
 
 type logsCollector struct {
 	cfg      logsConfig
 	lastUnix int64
 	seenFile map[string]int64 // path → size
+
+	followOn   bool
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	buf        []LogRow
+	pending    float64
+	pendingSev map[string]float64
 }
 
 func init() {
@@ -45,6 +53,10 @@ func (l *logsCollector) Configure(decode func(v any) error) error {
 	return nil
 }
 
+func (l *logsCollector) followEnabled() bool {
+	return l.cfg.Follow == nil || *l.cfg.Follow
+}
+
 func (l *logsCollector) Init(reg *registry.Registry) error {
 	if l.cfg.Top <= 0 {
 		if err := l.Configure(func(any) error { return nil }); err != nil {
@@ -56,6 +68,8 @@ func (l *logsCollector) Init(reg *registry.Registry) error {
 	}
 	l.seenFile = map[string]int64{}
 	l.lastUnix = time.Now().Unix()
+	l.pendingSev = map[string]float64{}
+	l.startFollow()
 	for _, c := range []*registry.Chart{
 		{ID: "logs.written", Title: "Log entries written", Units: "entries/s", Priority: 900, Type: registry.Area,
 			Dimensions: []*registry.Dimension{{ID: "written"}}},
@@ -77,6 +91,11 @@ func logsAvailable(files []string) bool {
 	}
 	if runtime.GOOS == "windows" {
 		if _, err := exec.LookPath("wevtutil"); err == nil {
+			return true
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("log"); err == nil {
 			return true
 		}
 	}
@@ -109,20 +128,38 @@ func defaultLogFiles() []string {
 }
 
 func (l *logsCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
-	since := l.lastUnix
-	if since == 0 {
-		since = now.Unix() - 2
-	}
-	l.lastUnix = now.Unix()
-	rows := QueryLogs(LogQuery{After: since, Before: now.Unix(), Limit: 500, Files: l.files()})
 	sev := map[string]float64{"emerg": 0, "alert": 0, "crit": 0, "err": 0, "warning": 0, "notice": 0, "info": 0, "debug": 0}
-	for _, r := range rows {
-		k := normalizePri(r.Priority)
-		sev[k]++
+	var n float64
+	if l.followOn {
+		l.mu.Lock()
+		n = l.pending
+		for k, v := range l.pendingSev {
+			sev[k] = v
+		}
+		l.pending = 0
+		l.pendingSev = map[string]float64{}
+		l.mu.Unlock()
+	} else {
+		since := l.lastUnix
+		if since == 0 {
+			since = now.Unix() - 2
+		}
+		l.lastUnix = now.Unix()
+		rows := QueryLogs(LogQuery{After: since, Before: now.Unix(), Limit: 500, Files: l.files()})
+		n = float64(len(rows))
+		for _, r := range rows {
+			sev[normalizePri(r.Priority)]++
+		}
 	}
-	_ = reg.Collect("logs.written", now, map[string]float64{"written": float64(len(rows))})
+	_ = reg.Collect("logs.written", now, map[string]float64{"written": n})
 	_ = reg.Collect("logs.severity", now, sev)
 	return nil
+}
+
+func (l *logsCollector) Stop() {
+	if l.cancel != nil {
+		l.cancel()
+	}
 }
 
 func (l *logsCollector) files() []string {
@@ -138,7 +175,10 @@ func (l *logsCollector) Functions() []Function {
 		Help:    "Recent system logs (journald, logcat, Windows Event Log, or configured files)",
 		Timeout: 10,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
-			q := LogQuery{Limit: l.cfg.Top, Files: l.files(), Query: args["query"], Source: args["source"], Channel: args["channel"]}
+			q := LogQuery{
+				Limit: l.cfg.Top, Files: l.files(), Query: args["query"], Source: args["source"], Channel: args["channel"],
+				Unit: args["unit"], Priority: args["priority"], Boot: args["boot"], Cursor: args["cursor"], XPath: args["xpath"],
+			}
 			if q.Channel == "" && len(l.cfg.Channels) > 0 {
 				q.Channel = l.cfg.Channels[0]
 			}
@@ -154,8 +194,8 @@ func (l *logsCollector) Functions() []Function {
 			if q.Limit > 1000 {
 				q.Limit = 1000
 			}
-			rows := QueryLogs(q)
-			tab := Table{Columns: []string{"time", "priority", "unit", "pid", "message"}, Total: len(rows), Rows: make([]any, len(rows))}
+			rows := l.query(q)
+			tab := Table{Columns: []string{"time", "priority", "unit", "pid", "message", "cursor"}, Total: len(rows), Rows: make([]any, len(rows))}
 			for i, r := range rows {
 				tab.Rows[i] = r
 			}
@@ -166,13 +206,18 @@ func (l *logsCollector) Functions() []Function {
 
 // LogQuery is the on-demand logs function / GET /api/v1/logs filter.
 type LogQuery struct {
-	Source  string
-	Query   string
-	Channel string // Windows Event Log / ETW channel (System, Application, Security, …)
-	After   int64
-	Before  int64
-	Limit   int
-	Files   []string
+	Source   string
+	Query    string
+	Channel  string // Windows Event Log / ETW channel (System, Application, Security, …)
+	Unit     string // journald -u / unified-log process
+	Priority string // journald -p (this level and more severe)
+	Boot     string // journald -b (0, -1, or boot id)
+	Cursor   string // journal --after-cursor, or Windows EventRecordID
+	XPath    string // Windows wevtutil /q
+	After    int64
+	Before   int64
+	Limit    int
+	Files    []string
 }
 
 // LogRow is one journal / event / file line.
@@ -182,6 +227,8 @@ type LogRow struct {
 	Unit     string `json:"unit"`
 	PID      string `json:"pid"`
 	Message  string `json:"message"`
+	Cursor   string `json:"cursor,omitempty"`
+	Boot     string `json:"boot,omitempty"`
 }
 
 func QueryLogs(q LogQuery) []LogRow {
@@ -197,8 +244,16 @@ func QueryLogs(q LogQuery) []LogRow {
 	if q.Source == "logcat" || q.Source == "android" {
 		return queryLogcat(q)
 	}
+	if q.Source == "macos" || q.Source == "unified" {
+		return queryUnified(q)
+	}
 	if rows := queryJournal(q); len(rows) > 0 || q.Source == "journal" || q.Source == "journald" {
 		return rows
+	}
+	if runtime.GOOS == "darwin" {
+		if rows := queryUnified(q); len(rows) > 0 {
+			return rows
+		}
 	}
 	if runtime.GOOS == "android" {
 		if rows := queryLogcat(q); len(rows) > 0 || q.Source == "" {
@@ -344,55 +399,14 @@ func queryJournal(q LogQuery) []LogRow {
 	if _, err := exec.LookPath("journalctl"); err != nil {
 		return nil
 	}
-	args := []string{"-o", "json", "-n", strconv.Itoa(q.Limit), "--no-pager"}
-	if q.After > 0 {
-		args = append(args, "--since", time.Unix(q.After, 0).UTC().Format("2006-01-02 15:04:05"))
-	}
-	if q.Before > 0 {
-		args = append(args, "--until", time.Unix(q.Before, 0).UTC().Format("2006-01-02 15:04:05"))
-	}
-	if q.Query != "" {
-		args = append(args, "-g", q.Query)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "journalctl", args...)
+	cmd := exec.CommandContext(ctx, "journalctl", journalArgs(q)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
-	var rows []LogRow
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			continue
-		}
-		row := LogRow{
-			Priority: journalPri(fmt.Sprint(m["PRIORITY"])),
-			Unit:     firstString(m, "SYSLOG_IDENTIFIER", "_SYSTEMD_UNIT", "_COMM"),
-			PID:      firstString(m, "_PID", "SYSLOG_PID"),
-			Message:  firstString(m, "MESSAGE"),
-		}
-		if ts := fmt.Sprint(m["__REALTIME_TIMESTAMP"]); ts != "" && ts != "<nil>" {
-			if n, err := strconv.ParseInt(ts, 10, 64); err == nil {
-				row.Time = n / 1e6
-			}
-		}
-		if q.Query != "" && !strings.Contains(strings.ToLower(row.Message+" "+row.Unit), strings.ToLower(q.Query)) {
-			continue
-		}
-		rows = append(rows, row)
-	}
-	if len(rows) > q.Limit {
-		rows = rows[len(rows)-q.Limit:]
-	}
-	return rows
+	return parseJournalJSON(string(out), q)
 }
 
 func queryEventLog(q LogQuery) []LogRow {
@@ -406,9 +420,13 @@ func queryEventLog(q LogQuery) []LogRow {
 	if ch == "" {
 		ch = "System"
 	}
+	args := []string{"qe", ch, "/c:" + strconv.Itoa(q.Limit), "/rd:true", "/f:text"}
+	if xp := eventXPath(q); xp != "" {
+		args = append(args, "/q:"+xp)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "wevtutil", "qe", ch, "/c:"+strconv.Itoa(q.Limit), "/rd:true", "/f:text")
+	cmd := exec.CommandContext(ctx, "wevtutil", args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -423,7 +441,7 @@ func parseEventLogText(s string, q LogQuery) []LogRow {
 		if cur.Message == "" && cur.Unit == "" {
 			return
 		}
-		if q.Query != "" && !strings.Contains(strings.ToLower(cur.Message+" "+cur.Unit), strings.ToLower(q.Query)) {
+		if !acceptLog(q, cur) || !cursorNewer(cur.Cursor, q.Cursor) {
 			return
 		}
 		rows = append(rows, cur)
@@ -447,6 +465,8 @@ func parseEventLogText(s string, q LogQuery) []LogRow {
 			if err == nil {
 				cur.Time = t.Unix()
 			}
+		case strings.HasPrefix(strings.TrimSpace(line), "Record Id:"), strings.HasPrefix(strings.TrimSpace(line), "Record Number:"):
+			cur.Cursor = strings.TrimSpace(line[strings.Index(line, ":")+1:])
 		case strings.HasPrefix(line, "  Description:"), strings.HasPrefix(line, "Description:"):
 			cur.Message = strings.TrimSpace(line[strings.Index(line, ":")+1:])
 		default:

@@ -1,0 +1,13 @@
+# M20 logs and viewers: systemd unit state.
+alarms:
+  - name: systemd_units_failed
+    on: systemd.service_units
+    class: Errors
+    type: System
+    component: Systemd
+    lookup: max -1m unaligned of failed
+    units: units
+    every: 10s
+    warn: '$this > 0'
+    info: One or more systemd services are in the failed state
+    to: sysadmin

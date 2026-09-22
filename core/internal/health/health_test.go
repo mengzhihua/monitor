@@ -126,6 +126,7 @@ func TestDefaultRulesCompile(t *testing.T) {
 		"threads_in_use", "freebsd_cpu_temperature", "windows_cpu_queue", "iis_errors", "windows_power_supply_capacity",
 		"zfs_memory_throttle", "freebsd_ipfw_drops", "freebsd_softnet_drops",
 		"edac_uncorrectable", "clock_unsync", "xen_domain_down", "sctp_aborted", "ib_port_errors",
+		"systemd_units_failed",
 	} {
 		if !found[name] {
 			t.Fatalf("missing M13 builtin rule %q", name)
