@@ -49,7 +49,7 @@ func TestProcM18Fixture(t *testing.T) {
 	write(filepath.Join(zswap, "reject_reclaim_fail"), "0")
 	write(filepath.Join(zswap, "reject_alloc_fail"), "0")
 
-	rapl := filepath.Join(root, "powercap", "intel-rapl:0")
+	rapl := filepath.Join(root, "powercap", "intel-rapl-0")
 	if err := os.MkdirAll(rapl, 0o755); err != nil {
 		t.Fatal(err)
 	}
