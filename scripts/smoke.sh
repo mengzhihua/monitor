@@ -26,7 +26,7 @@ echo "$info" | grep '"charts_count":[1-9]' >/dev/null || fail "no charts: $info"
 
 charts=$(curl -sf "http://127.0.0.1:$PORT/api/v1/charts") || fail "charts"
 echo "$charts" | grep '"system.cpu"' >/dev/null || fail "system.cpu missing"
-echo "$charts" | grep '"system.ram"' >/dev/null || fail "system.ram missing"
+curl -sf "http://127.0.0.1:$PORT/api/v1/charts" | grep '"system.idlejitter"' >/dev/null || fail "system.idlejitter missing"
 
 curl -sf "http://127.0.0.1:$PORT/api/v1/contexts" | grep '"contexts"' >/dev/null || fail "contexts"
 curl -sf "http://127.0.0.1:$PORT/api/v1/allmetrics?format=csv" | grep 'system.ram' >/dev/null || fail "allmetrics csv"

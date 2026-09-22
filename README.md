@@ -258,6 +258,16 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
 | API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
 
+### 已实现能力（M19：内核深度）
+
+| 模块 | 说明 |
+| --- | --- |
+| eBPF | bpftool 库存图 + 程序族 `ebpf.cachestat/dcstat/fd/vfs/oomkill/process/shm/swap/disk/mount/hardirq`（kprobe_profile 优先，否则 /proc 近似）；无源则禁用子图而不是整模块 |
+| perf | `perf stat -a` → `perf.cpu` / `perf.instructions` / `perf.cache_misses`；无权限自动禁用 |
+| proc | NUMA `mem.extfrag.*`、`audit.backlog`（`auditctl -s`） |
+| 其它 | `idlejitter`（`system.idlejitter`）；`nfacct`；apps `cpu/mem/processes` 按 user / user group |
+| 告警 | oomkill、extfrag 高、audit backlog |
+
 ### 已实现能力（M22：freebsd.plugin 剩余）
 
 | 模块 | 说明 |
@@ -337,6 +347,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0–M18 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐。
+M0–M18、M22、M23 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → FreeBSD 插件剩余 → IBM/pandas/容器运行时。
 
-后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。M22 freebsd.plugin 剩余见本页；M23 IBM/残留已合入 main。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。M19 内核深度见本页；M22 freebsd.plugin 剩余与 M23 IBM/残留已合入 main。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
