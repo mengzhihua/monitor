@@ -735,6 +735,20 @@ func (e *Engine) markNotified(entry LogEntry) {
 	}
 }
 
+func (e *Engine) RoutingInfo() map[string]any {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	channels := make([]map[string]any, 0, len(e.opt.Notifiers))
+	for _, n := range e.opt.Notifiers {
+		channels = append(channels, map[string]any{"name": n.Name(), "configured": true})
+	}
+	roles := e.opt.Roles
+	if roles == nil {
+		roles = map[string][]string{}
+	}
+	return map[string]any{"roles": roles, "channels": channels}
+}
+
 func (e *Engine) notifiersFor(role string) []Notifier {
 	role = strings.TrimSpace(role)
 	if role == "silent" {

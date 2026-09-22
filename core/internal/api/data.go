@@ -93,6 +93,15 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	if !ok {
 		return
 	}
+	if v.node != nil && s.opt.Nodes != nil && s.opt.Nodes.Storage() == "proxy" && v.node.Online() {
+		args := map[string]string{"chart": q.Get("chart"), "after": q.Get("after"), "before": q.Get("before"), "points": q.Get("points")}
+		raw, err := v.node.Query(r.Context(), args)
+		if err == nil && len(raw) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(raw)
+			return
+		}
+	}
 	out, code, errMsg := s.queryData(v, q, api)
 	if errMsg != "" {
 		http.Error(w, errMsg, code)
@@ -386,6 +395,7 @@ func (d *dataResult) jsonMap() map[string]any {
 		"dimension_ids":     d.DimensionIDs,
 		"dimension_names":   d.DimensionNames,
 		"dimension_anomaly": d.Anomaly,
+		"anomaly":           anomalyBits(d.Anomaly),
 		"min":               round3(d.Min),
 		"max":               round3(d.Max),
 		"result":            map[string]any{"labels": d.Labels, "data": d.Rows},
@@ -394,6 +404,16 @@ func (d *dataResult) jsonMap() map[string]any {
 		m["group_by"] = d.GroupBy
 	}
 	return m
+}
+
+func anomalyBits(rates []float64) []int {
+	out := make([]int, len(rates))
+	for i, v := range rates {
+		if v >= 50 {
+			out[i] = 1
+		}
+	}
+	return out
 }
 
 func chartsForData(reg *registry.Registry, chartID, ctx string) ([]*registry.Chart, string) {
@@ -555,6 +575,19 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 			}
 		}
 	}
+	if flags := s.anomalies(); flags != nil {
+		for i, d := range dims {
+			if anom[i] != 0 {
+				continue
+			}
+			for _, c := range d.charts {
+				if flags[registry.SeriesID(c.ID, d.id)] {
+					anom[i] = 100
+					break
+				}
+			}
+		}
+	}
 	bit := wantsAnomalyBit(opts)
 	units := headUnits(charts)
 	if bit {
@@ -562,16 +595,17 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 		for di, d := range dims {
 			for i, t := range times {
 				end := t
+				start := t
 				if step > 0 {
-					end = t + step
+					start = t - step
 				}
-				if i+1 < len(times) {
-					end = times[i+1]
+				if i > 0 {
+					start = times[i-1]
 				}
 				var rates []float64
 				if src != nil {
 					for _, c := range d.charts {
-						rates = append(rates, src.RatesBetween(c.ID, d.id, t, end)...)
+						rates = append(rates, src.RatesBetween(c.ID, d.id, start, end)...)
 					}
 				}
 				if i >= len(values[di]) {

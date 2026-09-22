@@ -206,7 +206,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/notify/push", s.handlePushTest)
 	if s.opt.Nodes != nil {
 		m.HandleFunc("GET "+stream.Path, s.opt.Nodes.HandleStream)
+		m.HandleFunc("GET "+stream.PathACLK, s.opt.Nodes.HandleACLK)
 	}
+	m.HandleFunc("GET /api/v1/hub/console", s.handleConsole)
 	m.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		s.writePrometheus(w)
 	})
@@ -346,16 +348,44 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 	if s.opt.Stream != nil {
 		out["stream"] = s.opt.Stream.Status()
 	}
-	aclk := map[string]any{"available": false, "online": false, "protocol": "stream"}
+	aclk := map[string]any{
+		"available":    false,
+		"online":       false,
+		"protocol":     "stream",
+		"claimed":      false,
+		"capabilities": stream.ACLKCapabilities,
+	}
 	if s.opt.Nodes != nil {
+		now := time.Now()
+		live := 0
+		for _, n := range s.opt.Nodes.List() {
+			if n.Info(now).Status == hub.StatusLive {
+				live++
+			}
+		}
 		aclk["available"] = true
-		aclk["online"] = s.opt.Nodes.IngestEnabled()
+		aclk["online"] = s.opt.Nodes.IngestEnabled() && live > 0
 		aclk["nodes"] = len(s.opt.Nodes.List())
+		aclk["live"] = live
+		aclk["protocol"] = "stream+mqtt"
+		aclk["storage"] = s.opt.Nodes.Storage()
 	} else if s.opt.Stream != nil {
 		st := s.opt.Stream.Status()
 		aclk["available"] = st.Enabled
 		aclk["online"] = st.Connected
 		aclk["destination"] = st.Destination
+		aclk["protocol"] = st.Protocol
+		if st.Protocol == "" {
+			aclk["protocol"] = "stream"
+		}
+		aclk["claimed"] = st.Claimed
+		aclk["next_connection"] = st.NextConnection
+		aclk["last_error"] = st.LastError
+		aclk["sent"] = st.Sent
+		aclk["reconnects"] = st.Reconnects
+		if len(st.Capabilities) > 0 {
+			aclk["capabilities"] = st.Capabilities
+		}
 	}
 	out["aclk"] = aclk
 	if api > 0 {
@@ -372,30 +402,56 @@ func (s *Server) handleCharts(w http.ResponseWriter, r *http.Request) {
 	charts := v.reg.Charts()
 	out := make(map[string]any, len(charts))
 	for _, c := range charts {
-		out[c.ID] = chartJSON(c, v.db)
+		out[c.ID] = s.chartJSON(c, v.db)
 	}
 	writeJSON(w, map[string]any{"node": v.id, "hostname": v.hostname, "update_every": v.reg.Host.UpdateEvery, "charts_count": len(charts), "charts": out})
 }
 
-func chartJSON(c *registry.Chart, db tsdb.Reader) map[string]any {
+func (s *Server) anomalies() map[string]bool {
+	c := s.sched.Collector("ml")
+	if p, ok := c.(collect.AnomalyProvider); ok && p != nil {
+		return p.DimAnomalies()
+	}
+	return nil
+}
+
+func (s *Server) chartJSON(c *registry.Chart, db tsdb.Reader) map[string]any {
 	var first, last int64
 	dims := c.Dims()
+	anom := s.anomalies()
+	dimOut := make([]map[string]any, 0, len(dims))
+	anomalous := false
 	for _, d := range dims {
 		f, l, ok := db.Bounds(registry.SeriesID(c.ID, d.ID))
-		if !ok {
-			continue
+		if ok {
+			if first == 0 || f < first {
+				first = f
+			}
+			if l > last {
+				last = l
+			}
 		}
-		if first == 0 || f < first {
-			first = f
+		m := map[string]any{"id": d.ID, "name": d.Name, "algorithm": d.Algorithm, "multiplier": d.Multiplier, "divisor": d.Divisor, "hidden": d.Hidden}
+		if anom[registry.SeriesID(c.ID, d.ID)] {
+			m["anomaly"] = true
+			anomalous = true
 		}
-		if l > last {
-			last = l
+		if src := s.anomaly(); src != nil {
+			if r, ok := src.Rate(c.ID, d.ID); ok {
+				m["dimension_anomaly"] = r
+				if r >= 50 {
+					m["anomaly"] = true
+					anomalous = true
+				}
+			}
 		}
+		dimOut = append(dimOut, m)
 	}
 	return map[string]any{
 		"id": c.ID, "context": c.Context, "family": c.Family, "title": c.Title, "units": c.Units,
 		"chart_type": c.Type, "priority": c.Priority, "update_every": c.UpdateEvery, "plugin": c.Plugin,
-		"module": c.Module, "labels": c.Labels, "dimensions": dims, "first_entry": first, "last_entry": last,
+		"module": c.Module, "labels": c.Labels, "dimensions": dimOut, "first_entry": first, "last_entry": last,
+		"anomaly": anomalous,
 	}
 }
 
@@ -409,17 +465,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chart not found", http.StatusNotFound)
 		return
 	}
-	out := chartJSON(c, v.db)
-	if src := s.anomaly(); src != nil {
-		bits := map[string]float64{}
-		for _, d := range c.Dims() {
-			if r, ok := src.Rate(c.ID, d.ID); ok {
-				bits[d.ID] = r
-			}
-		}
-		out["dimension_anomaly"] = bits
-	}
-	writeJSON(w, out)
+	writeJSON(w, s.chartJSON(c, v.db))
 }
 
 // parseTime accepts unix seconds or a relative offset (negative = seconds
@@ -561,7 +607,7 @@ func (s *Server) contextsPayload(v *view, api int) map[string]any {
 				info.Dimensions = append(info.Dimensions, d.ID)
 			}
 		}
-		meta := chartJSON(c, v.db)
+		meta := s.chartJSON(c, v.db)
 		if fe, _ := meta["first_entry"].(int64); fe > 0 && (info.FirstEntry == 0 || fe < info.FirstEntry) {
 			info.FirstEntry = fe
 		}
@@ -829,9 +875,18 @@ func (s *Server) handleWeights(w http.ResponseWriter, r *http.Request) {
 		before := parseTime(q.Get("before"), now, now)
 		after := parseTime(q.Get("after"), before, before-300)
 		baseBefore := parseTime(q.Get("baseline_before"), before, after)
-		baseAfter := parseTime(q.Get("baseline_after"), baseBefore, baseBefore-600)
-		weights := collect.Correlate(v.reg, v.db, method, after, before, baseAfter, baseBefore)
-		writeJSON(w, map[string]any{"method": method, "weights": weights, "count": len(weights),
+		baseAfterSrc := q.Get("baseline_after")
+		if baseAfterSrc == "" {
+			baseAfterSrc = q.Get("baseline")
+		}
+		baseAfter := parseTime(baseAfterSrc, baseBefore, baseBefore-600)
+		group := q.Get("group")
+		if group == "" {
+			group = "chart"
+		}
+		top, _ := strconv.Atoi(q.Get("top"))
+		weights := collect.CorrelateGrouped(v.reg, v.db, method, after, before, baseAfter, baseBefore, group, top)
+		writeJSON(w, map[string]any{"method": method, "group": group, "weights": weights, "count": len(weights),
 			"after": after, "before": before, "baseline_after": baseAfter, "baseline_before": baseBefore})
 		return
 	}
@@ -842,5 +897,9 @@ func (s *Server) handleWeights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	weights := wp.Weights(method)
-	writeJSON(w, map[string]any{"method": method, "weights": weights, "count": len(weights)})
+	top, _ := strconv.Atoi(q.Get("top"))
+	if top > 0 && top < len(weights) {
+		weights = weights[:top]
+	}
+	writeJSON(w, map[string]any{"method": method, "group": "chart", "weights": weights, "count": len(weights)})
 }

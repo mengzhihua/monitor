@@ -71,6 +71,9 @@ type Stream struct {
 	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
 	Timeout            time.Duration `yaml:"timeout"`
 	Replicate          time.Duration `yaml:"replicate"` // max history re-sent after reconnect
+	// Protocol is "mqtt"/"aclk" for MQTT-over-WebSocket (/api/v1/aclk), or
+	// empty/"stream" for JSON frames (/api/v1/stream).
+	Protocol string `yaml:"protocol"`
 }
 
 // Hub configures accepting streamed nodes (mode: hub).
@@ -87,6 +90,8 @@ type Hub struct {
 	// Default Space/Room names created on empty org (hub mode).
 	Space string `yaml:"space"`
 	Room  string `yaml:"room"`
+	// Storage is "full" (default, hub keeps samples) or "proxy" (query live agent).
+	Storage string `yaml:"storage"`
 }
 
 // OIDC is web.oidc.

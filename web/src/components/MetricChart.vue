@@ -19,6 +19,7 @@ let unsub: (() => void) | null = null
 let times: number[] = []
 let raw: (number | null)[][] = []
 let dims: string[] = []
+let anomBits: number[] = []
 let pending = false
 
 const palette = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#64748b']
@@ -66,10 +67,12 @@ function makeOpts(width: number): uPlot.Options {
   for (let sidx = 1; sidx <= dims.length; sidx++) {
     const di = dimIndex(sidx)
     const id = dims[di]!
-    const color = (anomaly.value[id] ?? 0) >= 50 ? '#ef4444' : palette[di % palette.length]!
-    const strokeWidth = (anomaly.value[id] ?? 0) >= 50 ? 2 : 1
+    const dim = props.chart.dimensions.find((d) => d.id === id)
+    const anomalous = (anomaly.value[id] ?? 0) >= 50 || !!(dim?.anomaly || anomBits[di])
+    const color = anomalous ? '#ef4444' : palette[di % palette.length]!
+    const strokeWidth = anomalous ? 2 : 1
     series.push({
-      label: props.chart.dimensions.find((d) => d.id === id)?.name ?? id,
+      label: (dim?.name ?? id) + (anomalous ? ' ⚠' : ''),
       stroke: color,
       width: strokeWidth,
       fill: st || props.chart.chart_type === 'area' ? color + (st ? 'cc' : '33') : undefined,
@@ -113,6 +116,11 @@ async function load() {
       if (id) bits[id] = v
     })
     anomaly.value = bits
+    anomBits = dims.map((id) => {
+      const col = d.dimension_ids.indexOf(id)
+      if (col >= 0 && ((d.dimension_anomaly && d.dimension_anomaly[col] >= 50) || (d.anomaly && d.anomaly[col]))) return 1
+      return props.chart.dimensions.find((x) => x.id === id)?.anomaly ? 1 : 0
+    })
     raw = dims.map((id) => {
       const col = idx.get(id)
       return d.result.data.map((r) => (col == null ? null : (r[col] as number | null)))
@@ -127,6 +135,7 @@ async function load() {
     error.value = String(e)
     times = []
     raw = dims.map(() => [])
+    anomBits = dims.map(() => 0)
   }
   render()
 }
@@ -171,17 +180,17 @@ onBeforeUnmount(() => { unsub?.(); ro?.disconnect(); plot?.destroy() })
 watch(() => props.window, load)
 /** Anything that feeds makeOpts/buildData/load: a changed definition needs a full reload. */
 const defFingerprint = () =>
-  [props.chart.chart_type, props.chart.update_every, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}`)].join('\u0001')
+  [props.chart.chart_type, props.chart.update_every, props.chart.anomaly ? 1 : 0, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}\u0000${d.anomaly ? 1 : 0}`)].join('\u0001')
 watch(defFingerprint, load)
 </script>
 
 <template>
-  <div class="card">
+  <div class="card" :class="{ anom: chart.anomaly }">
     <div class="head">
       <div>
         <span class="title">{{ chart.title }}</span>
         <span class="id">{{ chart.id }}</span>
-        <span v-if="anomalous" class="anom">ANOM</span>
+        <span v-if="anomalous || chart.anomaly" class="anom">ANOM</span>
       </div>
       <span class="units">{{ chart.units }}</span>
     </div>
@@ -192,6 +201,8 @@ watch(defFingerprint, load)
 
 <style scoped>
 .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.card.anom { border-color: #7f1d1d; box-shadow: inset 0 0 0 1px #7f1d1d; }
+.badge { margin-left: 8px; font-size: 10px; color: #fecaca; background: #7f1d1d; border-radius: 8px; padding: 0 6px; }
 .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
 .title { font-weight: 600; font-size: 14px; }
 .id { color: #64748b; font-size: 11px; margin-left: 8px; font-family: ui-monospace, monospace; }

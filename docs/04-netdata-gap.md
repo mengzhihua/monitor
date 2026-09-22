@@ -5,10 +5,10 @@
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
 > **不要重做 go.d**：`init.go` 除故意跳过的 `testrandom` 外已打勾。
 
-## 0. 现状一句话（M0–M19、M21、M22、M23、M26 合入 main；M24 本轮）
+## 0. 现状一句话（M0–M19、M21、M22、M23、M25、M26 合入 main；M24 本轮）
 
 Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
-剩下主要是 **日志/查看器、Cloud 产品面、真 eBPF CO-RE** 以及本轮查询 API。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M21 Windows Perflib 已合入；M26 点名 Prometheus 原生 ID 已合入。
+剩下主要是 **日志/查看器、真 eBPF CO-RE** 以及本轮查询 API。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M21 Windows Perflib 已合入；M26 点名 Prometheus 原生 ID 已合入；M25 ACLK MQTT / Cloud 控制台 / Correlations 已合入。
 
 | 面 | 完成度 | 说明 |
 | --- | --- | --- |
@@ -17,12 +17,12 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | 原生 C 插件便携近似 | **骨架完成** | cups / xenstat / ioping / nftables / ipmi / ebpf(bpftool) / journalctl / wevtutil |
 | Windows.plugin | **M21** | 进程/线程/句柄 + Perflib 全家桶（IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 出图）；无角色则跳过 |
 | freebsd.plugin | **完成（M22）** | sysctl 全家桶 + ZFS ARC/trim + ipfw + gstat/df/netstat 近似；非 FreeBSD 自动禁用 |
-| Hub / Cloud | **骨架** | claim/Space/Room/OIDC/环复制/LDAP/share；缺真 ACLK MQTT 与 Cloud 控制台 |
+| Hub / Cloud | **产品面（M25）** | claim/Space/Room/OIDC/环复制/LDAP/share + ACLK MQTT-over-WSS + Cloud 控制台 + 图上异常高亮 + Correlations UI |
 | 850+ Prometheus 集成名 | **M26 点名包装** | 具名 profile 出原生 ID（etcd/minio/vault/…）；其余仍 `prom.*`；已有采集器的不重复包装 |
 
 约 **178** 个内置采集器。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **21%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在真 eBPF CO-RE 与日志/查看器。
 
-## 1. 现在有什么（M0–M19）
+## 1. 现在有什么（M0–M19 / M22 / M23）
 
 `cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram、InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetype、IRQ/softirq 明细、EDAC、SLAB、zswap、RAPL、DRM、bcache、timex）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense` `storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq` `icecast` `phpdaemon` `pika` `maxscale` `nginxplus` `nginxunit` `docker_engine` `riakkv` `litespeed` `boinc` `spigotmc` `w1sensor` `ap` `dockerhub` `ethtool` `intelgpu` `logind` `dcgm` `panos` `powerstore` `powervault` `s3check` `scaleio` `smbios_memory` `vcsa` `mssql` `oracledb` `sql` `cloudwatch` `azure_monitor` `vsphere` `cato_networks` `snmp_traps` `snmp_topology` `freebsd` `windows` `libvirt` `proxmox` `ebpf` `cups` `xenstat` `ioping` `nftables` `podman` `ipmi` `idlejitter` `perf` `nfacct` `db2` `as400` `mq` `websphere` `pandas` `go_expvar` `am2320` `lxc` `ecs` `containerd`。
 
@@ -87,11 +87,9 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | 状态 | 能力 |
 | --- | --- |
 | 有 | v1 全套常用端点；v2 contexts/nodes/data/q/badge；`group_by=node`；alert_transitions；manage/health |
-| **M24** | `/api/v3` 子集（info/data/q/contexts/context/nodes/weights/alerts/alert_transitions/alert_config/functions/badge/allmetrics）；`group_by=dimension` 与 `group_by=node,dimension`；`alert_config` CRUD；`options=anomaly-bit` 与 `dimension_anomaly`；Vue 图上 ANOM 高亮 |
-| **M26** | `GET /api/v1/prometheus/catalog`；prometheus job `profile`/`fallback` |
-| **未做** | Metric Correlations 完整 UI（现在只有 Weights 面板窗口输入） |
-| 近似 | `info.aclk` 语义字段；流仍是 WebSocket，**不是 MQTT over WSS** |
-| **未做** | Cloud 控制台产品面（节点清单/房间拓扑/告警路由可视化，不只 API） |
+| **M24** | `/api/v3` 子集（info/data/q/contexts/context/nodes/weights/alerts/alert_transitions/alert_config/functions/badge/allmetrics）；`group_by=dimension` 与 `group_by=node,dimension`；`alert_config` CRUD；`options=anomaly-bit` 与 `dimension_anomaly`（0–100）兼 `anomaly`（0/1）；Vue 图上 ANOM 高亮 |
+| **有（M25）** | Metric Correlations 完整 UI（group/top/窗口/分数条/点选筛选）；ACLK MQTT 3.1.1 over WSS；Cloud 控制台 |
+| **有（M26）** | `GET /api/v1/prometheus/catalog`；prometheus job `profile`/`fallback` |
 
 ### 2.7 明确不做 / 延后
 
@@ -140,7 +138,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
 | **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 图表 ID 对齐 `mq.queue.depth` / `db2.bufferpool_hit_ratio` / `as400.memory_pool_usage`；无驱动禁用 |
 | **M24 查询 API 深度（本轮）** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
-| **M25 Hub Cloud 产品** | 真 ACLK（MQTT over WSS 或保持 WS 并完整对等语义）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
+| **M25 Hub Cloud 产品（合入）** | 真 ACLK（MQTT over WSS）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
 | **M26 集成目录（合入）** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | `GET /api/v1/prometheus/catalog`；fixture 抓取 |
 
 ### 3.3 批次依赖
@@ -165,9 +163,9 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 1. `/api/v3` 子集：info / data / q / contexts / context / nodes / weights / alerts / alert_transitions / alert_config / functions / function / badge.svg / allmetrics；payload `api: 3`
 2. `group_by=dimension`（同 context 下按维度 ID 合并实例）；`group_by=node,dimension`（列名为 `node.dim`）
 3. `GET|PUT|POST|DELETE /api/v3/alert_config`（及 v1 别名）：YAML 或 JSON 规则 CRUD，`hash` 查询
-4. 每维 anomaly：ML 保存 0/100 bit 环；`data` 响应 `dimension_anomaly`；`options=anomaly-bit` 把数值换成 0–100；health lookup 支持 `anomaly-bit`；Vue 异常维度标红 + ANOM 徽标
+4. 每维 anomaly：ML 保存 0/100 bit 环；`data` 响应 `dimension_anomaly`（0–100）与 `anomaly`（0/1）；`options=anomaly-bit` 把数值换成 0–100；health lookup 支持 `anomaly-bit`；Vue 异常维度标红 + ANOM 徽标
 
-## 4.1 M19（已合入 main）
+## 4.2 M19（已合入 main）
 
 1. eBPF 程序族：`ebpf.cachestat/dcstat/fd/vfs/oomkill/process/shm/swap/disk/mount/hardirq`（kprobe_profile 优先，否则 `/proc` 近似）；bpftool 库存图保留；无源则禁用子图
 2. `perf`：`perf stat -a -x,` → `perf.cpu` / `perf.instructions` / `perf.cache_misses`；无权限禁用
@@ -177,7 +175,7 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 6. `nfacct`：`netfilter.nfacct_packets/bytes.{name}`
 7. health.d `system_m19.yaml`
 
-## 4.2 M22（已合入 main）
+## 4.3 M22（已合入 main）
 
 freebsd.plugin 剩余，不碰 go.d。
 
@@ -189,7 +187,7 @@ freebsd.plugin 剩余，不碰 go.d。
 6. **health.d** `system_m22.yaml`：`zfs_memory_throttle` / `freebsd_ipfw_drops` / `freebsd_softnet_drops`
 7. **测试**：sysctl+ipfw+gstat+df+netstat fixture 两拍；`GOOS=freebsd go test -c`
 
-## 4.3 M23（已合入 main）
+## 4.4 M23（已合入 main）
 
 ibm.d / python.d 残留 / 专用容器运行时。默认无 CGO；Init 失败即禁用。图表 ID 对齐 Netdata：
 
@@ -222,9 +220,18 @@ Windows.plugin Perflib 全家桶，不碰 go.d，不扩 eBPF/FreeBSD。
 4. `sc query` → `windows.service_state.{name}` + 汇总 `windows.services`
 5. health.d `system_m21.yaml`
 
+## 4.6 M25（已合入 main）
+
+Hub Cloud 产品面。不碰 go.d。
+
+1. **ACLK MQTT-over-WSS**：`/api/v1/aclk` MQTT 3.1.1，payload 仍是 JSON `stream.Frame`；JSON `/api/v1/stream` 默认；`stream.protocol: mqtt|aclk`
+2. **Cloud 控制台**：`GET /api/v1/hub/console` + Vue `CloudPanel`
+3. **图上异常高亮**：`charts`/`chart` 每维 `anomaly`；`/data` 同时返回 `anomaly`（0/1）与 `dimension_anomaly`（0–100）
+4. **完整 Correlations UI**：`weights?method=ks2|volume&group=&top=`
+
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 
-## 5. 工程约束（各批通用）
+## 6. 工程约束（各批通用）
 
 - 图表 ID / context / 单位 / algorithm（absolute vs incremental）对齐 Netdata。
 - Init 失败 = 该采集器禁用，不影响其它模块。

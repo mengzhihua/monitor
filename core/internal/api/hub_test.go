@@ -575,3 +575,54 @@ func TestHubLiveUnknownNodeRejected(t *testing.T) {
 		t.Fatalf("unknown node live: err=%v resp=%v", err, resp)
 	}
 }
+
+func TestHubACLKEndToEnd(t *testing.T) {
+	hubTS, nodes := newHub(t, Options{})
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "agent-mqtt", Hostname: "agent-mqtt", OS: "linux", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Title: "RAM", Units: "MiB",
+		Type: registry.Stacked, Priority: 200, Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	now := time.Now().Truncate(time.Second)
+	_ = reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 11, "free": 22})
+	client := stream.NewClient(reg, db, stream.ClientOptions{
+		Destinations: []string{hubTS.URL}, APIKey: testKey, Version: "t", Timeout: 5 * time.Second, Protocol: "mqtt",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go client.Run(ctx)
+
+	waitFor(t, "aclk node online", func() bool {
+		n, ok := nodes.Get("agent-mqtt")
+		return ok && n.Online()
+	})
+	node, _ := nodes.Get("agent-mqtt")
+	if inf := node.Info(time.Now()); inf.Protocol != "mqtt" || !inf.ACLK {
+		t.Fatalf("info = %+v", inf)
+	}
+	_ = reg.Collect("system.ram", now.Add(time.Second), map[string]float64{"used": 33, "free": 22})
+	waitFor(t, "aclk live sample", func() bool {
+		_, last, ok := node.DB().Bounds(registry.SeriesID("system.ram", "used"))
+		return ok && last >= now.Unix()
+	})
+
+	var info struct {
+		ACLK struct {
+			Available bool   `json:"available"`
+			Protocol  string `json:"protocol"`
+			Storage   string `json:"storage"`
+		} `json:"aclk"`
+	}
+	getJSON(t, hubTS.URL+"/api/v1/info", &info)
+	if !info.ACLK.Available || info.ACLK.Protocol != "stream+mqtt" || info.ACLK.Storage != "full" {
+		t.Fatalf("hub info.aclk = %+v", info.ACLK)
+	}
+
+	raw, err := node.Query(context.Background(), map[string]string{"chart": "system.ram", "after": "-60"})
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("query: %v %s", err, raw)
+	}
+}

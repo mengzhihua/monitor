@@ -344,6 +344,18 @@ func (m *mlCollector) RatesBetween(chart, dim string, after, before int64) []flo
 	return out
 }
 
+func (m *mlCollector) DimAnomalies() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]bool{}
+	for id, st := range m.dims {
+		if st != nil && st.anom {
+			out[id] = true
+		}
+	}
+	return out
+}
+
 func lastFeature(diffs []float64, lag int) []float64 {
 	if lag <= 0 || len(diffs) < lag {
 		return nil

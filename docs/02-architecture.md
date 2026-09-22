@@ -484,7 +484,7 @@ sequenceDiagram
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
 | **M23 IBM 与残留（合入）** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 合入 main |
 | **M24 查询 API 深度（本轮）** | `/api/v3` 子集、`group_by=dimension`、`alert_config` CRUD、每维 anomaly bit | `go test -race`、`vue-tsc`、`smoke.sh` |
-| **M25 Hub Cloud 产品** | ACLK 语义补齐、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 双节点冒烟 |
+| **M25 Hub Cloud 产品（合入）** | ACLK MQTT-over-WSS、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 冒烟 + Vue |
 | **M26 集成目录（合入）** | 点名 Prometheus 原生 ID 包装（etcd/minio/vault/…）；catalog API；其余 `prom.*` | `go test -race`、`vue-tsc`、`smoke.sh` |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
@@ -544,4 +544,4 @@ sequenceDiagram
 | freebsd.plugin ZFS/ipfw/net.inet | `internal/collect/freebsd.go` + `freebsd_m22.go` | M22 |
 | ibm.d / pandas / lxc/ecs/containerd | `internal/collect` | M23 |
 | API v3 / group_by=dimension / alert_config / 每维 anomaly | `internal/api` + `collect/ml.go` + Vue MetricChart | M24 |
-| Cloud 控制台 / 图上异常高亮 | `web/` + `internal/hub` | M25 |
+| Cloud 控制台 / 图上异常高亮 / ACLK MQTT | `web/` + `internal/hub` + `internal/stream` | M25 |
