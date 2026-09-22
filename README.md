@@ -12,7 +12,7 @@
 | [docs/01-netdata-capability-study.md](docs/01-netdata-capability-study.md) | Netdata 能力调研：组件、数据流水线、平台覆盖、部署拓扑、安全模型 |
 | [docs/02-architecture.md](docs/02-architecture.md) | Monitor 架构设计：总体架构、技术选型、服务端模块（采集/TSDB/健康/ML/流式/API/Functions）、Hub、Android 服务端专项、客户端、仓库结构、路线图、能力对照表 |
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
-| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M16 移植计划 |
+| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M17 移植计划 |
 
 ## 快速开始（M0）
 
@@ -238,6 +238,17 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI `Win32_PerfRawData_PerfOS_System` + gopsutil）；Function `windows-services`（`sc query`）；非 Windows 自动禁用 |
 | Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
 | Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
+
+### 已实现能力（M17：剩余缺口一次补齐）
+
+| 模块 | 说明 |
+| --- | --- |
+| Linux proc | InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetypeinfo、per-IRQ / softirq 明细 |
+| 采集器 | `libvirt`（virsh）、`proxmox`（PVE REST）、`ebpf`（bpftool prog show + Function `ebpf-programs`）；目标缺失自动禁用 |
+| API | `GET\|PUT /api/v1/manage/health`（pause / 静默 / 维护截止）；`GET /api/v1/alarm_summary`；v2 `data?group_by=node`；v2 `nodes?contexts=`；`POST /api/v1/auth/ldap`；`POST /api/v1/share` 只读链接；`info.aclk` |
+| 导出 / 通知 | Kinesis / Pub/Sub HTTP JSON；`health.notify.push`；维护窗口日历 |
+| Dashboard | Context 总览、静默倒计时、ks2/volume 窗口输入、Hub 只读分享链接 |
+| 日志 | Windows ETW / Event Log `channel=` 参数 |
 
 ### 开发
 

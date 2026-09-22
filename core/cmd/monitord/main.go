@@ -239,6 +239,10 @@ func run() error {
 		apiOpt.OIDC = &api.OIDCConfig{Issuer: cfg.Web.OIDC.Issuer, ClientID: cfg.Web.OIDC.ClientID,
 			ClientSecret: cfg.Web.OIDC.ClientSecret, RedirectURL: cfg.Web.OIDC.RedirectURL, Role: cfg.Web.OIDC.Role}
 	}
+	if cfg.Web.LDAP.URL != "" {
+		apiOpt.LDAP = &api.LDAPConfig{URL: cfg.Web.LDAP.URL, UserDN: cfg.Web.LDAP.UserDN,
+			BindDN: cfg.Web.LDAP.BindDN, BindPass: cfg.Web.LDAP.BindPass, Role: cfg.Web.LDAP.Role}
+	}
 	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {
 		return err
@@ -463,6 +467,9 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	if n.PagerDuty.RoutingKey != "" {
 		notifiers = append(notifiers, &health.PagerDutyNotifier{RoutingKey: n.PagerDuty.RoutingKey})
 	}
+	if n.Push.URL != "" {
+		notifiers = append(notifiers, &health.PushNotifier{URL: n.Push.URL, Headers: n.Push.Headers})
+	}
 
 	vars := map[string]float64{"cpus": float64(runtime.NumCPU())}
 	if vm, err := mem.VirtualMemory(); err == nil {
@@ -479,5 +486,6 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		HostVars:   vars,
 		Logger:     log,
 		SilenceAll: cfg.Health.Silent,
+		Windows:    cfg.Health.Windows,
 	})
 }

@@ -475,7 +475,8 @@ sequenceDiagram
 | **M13 规则与查询** | 剩余系统 health.d 模板、`data?context=`、data csv/ssv/jsonp、`/api/v2` 子集、alarm_count、badge | 告警与跨图查询对齐 |
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
 | **M15 ML / Functions / 导出** | k-means、containers/disks/mounts/ifaces、Mongo 导出 | weights 对比 |
-| **M16 平台（本轮）** | Windows/FreeBSD 采集、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
+| **M16 平台** | Windows/FreeBSD 采集、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
+| **M17 剩余缺口（本轮）** | proc 剩余、libvirt/proxmox/ebpf、manage/health、v2 group_by=node、维护窗口、Kinesis/Pub/Sub、LDAP/share/ACLK、Vue context | `go test -race`、`vue-tsc`、`smoke.sh` |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -520,3 +521,7 @@ sequenceDiagram
 | Windows.plugin 进程/线程/句柄 | `internal/collect/windows.go` | M16 |
 | freebsd.plugin sysctl | `internal/collect/freebsd.go` | M16 |
 | Android logcat | `internal/collect/logs.go` | M16 |
+| InfiniBand / tc / SCTP / NUMA / IRQ | `internal/collect/proc_m17.go` | M17 |
+| libvirt / proxmox / ebpf | `internal/collect` | M17 |
+| manage/health / alarm_summary / share / LDAP | `internal/api` | M17 |
+| Kinesis / Pub/Sub | `internal/export` | M17 |

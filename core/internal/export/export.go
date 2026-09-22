@@ -109,6 +109,10 @@ func (e *Engine) flush(ctx context.Context, d Destination) error {
 		return e.flushOpenTSDB(ctx, d)
 	case "mongodb", "mongo":
 		return e.flushMongo(ctx, d)
+	case "kinesis", "firehose":
+		return e.flushKinesis(ctx, d)
+	case "pubsub", "pub/sub", "google-pubsub":
+		return e.flushPubSub(ctx, d)
 	default:
 		return fmt.Errorf("unknown exporter %q", d.Type)
 	}

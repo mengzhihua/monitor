@@ -49,7 +49,7 @@ export interface Alarm {
   last_status_change: number; active: boolean; delay_up_to_timestamp?: number; last_notified?: number
   silenced?: boolean
 }
-export interface SilenceState { all: boolean; until?: number; alarms: Record<string, number> }
+export interface SilenceState { all: boolean; until?: number; alarms: Record<string, number>; maintenance?: boolean; maint_until?: number }
 export interface AlarmLogEntry {
   unique_id: number; alarm_id: number; when: number; hostname: string; name: string; chart: string; context: string
   family: string; status: AlarmStatus; old_status: AlarmStatus; value: number | null; old_value: number | null
@@ -164,6 +164,12 @@ export const api = {
     get<FunctionResponse>(`/api/v1/logs${q(args)}`),
   data: (chart: string, after: number, before = 0, points = 0) =>
     get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`),
+  contexts: () => get<{ contexts: Record<string, { family: string; title: string; units: string; charts: string[]; dimensions: string[]; priority: number }> }>(`/api/v1/contexts${q({})}`),
+  alarmSummary: () => get<{ status: Record<string, number>; classes?: Record<string, number> }>(`/api/v1/alarm_summary${q({})}`),
+  manageHealth: () => get<{ enabled: boolean; silent: boolean; maintenance: boolean; maint_until?: number }>('/api/v1/manage/health'),
+  setHealth: (body: Record<string, unknown>) => send<unknown>('PUT', '/api/v1/manage/health', body),
+  share: (ttl = '24h') => post<{ token: string; url: string; until: number }>('/api/v1/share', { ttl }),
+  ldapLogin: (user: string, password: string) => post<{ token: string; role: string }>('/api/v1/auth/ldap', { user, password }),
   spaces: () => get<{ spaces: Space[] }>('/api/v1/hub/spaces'),
   createSpace: (name: string) => post<Space>('/api/v1/hub/spaces', { name }),
   deleteSpace: (id: string) => send<void>('DELETE', `/api/v1/hub/spaces?id=${encodeURIComponent(id)}`),

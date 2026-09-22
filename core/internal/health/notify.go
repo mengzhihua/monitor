@@ -375,3 +375,16 @@ func (n *PagerDutyNotifier) Notify(ctx context.Context, e LogEntry) error {
 	}
 	return postJSON(ctx, c, ep, body, nil)
 }
+
+// PushNotifier is a mobile / webhook push gateway (same JSON payload as webhook).
+type PushNotifier struct {
+	URL     string
+	Headers map[string]string
+	Client  *http.Client
+}
+
+func (n *PushNotifier) Name() string { return "push" }
+
+func (n *PushNotifier) Notify(ctx context.Context, e LogEntry) error {
+	return (&WebhookNotifier{URL: n.URL, Headers: n.Headers, Client: n.Client}).Notify(ctx, e)
+}

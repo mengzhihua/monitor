@@ -18,8 +18,9 @@ import (
 
 // logsConfig is collectors.modules.logs (journald / Event Log / files).
 type logsConfig struct {
-	Files []string `yaml:"files"`
-	Top   int      `yaml:"top"` // max rows returned by the logs function
+	Files    []string `yaml:"files"`
+	Channels []string `yaml:"channels"` // Windows Event Log / ETW channel names
+	Top      int      `yaml:"top"`      // max rows returned by the logs function
 }
 
 type logsCollector struct {
@@ -137,7 +138,10 @@ func (l *logsCollector) Functions() []Function {
 		Help:    "Recent system logs (journald, logcat, Windows Event Log, or configured files)",
 		Timeout: 10,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
-			q := LogQuery{Limit: l.cfg.Top, Files: l.files(), Query: args["query"], Source: args["source"]}
+			q := LogQuery{Limit: l.cfg.Top, Files: l.files(), Query: args["query"], Source: args["source"], Channel: args["channel"]}
+			if q.Channel == "" && len(l.cfg.Channels) > 0 {
+				q.Channel = l.cfg.Channels[0]
+			}
 			if n, _ := strconv.Atoi(args["limit"]); n > 0 {
 				q.Limit = n
 			}
@@ -162,12 +166,13 @@ func (l *logsCollector) Functions() []Function {
 
 // LogQuery is the on-demand logs function / GET /api/v1/logs filter.
 type LogQuery struct {
-	Source string
-	Query  string
-	After  int64
-	Before int64
-	Limit  int
-	Files  []string
+	Source  string
+	Query   string
+	Channel string // Windows Event Log / ETW channel (System, Application, Security, …)
+	After   int64
+	Before  int64
+	Limit   int
+	Files   []string
 }
 
 // LogRow is one journal / event / file line.
@@ -186,7 +191,7 @@ func QueryLogs(q LogQuery) []LogRow {
 	if q.Source == "file" || q.Source == "files" {
 		return queryFileLogs(q)
 	}
-	if q.Source == "eventlog" || q.Source == "windows" {
+	if q.Source == "eventlog" || q.Source == "windows" || q.Source == "etw" {
 		return queryEventLog(q)
 	}
 	if q.Source == "logcat" || q.Source == "android" {
@@ -397,9 +402,13 @@ func queryEventLog(q LogQuery) []LogRow {
 	if _, err := exec.LookPath("wevtutil"); err != nil {
 		return nil
 	}
+	ch := q.Channel
+	if ch == "" {
+		ch = "System"
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "wevtutil", "qe", "System", "/c:"+strconv.Itoa(q.Limit), "/rd:true", "/f:text")
+	cmd := exec.CommandContext(ctx, "wevtutil", "qe", ch, "/c:"+strconv.Itoa(q.Limit), "/rd:true", "/f:text")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

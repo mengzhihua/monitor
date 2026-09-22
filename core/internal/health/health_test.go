@@ -667,3 +667,35 @@ func TestEngineNoDataGapKeepsNotifiedStatus(t *testing.T) {
 		t.Fatalf("notifications = %+v", n.seen)
 	}
 }
+
+func TestMaintenanceWindowAndPause(t *testing.T) {
+	n := &memNotifier{}
+	e, reg := newTestEngine(t, ramRule, n)
+	now := time.Date(2024, 6, 15, 23, 30, 0, 0, time.UTC) // Saturday 23:30
+	e.windows = []MaintenanceWindow{{Start: "22:00", End: "06:00", Weekdays: []string{"sat", "sun"}}}
+	if !e.InMaintenance() && !(&MaintenanceWindow{Start: "22:00", End: "06:00", Weekdays: []string{"sat"}}).covers(now) {
+		t.Fatal("expected overnight Saturday window")
+	}
+	e.now = func() time.Time { return now }
+	if !e.InMaintenance() {
+		t.Fatal("engine should be in maintenance")
+	}
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 90, "free": 10})
+	e.Tick(now.Add(time.Second))
+	time.Sleep(40 * time.Millisecond)
+	if n.count() != 0 {
+		t.Fatalf("maintenance notified: %+v", n.seen)
+	}
+	e.SetEnabled(false)
+	if e.Enabled() {
+		t.Fatal("expected paused")
+	}
+	sum := e.AlarmSummary()
+	if sum["status"] == nil {
+		t.Fatalf("%v", sum)
+	}
+	info := e.ManageInfo()
+	if info["enabled"] != false {
+		t.Fatalf("%v", info)
+	}
+}

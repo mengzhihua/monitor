@@ -153,6 +153,8 @@ type Options struct {
 	OnEvent    func(e LogEntry) // called on every transition (for the live WS)
 	Now        func() time.Time
 	SilenceAll bool
+	Enabled    *bool // nil/true = evaluate; false = pause the engine
+	Windows    []MaintenanceWindow
 }
 
 // Engine evaluates rules and tracks alarms for one host.
@@ -182,6 +184,9 @@ type Engine struct {
 	silenceAll   bool
 	silenceUntil int64
 	silenced     map[string]int64 // chart.name or name → until unix
+	enabled      bool
+	maintUntil   int64
+	windows      []MaintenanceWindow
 }
 
 // logUpdate is appended to alarm-log.jsonl when a previously written entry
@@ -205,7 +210,10 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	}
 	e := &Engine{opt: opt, reg: reg, db: db, log: opt.Logger, now: opt.Now, rules: opt.Rules,
 		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256),
-		silenceAll: opt.SilenceAll, silenced: map[string]int64{}}
+		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows}
+	if opt.Enabled != nil {
+		e.enabled = *opt.Enabled
+	}
 	if opt.LogDir != "" {
 		if err := os.MkdirAll(opt.LogDir, 0o755); err != nil {
 			return nil, err
@@ -319,6 +327,9 @@ func (e *Engine) Close() {
 
 // Tick binds rules to any new charts and evaluates alarms that are due.
 func (e *Engine) Tick(now time.Time) {
+	if !e.Enabled() {
+		return
+	}
 	e.bind()
 	e.mu.Lock()
 	due := make([]*Alarm, 0)
@@ -905,6 +916,9 @@ func (e *Engine) IsSilenced(chart, name string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.now().Unix()
+	if e.inMaintenanceLocked(e.now()) {
+		return true
+	}
 	if e.silenceAll {
 		if e.silenceUntil == 0 || now < e.silenceUntil {
 			return true
@@ -961,7 +975,7 @@ func (e *Engine) SilenceInfo() map[string]any {
 			alarms[k] = v
 		}
 	}
-	return map[string]any{"all": all, "until": e.silenceUntil, "alarms": alarms}
+	return map[string]any{"all": all, "until": e.silenceUntil, "alarms": alarms, "maintenance": e.inMaintenanceLocked(e.now()), "maint_until": e.maintUntil}
 }
 
 // ChartVariables returns $names available to alarm expressions for a chart.
