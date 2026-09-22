@@ -38,6 +38,7 @@ type Config struct {
 		Token     string   `yaml:"token"`      // optional bearer token for the API (admin)
 		Users     []User   `yaml:"users"`      // named credentials with roles
 		OIDC      OIDC     `yaml:"oidc"`
+		LDAP      LDAP     `yaml:"ldap"`
 	} `yaml:"web"`
 	Stream     Stream `yaml:"stream"`
 	Hub        Hub    `yaml:"hub"`
@@ -89,6 +90,14 @@ type Hub struct {
 }
 
 // OIDC is web.oidc.
+type LDAP struct {
+	URL      string `yaml:"url"`
+	UserDN   string `yaml:"user_dn"`
+	BindDN   string `yaml:"bind_dn"`
+	BindPass string `yaml:"bind_password"`
+	Role     string `yaml:"role"`
+}
+
 type OIDC struct {
 	Issuer       string `yaml:"issuer"`
 	ClientID     string `yaml:"client_id"`
@@ -123,13 +132,14 @@ type Plugins struct {
 
 // Health configures the alarm engine and notification channels.
 type Health struct {
-	Enabled *bool             `yaml:"enabled"`  // default true
-	Dir     string            `yaml:"dir"`      // extra rule files (*.yaml), relative to the config file
-	Builtin *bool             `yaml:"builtin"`  // load the rules shipped with the agent (default true)
-	LogKeep int               `yaml:"log_keep"` // alarm log entries kept in memory
-	Silent  bool              `yaml:"silent"`   // evaluate but never notify
-	Notify  Notify            `yaml:"notify"`
-	Alarms  []health.RuleSpec `yaml:"alarms"` // inline rules, same schema as health.d files
+	Enabled *bool                      `yaml:"enabled"`  // default true
+	Dir     string                     `yaml:"dir"`      // extra rule files (*.yaml), relative to the config file
+	Builtin *bool                      `yaml:"builtin"`  // load the rules shipped with the agent (default true)
+	LogKeep int                        `yaml:"log_keep"` // alarm log entries kept in memory
+	Silent  bool                       `yaml:"silent"`   // evaluate but never notify
+	Notify  Notify                     `yaml:"notify"`
+	Alarms  []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
+	Windows []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
 }
 
 // Notify holds the notification channels; a channel is active when its
@@ -171,6 +181,10 @@ type Notify struct {
 	PagerDuty struct {
 		RoutingKey string `yaml:"routing_key"`
 	} `yaml:"pagerduty"`
+	Push struct {
+		URL     string            `yaml:"url"`
+		Headers map[string]string `yaml:"headers"`
+	} `yaml:"push"`
 }
 
 // Export pushes latest samples to Graphite / Influx / JSON HTTP.

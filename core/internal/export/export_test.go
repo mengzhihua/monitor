@@ -148,3 +148,58 @@ func TestFlushMongo(t *testing.T) {
 		t.Fatal("timeout")
 	}
 }
+
+func TestFlushKinesisAndPubSub(t *testing.T) {
+	var gotK, gotP, pathK, pathP string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(r.URL.Path, "kinesis") {
+			gotK, pathK = string(b), r.URL.Path
+		} else {
+			gotP, pathP = string(b), r.URL.Path
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	_ = reg.Collect("system.ram", time.Unix(1_700_000_000, 0), map[string]float64{"used": 12.5})
+	e := New(reg, []Destination{
+		{Type: "kinesis", URL: srv.URL + "/kinesis", Prefix: "monitor"},
+		{Type: "pubsub", URL: srv.URL + "/pubsub"},
+	}, nil)
+	if err := e.flush(context.Background(), e.dest[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.flush(context.Background(), e.dest[1]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotK, `"StreamName":"monitor"`) || !strings.Contains(gotK, "system.ram") || pathK != "/kinesis" {
+		t.Fatalf("kinesis = %s %s", pathK, gotK)
+	}
+	if !strings.Contains(gotP, `"messages"`) || !strings.Contains(gotP, "system.ram") || pathP != "/pubsub" {
+		t.Fatalf("pubsub = %s %s", pathP, gotP)
+	}
+}
+
+func TestFlushKafka(t *testing.T) {
+	var got, ct string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got, ct = string(b), r.Header.Get("Content-Type")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	_ = reg.Collect("system.ram", time.Unix(1_700_000_000, 0), map[string]float64{"used": 12.5})
+	e := New(reg, []Destination{{Type: "kafka", URL: srv.URL + "/topics/monitor", Prefix: "monitor"}}, nil)
+	if err := e.flush(context.Background(), e.dest[0]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"records"`) || !strings.Contains(got, "system.ram") || !strings.Contains(ct, "kafka.json") {
+		t.Fatalf("kafka ct=%s body=%s", ct, got)
+	}
+}

@@ -698,3 +698,107 @@ alarms:
 		t.Fatalf("alarm badge: %s", body)
 	}
 }
+
+func TestManageHealthShareLDAPAndSummary(t *testing.T) {
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "id", Hostname: "test", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Units: "MiB",
+		Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	eng, err := health.New(reg, db, health.Options{Hostname: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(eng.Close)
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
+	srv, err := New(reg, db, sched, Options{Health: eng, StartedAt: time.Now(), LDAP: &LDAPConfig{
+		URL: "ldap://unused", Bind: func(user, password string) error {
+			if user == "alice" && password == "secret" {
+				return nil
+			}
+			return fmt.Errorf("nope")
+		}, Role: "viewer",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp := getJSON(t, ts.URL+"/api/v1/manage/health", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("manage get %d", resp.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/manage/health", strings.NewReader(`{"enabled":false,"cmd":"DISABLE ALL"}`))
+	req.Header.Set("Content-Type", "application/json")
+	got, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	if got.StatusCode != 200 {
+		t.Fatalf("manage put %d", got.StatusCode)
+	}
+	if eng.Enabled() {
+		t.Fatal("expected disabled")
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/alarm_summary", nil); resp.StatusCode != 200 {
+		t.Fatalf("summary %d", resp.StatusCode)
+	}
+	var info map[string]any
+	if resp := getJSON(t, ts.URL+"/api/v1/info", &info); resp.StatusCode != 200 {
+		t.Fatal("info")
+	}
+	if info["aclk"] == nil {
+		t.Fatalf("info missing aclk: %v", info)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/share", strings.NewReader(`{"ttl":"1h"}`))
+	req.Header.Set("Content-Type", "application/json")
+	got, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var share struct {
+		Token string `json:"token"`
+	}
+	_ = json.NewDecoder(got.Body).Decode(&share)
+	got.Body.Close()
+	if share.Token == "" {
+		t.Fatal("empty share token")
+	}
+	if resp := getJSON(t, ts.URL+"/api/v1/share?token="+share.Token, nil); resp.StatusCode != 200 {
+		t.Fatalf("share get %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/auth/ldap", strings.NewReader(`{"user":"alice","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	got, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var login struct {
+		Token string `json:"token"`
+		Role  string `json:"role"`
+	}
+	_ = json.NewDecoder(got.Body).Decode(&login)
+	got.Body.Close()
+	if login.Token == "" || login.Role != "viewer" {
+		t.Fatalf("%+v", login)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v2/nodes?contexts=true", nil); resp.StatusCode != 200 {
+		t.Fatalf("v2 nodes %d", resp.StatusCode)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v2/data?context=system.ram&group_by=node&after=-5", nil); resp.StatusCode != 200 && resp.StatusCode != 404 {
+		t.Fatalf("group_by status %d", resp.StatusCode)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v2/q?chart=system.ram&after=-5", nil); resp.StatusCode != 200 && resp.StatusCode != 404 {
+		t.Fatalf("v2 q %d", resp.StatusCode)
+	}
+	if resp := getJSON(t, ts.URL+"/api/v2/alert_transitions", nil); resp.StatusCode != 200 {
+		t.Fatalf("alert_transitions %d", resp.StatusCode)
+	}
+}

@@ -77,13 +77,18 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 			return u, true
 		}
 	}
+	if s.shares != nil {
+		if u, ok := s.shares.user(tok); ok {
+			return u, true
+		}
+	}
 	return User{}, false
 }
 
 func publicAPI(path string) bool {
 	switch path {
 	case stream.Path, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
-		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback":
+		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap":
 		return true
 	}
 	return false
@@ -223,6 +228,22 @@ func (s *Server) nodesPayload(r *http.Request, api int) map[string]any {
 			}
 			sp, rm := s.opt.Org.Membership(out[i].ID)
 			out[i].SpaceID, out[i].RoomID = sp, rm
+		}
+	}
+	if c := r.URL.Query().Get("contexts"); c == "true" || c == "1" {
+		for i := range out {
+			var v *view
+			if out[i].Local || out[i].ID == "" {
+				v = &view{hostname: s.reg.Host.Hostname, reg: s.reg, db: s.db}
+			} else if s.opt.Nodes != nil {
+				if n, ok := s.opt.Nodes.Get(out[i].ID); ok {
+					v = &view{id: n.ID, hostname: n.Host.Hostname, reg: n.Registry(), db: n.DB(), node: n}
+				}
+			}
+			if v == nil {
+				continue
+			}
+			out[i].Contexts = s.contextsPayload(v, api)
 		}
 	}
 	return map[string]any{"api": api, "now": now.Unix(), "nodes": out}
