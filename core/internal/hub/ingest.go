@@ -57,7 +57,10 @@ func StreamKey(r *http.Request) string {
 
 // authorize returns the hash of the accepted key; nodes are bound to it.
 func (n *Nodes) authorize(r *http.Request) (string, bool) {
-	key := StreamKey(r)
+	return n.authorizeKey(StreamKey(r))
+}
+
+func (n *Nodes) authorizeKey(key string) (string, bool) {
 	if key == "" {
 		return "", false
 	}
@@ -103,12 +106,20 @@ type session struct {
 	node    *Node
 	once    sync.Once
 	err     error
+	mqtt    bool
 }
 
 func (s *session) send(f stream.Frame) error {
 	b, err := json.Marshal(f)
 	if err != nil {
 		return err
+	}
+	if s.mqtt {
+		id := "pending"
+		if s.node != nil {
+			id = s.node.ID
+		}
+		b = stream.EncodeMQTTPublish("agent/"+id+"/from-cloud", b)
 	}
 	select {
 	case s.out <- b:
@@ -131,18 +142,29 @@ func (s *session) close(err error) {
 func (s *session) writer() {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
+	mt := websocket.TextMessage
+	if s.mqtt {
+		mt = websocket.BinaryMessage
+	}
 	for {
 		select {
 		case <-s.done:
 			return
 		case b := <-s.out:
 			_ = s.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
-			if err := s.ws.WriteMessage(websocket.TextMessage, b); err != nil {
+			if err := s.ws.WriteMessage(mt, b); err != nil {
 				s.close(err)
 				return
 			}
 		case <-ping.C:
 			_ = s.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if s.mqtt {
+				if err := s.ws.WriteMessage(websocket.BinaryMessage, stream.EncodeMQTTPingreq()); err != nil {
+					s.close(err)
+					return
+				}
+				continue
+			}
 			if err := s.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
 				s.close(err)
 				return
@@ -214,6 +236,11 @@ func (s *session) serve() {
 	if err := s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())}); err != nil {
 		return
 	}
+	if s.n.opt.NodeConfig != nil {
+		if disabled := s.n.opt.NodeConfig(node.ID); len(disabled) > 0 {
+			_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: disabled})
+		}
+	}
 	s.n.log.Info("hub: node connected", "node", node.ID, "hostname", node.Host.Hostname, "from", s.remote, "charts", len(last))
 
 	s.ws.SetPongHandler(func(string) error { return s.ws.SetReadDeadline(time.Now().Add(readTimeout)) })
@@ -275,6 +302,13 @@ func (s *session) attach(hello stream.Frame, now time.Time) (*Node, error) {
 	node.LastSeen = now.Unix()
 	node.lastData = 0
 	node.functions = hello.Functions
+	if hello.Protocol != "" {
+		node.protocol = hello.Protocol
+	} else if s.mqtt {
+		node.protocol = "mqtt"
+	} else {
+		node.protocol = "stream"
+	}
 	node.mu.Unlock()
 	s.node = node
 	if old != nil {
@@ -362,7 +396,7 @@ func (s *session) handle(node *Node, f stream.Frame) {
 				s.n.opt.OnAlarm(node.ID, e)
 			}
 		}
-	case stream.TypeFuncResult:
+	case stream.TypeFuncResult, stream.TypeQueryResult:
 		node.deliverResult(f)
 	default:
 		s.n.log.Debug("hub: unknown frame", "node", node.ID, "type", f.Type)

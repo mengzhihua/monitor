@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,9 @@ type ClientOptions struct {
 	// Replicate bounds how much history is re-sent after a (re)connect.
 	Replicate time.Duration
 	Version   string
+	// Protocol is "mqtt" / "aclk" for MQTT-over-WebSocket (PathACLK), or
+	// empty/"stream"/"json" for the JSON Frame path (Path).
+	Protocol string
 	// Functions lists the collector functions the hub may call (optional).
 	Functions func() []collect.Function
 	// Alarms returns the current alarm state; it is sent as a snapshot after
@@ -49,15 +53,19 @@ type ClientOptions struct {
 
 // ClientStatus is exposed through /api/v1/info.
 type ClientStatus struct {
-	Enabled     bool   `json:"enabled"`
-	Connected   bool   `json:"connected"`
-	Destination string `json:"destination,omitempty"`
-	Since       int64  `json:"since,omitempty"`
-	LastError   string `json:"last_error,omitempty"`
-	Sent        uint64 `json:"sent"`
-	Replicated  uint64 `json:"replicated"`
-	Dropped     uint64 `json:"dropped"`
-	Reconnects  uint64 `json:"reconnects"`
+	Enabled        bool     `json:"enabled"`
+	Connected      bool     `json:"connected"`
+	Destination    string   `json:"destination,omitempty"`
+	Since          int64    `json:"since,omitempty"`
+	LastError      string   `json:"last_error,omitempty"`
+	Sent           uint64   `json:"sent"`
+	Replicated     uint64   `json:"replicated"`
+	Dropped        uint64   `json:"dropped"`
+	Reconnects     uint64   `json:"reconnects"`
+	Protocol       string   `json:"protocol,omitempty"`
+	Claimed        bool     `json:"claimed,omitempty"`
+	NextConnection int64    `json:"next_connection,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
 }
 
 // Client streams a registry (and its TSDB history) to a hub.
@@ -89,6 +97,9 @@ func NewClient(reg *registry.Registry, db *tsdb.Store, opt ClientOptions) *Clien
 	}
 	c := &Client{reg: reg, db: db, opt: opt, log: opt.Logger, queue: make(chan Frame, 8192)}
 	c.st.Enabled = len(opt.Destinations) > 0
+	c.st.Protocol = c.protocolName()
+	c.st.Claimed = opt.ClaimToken != "" || opt.APIKey != ""
+	c.st.Capabilities = append([]string{}, ACLKCapabilities...)
 	reg.Subscribe(c.onSample)
 	return c
 }
@@ -151,6 +162,7 @@ func (c *Client) Run(ctx context.Context) {
 		if err != nil {
 			c.mu.Lock()
 			c.st.LastError = err.Error()
+			c.st.NextConnection = time.Now().Add(backoff).Unix()
 			c.mu.Unlock()
 		}
 		c.reconnects.Add(1)
@@ -168,8 +180,31 @@ func (c *Client) Run(ctx context.Context) {
 	}
 }
 
+func (c *Client) useMQTT() bool {
+	p := strings.ToLower(strings.TrimSpace(c.opt.Protocol))
+	return p == "mqtt" || p == "aclk"
+}
+
+func (c *Client) protocolName() string {
+	if c.useMQTT() {
+		return "mqtt"
+	}
+	return "stream"
+}
+
+func (c *Client) defaultPath() string {
+	if c.useMQTT() {
+		return PathACLK
+	}
+	return Path
+}
+
 // destURL normalizes a destination to a full WebSocket URL.
 func destURL(d string) (string, error) {
+	return destURLPath(d, Path)
+}
+
+func destURLPath(d, path string) (string, error) {
 	if !strings.Contains(d, "://") {
 		d = "ws://" + d
 	}
@@ -187,7 +222,7 @@ func destURL(d string) (string, error) {
 		return "", fmt.Errorf("stream destination %q: unsupported scheme", d)
 	}
 	if u.Path == "" || u.Path == "/" {
-		u.Path = Path
+		u.Path = path
 	}
 	return u.String(), nil
 }
@@ -206,7 +241,7 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, string, error) {
 		if c.opt.APIKey != "" {
 			hdr.Set("Authorization", "Bearer "+c.opt.APIKey)
 		}
-		u, err := destURL(d)
+		u, err := destURLPath(d, c.defaultPath())
 		if err != nil {
 			lastErr = err
 			continue
@@ -354,15 +389,22 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 	}
 	defer ws.Close()
 	sess := &clientSession{c: c, ws: ws, out: make(chan []byte, 1024), done: make(chan struct{}), errc: make(chan error, 1), sentDefs: map[string]string{}}
-	go sess.writer()
 	defer sess.close()
 
-	if err := sess.send(Frame{Type: TypeHello, Host: c.reg.Host, Version: c.opt.Version, Functions: c.functions()}); err != nil {
+	if c.useMQTT() {
+		if err := sess.mqttHandshake(); err != nil {
+			return false, err
+		}
+	}
+	go sess.writer()
+
+	if err := sess.send(Frame{Type: TypeHello, Host: c.reg.Host, Version: c.opt.Version, Functions: c.functions(),
+		Capabilities: ACLKCapabilities, Protocol: c.protocolName(), Claimed: c.opt.ClaimToken != "" || c.opt.APIKey != ""}); err != nil {
 		return false, err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(c.opt.Timeout))
-	var welcome Frame
-	if err := ws.ReadJSON(&welcome); err != nil {
+	welcome, err := sess.readFrame()
+	if err != nil {
 		return false, fmt.Errorf("waiting for welcome: %w", err)
 	}
 	if welcome.Type == TypeError {
@@ -373,6 +415,9 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 	}
 	c.mu.Lock()
 	c.st.Connected, c.st.Destination, c.st.Since, c.st.LastError = true, dest, time.Now().Unix(), ""
+	c.st.Protocol = c.protocolName()
+	c.st.Claimed = c.opt.ClaimToken != "" || c.opt.APIKey != ""
+	c.st.NextConnection = 0
 	c.mu.Unlock()
 	c.log.Info("stream: connected", "hub", dest)
 	c.fetchConfig(ctx, dest)
@@ -450,10 +495,72 @@ func (s *clientSession) close() {
 	s.closed.Do(func() { close(s.done) })
 }
 
+func (s *clientSession) mqttHandshake() error {
+	cid := ""
+	if s.c.reg != nil && s.c.reg.Host != nil {
+		cid = s.c.reg.Host.ID
+		if cid == "" {
+			cid = s.c.reg.Host.Hostname
+		}
+	}
+	if cid == "" {
+		cid = "monitord"
+	}
+	_ = s.ws.SetWriteDeadline(time.Now().Add(s.c.opt.Timeout))
+	if err := s.ws.WriteMessage(websocket.BinaryMessage, EncodeMQTTConnect(MQTTConnect{
+		ClientID: cid, Username: s.c.opt.APIKey, Password: s.c.opt.APIKey, KeepAlive: 60,
+	})); err != nil {
+		return err
+	}
+	_ = s.ws.SetReadDeadline(time.Now().Add(s.c.opt.Timeout))
+	_, raw, err := s.ws.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("mqtt connack: %w", err)
+	}
+	pkt, err := ParseMQTTPacket(raw)
+	if err != nil {
+		return err
+	}
+	if pkt.Type != mqttConnack || len(pkt.Payload) < 2 || pkt.Payload[1] != 0 {
+		return fmt.Errorf("mqtt: connect refused")
+	}
+	_ = s.ws.SetWriteDeadline(time.Now().Add(s.c.opt.Timeout))
+	if err := s.ws.WriteMessage(websocket.BinaryMessage, EncodeMQTTSubscribe(1, "agent/+/from-cloud")); err != nil {
+		return err
+	}
+	_ = s.ws.SetReadDeadline(time.Now().Add(s.c.opt.Timeout))
+	_, raw, err = s.ws.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("mqtt suback: %w", err)
+	}
+	ack, err := ParseMQTTPacket(raw)
+	if err != nil {
+		return err
+	}
+	if ack.Type != mqttSuback {
+		return fmt.Errorf("mqtt: expected SUBACK, got %d", ack.Type)
+	}
+	return nil
+}
+
+func (s *clientSession) pubTopic() string {
+	id := "agent"
+	if s.c.reg != nil && s.c.reg.Host != nil {
+		id = s.c.reg.Host.ID
+		if id == "" {
+			id = s.c.reg.Host.Hostname
+		}
+	}
+	return "agent/" + id + "/from-agent"
+}
+
 func (s *clientSession) send(f Frame) error {
 	b, err := json.Marshal(f)
 	if err != nil {
 		return err
+	}
+	if s.c.useMQTT() {
+		b = EncodeMQTTPublish(s.pubTopic(), b)
 	}
 	select {
 	case s.out <- b:
@@ -466,13 +573,17 @@ func (s *clientSession) send(f Frame) error {
 }
 
 func (s *clientSession) writer() {
+	mt := websocket.TextMessage
+	if s.c.useMQTT() {
+		mt = websocket.BinaryMessage
+	}
 	for {
 		select {
 		case <-s.done:
 			return
 		case b := <-s.out:
 			_ = s.ws.SetWriteDeadline(time.Now().Add(s.c.opt.Timeout))
-			if err := s.ws.WriteMessage(websocket.TextMessage, b); err != nil {
+			if err := s.ws.WriteMessage(mt, b); err != nil {
 				s.fail(err)
 				return
 			}
@@ -489,6 +600,51 @@ func (s *clientSession) fail(err error) {
 
 // reader handles hub → agent frames; the hub pings every 30s, so silence for
 // 90s means the connection is dead.
+func (s *clientSession) readFrame() (Frame, error) {
+	if !s.c.useMQTT() {
+		var f Frame
+		if err := s.ws.ReadJSON(&f); err != nil {
+			return Frame{}, err
+		}
+		return f, nil
+	}
+	for {
+		_, raw, err := s.ws.ReadMessage()
+		if err != nil {
+			return Frame{}, err
+		}
+		pkt, err := ParseMQTTPacket(raw)
+		if err != nil {
+			return Frame{}, err
+		}
+		switch pkt.Type {
+		case mqttPingreq:
+			select {
+			case s.out <- EncodeMQTTPingresp():
+			case <-s.done:
+				return Frame{}, errors.New("session closed")
+			}
+			continue
+		case mqttPingresp, mqttSuback, mqttConnack:
+			continue
+		case mqttPublish:
+			_, payload, err := DecodeMQTTPublish(pkt)
+			if err != nil {
+				return Frame{}, err
+			}
+			var f Frame
+			if err := json.Unmarshal(payload, &f); err != nil {
+				return Frame{}, err
+			}
+			return f, nil
+		case mqttDisconnect:
+			return Frame{}, errors.New("mqtt disconnect")
+		default:
+			continue
+		}
+	}
+}
+
 func (s *clientSession) reader(ctx context.Context) {
 	s.ws.SetReadLimit(1 << 20)
 	refresh := func() error { return s.ws.SetReadDeadline(time.Now().Add(90 * time.Second)) }
@@ -498,8 +654,8 @@ func (s *clientSession) reader(ctx context.Context) {
 		return s.ws.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(s.c.opt.Timeout))
 	})
 	for {
-		var f Frame
-		if err := s.ws.ReadJSON(&f); err != nil {
+		f, err := s.readFrame()
+		if err != nil {
 			s.fail(err)
 			return
 		}
@@ -507,10 +663,88 @@ func (s *clientSession) reader(ctx context.Context) {
 		switch f.Type {
 		case TypeFuncCall:
 			go s.runFunction(ctx, f)
+		case TypeQuery:
+			go s.runQuery(f)
+		case TypeConfig:
+			if s.c.opt.OnConfig != nil {
+				s.c.opt.OnConfig(f.Disabled)
+			}
 		case TypeError:
 			s.fail(fmt.Errorf("hub: %s", f.Error))
 			return
 		}
+	}
+}
+
+func (s *clientSession) runQuery(f Frame) {
+	res := Frame{Type: TypeQueryResult, CallID: f.CallID, Name: f.Name}
+	chartID := ""
+	if f.Args != nil {
+		chartID = f.Args["chart"]
+	}
+	if chartID == "" {
+		chartID = f.ChartID
+	}
+	ch, ok := s.c.reg.Chart(chartID)
+	if !ok || s.c.db == nil {
+		res.Error = "chart not found"
+		_ = s.send(res)
+		return
+	}
+	now := time.Now().Unix()
+	before := now
+	after := now - 60
+	if f.Args != nil {
+		if n, err := strconv.ParseInt(f.Args["after"], 10, 64); err == nil && n != 0 {
+			if n < 0 {
+				after = before + n
+			} else {
+				after = n
+			}
+		}
+		if n, err := strconv.ParseInt(f.Args["before"], 10, 64); err == nil && n > 0 {
+			before = n
+		}
+	}
+	dimIDs := make([]string, 0, len(ch.Dims()))
+	rows := map[int64]map[string]float64{}
+	for _, d := range ch.Dims() {
+		dimIDs = append(dimIDs, d.ID)
+		pts, err := s.c.db.Query(registry.SeriesID(ch.ID, d.ID), after, before)
+		if err != nil {
+			continue
+		}
+		for _, p := range pts {
+			r := rows[p.TS]
+			if r == nil {
+				r = map[string]float64{}
+				rows[p.TS] = r
+			}
+			r[d.ID] = p.Value
+		}
+	}
+	ts := make([]int64, 0, len(rows))
+	for t := range rows {
+		ts = append(ts, t)
+	}
+	sort.Slice(ts, func(i, j int) bool { return ts[i] < ts[j] })
+	data := make([][]any, 0, len(ts))
+	for _, t := range ts {
+		row := make([]any, 1, 1+len(dimIDs))
+		row[0] = t
+		for _, id := range dimIDs {
+			if v, ok := rows[t][id]; ok {
+				row = append(row, v)
+			} else {
+				row = append(row, nil)
+			}
+		}
+		data = append(data, row)
+	}
+	b, _ := json.Marshal(map[string]any{"id": ch.ID, "dimension_ids": dimIDs, "result": map[string]any{"data": data}})
+	res.Result = b
+	if err := s.send(res); err != nil {
+		s.fail(err)
 	}
 }
 

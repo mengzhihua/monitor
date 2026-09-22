@@ -17,7 +17,7 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | 原生 C 插件便携近似 | **骨架完成** | cups / xenstat / ioping / nftables / ipmi / ebpf(bpftool) / journalctl / wevtutil |
 | Windows.plugin | **骨架** | 进程/线程/句柄 + Function `windows-services`；缺 Perflib 全家桶 |
 | freebsd.plugin | **骨架** | ctxt/intr/softirq/forks/wired/laundry/IPC/温度；缺 ZFS/ipfw/net.inet*/devstat |
-| Hub / Cloud | **骨架** | claim/Space/Room/OIDC/环复制/LDAP/share；缺真 ACLK MQTT 与 Cloud 控制台 |
+| Hub / Cloud | **产品面（M25）** | claim/Space/Room/OIDC/环复制/LDAP/share + ACLK MQTT-over-WSS + Cloud 控制台 + 图上异常高亮 + Correlations UI |
 | 850+ Prometheus 集成名 | **过渡覆盖** | 走已有 `prometheus` 采集器（`prom.*` ID），不逐个原生化 |
 
 约 **165** 个内置采集器。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **18%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在内核探针与平台插件。
@@ -98,10 +98,10 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | 状态 | 能力 |
 | --- | --- |
 | 有 | v1 全套常用端点；v2 contexts/nodes/data/q/badge；`group_by=node`；alert_transitions；manage/health |
-| **未做** | `/api/v3`；`group_by=dimension`；`alert_config`（单条规则 CRUD）；chart 异常高亮（每维 anomaly bit） |
-| **未做** | Metric Correlations 完整 UI（现在只有 Weights 面板窗口输入） |
-| 近似 | `info.aclk` 语义字段；流仍是 WebSocket，**不是 MQTT over WSS** |
-| **未做** | Cloud 控制台产品面（节点清单/房间拓扑/告警路由可视化，不只 API） |
+| **未做** | `/api/v3`；`group_by=dimension`；`alert_config`（单条规则 CRUD） |
+| **有（M25）** | 每维 anomaly bit（`charts`/`chart`/`data.anomaly`）；Metric Correlations 完整 UI（group/top/窗口/分数条/点选筛选） |
+| **有（M25）** | ACLK：MQTT 3.1.1 over WSS（`/api/v1/aclk`）承载既有 JSON Frame；JSON `/api/v1/stream` 仍是默认 |
+| **有（M25）** | Cloud 控制台：`GET /api/v1/hub/console` + Vue 面板（Space/Room 拓扑、ACLK、告警路由） |
 
 ### 2.7 明确不做 / 延后
 
@@ -144,8 +144,8 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | **M21 Windows.plugin** | Perflib：processor/memory/storage/network/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows 目前几乎只有进程计数 | WMI/typeperf fixture；无角色则禁用；Windows CI |
 | **M22 freebsd.plugin** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
 | **M23 IBM 与残留应用** | ibm.d db2/as400/mq/websphere（CGO 或 CLI）；pandas/go_expvar/am2320；lxc/ecs/containerd；可选 Kafka 协议采集 | 长尾，不挡主路径 | 无驱动/无 socket 禁用；cgo 用 build tag |
-| **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
-| **M25 Hub Cloud 产品** | 真 ACLK（MQTT over WSS 或保持 WS 并完整对等语义）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
+| **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
+| **M25 Hub Cloud 产品（本轮）** | 真 ACLK（MQTT over WSS）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
 | **M26 集成目录** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | 文档 + 可选 codegen，不扩 go.d 重复 |
 
 ### 3.3 批次依赖
@@ -165,9 +165,30 @@ flowchart LR
 
 M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定后再动查询协议。M25 依赖 M24。M23 可随时插空。
 
-## 4. 下一轮（M19）交付清单
+## 4. 本轮（M25）交付清单
 
-内核深度，不碰 go.d，不扩 Windows/FreeBSD（留给 M21/M22）。
+Hub Cloud 产品面。不碰 go.d，不实现 M19–M24。
+
+1. **ACLK MQTT-over-WSS**
+   - `/api/v1/aclk`：MQTT 3.1.1 CONNECT/CONNACK/PUBLISH/SUBSCRIBE/PING，payload 仍是既有 JSON `stream.Frame`
+   - JSON `/api/v1/stream` 保持默认；`stream.protocol: mqtt|aclk` 切换
+   - hello 广告 capabilities；`info.aclk` 含 protocol / claimed / storage / dest
+   - Hub `TypeQuery` 在 `hub.storage=proxy` 时 live-query Agent；`TypeConfig` 下发 disabled 采集器
+2. **Cloud 控制台**
+   - `GET /api/v1/hub/console`：Space → Room → nodes（status/aclk/alarms）+ 告警路由 + ACLK 摘要
+   - Vue `CloudPanel`：拓扑、路由渠道、点选节点筛选
+3. **图上异常高亮**
+   - `charts`/`chart` 每维 `anomaly` + 图级 `anomaly`
+   - `/api/v1/data` 返回与 dimension_ids 对齐的 `anomaly: []int`（最新 bit）
+   - MetricChart：异常维红色加粗 + 卡片 badge
+4. **完整 Correlations UI**
+   - `weights?method=ks2|volume&group=chart|context|dimension&top=`
+   - 故障窗 / 基线窗、分数条、点选筛选图表
+5. **测试**：MQTT round-trip、ACLK 端到端、console、correlate group、data anomaly；smoke 覆盖新路径
+
+## 5. 后续（M19 内核深度，并行批次）
+
+内核深度，不碰 go.d，不扩 Windows/FreeBSD（留给 M21/M22）。仍由其它批次推进。
 
 1. **eBPF 程序族（便携优先）**
    - 新文件建议：`core/internal/collect/ebpf_progs.go`（或按 program 拆）
@@ -187,7 +208,7 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 
-## 5. 工程约束（各批通用）
+## 6. 工程约束（各批通用）
 
 - 图表 ID / context / 单位 / algorithm（absolute vs incremental）对齐 Netdata。
 - Init 失败 = 该采集器禁用，不影响其它模块。

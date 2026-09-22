@@ -87,7 +87,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 
 func publicAPI(path string) bool {
 	switch path {
-	case stream.Path, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
+	case stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
 		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap":
 		return true
 	}

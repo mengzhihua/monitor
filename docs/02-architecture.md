@@ -484,7 +484,7 @@ sequenceDiagram
 | **M22 freebsd.plugin** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
 | **M23 IBM 与残留** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 无驱动禁用 |
 | **M24 查询 API 深度** | `/api/v3`、`group_by=dimension`、`alert_config`、每维 anomaly | API 单测 |
-| **M25 Hub Cloud 产品** | ACLK 语义补齐、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 双节点冒烟 |
+| **M25 Hub Cloud 产品（本轮）** | ACLK MQTT-over-WSS、Cloud 控制台、图上异常高亮、完整 Correlations UI | Hub 冒烟 + Vue |
 | **M26 集成目录** | 仅点名需要原生 ID 的 Prometheus 包装；文档化 prom.* vs 原生 | 不重复 go.d |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
@@ -543,4 +543,4 @@ sequenceDiagram
 | freebsd.plugin ZFS/ipfw/net.inet | `internal/collect/freebsd.go` | M22 |
 | ibm.d / pandas / lxc/ecs/containerd | `internal/collect` | M23 |
 | API v3 / group_by=dimension / alert_config | `internal/api` | M24 |
-| Cloud 控制台 / 图上异常高亮 | `web/` + `internal/hub` | M25 |
+| Cloud 控制台 / 图上异常高亮 / ACLK MQTT | `web/` + `internal/hub` + `internal/stream` | M25 |

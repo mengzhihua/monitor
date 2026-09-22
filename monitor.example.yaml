@@ -46,6 +46,7 @@ stream:
   insecure_skip_verify: false
   timeout: 10s
   replicate: 1h        # at most this much history is re-sent after reconnecting
+  protocol: stream     # stream = JSON /api/v1/stream; mqtt or aclk = MQTT 3.1.1 over WSS /api/v1/aclk
 
 # Hub side (mode: hub): accept nodes. Each node gets its own registry + TSDB namespace;
 # query them with `?node=<id>` on the usual API and pick them in the dashboard.
@@ -61,6 +62,7 @@ hub:
   peer_token: ""           # Bearer token presented to peers (usually their web.token); also required on POST /api/v1/hub/ring
   space: default           # created on first hub start if org.json is empty
   room: default
+  storage: full            # full = hub keeps samples; proxy = live-query the agent (TypeQuery)
 
 collectors:
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi

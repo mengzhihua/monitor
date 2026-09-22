@@ -39,8 +39,14 @@ type Weight struct {
 	Chart       string  `json:"chart"`
 	Context     string  `json:"context"`
 	Title       string  `json:"title"`
+	Dimension   string  `json:"dimension,omitempty"`
 	Score       float64 `json:"score"`
 	AnomalyRate float64 `json:"anomaly_rate"`
+}
+
+// AnomalyProvider exposes the current per-dimension anomaly bit (series id → flag).
+type AnomalyProvider interface {
+	DimAnomalies() map[string]bool
 }
 
 // Configurable collectors receive their `collectors.modules.<name>` section

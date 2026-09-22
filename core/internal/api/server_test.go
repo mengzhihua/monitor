@@ -529,6 +529,15 @@ func TestIngestOTLPAndWeightsKS2(t *testing.T) {
 	if w.Method != "volume" {
 		t.Fatalf("weights = %+v", w)
 	}
+	var grouped struct {
+		Group string           `json:"group"`
+		Count int              `json:"count"`
+		Rows  []collect.Weight `json:"weights"`
+	}
+	getJSON(t, ts.URL+"/api/v1/weights?method=volume&group=dimension&top=5&after=-10&before=0&baseline_after=-40&baseline_before=-10", &grouped)
+	if grouped.Group != "dimension" || grouped.Count == 0 || grouped.Rows[0].Dimension == "" {
+		t.Fatalf("grouped weights = %+v", grouped)
+	}
 	if resp := getJSON(t, ts.URL+"/api/v1/logs?source=file&limit=5", nil); resp.StatusCode != 200 {
 		t.Fatalf("logs status %d", resp.StatusCode)
 	}
@@ -800,5 +809,87 @@ func TestManageHealthShareLDAPAndSummary(t *testing.T) {
 	}
 	if resp := getJSON(t, ts.URL+"/api/v2/alert_transitions", nil); resp.StatusCode != 200 {
 		t.Fatalf("alert_transitions %d", resp.StatusCode)
+	}
+}
+
+type stubML struct{ bits map[string]bool }
+
+func (s *stubML) Name() string                  { return "ml" }
+func (s *stubML) Init(*registry.Registry) error { return nil }
+func (s *stubML) Collect(context.Context, *registry.Registry, time.Time) error {
+	return nil
+}
+func (s *stubML) DimAnomalies() map[string]bool { return s.bits }
+
+func TestDataAnomalyBits(t *testing.T) {
+	collect.Register("ml", func() collect.Collector {
+		return &stubML{bits: map[string]bool{registry.SeriesID("system.ram", "used"): true}}
+	})
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "id", Hostname: "test", OS: "linux", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Context: "system.ram", Family: "ram", Title: "RAM", Units: "MiB",
+		Type: registry.Stacked, Priority: 200, Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	now := time.Now().Truncate(time.Second)
+	for i := 0; i < 5; i++ {
+		_ = reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": 10, "free": 1})
+	}
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"ml"}})
+	srv, err := New(reg, db, sched, Options{Version: "test", StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	var info struct {
+		ACLK struct {
+			Available bool   `json:"available"`
+			Protocol  string `json:"protocol"`
+		} `json:"aclk"`
+	}
+	getJSON(t, ts.URL+"/api/v1/info", &info)
+	if info.ACLK.Protocol != "stream" {
+		t.Fatalf("info.aclk = %+v", info.ACLK)
+	}
+
+	var data struct {
+		Anomaly      []int    `json:"anomaly"`
+		DimensionIDs []string `json:"dimension_ids"`
+	}
+	getJSON(t, ts.URL+fmt.Sprintf("/api/v1/data?chart=system.ram&after=%d&before=%d", now.Unix()-10, now.Unix()), &data)
+	if len(data.Anomaly) != len(data.DimensionIDs) {
+		t.Fatalf("anomaly %v vs dims %v", data.Anomaly, data.DimensionIDs)
+	}
+	found := false
+	for i, id := range data.DimensionIDs {
+		if id == "used" && data.Anomaly[i] == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected used anomaly bit: %+v", data)
+	}
+
+	var chart struct {
+		Anomaly    bool `json:"anomaly"`
+		Dimensions []struct {
+			ID      string `json:"id"`
+			Anomaly bool   `json:"anomaly"`
+		} `json:"dimensions"`
+	}
+	getJSON(t, ts.URL+"/api/v1/chart?chart=system.ram", &chart)
+	if !chart.Anomaly {
+		t.Fatalf("chart anomaly = %+v", chart)
+	}
+}
+
+func TestHubConsoleOnAgentIs404(t *testing.T) {
+	ts, _ := newTestServer(t, Options{Version: "test"})
+	if resp := getJSON(t, ts.URL+"/api/v1/hub/console", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("agent console %d", resp.StatusCode)
 	}
 }
