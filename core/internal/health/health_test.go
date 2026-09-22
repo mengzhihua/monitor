@@ -120,7 +120,11 @@ func TestDefaultRulesCompile(t *testing.T) {
 	for _, r := range rules {
 		found[r.Spec.Name] = true
 	}
-	for _, name := range []string{"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors", "threads_in_use", "freebsd_cpu_temperature"} {
+	for _, name := range []string{
+		"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors",
+		"threads_in_use", "freebsd_cpu_temperature",
+		"edac_uncorrectable", "clock_unsync", "xen_domain_down", "sctp_aborted", "ib_port_errors",
+	} {
 		if !found[name] {
 			t.Fatalf("missing M13 builtin rule %q", name)
 		}
@@ -139,6 +143,51 @@ alarms:
 	for _, r := range merged {
 		if r.Spec.Name == "ram_in_use" && r.Spec.Warn != "$this > 50" {
 			t.Fatalf("override not applied: %+v", r.Spec)
+		}
+	}
+}
+
+func TestM18PerInstanceHealthBind(t *testing.T) {
+	rules, err := DefaultRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{
+		ID: "mem.edac_mc.mc0", Context: "mem.edac_mc", Family: "edac", Units: "errors",
+		Dimensions: []*registry.Dimension{{ID: "ce", Algorithm: registry.Incremental}, {ID: "ue", Algorithm: registry.Incremental}},
+	})
+	reg.AddChart(&registry.Chart{
+		ID: "xen.state.Domain-0", Context: "xen.state", Family: "xen", Units: "boolean",
+		Dimensions: []*registry.Dimension{{ID: "running"}},
+	})
+	e, err := New(reg, db, Options{Rules: rules, Hostname: "h", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+	now := time.Unix(1_700_000_000, 0)
+	_ = reg.Collect("mem.edac_mc.mc0", now, map[string]float64{"ce": 1, "ue": 0})
+	_ = reg.Collect("xen.state.Domain-0", now, map[string]float64{"running": 1})
+	e.Tick(now)
+	want := map[string]bool{
+		"edac_uncorrectable|mem.edac_mc.mc0": false,
+		"xen_domain_down|xen.state.Domain-0": false,
+	}
+	for _, a := range e.Alarms() {
+		key := a.Name + "|" + a.Chart
+		if _, ok := want[key]; ok {
+			want[key] = a.Active
+		}
+	}
+	for key, ok := range want {
+		if !ok {
+			t.Fatalf("template did not bind %s", key)
 		}
 	}
 }

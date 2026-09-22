@@ -90,7 +90,7 @@ func (i *ipmiCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		if !i.seen[id] {
 			i.seen[id] = true
 			ch := sysChart(id, "ipmi", "IPMI "+s.Name, s.Units, 39010, &registry.Dimension{ID: "value"})
-			ch.Plugin, ch.Module = "ipmi", "ipmi"
+			ch.Plugin, ch.Module, ch.Context = "ipmi", "ipmi", "ipmi."+s.Kind
 			reg.AddChart(ch)
 		}
 		_ = reg.Collect(id, now, map[string]float64{"value": s.Value})

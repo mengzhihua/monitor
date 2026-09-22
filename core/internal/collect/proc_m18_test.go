@@ -106,6 +106,12 @@ func TestProcM18Fixture(t *testing.T) {
 	must("drm.gpu_freq.card0", "freq")
 	must("bcache.hits.uuid-1", "hits")
 	must("system.clock_sync_offset", "offset")
+	if c, ok := reg.Chart("mem.edac_mc.mc0"); !ok || c.Context != "mem.edac_mc" {
+		t.Fatalf("edac context %v", c)
+	}
+	if c, ok := reg.Chart("cpu.powercap.package-0"); !ok || c.Context != "cpu.powercap" {
+		t.Fatalf("powercap context %v", c)
+	}
 	c, _ := reg.Chart("mem.slabmemory")
 	_, vals := c.LastValues()
 	if vals["active"] != 80 {

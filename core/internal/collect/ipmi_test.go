@@ -36,6 +36,9 @@ func TestIPMICollectorFixture(t *testing.T) {
 			if vals["value"] != 40 {
 				t.Fatalf("%s %v", ch.ID, vals)
 			}
+			if ch.Context != "ipmi.temperatures" {
+				t.Fatalf("context %q", ch.Context)
+			}
 		}
 	}
 	if !found {
