@@ -122,7 +122,7 @@ func TestDefaultRulesCompile(t *testing.T) {
 	}
 	for _, name := range []string{
 		"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors",
-		"threads_in_use", "freebsd_cpu_temperature",
+		"threads_in_use", "freebsd_cpu_temperature", "zfs_memory_throttle", "freebsd_ipfw_drops", "freebsd_softnet_drops",
 		"edac_uncorrectable", "clock_unsync", "xen_domain_down", "sctp_aborted", "ib_port_errors",
 	} {
 		if !found[name] {
