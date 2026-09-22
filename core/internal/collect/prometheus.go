@@ -13,16 +13,21 @@ import (
 
 // prometheusConfig is collectors.modules.prometheus — scrape jobs, matching
 // Netdata's go.d prometheus collector (any OpenMetrics / Prometheus endpoint).
+// Named profiles (M26) remap selected families onto native chart IDs; the rest
+// stay under the prom. prefix.
 type prometheusConfig struct {
-	Jobs    []prometheusJob `yaml:"jobs"`
-	Timeout time.Duration   `yaml:"timeout"`
+	Jobs     []prometheusJob `yaml:"jobs"`
+	Timeout  time.Duration   `yaml:"timeout"`
+	Profiles string          `yaml:"profiles"` // auto | off (default auto)
 }
 
 type prometheusJob struct {
-	Name    string            `yaml:"name"`
-	URL     string            `yaml:"url"`
-	Timeout time.Duration     `yaml:"timeout"`
-	Headers map[string]string `yaml:"headers"`
+	Name     string            `yaml:"name"`
+	URL      string            `yaml:"url"`
+	Timeout  time.Duration     `yaml:"timeout"`
+	Headers  map[string]string `yaml:"headers"`
+	Profile  string            `yaml:"profile"`  // etcd | fastapi | off | empty=auto
+	Fallback *bool             `yaml:"fallback"` // unmatched families → prom.* (default true)
 }
 
 type prometheusCollector struct {
@@ -73,6 +78,9 @@ func (p *prometheusCollector) Init(_ *registry.Registry) error {
 			Prefix: "prom", Plugin: "prometheus", Module: j.Name, Family: "prometheus/" + j.Name,
 		})
 	}
+	if p.cfg.Profiles == "" {
+		p.cfg.Profiles = "auto"
+	}
 	return nil
 }
 
@@ -86,7 +94,15 @@ func (p *prometheusCollector) Collect(ctx context.Context, reg *registry.Registr
 			continue
 		}
 		samples := ingest.ParseOpenMetrics(string(body))
-		n += p.maps[j.Name].Apply(reg, now, samples)
+		used := map[string]bool{}
+		for _, pr := range resolvePromProfiles(j, samples, p.cfg.Profiles) {
+			n += applyPromProfile(reg, now, pr, j.Name, samples, used)
+		}
+		if jobFallback(j) {
+			if rest := leftoverSamples(samples, used); len(rest) > 0 {
+				n += p.maps[j.Name].Apply(reg, now, rest)
+			}
+		}
 	}
 	if n == 0 && last != nil {
 		return last
