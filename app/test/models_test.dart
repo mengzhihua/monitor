@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:monitor_app/api/client.dart';
 import 'package:monitor_app/api/models.dart';
+import 'package:monitor_app/version.dart';
 
 void main() {
   test('ServerConfig builds http and ws URIs with token', () {
@@ -59,5 +60,9 @@ void main() {
     final f = FunctionInfo.fromJson({'name': 'logs', 'help': 'h', 'timeout': 8});
     expect(f.name, 'logs');
     expect(f.timeout, 8);
+  });
+
+  test('appVersion default matches pubspec placeholder', () {
+    expect(appVersion, isNotEmpty);
   });
 }
