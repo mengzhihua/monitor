@@ -31,6 +31,9 @@ func TestXenstatCollectorFixture(t *testing.T) {
 		t.Fatal("missing cpu")
 	}
 	ch, _ := reg.Chart("xen.state.Domain-0")
+	if ch.Context != "xen.state" {
+		t.Fatalf("context %q", ch.Context)
+	}
 	_, vals := ch.LastValues()
 	if vals["running"] != 1 {
 		t.Fatalf("%v", vals)

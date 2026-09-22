@@ -41,7 +41,9 @@ func TestCupsCollectorFixture(t *testing.T) {
 	if vals["idle"] != 1 {
 		t.Fatalf("%v", vals)
 	}
-	if _, ok := reg.Chart("cups.dest_state.HP"); !ok {
+	if ch, ok := reg.Chart("cups.dest_state.HP"); !ok {
 		t.Fatal("missing dest state")
+	} else if ch.Context != "cups.dest_state" {
+		t.Fatalf("context %q", ch.Context)
 	}
 }
