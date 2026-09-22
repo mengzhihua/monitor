@@ -63,7 +63,7 @@ hub:
   room: default
 
 collectors:
-  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi idlejitter perf nfacct
+  enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi idlejitter perf nfacct db2 as400 mq websphere pandas go_expvar am2320 lxc ecs containerd
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
     apps:              # processes grouped into applications (apps.cpu/mem/processes/threads/io_*) + `processes` function
@@ -184,6 +184,40 @@ collectors:
     ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
       command: ipmitool
       timeout: 8s
+    db2:                     # IBM DB2 via db2 CLI (no CGO); requires dsn
+      dsn: ""
+      command: db2
+      timeout: 8s
+    as400:                   # IBM i via isql/unixODBC; requires dsn
+      dsn: ""
+      command: isql
+      timeout: 8s
+    mq:                      # IBM MQ via dspmq/runmqsc
+      queue_manager: ""
+      command: dspmq
+      runmqsc: runmqsc
+      timeout: 5s
+    websphere:               # WebSphere PMI JSON or Prometheus /metrics
+      url: http://127.0.0.1:9080/metrics
+      timeout: 5s
+    pandas:                  # fetch JSON/CSV first row as charts (no Python eval)
+      timeout: 5s
+      jobs: []               # e.g. [{ name: demo, url: http://host/stats.json, format: json }]
+    go_expvar:               # Go /debug/vars memstats
+      url: http://127.0.0.1:6060/debug/vars
+      timeout: 3s
+    am2320:                  # AM2320 I2C via sysfs; missing sensor auto-disables
+      path: ""
+    lxc:                     # lxc-ls -f or cgroup lxc dirs
+      command: lxc-ls
+      timeout: 5s
+    ecs:                     # AWS ECS task metadata v4 (ECS_CONTAINER_METADATA_URI_V4)
+      url: ""
+      timeout: 3s
+    containerd:              # ctr containers/tasks ls
+      command: ctr
+      namespace: default
+      timeout: 5s
     sslcheck:
       timeout: 5s
       jobs: []               # e.g. [{ name: web, target: example.com:443 }]
