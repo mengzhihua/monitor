@@ -94,7 +94,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 模块 | 说明 |
 | --- | --- |
 | OpenMetrics 摄入 | `POST /api/v1/ingest/openmetrics` 解析 Prometheus / OpenMetrics 文本，按 metric 建图、按 label 建维度（上限 500 图 × 200 维） |
-| Prometheus 抓取 | `collectors.modules.prometheus.jobs` 定期拉取任意 `/metrics`，图表前缀 `prom.` |
+| Prometheus 抓取 | `collectors.modules.prometheus.jobs` 定期拉取任意 `/metrics`；点名 profile 出原生 ID，其余前缀 `prom.` |
 | StatsD | 默认监听 `127.0.0.1:8125` UDP，`name:value\|c\|g\|ms` → `statsd.counter/gauge/timer` |
 | 合成检查 | `httpcheck`（状态/耗时/长度/状态码/证书到期）、`portcheck`（TCP）、`ping`（ICMP 或 TCP RTT） |
 | 导出 | `export.destinations`：Graphite TCP、InfluxDB line protocol、JSON HTTP、OpenTSDB、Prometheus remote write、MongoDB |
@@ -234,7 +234,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 
 | 模块 | 说明 |
 | --- | --- |
-| FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
+| FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；M22 补 syscalls/pgfaults/swapio/RAM/ZFS ARC/ipfw/net.inet*/gstat/df/netstat；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
 | Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI `Win32_PerfRawData_PerfOS_System` + gopsutil）；Function `windows-services`（`sc query`）；非 Windows 自动禁用 |
 | Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
 | Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
@@ -258,6 +258,27 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
 | API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
 
+### 已实现能力（M19：内核深度）
+
+| 模块 | 说明 |
+| --- | --- |
+| eBPF | bpftool 库存图 + 程序族 `ebpf.cachestat/dcstat/fd/vfs/oomkill/process/shm/swap/disk/mount/hardirq`（kprobe_profile 优先，否则 /proc 近似）；无源则禁用子图而不是整模块 |
+| perf | `perf stat -a` → `perf.cpu` / `perf.instructions` / `perf.cache_misses`；无权限自动禁用 |
+| proc | NUMA `mem.extfrag.*`、`audit.backlog`（`auditctl -s`） |
+| 其它 | `idlejitter`（`system.idlejitter`）；`nfacct`；apps `cpu/mem/processes` 按 user / user group |
+| 告警 | oomkill、extfrag 高、audit backlog |
+
+### 已实现能力（M22：freebsd.plugin 剩余）
+
+| 模块 | 说明 |
+| --- | --- |
+| sysctl | `system.syscalls`、`mem.pgfaults` / `mem.swapio` / `mem.available`、`system.ram` 明细、`system.active_processes`、`cpu.scaling_cur_freq`、`system.interrupts`（hw.intrcnt）、`system.softnet_stat` |
+| 网络 | `ipv4.tcpsock/tcppackets/tcperrors/tcphandshake`、UDP/ICMP/IP、`ipv6.packets/errors/icmp`；点分 sysctl 键（opaque `net.inet.*.stats` 结构体无 CGO 不解码） |
+| ZFS | `kstat.zfs.misc.arcstats` → `zfs.arc_size` 等 + `zfs.l2_size/bytes/memory_ops/important_ops/arc_size_breakdown/trim_bytes/trim_requests` |
+| ipfw | `ipfw -a list` → `ipfw.mem/packets/bytes/active/expired` |
+| 磁盘/挂载/网卡 | `gstat` / `df -kP` / `netstat -ibn` 近似 devstat / getmntinfo / getifaddrs；gopsutil 已占用同 ID 则跳过 |
+| health | `zfs_memory_throttle`、`freebsd_ipfw_drops`、`freebsd_softnet_drops` |
+
 ### 已实现能力（M23：IBM / pandas / 容器运行时）
 
 | 模块 | 说明 |
@@ -265,6 +286,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc；`mq.queue.depth` current/max、`mq.qmgr.status`）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
 | python.d 残留 | `pandas`（JSON/CSV 首行，不 eval Python）、`go_expvar`（`/debug/vars` memstats）、`am2320`（sysfs I2C） |
 | 容器 | `lxc`（lxc-ls / cgroup）、`ecs`（task metadata v4）、`containerd`（ctr）；Functions `lxc-containers` / `ecs-containers` / `containerd-containers` |
+
+### 已实现能力（M26：Prometheus 点名原生 ID）
+
+| 模块 | 说明 |
+| --- | --- |
+| 采集 | `prometheus.jobs[].profile` 把 etcd/minio/vault/jenkins/grafana/prometheus/alertmanager/kafka/blackbox/gitlab/harbor/argocd/cert-manager/cilium/istio/vllm/litellm 等族映射成原生图表 ID；fastapi/go_runtime/python_gc 需显式 `profile`；其余仍 `prom.*` |
+| API | `GET /api/v1/prometheus/catalog` 列出 profile / 已有原生采集器 / fallback 策略 |
+| 告警 | etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列 |
 
 ### 开发
 
@@ -326,6 +355,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0–M18 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐。
+M0–M19、M22、M23 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → FreeBSD 插件剩余 → IBM/pandas/容器运行时。
 
-后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M22 freebsd.plugin → **M23 IBM/残留（已合入）** → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
