@@ -3,156 +3,221 @@
 > 对照 [Netdata](https://github.com/netdata/netdata) Agent + Cloud 全表面。
 > **目标：全部搬过来**（图表 ID / 语义对齐；目标不存在则零配置自动禁用）。
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
+> **不要重做 go.d**：`init.go` 除故意跳过的 `testrandom` 外已打勾。
 
-## 1. 已实现模块（截至 M16，真实环境覆盖待逐项验收）
+## 0. 现状一句话（M0–M18、M23 合入 main；M22 本轮）
 
-约 **156** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense` `storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq` `icecast` `phpdaemon` `pika` `maxscale` `nginxplus` `nginxunit` `docker_engine` `riakkv` `litespeed` `boinc` `spigotmc` `w1sensor` `ap` `dockerhub` `ethtool` `intelgpu` `logind` `dcgm` `panos` `powerstore` `powervault` `s3check` `scaleio` `smbios_memory` `vcsa` `mssql` `oracledb` `sql` `cloudwatch` `azure_monitor` `vsphere` `cato_networks` `snmp_traps` `snmp_topology` `freebsd` `windows`。
+Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
+剩下主要是 **eBPF/perf 内核探针、Windows Perflib、Cloud 产品面**。FreeBSD 插件剩余由本轮 M22 补齐；M23 IBM/pandas/容器运行时已合入。
 
-平台骨架已齐：三层 TSDB、Health 表达式、plugins.d、Child→Parent 流、Hub 查询扇出、RBAC、异常顾问（k-sigma / ks2 / volume）、Graphite/Influx/JSON/Prom remote write、Webhook/Slack/SMTP/钉钉/企微/飞书、Vue Dashboard。
-
-Netdata 公开目录约 **850+ 集成**（go.d ≈ 150 个模块 + proc/cgroups/apps/windows/freebsd 内部插件 + Cloud）。旧文档中的覆盖百分比没有可复现的指标分母，撤下；后续以能力、依赖、自动测试和真实环境四列验收。
-
-## 2. 还差什么（按子系统）
-
-### 2.1 Linux proc.plugin（装上就该有的系统图）
-
-| 状态 | 模块 | 数据源 |
+| 面 | 完成度 | 说明 |
 | --- | --- | --- |
-| 有 | cpu/load/mem/disk/net/uptime、熵、fd、forks、intr、PSI、IPv4 SNMP、TCP 状态 | `system.go` `proc.go` `netstat.go` |
-| **M7** | conntrack、softnet、IPC、mdstat、power_supply | `/proc` `/sys` |
-| **M8** | IPv6 SNMP/sockstat、IPVS、NFS client/server、ZFS ARC、Btrfs、wireless、KSM、zram | `/proc` `/sys` |
-| 未做 | InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetype、interrupts 明细、softirq 明细 | proc.plugin 其余 |
+| go.d 应用采集器 | **完成** | 除 `testrandom`；约 154 个原生模块 |
+| Linux proc / debugfs 常规图 | **完成** | 含 InfiniBand、tc、EDAC、SLAB、zswap、RAPL、DRM、bcache、timex |
+| 原生 C 插件便携近似 | **骨架完成** | cups / xenstat / ioping / nftables / ipmi / ebpf(bpftool) / journalctl / wevtutil |
+| Windows.plugin | **骨架** | 进程/线程/句柄 + Function `windows-services`；缺 Perflib 全家桶 |
+| freebsd.plugin | **完成（M22）** | sysctl 全家桶 + ZFS ARC/trim + ipfw + gstat/df/netstat 近似；非 FreeBSD 自动禁用 |
+| Hub / Cloud | **骨架** | claim/Space/Room/OIDC/环复制/LDAP/share；缺真 ACLK MQTT 与 Cloud 控制台 |
+| 850+ Prometheus 集成名 | **过渡覆盖** | 走已有 `prometheus` 采集器（`prom.*` ID），不逐个原生化 |
 
-### 2.2 容器 / cgroup
+本次合并后 `monitord -list-collectors` 实测174个注册模块；注册数量不代表真实端点验收。尚无统一覆盖率分母，不给出 Agent 或集成覆盖百分比。
 
-| 状态 | 能力 |
-| --- | --- |
-| 有 | Docker Engine API 每容器 cpu/mem/net/blkio；systemd `system.slice`；通用 cgroup v2 容器/VM 树（M11）；docker_engine Prometheus 指标（M12 续 4） |
-| **M11** | kubelet / kube-proxy / k8s_state / k8s_apiserver |
-| 未做 | libvirt/proxmox 专用采集 |
+## 1. 现在有什么（M0–M18）
 
-### 2.3 go.d 应用采集器（≈150，原生约 154）
+`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram、InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetype、IRQ/softirq 明细、EDAC、SLAB、zswap、RAPL、DRM、bcache、timex）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense` `storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq` `icecast` `phpdaemon` `pika` `maxscale` `nginxplus` `nginxunit` `docker_engine` `riakkv` `litespeed` `boinc` `spigotmc` `w1sensor` `ap` `dockerhub` `ethtool` `intelgpu` `logind` `dcgm` `panos` `powerstore` `powervault` `s3check` `scaleio` `smbios_memory` `vcsa` `mssql` `oracledb` `sql` `cloudwatch` `azure_monitor` `vsphere` `cato_networks` `snmp_traps` `snmp_topology` `freebsd` `windows` `libvirt` `proxmox` `ebpf` `cups` `xenstat` `ioping` `nftables` `podman` `ipmi` `db2` `as400` `mq` `websphere` `pandas` `go_expvar` `am2320` `lxc` `ecs` `containerd`。
 
-**已有：** apache, docker, dns_query, elasticsearch, httpcheck, memcached, mysql, nginx, nvidia_smi, php-fpm, ping, portcheck, postgres, prometheus, rabbitmq, redis, sslcheck/x509, systemd（部分）, whoisquery（M7）, haproxy（M7）, lighttpd（M7）, consul（M7）, mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm（M8）, zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs（M9）, postfix/exim/dovecot/fail2ban/weblog/squidlog/openldap/wireguard/samba/freeradius/tor（M10）, cgroup/k8s_kubelet/k8s_kubeproxy/k8s_apiserver/k8s_state（M11）, proxysql/clickhouse/cockroachdb/pulsar/envoy/upsd/zfspool/dmcache/filecheck/supervisord/monit/snmp（M12）, fluentd/logstash/cassandra/ceph/couchdb/couchbase/hddtemp/openvpn/beanstalk/uwsgi/powerdns/dnsmasq（M12 续）, megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense（M12 续 2）, storcli/nginxvts/tengine/nsd/dnsdist/dnsmasq_dhcp/isc_dhcpd/puppet/openvpn_status_log/rethinkdb/yugabytedb/vernemq（M12 续 3）, icecast/phpdaemon/pika/maxscale/nginxplus/nginxunit/docker_engine/riakkv/litespeed/boinc/spigotmc/w1sensor（M12 续 4）, ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory（M12 续 5）, vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology（M12 续 6）。
+平台骨架已齐：三层 TSDB、Health 表达式、plugins.d、Child→Parent 流、Hub 查询扇出、RBAC、异常顾问（k-sigma / ks2 / volume / k-means）、Graphite/Influx/JSON/Prom remote write/OpenTSDB/Mongo/Kinesis/PubSub/Kafka REST、Webhook/Slack/SMTP/钉钉/企微/飞书/Telegram/Discord/PagerDuty、Vue Dashboard、Flutter Functions、Android logcat。
 
-**已完成代码移植的历史批次（不等于真实服务验收）：**
+## 2. 还差什么（M18 之后，按子系统）
 
-| 批次 | 采集器 |
-| --- | --- |
-| **M7** | haproxy, lighttpd, consul, whoisquery |
-| **M8** | mongodb, pgbouncer, chrony, ntpd, smartctl, nvme, apcupsd, lvm |
-| **M9** | zookeeper, nats, varnish, squid, tomcat, traefik, bind, unbound, coredns, hdfs |
-| **M10** | postfix, exim, dovecot, fail2ban, squidlog, weblog, openldap, freeradius, tor, wireguard, samba |
-| **M11** | cgroup, k8s_kubelet, k8s_kubeproxy, k8s_apiserver, k8s_state |
-| **M12** | snmp, proxysql, clickhouse, cockroachdb, pulsar, envoy, upsd, zfspool, dmcache, filecheck, supervisord, monit |
-| **M12 续** | fluentd, logstash, cassandra, ceph, couchdb, couchbase, hddtemp, openvpn, beanstalk, uwsgi, powerdns, dnsmasq |
-| **M12 续 2** | megacli, hpssa, adaptecraid, redfish, activemq, gearman, geth, ipfs, pihole, powerdns_recursor, rspamd, typesense |
-| **M12 续 3** | storcli, nginxvts, tengine, nsd, dnsdist, dnsmasq_dhcp, isc_dhcpd, puppet, openvpn_status_log, rethinkdb, yugabytedb, vernemq |
-| **M12 续 4** | icecast, phpdaemon, pika, maxscale, nginxplus, nginxunit, docker_engine, riakkv, litespeed, boinc, spigotmc, w1sensor |
-| **M12 续 5** | ap, dockerhub, ethtool, intelgpu, logind, dcgm, panos, powerstore, powervault, s3check, scaleio, smbios_memory |
-| **M12 续 6** | vcsa, mssql, oracledb, sql, cloudwatch, azure_monitor, vsphere, cato_networks, snmp_traps, snmp_topology |
+原则：下列「近似」不算完成。图表 ID 必须对齐 Netdata；CLI 包装可以先落地，但要在完成标准里写明与 C 插件的语义差。
 
-go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实现之前：该软件若暴露 `/metrics`，用已有 `prometheus` 采集器即可先出图（图表 ID 为 `prom.*`，与 Netdata 原生 ID 不同）。
+### 2.1 Linux 内核深度（最高优先级）
 
-### 2.4 API / 查询（对标 `/api/v1` + `/api/v2`）
+| 状态 | Netdata 插件 / 模块 | 我们现在 | 目标 |
+| --- | --- | --- | --- |
+| 近似 | `ebpf.plugin` | `bpftool prog show` → 程序数/memlock/run_time | 真探针：cachestat / dcstat / disk / fd / filesystem / hardirq / oomkill / process / socket / vfs / mdflush / mount / shm / swap / sync；与 apps / cgroup 关联 |
+| 无 | `perf.plugin` | — | PMU：`perf_event_open` 或 `perf stat` → `perf.cpu.*` / `perf.hw.*` |
+| 部分 | `debugfs.plugin` | zswap / RAPL / sensors 已有 | 补 **NUMA extfrag**、**audit**（`/sys/kernel/debug/extfrag`、audit backlog） |
+| 近似 | `nfacct.plugin` | `nft list counters` | netfilter acct（nfacct / conntrack 字节会计）；无 nfacct 时保留 nft |
+| 近似 | `freeipmi.plugin` | `ipmitool sdr` | 优先 `ipmi-sensors`/`freeipmi`；回退 ipmitool |
+| 无 | `idlejitter.plugin` | — | 用户态 idle 抖动 microseconds |
+| 部分 | `apps.plugin` | 按进程组 cpu/mem/io | 补 **user / user group** 分解图 |
 
-| 状态 | 端点 |
-| --- | --- |
-| 有 | info, charts, chart, data, allmetrics(json/prometheus), collectors, functions, function, live, alarms, alarm_log, alarm_rules, weights, logs, ingest, nodes, stream, /metrics |
-| **M7** | `GET /api/v1/contexts`；`GET\|POST /api/v1/alarms/silence`；`GET /api/v1/alarm_variables`；allmetrics `csv`/`shell` |
-| **M13** | `/api/v1/data?context=` 跨图聚合；data `format=csv/ssv/jsonp`；`/api/v2` contexts/nodes/data；`alarm_count`；`badge.svg` |
-| **M14** | `hub/spaces` `hub/rooms` `hub/claim-tokens` `POST /api/v1/claim` `hub/config` `agent/config` `hub/ring` `auth/oidc/{login,callback}` |
-| 未做 | `manage/health` 其余管理项；v2 nodes 批量上下文树 / group_by=node |
+### 2.2 日志 / 查看器 / 其它 OS 插件
 
-### 2.5 健康 / 通知 / 导出
+| 状态 | Netdata | 我们现在 | 目标 |
+| --- | --- | --- | --- |
+| 近似 | `systemd-journal.plugin` | `journalctl` 一次性查询 | 跟随流、字段过滤、boot/unit/priority、Function 对齐 |
+| 近似 | `windows-events.plugin` | `wevtutil` + `channel=` | ETW/Evtx 分页、XPath、Function 对齐 |
+| 无 | `macos.plugin` / `macos-logs.plugin` | gopsutil 通用 cpu/mem/disk | mach host_info、powermetrics 可选、统一日志 `log show` |
+| 无 | `network-viewer.plugin` | Function `network-connections` | 连接×进程实时表（inode→pid），与 Netdata Function 列对齐 |
+| 部分 | `systemd-units.plugin` | systemd cgroup cpu/mem/io | 单位状态/失败/重启计数图 + Function |
+| 无 | `profile.plugin` | — | Agent 自身 CPU/锁剖析（可选，默认关） |
 
-| 状态 | 能力 |
-| --- | --- |
-| 有 | 表达式引擎、delay/hysteresis/repeat、约 20 条内置规则、6 个通知渠道、4 种导出 |
-| **M7** | 运行时静默 API；Telegram/Discord/PagerDuty；OpenTSDB；conntrack/md/haproxy/consul/battery/whois 规则 |
-| **M8** | ntpd/chrony 失步、Mongo 连接、UPS 电池、SMART 失败、NVMe 寿命、LVM 容量 |
-| **M9** | ZooKeeper outstanding、Tomcat/Traefik 错误、BIND SERVFAIL、CoreDNS panic、HDFS missing blocks |
-| **M10** | 邮件队列、Dovecot 认证失败、Fail2ban 封禁、web/squid 日志 5xx、FreeRADIUS reject |
-| **M11** | kubelet runtime 错误、API server 5xx、节点 NotReady、Failed pods |
-| **M12** | ZFS degraded、NUT 电池、ProxySQL slow、Envoy 5xx、文件缺失、Supervisord/Monit、SNMP ifDown、Cockroach live nodes |
-| **M12 续** | Fluentd retry、Logstash heap、Cassandra failures、Ceph ERR、CouchDB 5xx、Couchbase quota、HDD 温度、Beanstalk buried、uWSGI exceptions、PowerDNS latency |
-| **M12 续 2** | MegaRAID degraded、HPSSA nok、Adaptec LD critical、Redfish Critical、ActiveMQ backlog、Geth RPC fail、Recursor drops、Typesense unhealthy |
-| **M12 续 3** | StorCLI unhealthy、nginx VTS 5xx、Tengine 5xx、NSD drops、dnsdist drops、ISC dhcpd pool、Yugabyte over-limit、VerneMQ socket close |
-| **M12 续 4** | phpDaemon idle、MaxScale errors、NGINX Plus dropped、Docker health fails、Riak FSM、BOINC compute_error、SpigotMC TPS、w1sensor hot |
-| **M12 续 5** | 光模块温度、Intel GPU busy、DCGM GPU 温度、PAN-OS session、PowerStore/PowerVault health、S3 check、ScaleIO capacity |
-| **M12 续 6** | VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询 |
-| **M13** | CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
-| **M15** | MongoDB 导出（OP_MSG insert） |
-| 未做 | Netdata `health.d` 其余应用/Windows 模板；维护窗口日历；告警聚合摘要；Kinesis/Pub/Sub |
+### 2.3 Windows.plugin（Perflib 全家桶）
 
-### 2.6 Hub / Cloud
+M16 只有 `system.processes/threads/handles/ctxt` + Function `windows-services`。Netdata `windows.plugin` 还缺：
 
-| 状态 | 能力 |
-| --- | --- |
-| 有 | API Key 流式接入、replication 补传、节点列表、`node=` 查询、`hub.peers` 扇出、三角色 RBAC |
-| **M14** | claim token、Space/Room、OIDC 登录、配置下发（disabled 采集器）、样本环复制 HA |
-| 未做 | LDAP、ACLK 语义、移动推送网关、只读分享链接 |
-
-### 2.7 Dashboard / 客户端 / 平台
-
-| 状态 | 能力 |
-| --- | --- |
-| 有 | Vue 实时图、告警/Functions/日志/异常顾问、Hub 节点切换 |
-| **M7** | 告警静默按钮 |
-| **M14** | Hub 面板（Space/Room/claim/配置下发）、OIDC 登录入口、replica 标注 |
-| **M16** | Flutter Functions 页；Android logcat；Windows 进程/线程/句柄；FreeBSD sysctl IPC/温度 |
-| 未做 | context 总览页、静默倒计时、Netdata 式 metric correlation UI 深化 |
-
-### 2.8 ML / Functions
-
-| 状态 | 能力 |
-| --- | --- |
-| 有 | k-sigma 一阶差分回退、anomaly-rate/ks2/volume；functions：processes、network-connections、services、logs、streaming |
-| **M15** | k-means 多窗口模型（Netdata ML）；`weights?method=kmeans`；Functions `containers`/`disks`/`mounts`/`network-interfaces`；MongoDB 导出 |
-| **M16** | Windows `system.processes/threads/handles/ctxt` + `windows-services`；FreeBSD sysctl IPC/wired/laundry/温度；Flutter Functions；Android logcat |
-| 未做 | ebpf 网络观察；systemd-journal 原生库（现为 journalctl 子进程）；Windows ETW 深化 |
-
-## 3. 分批计划（全部搬完）
-
-原则不变：每批可合并、可测、图表 ID 对齐、目标缺失即禁用。
-
-| 批次 | 搬什么 | 完成标准 |
+| 批次优先级 | Perflib / 模块 | 图表族（对齐 Netdata ID） |
 | --- | --- | --- |
-| **M7** | proc 五件套；haproxy/lighttpd/consul/whoisquery；contexts/silence/variables/allmetrics csv·shell；OpenTSDB；Telegram/Discord/PagerDuty；Dashboard 静默 | `go test -race`、`vue-tsc`、`smoke.sh` |
-| **M8** | proc 剩余（ipv6/ipvs/nfs/zfs/btrfs/wireless/ksm/zram）；mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm | 同上 + 新采集器单测 |
-| **M9** | zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs | 默认端口探测 |
-| **M10** | postfix/exim/dovecot/fail2ban/weblog/squidlog/openldap/wireguard/samba/freeradius/tor | 含日志类 |
-| **M11** | 通用 cgroup + k8s_kubelet/kubeproxy/k8s_state/k8s_apiserver | kind/minikube 可选手测 |
-| **M12 本轮** | snmp + proxysql/clickhouse/cockroachdb/pulsar/envoy/upsd/zfspool/dmcache/filecheck/supervisord/monit | 第一批长尾 12 个 |
-| **M12 续** | fluentd/logstash/cassandra/ceph/couchdb/couchbase/hddtemp/openvpn/beanstalk/uwsgi/powerdns/dnsmasq | 第二批长尾 12 个 |
-| **M12 续 2** | megacli/hpssa/adaptecraid/redfish/activemq/gearman/geth/ipfs/pihole/powerdns_recursor/rspamd/typesense | 第三批长尾 12 个 |
-| **M12 续 3** | storcli/nginxvts/tengine/nsd/dnsdist/dnsmasq_dhcp/isc_dhcpd/puppet/openvpn_status_log/rethinkdb/yugabytedb/vernemq | 第四批长尾 12 个 |
-| **M12 续 4** | icecast/phpdaemon/pika/maxscale/nginxplus/nginxunit/docker_engine/riakkv/litespeed/boinc/spigotmc/w1sensor | 第五批长尾 12 个 |
-| **M12 续 5** | ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory | 第六批长尾 12 个 |
-| **M12 续 6** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | go.d init.go 收尾（跳过 testrandom） |
-| **M13** | 剩余系统 health.d 模板；data context 聚合；data csv/ssv/jsonp；`/api/v2` 子集；alarm_count；badge | 规则编译测试 |
-| **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
-| **M15** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
-| **M16（本轮）** | Windows/FreeBSD 对等、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
+| 高 | processor / memory / objects / processes / storage / network | CPU 队列、内存池、磁盘物理/逻辑、网卡 |
+| 高 | web-service（IIS）、asp、netframework | IIS 请求/队列、ASP.NET、.NET CLR |
+| 中 | hyperv、smb、thermalzone、numa、terminal-services | Hyper-V VM、SMB、温度、NUMA、RDS |
+| 低 | ad / adcs / adfs / exchange | 仅当角色存在时自动启用 |
+| 中 | GetServicesStatus **出图**（不仅 Function）、GetSensors、GetPowerSupply、GetHardwareInfo | `windows.service.*`、传感器、电源、硬件清单 |
 
-M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
+无 CGO PDH 时走 WMI `Win32_PerfRawData_*` / `typeperf`；Init 失败即禁用。
 
-## 4. 本轮（M16）交付清单
+### 2.4 freebsd.plugin（M22 本轮）
 
-1. FreeBSD `sysctl` 采集器（IPC / wired / laundry / forks / interrupts / CPU 温度），fixture 单测；`make cross` 与 Release 增加 `GOOS=freebsd`  
-2. Windows 进程/线程/句柄/上下文切换采集器（非 Windows 自动禁用）+ Function `windows-services`  
-3. Flutter 客户端 Functions 页（`/api/v1/functions` + `/function`）  
-4. Android：`logcat` 接入 Function `logs`；服务端壳默认禁用 Linux 专用采集器，声明 `READ_LOGS`
+M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / available / active_processes / cpu freq / hw.intrcnt / net.isr / net.inet* / inet6）、`kstat.zfs` ARC + zio trim、`ipfw -a list`、`gstat`/`df`/`netstat` 近似 devstat / getmntinfo / getifaddrs。
+
+与 C 插件的语义差：`net.inet.tcp.stats` 等内核结构体无 CGO 不解码，fixture / 点分 sysctl 键才出 TCP 明细；gstat `-b` 在无累计计数时按速率行映射。gopsutil 已占用的 `disk.*` / `disk_space.*` / `net.*` ID 不再重复建图。
+
+### 2.5 IBM / python.d 残留 / 容器专用
+
+| 状态 | 模块 | 说明 |
+| --- | --- | --- |
+| **M23** | ibm.d `db2` / `as400` / `mq` / `websphere` | CLI/HTTP 便携实现（`db2`/`isql`/`dspmq`/`runmqsc`/PMI JSON）；无 DSN/命令则禁用。真 ODBC CGO 仍可选后续 |
+| **M23** | python.d `pandas` / `go_expvar` / `am2320` | pandas 抓 JSON/CSV 首行（**不** eval Python）；go_expvar `/debug/vars`；am2320 sysfs |
+| **M23** | 容器运行时 | Docker / Podman / 通用 cgroup / k8s 之外：`lxc`、`ecs`、`containerd` |
+| 近似 | Kafka | 导出走 Kafka REST；采集可走 prometheus。原生 broker 协议仅在需要原生 ID 时做 |
+
+### 2.6 API / 查询 / ML / Dashboard
+
+| 状态 | 能力 |
+| --- | --- |
+| 有 | v1 全套常用端点；v2 contexts/nodes/data/q/badge；`group_by=node`；alert_transitions；manage/health |
+| **未做** | `/api/v3`；`group_by=dimension`；`alert_config`（单条规则 CRUD）；chart 异常高亮（每维 anomaly bit） |
+| **未做** | Metric Correlations 完整 UI（现在只有 Weights 面板窗口输入） |
+| 近似 | `info.aclk` 语义字段；流仍是 WebSocket，**不是 MQTT over WSS** |
+| **未做** | Cloud 控制台产品面（节点清单/房间拓扑/告警路由可视化，不只 API） |
+
+### 2.7 明确不做 / 延后
+
+| 项 | 策略 |
+| --- | --- |
+| go.d 已实现模块 | **不再移植** |
+| `testrandom` | 永远跳过 |
+| 850+ Prometheus 集成名 | 继续用 `prometheus` 采集器；只有客户点名原生 chart ID 才单开 |
+| charts.d bash 编排器 | 已有 plugins.d；不内嵌 bash 解释器 |
+| 真 CGO eBPF CO-RE | M19 先 `cilium/ebpf-go` **可选 tag** + bpftool/tracefs 回退；默认静态二进制仍无 CGO |
+| Netdata Cloud SaaS 账号体系 | 用自建 Hub 对等，不对接 netdata.cloud 账号 |
+
+## 3. 分批计划
+
+原则不变：每批可合并、可测、图表 ID 对齐、目标缺失即禁用。完成标准一律 `go test -race`、`vue-tsc`、`scripts/smoke.sh`。
+
+### 3.1 已完成（M7–M18）
+
+| 批次 | 搬什么 | 状态 |
+| --- | --- | --- |
+| **M7** | proc 五件套；haproxy/lighttpd/consul/whoisquery；contexts/silence/variables；OpenTSDB；Telegram/Discord/PagerDuty | 合入 |
+| **M8** | ipv6/ipvs/nfs/zfs/btrfs/wireless/ksm/zram；mongodb/pgbouncer/chrony/ntpd/smartctl/nvme/apcupsd/lvm | 合入 |
+| **M9** | zookeeper/nats/varnish/squid/tomcat/traefik/bind/unbound/coredns/hdfs | 合入 |
+| **M10** | postfix/exim/dovecot/fail2ban/weblog/squidlog/openldap/wireguard/samba/freeradius/tor | 合入 |
+| **M11** | cgroup + k8s_kubelet/kubeproxy/k8s_state/k8s_apiserver | 合入 |
+| **M12 … 续 6** | go.d init.go 收尾（跳过 testrandom） | 合入 |
+| **M13** | 系统 health.d；data context；csv/ssv/jsonp；v2 子集；badge | 合入 |
+| **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 合入 |
+| **M15** | k-means ML、Functions、Mongo 导出 | 合入 |
+| **M16** | Windows/FreeBSD 骨架、Flutter Functions、Android logcat | 合入 |
+| **M17** | proc 剩余 + libvirt/proxmox/ebpf 近似；manage/health；维护窗口；Kinesis/Pub/Sub；LDAP/share | 合入 |
+| **M18** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q | 合入 |
+
+### 3.2 后续批次（M19–M26）
+
+| 批次 | 搬什么 | 为什么现在做 | 完成标准（额外） |
+| --- | --- | --- | --- |
+| **M19 内核深度** | eBPF 程序族（tracefs/`bpftool`/可选 cilium）；`perf`；debugfs extfrag+audit；idlejitter；nfacct 回退增强；apps user/group | Linux 服务器与 Netdata 差异最大的一块 | fixture 解析 `/sys/kernel/debug`、`perf stat` 文本；无权限自动禁用 |
+| **M20 日志与查看器** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | Function 列与 Netdata 对齐的单测；macOS 交叉编译 |
+| **M21 Windows.plugin** | Perflib：processor/memory/storage/network/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows 目前几乎只有进程计数 | WMI/typeperf fixture；无角色则禁用；Windows CI |
+| **M22 freebsd.plugin（本轮）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
+| **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 无驱动/无 socket 禁用 |
+| **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
+| **M25 Hub Cloud 产品** | 真 ACLK（MQTT over WSS 或保持 WS 并完整对等语义）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
+| **M26 集成目录** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | 文档 + 可选 codegen，不扩 go.d 重复 |
+
+### 3.3 批次依赖
+
+```mermaid
+flowchart LR
+  M19[M19 内核] --> M20[M20 日志/查看器]
+  M19 --> M21[M21 Windows]
+  M19 --> M22[M22 FreeBSD]
+  M20 --> M24[M24 API v3]
+  M21 --> M24
+  M22 --> M24
+  M23[M23 IBM/残留]
+  M24 --> M25[M25 Cloud UI]
+  M25 --> M26[M26 集成目录]
+```
+
+M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定后再动查询协议。M25 依赖 M24。M23 可随时插空。
+
+## 4. 本轮（M22）交付清单
+
+freebsd.plugin 剩余，不碰 go.d，不扩 eBPF/Windows（M19/M21 由其它 PR）。
+
+1. **sysctl 扩展**：`system.syscalls` `mem.pgfaults` `mem.swapio` `system.ram` 明细 `mem.available` `system.active_processes` `cpu.scaling_cur_freq` `system.interrupts` `system.softnet_stat`
+2. **net.inet***：`ipv4.tcpsock/tcppackets/tcperrors/tcphandshake`、UDP/ICMP/IP、`ipv6.packets/errors/icmp`（点分键；opaque 结构体不解码）
+3. **ZFS**：复用 `zfs.arc_size` 等 + `zfs.l2_size/bytes/memory_ops/important_ops/arc_size_breakdown/trim_*`
+4. **ipfw**：`ipfw.mem/packets/bytes/active/expired`（`ipfw -a list`）
+5. **devstat / mnt / if**：`gstat` / `df -kP` / `netstat -ibn`，已有同 ID 则跳过
+6. **health.d** `system_m22.yaml`：`zfs_memory_throttle` / `freebsd_ipfw_drops` / `freebsd_softnet_drops`
+7. **测试**：sysctl+ipfw+gstat+df+netstat fixture 两拍；`GOOS=freebsd go test -c`
+
+下一轮仍是 M19 内核深度（其它 Chat 的 M20/M21 并行）。
+
+## 4b. 下一轮（M19）交付清单
+
+内核深度，不碰 go.d，不扩 Windows/FreeBSD（留给 M21/M22）。
+
+1. **eBPF 程序族（便携优先）**
+   - 新文件建议：`core/internal/collect/ebpf_progs.go`（或按 program 拆）
+   - 数据源优先级：`/sys/kernel/debug/tracing` / bpffs 统计 → `bpftool prog show --json` 扩展 → 可选 `cilium/ebpf-go`（`//go:build linux,cgo,ebpf`）
+   - 图表 ID 对齐 Netdata：`ebpf.cachestat` `ebpf.dcstat` `ebpf.disk` `ebpf.fd` `ebpf.vfs` `ebpf.oomkill` `ebpf.process` `ebpf.shm` `ebpf.swap` `ebpf.sync` `ebpf.mdflush` `ebpf.mount` `ebpf.hardirq` 等
+   - 无 `CAP_BPF` / debugfs 则保持现有 bpftool 库存图，程序族禁用而不是整模块失败
+2. **perf.plugin**
+   - `perf stat -a -x,` 或 `unix.PerfEventOpen`（linux-only 文件）
+   - 图：`perf.cpu`（cycles/instructions/cache-misses/branch-misses）
+   - 容器无 perf_event_paranoid 权限 → Init 失败禁用
+3. **debugfs 剩余**：NUMA `extfrag`、kernel `audit` backlog
+4. **idlejitter**：用户态 sleep 抖动，图 `system.idlejitter`
+5. **apps user/group**：`apps.cpu_user` / `apps.cpu_group`（以及 mem 对应）；groups 来自 `/etc/passwd`+`/etc/group` 或 gopsutil
+6. **nfacct**：若 `nfacct list` 可用则出 `netfilter.nfacct`；否则保持 nftables
+7. **health.d** `system_m19.yaml`：oomkill、extfrag 高、perf 不可用不必告警（采集禁用即可）
+8. **测试**：纯 fixture，不在 CI 加载真实 kprobe；`GOOS=linux` 单测 + 其它 OS stub
+
+## 4.1 M23（已合入 main）
+
+与 M19–M22 并行落地。默认无 CGO；Init 失败即禁用。
+
+1. `db2` / `as400` / `mq` / `websphere`：ibm.d 图表 ID 子集（connections/locking/deadlocks、cpu/jobs/ASP、queue managers/depth、JVM heap/threads/sessions）
+2. `pandas` JSON/CSV 首行；`go_expvar` memstats；`am2320` sysfs
+3. `lxc` / `ecs` / `containerd` 状态图 + Functions
+4. health.d `system_m23.yaml`
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 
+## 5. 工程约束（各批通用）
 
-## 5. 稳定性阶段验收（2026-09-22）
+- 图表 ID / context / 单位 / algorithm（absolute vs incremental）对齐 Netdata。
+- Init 失败进入后台退避重试，不影响其它模块；手动禁用不重试。
+- 默认静态二进制、无 CGO；需要 CGO 的能力用 build tag，CI 主矩阵仍 `CGO_ENABLED=0`。
+- 不跑全量 Maven；Go 变更用已有 `go test` / 单测类，前端 `vue-tsc`。
+- 新 API 必须进 `scripts/smoke.sh`。
+- Windows 路径禁止 `:` 等非法字符（RAPL 已踩过）。
+- Health 锁不可重入；通知计数先 `markNotified` 再 `Add`。
+- 分支名 `cursor/netdata-mNN-<topic>-8c7b`，PR 对 `main`。
+
+## 6. 稳定性阶段验收（2026-09-22）
 
 | 能力 | 实现及依赖 | 自动验证 | 真实环境 / 待完成 |
 | --- | --- | --- | --- |
 | OIDC | 标准 go-oidc 验证签名/issuer/audience/expiry，nonce、PKCE、浏览器 state，限时会话及 logout；OIDC 单独配置时禁止匿名管理员 | 签名模拟 IdP 正反例、越权/过期/退出 | 外部 IdP 联调待验收 |
-| HTTPS 采集 | 12 个曾共用 insecureClient 的模块默认校验证书；tls.ca_file、tls.insecure_skip_verify | 本地 TLS 服务：不可信拒绝、CA 信任成功、显式不安全成功 | K8s / BMC / 存储真实设备待验收 |
+| HTTPS 采集 | 13 个曾共用 insecureClient 的模块（含合并后的 Proxmox）默认校验证书；tls.ca_file、tls.insecure_skip_verify | 本地 TLS 服务：不可信拒绝、CA 信任成功、显式不安全成功 | K8s / BMC / 存储真实设备待验收 |
 | MSSQL | 依赖 sqlcmd；命中率使用 numerator/base，缺失计数不写零 | 比例/缺失/零分母回归 | SQL Server 实机待验收 |
 | 采集器恢复 | 初始化失败 5 秒至 60 秒退避后台重试；手动禁用不重探；重新启用先初始化 | 离线恢复、并发启停 race 回归 | 长时间运行待验收 |
 | Web / Agent / Hub | Go >=1.25，CI 固定1.27.1；Node 24.19.0 | make all、make test（含 race/vet）、scripts/smoke.sh 通过 | 本轮 macOS amd64；其他平台以 CI 结果为准 |
@@ -162,7 +227,7 @@ M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不
 CI 与 Release 使用同一 Go/Node 版本；开发机不再依赖 PATH 中的旧 Node 18。
 TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意证书。
 
-## 6. 阶段3：持久化、备份和历史复制
+## 7. 阶段3：持久化、备份和历史复制
 
 - TSDB 检查点默认 30s；块内容同步后原子替换，Unix 同步所在目录；Windows 目录同步由系统管理。
 - `/api/v1/info` 的 `db.persistence` 报告最后成功检查点的开始/完成时间及错误。**30s 是调度间隔，不是硬性丢失上限**：异常退出可能丢失上次成功检查点之后的数据；尚未实现逐样本 WAL 或跨层事务。
@@ -173,16 +238,16 @@ TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意�
 - **HA边界**：还不是共识集群或任意故障零丢失；60s重叠不能覆盖任意慢检查点或副本盘丢失。完整重建可重启源Hub重新回放尚在保留期内的历史；超8MiB单页会记录错误而不会错误推进游标。
 - 验证：备份占用/损坏/覆盖保护，检查点后异常退出的 raw/rollup 恢复，查询与检查点并发，Hub历史补传及拒绝重试，进程级 SIGKILL 与备份恢复比对。复现：`make verify-durability`。
 
-## 7. 阶段4：日常使用与客户端恢复
+## 8. 阶段4：日常使用与客户端恢复
 
 - Dashboard：6小时/24小时/7天窗口，每图最多1200历史点；长窗口每30秒重新降采样，不累积逐秒数组；异步查询过期响应丢弃，卸载后不再更新图表。
 - 节点健康卡片显示在线/过期/离线、最后数据和严重告警；图表区分暂无数据与过期；采集器悬停显示失败原因；存储落盘失败直接显示。
 - Flutter：移除旧版 SharedPreferences 中的明文 token，凭证仅保留本次运行，连接表单明确提示重启后重新输入；WebSocket 使用编码子协议，URL 不再携带 token。平台安全存储和推送仍待后续真实设备验收。
 - Android：子进程崩溃 1s→60s 重启退避，稳定运行一分钟后重置；手动停止取消重试；Android 15 dataSync 超时主动停止，启动限制不再冒充永久保活。
 - Android 15+ 不从 BOOT_COMPLETED 启动 dataSync：需要打开应用启动。依据：https://developer.android.com/about/versions/15/behavior-changes-15 。仍需真机验证后台耗电和系统回收行为。
-- 验证：Vue生产构建通过，Flutter analyze与6项单测通过。浏览器控制工具超时，UI目视验收未完成；移动端完整打包受工具/依赖下载影响，不能将代码检查等同于真机通过。
+- 验证：Vue生产构建通过，Flutter analyze与6项单测通过。浏览器控制工具超时，UI目视验收未完成；Android服务端调试APK构建通过；Flutter macOS完整打包因缺少CocoaPods未通过，不能将代码检查等同于真机通过。
 
-## 8. 阶段5：可复现的容量与运行基线
+## 9. 阶段5：可复现的容量与运行基线
 
 - `monitord -list-collectors` 输出编译进二进制的模块名；它只说明注册，不说明依赖满足或真实设备验证通过。
 - `make bench`：2000条序列的内存追加、24小时历史读取并聚合到600点、2000条序列的同步检查点分别测量；明确区分追加耗时和持久化耗时。
@@ -190,4 +255,12 @@ TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意�
 - CI（Linux/macOS）加入独立进程的强杀恢复、运行中备份拒绝及备份恢复比对；Go/Flutter现有检查保留。
 - 本机基线（Intel i7-9750H，macOS amd64）：120秒、74张图表、60次请求，查询中位数3.05ms，最大186.61ms，最大RSS18.27MiB，最终磁盘266000字节，采集/请求/关闭错误0。
 - 微基准：2000序列追加498ns/sample（**不包含持久化**），24小时读取+600点聚合674377ns/query（约0.67ms）。同时存在其他构建负载，结果不是独占主机峰值。
+- 持久化微基准：2000条序列首次同步检查点耗时249.66秒（本机并行构建期间）。当前每序列文件同步仍是明显瓶颈，不适合据此承诺大规模写入或30秒持久化上限；下一步优先评估WAL与合并块。
 - 尚不能宣称：1000节点/200万samples每秒、72小时稳定、Hub无感切换、全部采集器真实可用。下一批应测独立Linux Hub的10→100→1000节点阶梯负载、磁盘耗尽、网络分区和长时间保留清理；以实测决定是否引入WAL和合并块存储。
+
+## 10. 与远端 M17–M23 合并验收
+
+- 保留新增采集器、告警维护、Contexts、LDAP/share 与 FreeBSD 功能；Proxmox 采用统一的默认证书校验及私有CA配置。
+- LDAP单独配置时拒绝匿名管理员；空LDAP配置不改变本地开放模式；登录角色校验、会话退出撤销和LDAPS证书验证均有回归测试。`ldap://`仍是明文协议，部署时应使用可信证书的`ldaps://`。
+- 合并后 Go vet、全量race测试、Vue构建/typecheck、API/Hub冒烟、独立进程强杀及备份恢复通过。编译进二进制的模块为174个，不能据此推导真实设备覆盖率。
+- 备份恢复核对4行固定时刻RAM数据完全一致；运行中备份被正确拒绝。性能数字来自上述本机基线，并非新增加的全部采集器负载测量。

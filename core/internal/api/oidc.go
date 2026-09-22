@@ -282,12 +282,17 @@ func randomToken() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Logout revokes the caller's OIDC session; static API keys are unaffected.
+// Logout revokes the caller's login/share session; static API keys are unaffected.
 func (s *Server) handleOIDCLogout(w http.ResponseWriter, r *http.Request) {
 	if s.oidc != nil {
 		s.oidc.mu.Lock()
 		delete(s.oidc.sessions, requestToken(r))
 		s.oidc.mu.Unlock()
+	}
+	if s.shares != nil {
+		s.shares.mu.Lock()
+		delete(s.shares.toks, requestToken(r))
+		s.shares.mu.Unlock()
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

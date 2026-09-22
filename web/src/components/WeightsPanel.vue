@@ -5,13 +5,24 @@ import { api } from '../api'
 
 const emit = defineEmits<{ close: []; pick: [chart: string] }>()
 const method = ref('anomaly-rate')
+const highlight = ref('')
+const after = ref(-300)
+const before = ref(0)
+const baseline = ref(-3600)
 const rows = ref<Weight[]>([])
 const error = ref('')
 
 async function load() {
   try {
-    const r = await api.weights(method.value)
+    const extra: Record<string, string | number> = {}
+    if (method.value === 'ks2' || method.value === 'volume') {
+      extra.after = after.value
+      extra.before = before.value
+      extra.baseline = baseline.value
+    }
+    const r = await api.weights(method.value, extra)
     rows.value = r.weights ?? []
+    highlight.value = rows.value[0]?.chart ?? ''
     error.value = ''
   } catch (e) {
     error.value = (e as Error).message
@@ -32,6 +43,10 @@ onMounted(load)
           <option value="ks2">ks2</option>
           <option value="volume">volume</option>
         </select>
+        <template v-if="method === 'ks2' || method === 'volume'">
+          <input v-model.number="after" type="number" title="故障窗 after" style="width:72px" @change="load" />
+          <input v-model.number="baseline" type="number" title="基线 after" style="width:72px" @change="load" />
+        </template>
         <small>{{ rows.length }}</small>
       </h3>
       <button class="x" @click="emit('close')" title="关闭">×</button>
@@ -42,7 +57,7 @@ onMounted(load)
         <tr><th>图表</th><th class="num">分数</th></tr>
       </thead>
       <tbody>
-        <tr v-for="w in rows" :key="w.chart" @click="emit('pick', w.chart)">
+        <tr v-for="w in rows" :key="w.chart" :class="{ hi: w.chart === highlight }" @click="emit('pick', w.chart)">
           <td>{{ w.title || w.chart }} <span class="dim">{{ w.chart }}</span></td>
           <td class="num">{{ w.score.toFixed(3) }}</td>
         </tr>
@@ -66,5 +81,6 @@ th { color: #64748b; font-size: 11px; font-weight: 500; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .dim { color: #64748b; font-size: 11px; margin-left: 6px; }
 tr { cursor: pointer; }
+tr.hi { background: #1e3a5f; }
 tr:hover { background: #1e293b; }
 </style>

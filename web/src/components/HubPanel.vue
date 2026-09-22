@@ -12,6 +12,7 @@ const roomID = ref('')
 const spaceName = ref('')
 const roomName = ref('')
 const minted = ref('')
+const shareURL = ref('')
 const nodeID = ref('')
 const disabled = ref('')
 const error = ref('')
@@ -89,6 +90,12 @@ async function copyToken() {
   }
 }
 
+async function mintShare() {
+  const s = await api.share('24h')
+  shareURL.value = location.origin + (s.url || ('/?token=' + s.token))
+  copied.value = false
+}
+
 async function saveConfig() {
   const id = nodeID.value.trim()
   if (!id) return
@@ -137,6 +144,8 @@ onMounted(() => { void load() })
       <button :disabled="!spaceID || !roomID" @click="mint">签发 claim token</button>
       <code v-if="minted" class="tok" :title="minted">{{ minted }}</code>
       <button v-if="minted" @click="copyToken">{{ copied ? '已复制' : '复制' }}</button>
+      <button @click="mintShare">只读分享链接</button>
+      <code v-if="shareURL" class="tok" :title="shareURL">{{ shareURL }}</code>
     </div>
     <p class="hint">Agent 在 <code>stream.claim_token</code> 填入一次性 token，连接 Hub 后换成长生命周期 stream key 并加入该 Room。</p>
 

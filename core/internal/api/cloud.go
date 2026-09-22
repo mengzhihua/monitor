@@ -236,7 +236,7 @@ func (s *Server) handleRing(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-	} else if s.opt.Token != "" || len(s.opt.Users) > 0 || s.oidc != nil {
+	} else if s.opt.Token != "" || len(s.opt.Users) > 0 || s.oidc != nil || s.ldap != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

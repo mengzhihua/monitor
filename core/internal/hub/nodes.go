@@ -100,6 +100,7 @@ type Info struct {
 	SpaceID     string            `json:"space_id,omitempty"`
 	RoomID      string            `json:"room_id,omitempty"`
 	Replica     bool              `json:"replica,omitempty"`
+	Contexts    map[string]any    `json:"contexts,omitempty"`
 }
 
 // Nodes is the hub-side node set.

@@ -12,7 +12,7 @@
 | [docs/01-netdata-capability-study.md](docs/01-netdata-capability-study.md) | Netdata 能力调研：组件、数据流水线、平台覆盖、部署拓扑、安全模型 |
 | [docs/02-architecture.md](docs/02-architecture.md) | Monitor 架构设计：总体架构、技术选型、服务端模块（采集/TSDB/健康/ML/流式/API/Functions）、Hub、Android 服务端专项、客户端、仓库结构、路线图、能力对照表 |
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
-| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M16 移植计划 |
+| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 
 ## 快速开始（M0）
 
@@ -123,7 +123,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | API | `GET /api/v1/contexts`；`GET\|POST /api/v1/alarms/silence`；`GET /api/v1/alarm_variables`；`/api/v1/allmetrics?format=csv\|shell` |
 | 导出 / 通知 | OpenTSDB `/api/put`；Telegram / Discord / PagerDuty |
 | Dashboard | 告警面板全部静默 / 单条静默 |
-| 差距清单 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 全量移植对照与 M8–M16 批次 |
+| 差距清单 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 全量移植对照与 M19–M26 后续批次 |
 
 ### 已实现能力（M8：proc 剩余 / 存储 / 时间 / 硬件）
 
@@ -234,10 +234,48 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 
 | 模块 | 说明 |
 | --- | --- |
-| FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
+| FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；M22 补 syscalls/pgfaults/swapio/RAM/ZFS ARC/ipfw/net.inet*/gstat/df/netstat；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
 | Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI `Win32_PerfRawData_PerfOS_System` + gopsutil）；Function `windows-services`（`sc query`）；非 Windows 自动禁用 |
 | Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
 | Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
+
+### 已实现能力（M17：剩余缺口一次补齐）
+
+| 模块 | 说明 |
+| --- | --- |
+| Linux proc | InfiniBand、QoS/tc、SCTP、UDP-Lite、synproxy、NUMA、pagetypeinfo、per-IRQ / softirq 明细 |
+| 采集器 | `libvirt`（virsh）、`proxmox`（PVE REST）、`ebpf`（bpftool prog show + Function `ebpf-programs`）；目标缺失自动禁用 |
+| API | `GET\|PUT /api/v1/manage/health`（pause / 静默 / 维护截止）；`GET /api/v1/alarm_summary`；v2 `data?group_by=node`；v2 `nodes?contexts=`；`POST /api/v1/auth/ldap`；`POST /api/v1/share` 只读链接；`info.aclk` |
+| 导出 / 通知 | Kinesis / Pub/Sub HTTP JSON；`health.notify.push`；维护窗口日历 |
+| Dashboard | Context 总览、静默倒计时、ks2/volume 窗口输入、Hub 只读分享链接 |
+| 日志 | Windows ETW / Event Log `channel=` 参数 |
+
+### 已实现能力（M18：原生插件补齐）
+
+| 模块 | 说明 |
+| --- | --- |
+| Linux proc | EDAC ECC、SLAB、zswap、RAPL powercap、DRM GPU busy/freq、bcache、adjtimex 时钟同步状态 |
+| 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
+| API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
+
+### 已实现能力（M22：freebsd.plugin 剩余）
+
+| 模块 | 说明 |
+| --- | --- |
+| sysctl | `system.syscalls`、`mem.pgfaults` / `mem.swapio` / `mem.available`、`system.ram` 明细、`system.active_processes`、`cpu.scaling_cur_freq`、`system.interrupts`（hw.intrcnt）、`system.softnet_stat` |
+| 网络 | `ipv4.tcpsock/tcppackets/tcperrors/tcphandshake`、UDP/ICMP/IP、`ipv6.packets/errors/icmp`；点分 sysctl 键（opaque `net.inet.*.stats` 结构体无 CGO 不解码） |
+| ZFS | `kstat.zfs.misc.arcstats` → `zfs.arc_size` 等 + `zfs.l2_size/bytes/memory_ops/important_ops/arc_size_breakdown/trim_bytes/trim_requests` |
+| ipfw | `ipfw -a list` → `ipfw.mem/packets/bytes/active/expired` |
+| 磁盘/挂载/网卡 | `gstat` / `df -kP` / `netstat -ibn` 近似 devstat / getmntinfo / getifaddrs；gopsutil 已占用同 ID 则跳过 |
+| health | `zfs_memory_throttle`、`freebsd_ipfw_drops`、`freebsd_softnet_drops` |
+
+### 已实现能力（M23：IBM / pandas / 容器运行时）
+
+| 模块 | 说明 |
+| --- | --- |
+| ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
+| python.d 残留 | `pandas`（JSON/CSV 首行，不 eval Python）、`go_expvar`（`/debug/vars` memstats）、`am2320`（sysfs I2C） |
+| 容器 | `lxc`（lxc-ls / cgroup）、`ecs`（task metadata v4）、`containerd`（ctr）；Functions `lxc-containers` / `ecs-containers` / `containerd-containers` |
 
 ### 开发
 
@@ -299,4 +337,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0 骨架 → M1 单机 Agent → M2 Hub 集中 → M3 Flutter 客户端 → M4 Android 服务端 → M5 ML/摄入/导出/合成检查 → M6 日志/OTLP/集群/更多应用采集器。详见架构文档 §11。
+M0–M18 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐。
+
+后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。M22 freebsd.plugin 剩余见本页；M23 IBM/残留已合入 main。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。

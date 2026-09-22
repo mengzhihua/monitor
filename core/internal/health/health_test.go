@@ -120,7 +120,7 @@ func TestDefaultRulesCompile(t *testing.T) {
 	for _, r := range rules {
 		found[r.Spec.Name] = true
 	}
-	for _, name := range []string{"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors", "threads_in_use", "freebsd_cpu_temperature"} {
+	for _, name := range []string{"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors", "threads_in_use", "freebsd_cpu_temperature", "zfs_memory_throttle", "freebsd_ipfw_drops", "freebsd_softnet_drops"} {
 		if !found[name] {
 			t.Fatalf("missing M13 builtin rule %q", name)
 		}
@@ -665,5 +665,37 @@ func TestEngineNoDataGapKeepsNotifiedStatus(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if n.count() != 2 {
 		t.Fatalf("notifications = %+v", n.seen)
+	}
+}
+
+func TestMaintenanceWindowAndPause(t *testing.T) {
+	n := &memNotifier{}
+	e, reg := newTestEngine(t, ramRule, n)
+	now := time.Date(2024, 6, 15, 23, 30, 0, 0, time.UTC) // Saturday 23:30
+	e.windows = []MaintenanceWindow{{Start: "22:00", End: "06:00", Weekdays: []string{"sat", "sun"}}}
+	if !e.InMaintenance() && !(&MaintenanceWindow{Start: "22:00", End: "06:00", Weekdays: []string{"sat"}}).covers(now) {
+		t.Fatal("expected overnight Saturday window")
+	}
+	e.now = func() time.Time { return now }
+	if !e.InMaintenance() {
+		t.Fatal("engine should be in maintenance")
+	}
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 90, "free": 10})
+	e.Tick(now.Add(time.Second))
+	time.Sleep(40 * time.Millisecond)
+	if n.count() != 0 {
+		t.Fatalf("maintenance notified: %+v", n.seen)
+	}
+	e.SetEnabled(false)
+	if e.Enabled() {
+		t.Fatal("expected paused")
+	}
+	sum := e.AlarmSummary()
+	if sum["status"] == nil {
+		t.Fatalf("%v", sum)
+	}
+	info := e.ManageInfo()
+	if info["enabled"] != false {
+		t.Fatalf("%v", info)
 	}
 }

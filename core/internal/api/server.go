@@ -60,6 +60,8 @@ type Options struct {
 	PeerToken string
 	// OIDC enables browser login against an identity provider.
 	OIDC *OIDCConfig
+	// LDAP enables POST /api/v1/auth/ldap.
+	LDAP *LDAPConfig
 }
 
 type Server struct {
@@ -74,6 +76,8 @@ type Server struct {
 	ingest *ingest.Mapper
 	otlp   *ingest.Mapper
 	oidc   *oidcState
+	ldap   *LDAPConfig
+	shares *shareStore
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -109,6 +113,18 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 			return nil, fmt.Errorf("invalid OIDC role %q", s.oidc.cfg.Role)
 		}
 	}
+	s.ldap = opt.LDAP
+	if s.ldap != nil && s.ldap.URL == "" && s.ldap.Bind == nil {
+		s.ldap = nil
+	}
+	if s.ldap != nil && s.ldap.Role != "" {
+		switch Role(s.ldap.Role) {
+		case RoleAdmin, RoleViewer, RoleTroubleshooter:
+		default:
+			return nil, fmt.Errorf("invalid LDAP role %q", s.ldap.Role)
+		}
+	}
+	s.shares = newShareStore()
 	s.routes()
 	return s, nil
 }
@@ -133,8 +149,11 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarm_count", s.handleAlarmCount)
 	m.HandleFunc("GET /api/v1/badge.svg", s.handleBadge)
 	m.HandleFunc("GET /api/v2/data", s.handleDataV2)
+	m.HandleFunc("GET /api/v2/q", s.handleDataV2)
 	m.HandleFunc("GET /api/v2/contexts", s.handleContextsV2)
 	m.HandleFunc("GET /api/v2/nodes", s.handleNodesV2)
+	m.HandleFunc("GET /api/v2/alert_transitions", s.handleAlertTransitions)
+	m.HandleFunc("GET /api/v1/alarm_transitions", s.handleAlertTransitions)
 	m.HandleFunc("GET /api/v2/badge.svg", s.handleBadge)
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
 	m.HandleFunc("GET /api/v1/functions", s.handleFunctions)
@@ -173,6 +192,13 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/auth/oidc/logout", s.handleOIDCLogout)
 	m.HandleFunc("GET /api/v1/auth/oidc/login", s.handleOIDCLogin)
 	m.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
+	m.HandleFunc("POST /api/v1/auth/ldap", s.handleLDAP)
+	m.HandleFunc("GET /api/v1/manage/health", s.handleManageHealth)
+	m.HandleFunc("PUT /api/v1/manage/health", s.handleManageHealth)
+	m.HandleFunc("GET /api/v1/alarm_summary", s.handleAlarmSummary)
+	m.HandleFunc("POST /api/v1/share", s.handleShare)
+	m.HandleFunc("GET /api/v1/share", s.handleShare)
+	m.HandleFunc("POST /api/v1/notify/push", s.handlePushTest)
 	if s.opt.Nodes != nil {
 		m.HandleFunc("GET "+stream.Path, s.opt.Nodes.HandleStream)
 	}
@@ -307,6 +333,18 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if s.opt.Stream != nil {
 		out["stream"] = s.opt.Stream.Status()
 	}
+	aclk := map[string]any{"available": false, "online": false, "protocol": "stream"}
+	if s.opt.Nodes != nil {
+		aclk["available"] = true
+		aclk["online"] = s.opt.Nodes.IngestEnabled()
+		aclk["nodes"] = len(s.opt.Nodes.List())
+	} else if s.opt.Stream != nil {
+		st := s.opt.Stream.Status()
+		aclk["available"] = st.Enabled
+		aclk["online"] = st.Connected
+		aclk["destination"] = st.Destination
+	}
+	out["aclk"] = aclk
 	writeJSON(w, out)
 }
 
@@ -709,7 +747,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	args := map[string]string{"query": q.Get("query"), "source": q.Get("source"), "after": q.Get("after"), "before": q.Get("before"), "limit": q.Get("limit")}
+	args := map[string]string{"query": q.Get("query"), "source": q.Get("source"), "after": q.Get("after"), "before": q.Get("before"), "limit": q.Get("limit"), "channel": q.Get("channel")}
 	if v.node != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
@@ -725,7 +763,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if n, _ := strconv.Atoi(q.Get("limit")); n > 0 {
 		limit = n
 	}
-	lq := collect.LogQuery{Source: q.Get("source"), Query: q.Get("query"), Limit: limit}
+	lq := collect.LogQuery{Source: q.Get("source"), Query: q.Get("query"), Channel: q.Get("channel"), Limit: limit}
 	if n, _ := strconv.ParseInt(q.Get("after"), 10, 64); n != 0 {
 		lq.After = n
 	}

@@ -9,7 +9,8 @@ BIN=${BIN:-core/bin/monitord}
 
 PORT=${PORT:-19998}
 DATA=$(mktemp -d)
-"$BIN" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
+touch "$DATA/monitor.yaml"
+"$BIN" -config "$DATA/monitor.yaml" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
 PID=$!
 trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$DATA"' EXIT
 
@@ -35,6 +36,12 @@ curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5&format=cs
 curl -sf "http://127.0.0.1:$PORT/api/v2/contexts" | grep '"api":2' >/dev/null || fail "v2 contexts"
 curl -sf "http://127.0.0.1:$PORT/api/v2/nodes" | grep '"api":2' >/dev/null || fail "v2 nodes"
 curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_count" | grep '"count"' >/dev/null || fail "alarm_count"
+curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_summary" | grep '"status"' >/dev/null || fail "alarm_summary"
+curl -sf "http://127.0.0.1:$PORT/api/v1/manage/health" | grep '"enabled"' >/dev/null || fail "manage health"
+curl -sf "http://127.0.0.1:$PORT/api/v1/info" | grep '"aclk"' >/dev/null || fail "info aclk"
+curl -sf "http://127.0.0.1:$PORT/api/v2/nodes?contexts=true" | grep '"contexts"' >/dev/null || fail "v2 nodes contexts"
+curl -sf "http://127.0.0.1:$PORT/api/v2/q?chart=system.ram&after=-5" | grep '"points"' >/dev/null || fail "v2 q"
+curl -sf "http://127.0.0.1:$PORT/api/v2/alert_transitions" | grep '"transitions"' >/dev/null || fail "alert_transitions"
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
 curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"

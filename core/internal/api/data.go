@@ -41,6 +41,10 @@ func (s *Server) handleNodesV2(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	q := r.URL.Query()
+	if strings.EqualFold(q.Get("group_by"), "node") {
+		s.serveDataByNode(w, r, api)
+		return
+	}
 	v, ok := s.target(w, r)
 	if !ok {
 		return
@@ -49,6 +53,120 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	if errMsg != "" {
 		http.Error(w, errMsg, code)
 		return
+	}
+	writeData(w, q, out)
+}
+
+func (s *Server) serveDataByNode(w http.ResponseWriter, r *http.Request, api int) {
+	q := r.URL.Query()
+	q.Del("group_by")
+	views := []*view{}
+	if v, ok := s.resolve(""); ok {
+		views = append(views, v)
+	}
+	if s.opt.Nodes != nil {
+		for _, n := range s.opt.Nodes.List() {
+			views = append(views, &view{id: n.ID, hostname: n.Host.Hostname, reg: n.Registry(), db: n.DB(), node: n})
+		}
+	}
+	if len(views) == 0 {
+		http.Error(w, "no nodes", http.StatusNotFound)
+		return
+	}
+	type series struct {
+		name   string
+		times  []int64
+		values []float64
+		units  string
+		ctype  registry.ChartType
+		ctx    string
+	}
+	var parts []series
+	for _, v := range views {
+		d, _, errMsg := s.queryData(v, q, api)
+		if errMsg != "" || d == nil || len(d.Rows) == 0 {
+			continue
+		}
+		times := make([]int64, len(d.Rows))
+		vals := make([]float64, len(d.Rows))
+		for i, row := range d.Rows {
+			if len(row) == 0 {
+				continue
+			}
+			if t, ok := row[0].(int64); ok {
+				times[i] = t
+			} else if f, ok := row[0].(float64); ok {
+				times[i] = int64(f)
+			}
+			sum, n := 0.0, 0
+			for _, cell := range row[1:] {
+				switch x := cell.(type) {
+				case float64:
+					sum += x
+					n++
+				case int:
+					sum += float64(x)
+					n++
+				}
+			}
+			if n == 0 {
+				vals[i] = math.NaN()
+			} else {
+				vals[i] = sum
+			}
+		}
+		name := v.hostname
+		if name == "" {
+			name = v.id
+			if name == "" {
+				name = "local"
+			}
+		}
+		parts = append(parts, series{name: name, times: times, values: vals, units: d.Units, ctype: d.ChartType, ctx: d.Context})
+	}
+	if len(parts) == 0 {
+		http.Error(w, "no data", http.StatusNotFound)
+		return
+	}
+	times := parts[0].times
+	ids := make([]string, len(parts))
+	names := make([]string, len(parts))
+	rows := make([][]any, len(times))
+	minV, maxV := math.Inf(1), math.Inf(-1)
+	for i, t := range times {
+		row := make([]any, 0, len(parts)+1)
+		row = append(row, t)
+		for j, p := range parts {
+			if i >= len(p.values) || math.IsNaN(p.values[i]) {
+				row = append(row, nil)
+				continue
+			}
+			val := round3(p.values[i])
+			row = append(row, val)
+			if p.values[i] < minV {
+				minV = p.values[i]
+			}
+			if p.values[i] > maxV {
+				maxV = p.values[i]
+			}
+			_ = j
+		}
+		rows[i] = row
+	}
+	for i, p := range parts {
+		ids[i], names[i] = p.name, p.name
+	}
+	if math.IsInf(minV, 0) {
+		minV, maxV = 0, 0
+	}
+	ctx := q.Get("context")
+	if ctx == "" {
+		ctx = parts[0].ctx
+	}
+	out := &dataResult{
+		API: api, ID: ctx, Name: ctx, Context: ctx, Units: parts[0].units, ChartType: parts[0].ctype,
+		DimensionIDs: ids, DimensionNames: names, Min: minV, Max: maxV,
+		Labels: append([]string{"time"}, names...), Rows: rows,
 	}
 	writeData(w, q, out)
 }

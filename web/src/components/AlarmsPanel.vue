@@ -1,28 +1,53 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { Alarm, AlarmLogEntry } from '../api'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { Alarm, AlarmLogEntry, SilenceState } from '../api'
 import { api } from '../api'
 
 const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[] }>()
 const emit = defineEmits<{ close: [] }>()
+const silence = ref<SilenceState>({ all: false, alarms: {} })
+const now = ref(Math.floor(Date.now() / 1000))
+let tick = 0
+
+onMounted(() => {
+  void refreshSilence()
+  tick = window.setInterval(() => { now.value = Math.floor(Date.now() / 1000) }, 1000)
+})
+onBeforeUnmount(() => clearInterval(tick))
+
+async function refreshSilence() {
+  try { silence.value = await api.silenceState() } catch { /* token / role */ }
+}
 
 const order: Record<string, number> = { CRITICAL: 0, WARNING: 1, CLEAR: 2, UNDEFINED: 3, UNINITIALIZED: 4, REMOVED: 5 }
 const sorted = computed(() =>
   [...props.alarms].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.chart.localeCompare(b.chart) || a.name.localeCompare(b.name)),
 )
 const recent = computed(() => [...props.log].sort((a, b) => b.unique_id - a.unique_id).slice(0, 50))
-const allSilenced = computed(() => props.alarms.length > 0 && props.alarms.every((a) => a.silenced))
+const allSilenced = computed(() => silence.value.all || (props.alarms.length > 0 && props.alarms.every((a) => a.silenced)))
+
+function remain(until?: number) {
+  if (!until) return '持续'
+  const s = until - now.value
+  if (s <= 0) return '到期'
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+}
+function alarmUntil(a: Alarm) {
+  return silence.value.alarms[`${a.chart}.${a.name}`] ?? silence.value.alarms[a.name]
+}
 
 async function silenceAll(on: boolean) {
   try {
-    await api.silence(on ? { all: true } : { all: false, clear: true })
+    silence.value = await api.silence(on ? { all: true, until: -3600 } : { all: false, clear: true })
     for (const a of props.alarms) a.silenced = on
   } catch { /* token / role */ }
 }
 
 async function silenceOne(a: Alarm, on: boolean) {
   try {
-    await api.silence({ chart: a.chart, alarm: a.name, clear: !on })
+    silence.value = await api.silence({ chart: a.chart, alarm: a.name, clear: !on, until: on ? -3600 : 0 })
     a.silenced = on
   } catch { /* token / role */ }
 }
@@ -48,6 +73,8 @@ function ago(t: number) {
         <button class="mute" @click="silenceAll(!allSilenced)" :title="allSilenced ? '解除全部静默' : '静默全部通知'">
           {{ allSilenced ? '解除静默' : '全部静默' }}
         </button>
+        <span v-if="silence.all" class="dim">{{ remain(silence.until) }}</span>
+        <span v-if="silence.maintenance" class="dim">维护中</span>
         <button class="x" @click="emit('close')" title="关闭">×</button>
       </div>
     </div>
@@ -62,7 +89,9 @@ function ago(t: number) {
           <td class="dim">{{ a.chart }}</td>
           <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
           <td class="dim">{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</td>
-          <td><button class="mute tiny" @click="silenceOne(a, !a.silenced)">{{ a.silenced ? '响铃' : '静默' }}</button></td>
+          <td><button class="mute tiny" @click="silenceOne(a, !a.silenced)">{{ a.silenced ? '响铃' : '静默' }}</button>
+            <span v-if="a.silenced || alarmUntil(a)" class="dim"> {{ remain(alarmUntil(a) || silence.until) }}</span>
+          </td>
         </tr>
         <tr v-if="!alarms.length"><td colspan="6" class="dim">暂无告警规则</td></tr>
       </tbody>

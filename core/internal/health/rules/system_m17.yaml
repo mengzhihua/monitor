@@ -1,0 +1,74 @@
+# M17 remaining Linux proc, libvirt/proxmox, InfiniBand/QoS, eBPF.
+alarms:
+  - name: sctp_aborted
+    on: sctp.transitions
+    class: Errors
+    type: System
+    component: SCTP
+    lookup: average -1m unaligned of aborted
+    units: transitions/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (1) : (5))'
+    info: SCTP associations aborted
+    to: sysadmin
+
+  - name: ib_port_errors
+    on: ib.port_errors
+    class: Errors
+    type: System
+    component: InfiniBand
+    lookup: average -1m unaligned of symbol
+    units: errors/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (0) : (1))'
+    crit: '$this > (($status == $CRITICAL) ? (1) : (10))'
+    info: InfiniBand symbol errors on a port
+    to: sysadmin
+
+  - name: synproxy_invalid_cookies
+    on: netfilter.synproxy_cookies
+    class: Errors
+    type: System
+    component: Firewall
+    lookup: average -1m unaligned of invalid
+    units: cookies/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (10) : (50))'
+    info: SYNPROXY invalid cookies
+    to: sysadmin
+
+  - name: libvirt_vm_down
+    on: libvirt.vm_status
+    class: Availability
+    type: System
+    component: Virtualization
+    lookup: last -10s unaligned of running
+    units: status
+    every: 10s
+    warn: '$this == 0'
+    info: libvirt domain is not running
+    to: sysadmin
+
+  - name: proxmox_node_offline
+    on: proxmox.node_status
+    class: Availability
+    type: System
+    component: Proxmox
+    lookup: last -10s unaligned of online
+    units: status
+    every: 10s
+    crit: '$this == 0'
+    info: Proxmox node is offline
+    to: sysadmin
+
+  - name: ebpf_programs_gone
+    on: ebpf.programs
+    class: Availability
+    type: System
+    component: eBPF
+    lookup: last -10s unaligned of loaded
+    units: programs
+    every: 30s
+    warn: '$this == 0'
+    info: no eBPF programs loaded (bpftool)
+    to: sysadmin

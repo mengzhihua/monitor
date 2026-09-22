@@ -111,6 +111,39 @@ func (s *Server) handleAlarmLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, entries)
 }
 
+// GET /api/v2/alert_transitions and /api/v1/alarm_transitions wrap alarm_log
+// in the Netdata v2 shape {transitions:[...], api:2}.
+func (s *Server) handleAlertTransitions(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+	var entries []health.LogEntry
+	if v.node != nil {
+		entries = v.node.AlarmLog(after)
+	} else {
+		if s.opt.Health == nil {
+			http.Error(w, "health engine disabled", http.StatusNotFound)
+			return
+		}
+		entries = s.opt.Health.Log(after)
+	}
+	if q := r.URL.Query().Get("alarm"); q != "" {
+		f := entries[:0]
+		for _, e := range entries {
+			if e.Name == q || e.Chart+"."+e.Name == q {
+				f = append(f, e)
+			}
+		}
+		entries = f
+	}
+	if entries == nil {
+		entries = []health.LogEntry{}
+	}
+	writeJSON(w, map[string]any{"api": 2, "transitions": entries, "count": len(entries)})
+}
+
 // GET /api/v1/alarm_rules — the compiled rule set (for debugging / UI).
 func (s *Server) handleAlarmRules(w http.ResponseWriter, r *http.Request) {
 	if s.opt.Health == nil {
