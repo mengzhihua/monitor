@@ -26,8 +26,19 @@ const (
 	pingEvery    = 30 * time.Second
 )
 
+func (n *Nodes) extraKeys() []string {
+	if n.opt.ExtraKeys == nil {
+		return nil
+	}
+	return n.opt.ExtraKeys()
+}
+
+func (n *Nodes) allKeys() []string {
+	return append(append([]string{}, n.opt.Keys...), n.extraKeys()...)
+}
+
 // IngestEnabled reports whether any agent key is configured.
-func (n *Nodes) IngestEnabled() bool { return len(n.opt.Keys) > 0 }
+func (n *Nodes) IngestEnabled() bool { return len(n.allKeys()) > 0 }
 
 // Authorized checks an agent's stream credential.
 func (n *Nodes) Authorized(r *http.Request) bool {
@@ -35,16 +46,22 @@ func (n *Nodes) Authorized(r *http.Request) bool {
 	return ok
 }
 
-// authorize returns the hash of the accepted key; nodes are bound to it.
-func (n *Nodes) authorize(r *http.Request) (string, bool) {
+// StreamKey extracts the bearer/api_key credential from r.
+func StreamKey(r *http.Request) string {
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if key == "" || key == r.Header.Get("Authorization") {
 		key = r.URL.Query().Get("api_key")
 	}
+	return key
+}
+
+// authorize returns the hash of the accepted key; nodes are bound to it.
+func (n *Nodes) authorize(r *http.Request) (string, bool) {
+	key := StreamKey(r)
 	if key == "" {
 		return "", false
 	}
-	for _, k := range n.opt.Keys {
+	for _, k := range n.allKeys() {
 		if subtle.ConstantTimeCompare([]byte(k), []byte(key)) == 1 {
 			sum := sha256.Sum256([]byte(key))
 			return hex.EncodeToString(sum[:]), true
@@ -252,6 +269,7 @@ func (s *session) attach(hello stream.Frame, now time.Time) (*Node, error) {
 	node.keyHash = s.keyHash
 	old := node.conn
 	node.conn = s
+	node.replica = false // a live stream always wins over a ring copy
 	node.Host = *hello.Host
 	node.Version = hello.Version
 	node.LastSeen = now.Unix()

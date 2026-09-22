@@ -8,6 +8,7 @@ import AlarmsPanel from './components/AlarmsPanel.vue'
 import FunctionsPanel from './components/FunctionsPanel.vue'
 import LogsPanel from './components/LogsPanel.vue'
 import WeightsPanel from './components/WeightsPanel.vue'
+import HubPanel from './components/HubPanel.vue'
 
 const info = ref<Info | null>(null)
 const charts = ref<Chart[]>([])
@@ -25,6 +26,8 @@ const functions = ref<FunctionInfo[]>([])
 const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
+const showHub = ref(false)
+const oidcAvailable = ref(false)
 const nodes = ref<NodeInfo[]>([])
 const selectedNode = ref('')
 const NODE_KEY = 'monitor.node'
@@ -170,6 +173,7 @@ onMounted(async () => {
   selection.node = saved
   live.onState = (up) => (connected.value = up)
   live.onAlarm = onAlarmEvent
+  fetch('/api/v1/auth/oidc/login', { redirect: 'manual' }).then((r) => { oidcAvailable.value = r.status === 302 }).catch(() => {})
   await refresh()
   if (!needToken.value) live.start()
   timer = window.setInterval(refresh, 30000)
@@ -189,7 +193,7 @@ onBeforeUnmount(() => clearInterval(timer))
       <select v-if="isHub" class="node-select" :value="selectedNode" @change="selectNode(($event.target as HTMLSelectElement).value)"
         title="节点">
         <option v-for="n in nodes" :key="n.id" :value="n.id">
-          {{ n.local ? '◆ ' : n.status === 'live' ? '● ' : n.status === 'stale' ? '◐ ' : '○ ' }}{{ n.hostname }}{{ n.local ? ' (hub)' : n.peer ? ' (peer)' : '' }}
+          {{ n.local ? '◆ ' : n.status === 'live' ? '● ' : n.status === 'stale' ? '◐ ' : '○ ' }}{{ n.hostname }}{{ n.local ? ' (hub)' : n.replica ? ' (replica)' : n.peer ? ' (peer)' : '' }}
         </option>
       </select>
       <span v-if="isHub" class="nodes-count" title="在线节点 / 全部节点">{{ nodes.filter((n) => n.status === 'live').length }}/{{ nodes.length }} nodes</span>
@@ -205,6 +209,7 @@ onBeforeUnmount(() => clearInterval(timer))
       <button v-if="functions.length" class="alarms-btn" :class="{ open: showFunctions }" @click="showFunctions = !showFunctions"
         title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
       <button class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
+      <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
       <button class="alarms-btn" :class="{ open: showWeights }" @click="showWeights = !showWeights" title="异常顾问 / 关联分析">Σ</button>
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
     </div>
@@ -243,10 +248,12 @@ onBeforeUnmount(() => clearInterval(timer))
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { filter = id; showWeights = false }" />
+      <HubPanel v-if="showHub && isHub" @close="showHub = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>此 Agent 已启用访问令牌（web.token），请输入后继续。</p>
         <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />
         <button type="submit">进入</button>
+        <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
       <section v-for="s in sections" :key="s.name" :id="s.name">
         <h2>{{ s.name }}</h2>
@@ -295,6 +302,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #
 .token { max-width: 420px; margin: 40px auto; padding: 20px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; display: flex; flex-direction: column; gap: 10px; }
 .token p { margin: 0; color: #cbd5e1; font-size: 13px; }
 .token button { background: #22c55e; color: #052e16; border: 0; border-radius: 6px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+.oidc { color: #93c5fd; font-size: 13px; text-align: center; }
 @media (max-width: 760px) {
   nav { display: none; }
   header { position: static; }

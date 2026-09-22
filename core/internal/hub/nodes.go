@@ -43,6 +43,8 @@ type Options struct {
 	MaxChartsPerNode int
 	MaxDimsPerChart  int
 	Logger           *slog.Logger
+	// ExtraKeys are stream credentials minted at runtime (claim tokens).
+	ExtraKeys func() []string
 	// OnSample/OnAlarm mirror node activity to the live WebSocket feed.
 	OnSample func(nodeID, chartID string, ts int64, values map[string]float64)
 	OnAlarm  func(nodeID string, e health.LogEntry)
@@ -72,6 +74,9 @@ type Node struct {
 	alog      []health.LogEntry
 	nextCall  uint64
 	calls     map[uint64]chan stream.Frame
+	replica   bool
+	spaceID   string
+	roomID    string
 }
 
 // Info is the JSON view of a node.
@@ -92,6 +97,9 @@ type Info struct {
 	Alarms      map[string]int    `json:"alarms"`
 	Functions   []string          `json:"functions,omitempty"`
 	Peer        string            `json:"peer,omitempty"` // cluster: originating hub URL
+	SpaceID     string            `json:"space_id,omitempty"`
+	RoomID      string            `json:"room_id,omitempty"`
+	Replica     bool              `json:"replica,omitempty"`
 }
 
 // Nodes is the hub-side node set.
@@ -275,6 +283,93 @@ func (n *Nodes) disconnectAll() {
 	}
 }
 
+// SetMembership records the node's Space/Room (dashboard / nodes API).
+func (nd *Node) SetMembership(spaceID, roomID string) {
+	nd.mu.Lock()
+	defer nd.mu.Unlock()
+	nd.spaceID, nd.roomID = spaceID, roomID
+}
+
+// AcceptReplica installs (or refreshes) a ring-replicated copy of a node that
+// lives on a peer hub. A live local connection always wins.
+func (n *Nodes) AcceptReplica(host registry.Host, charts []*registry.Chart, samples []ReplicaSample, now time.Time) (*Node, error) {
+	id := nodeID(&host)
+	n.mu.Lock()
+	node, ok := n.nodes[id]
+	if ok {
+		node.mu.Lock()
+		live := node.conn != nil
+		node.mu.Unlock()
+		if live {
+			n.mu.Unlock()
+			return node, nil
+		}
+	} else {
+		if len(n.nodes) >= n.opt.MaxNodes && n.opt.MaxNodes > 0 {
+			n.mu.Unlock()
+			return nil, errTooManyNodes
+		}
+		node = n.newNode(id, host)
+		node.FirstSeen = now.Unix()
+		node.replica = true
+		n.nodes[id] = node
+		n.gen++
+	}
+	n.mu.Unlock()
+	node.mu.Lock()
+	node.Host = host
+	node.LastSeen = now.Unix()
+	node.replica = true
+	node.mu.Unlock()
+	for _, c := range charts {
+		if c == nil || c.ID == "" {
+			continue
+		}
+		if _, exists := node.reg.Chart(c.ID); !exists {
+			node.reg.AddChart(stream.DefOf(c).ToChart())
+		}
+	}
+	for _, s := range samples {
+		if s.Chart == "" {
+			continue
+		}
+		_ = node.reg.Collect(s.Chart, time.Unix(s.T, 0), s.V)
+		node.mu.Lock()
+		node.lastData = s.T
+		node.mu.Unlock()
+	}
+	return node, nil
+}
+
+// ReplicaSample is one chart collection copied over the hub ring.
+type ReplicaSample struct {
+	Chart string             `json:"chart"`
+	T     int64              `json:"t"`
+	V     map[string]float64 `json:"v"`
+}
+
+// SnapshotRing is the payload this hub would send to a peer for node.
+func (nd *Node) SnapshotRing() (registry.Host, []*registry.Chart, []ReplicaSample) {
+	nd.mu.Lock()
+	replica := nd.replica
+	host := nd.Host
+	nd.mu.Unlock()
+	if replica {
+		return host, nil, nil
+	}
+	var charts []*registry.Chart
+	var samples []ReplicaSample
+	for _, c := range nd.reg.Charts() {
+		charts = append(charts, c)
+		ts, vals := c.LastValues()
+		if len(vals) == 0 {
+			continue
+		}
+		samples = append(samples, ReplicaSample{Chart: c.ID, T: ts, V: vals})
+	}
+	return host, charts, samples
+}
+
 // Get returns a node by ID.
 func (n *Nodes) Get(id string) (*Node, bool) {
 	n.mu.RLock()
@@ -335,6 +430,13 @@ func (nd *Node) Status(now time.Time) string {
 
 func (nd *Node) statusLocked(now time.Time) string {
 	if nd.conn == nil {
+		if nd.replica && nd.lastData > 0 {
+			grace := int64(30)
+			if now.Unix()-nd.lastData <= grace {
+				return StatusLive
+			}
+			return StatusStale
+		}
 		return StatusOffline
 	}
 	grace := int64(3 * nd.Host.UpdateEvery)
@@ -353,7 +455,8 @@ func (nd *Node) Info(now time.Time) Info {
 	defer nd.mu.Unlock()
 	inf := Info{ID: nd.ID, Hostname: nd.Host.Hostname, OS: nd.Host.OS, Arch: nd.Host.Arch, Labels: nd.Host.Labels,
 		UpdateEvery: nd.Host.UpdateEvery, Version: nd.Version, Status: nd.statusLocked(now), FirstSeen: nd.FirstSeen,
-		LastSeen: nd.LastSeen, LastData: nd.lastData, ChartsCount: len(nd.reg.Charts()), Alarms: map[string]int{"warning": 0, "critical": 0}}
+		LastSeen: nd.LastSeen, LastData: nd.lastData, ChartsCount: len(nd.reg.Charts()), Alarms: map[string]int{"warning": 0, "critical": 0},
+		SpaceID: nd.spaceID, RoomID: nd.roomID, Replica: nd.replica}
 	for _, a := range nd.alarms {
 		switch a.Status {
 		case health.StatusWarning:

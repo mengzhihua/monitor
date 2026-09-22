@@ -54,6 +54,12 @@ type Options struct {
 	ExtraFunctions []collect.Function
 	// Cluster fans node lookups out to peer hubs.
 	Cluster *hub.Cluster
+	// Org is the Space/Room/claim store (hub mode).
+	Org *hub.Org
+	// PeerToken authenticates POST /api/v1/hub/ring from sibling hubs.
+	PeerToken string
+	// OIDC enables browser login against an identity provider.
+	OIDC *OIDCConfig
 }
 
 type Server struct {
@@ -67,6 +73,7 @@ type Server struct {
 	mux    *http.ServeMux
 	ingest *ingest.Mapper
 	otlp   *ingest.Mapper
+	oidc   *oidcState
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -94,6 +101,7 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		return nil, err
 	}
 	s.live = newLiveHub(reg, s.log)
+	s.oidc = newOIDC(opt.OIDC)
 	s.routes()
 	return s, nil
 }
@@ -140,6 +148,22 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/metrics", s.handleIngestOTLP)
 	m.HandleFunc("GET /api/v1/nodes", s.handleNodes)
 	m.HandleFunc("DELETE /api/v1/nodes", s.handleForgetNode)
+	m.HandleFunc("GET /api/v1/hub/spaces", s.handleSpaces)
+	m.HandleFunc("POST /api/v1/hub/spaces", s.handleSpaces)
+	m.HandleFunc("DELETE /api/v1/hub/spaces", s.handleSpaces)
+	m.HandleFunc("GET /api/v1/hub/rooms", s.handleRooms)
+	m.HandleFunc("POST /api/v1/hub/rooms", s.handleRooms)
+	m.HandleFunc("DELETE /api/v1/hub/rooms", s.handleRooms)
+	m.HandleFunc("PUT /api/v1/hub/rooms", s.handleRooms)
+	m.HandleFunc("GET /api/v1/hub/claim-tokens", s.handleClaimTokens)
+	m.HandleFunc("POST /api/v1/hub/claim-tokens", s.handleClaimTokens)
+	m.HandleFunc("POST /api/v1/claim", s.handleClaimRedeem)
+	m.HandleFunc("GET /api/v1/hub/config", s.handleHubConfig)
+	m.HandleFunc("PUT /api/v1/hub/config", s.handleHubConfig)
+	m.HandleFunc("GET /api/v1/agent/config", s.handleAgentConfig)
+	m.HandleFunc("POST /api/v1/hub/ring", s.handleRing)
+	m.HandleFunc("GET /api/v1/auth/oidc/login", s.handleOIDCLogin)
+	m.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
 	if s.opt.Nodes != nil {
 		m.HandleFunc("GET "+stream.Path, s.opt.Nodes.HandleStream)
 	}
@@ -172,7 +196,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if r.URL.Path == stream.Path { // agents authenticate with stream keys
+		if publicAPI(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

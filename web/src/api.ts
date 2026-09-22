@@ -28,7 +28,12 @@ export interface NodeInfo {
   id: string; hostname: string; os: string; arch: string; labels: Record<string, string> | null; update_every: number
   version: string; status: NodeStatus; local: boolean; first_seen: number; last_seen: number; last_data?: number
   charts_count: number; alarms: { warning: number; critical: number }; functions?: string[]; peer?: string
+  space_id?: string; room_id?: string; replica?: boolean
 }
+export interface Space { id: string; name: string; created: number }
+export interface Room { id: string; name: string; space_id: string; nodes?: string[] }
+export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
+export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
@@ -106,12 +111,23 @@ async function get<T>(path: string): Promise<T> {
   return r.json() as Promise<T>
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {}
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`
-  const r = await fetch(base + path, { method: 'POST', headers, body: JSON.stringify(body) })
+  let init: RequestInit = { method, headers }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    init = { ...init, body: JSON.stringify(body) }
+  }
+  const r = await fetch(base + path, init)
+  if (r.status === 204) return undefined as T
   if (!r.ok) throw new ApiError(r.status, `${path}: ${r.status} ${await r.text()}`)
-  return r.json() as Promise<T>
+  const text = await r.text()
+  return (text ? JSON.parse(text) : undefined) as T
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  return send<T>('POST', path, body)
 }
 
 /**
@@ -148,6 +164,17 @@ export const api = {
     get<FunctionResponse>(`/api/v1/logs${q(args)}`),
   data: (chart: string, after: number, before = 0, points = 0) =>
     get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`),
+  spaces: () => get<{ spaces: Space[] }>('/api/v1/hub/spaces'),
+  createSpace: (name: string) => post<Space>('/api/v1/hub/spaces', { name }),
+  deleteSpace: (id: string) => send<void>('DELETE', `/api/v1/hub/spaces?id=${encodeURIComponent(id)}`),
+  rooms: (spaceID = '') => get<{ rooms: Room[] }>(`/api/v1/hub/rooms${spaceID ? '?space_id=' + encodeURIComponent(spaceID) : ''}`),
+  createRoom: (spaceID: string, name: string) => post<Room>('/api/v1/hub/rooms', { space_id: spaceID, name }),
+  deleteRoom: (id: string) => send<void>('DELETE', `/api/v1/hub/rooms?id=${encodeURIComponent(id)}`),
+  claims: () => get<{ claims: Claim[] }>('/api/v1/hub/claim-tokens'),
+  issueClaim: (spaceID: string, roomID: string, ttl = '24h') =>
+    post<Claim>('/api/v1/hub/claim-tokens', { space_id: spaceID, room_id: roomID, ttl }),
+  putNodeConfig: (cfg: NodeConfig) => send<NodeConfig>('PUT', `/api/v1/hub/config?node=${encodeURIComponent(cfg.node_id)}`, cfg),
+  oidcLoginURL: () => '/api/v1/auth/oidc/login',
   liveURL(charts: string[] = []) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const params: Record<string, string> = {}
