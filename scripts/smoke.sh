@@ -44,6 +44,7 @@ curl -sf "http://127.0.0.1:$PORT/api/v2/alert_transitions" | grep '"transitions"
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
 curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"
+curl -sf "http://127.0.0.1:$PORT/api/v1/prometheus/catalog" | grep '"etcd"' >/dev/null || fail "prometheus catalog"
 
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
 echo "$data" | grep '"points":[1-9]' >/dev/null || fail "no data points: $data"
