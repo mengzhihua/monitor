@@ -2,7 +2,7 @@
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
-- **服务端** `monitord`（Go 单二进制，`--mode agent|hub`）：macOS / Linux / Windows / Android
+- **服务端** `monitord`（Go 单二进制，`--mode agent|hub`）：macOS / Linux / Windows / FreeBSD / Android
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
 ## 文档
@@ -32,7 +32,7 @@ cd core && go run ./cmd/monitord -listen :19999
 
 配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
 
-跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、android(arm64) 六个二进制。
+跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、freebsd(amd64/arm64)、android(arm64) 二进制。
 
 ### 已实现能力（M0）
 
@@ -230,6 +230,15 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | Functions | `containers`（Docker）、`disks`、`mounts`、`network-interfaces` |
 | 导出 | `export.destinations.type: mongodb`（OP_MSG insert，`database`/`collection`） |
 
+### 已实现能力（M16：Windows / FreeBSD / Flutter Functions / Android logcat）
+
+| 模块 | 说明 |
+| --- | --- |
+| FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
+| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI `Win32_PerfRawData_PerfOS_System` + gopsutil）；Function `windows-services`（`sc query`）；非 Windows 自动禁用 |
+| Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
+| Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
+
 ### 开发
 
 ```bash
@@ -242,7 +251,7 @@ cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 
 ### 客户端（Flutter，M3 起步）
 
-`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址（可选 Bearer token）即可连接，Hub 模式下可切换节点；图表页按 family 分组，历史数据走 `/api/v1/data`，实时点走 `/api/v1/live` WebSocket（断线 3s 自动重连）；告警页显示当前告警与最近状态变化。
+`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址（可选 Bearer token）即可连接，Hub 模式下可切换节点；图表页按 family 分组，历史数据走 `/api/v1/data`，实时点走 `/api/v1/live` WebSocket（断线 3s 自动重连）；告警页显示当前告警与最近状态变化；Functions 页调用 `/api/v1/function`（进程/连接/服务/日志等表）。
 
 ```bash
 cd app && flutter pub get
@@ -252,7 +261,7 @@ flutter analyze && flutter test
 
 ### Android 服务端（M4 起步）
 
-`android/` 是原生 Kotlin 壳：前台服务拉起随包分发的静态 `monitord`（`jniLibs/arm64-v8a/libmonitord.so`），可设置监听端口、可选上报到 Hub、开机自启，并直接打开内嵌 Dashboard。Android 沙箱限制 `/proc/net` 等接口，网络类图表可能缺失。
+`android/` 是原生 Kotlin 壳：前台服务拉起随包分发的静态 `monitord`（`jniLibs/arm64-v8a/libmonitord.so`），可设置监听端口、可选上报到 Hub、开机自启，并直接打开内嵌 Dashboard。Android 沙箱限制 `/proc/net` 等接口，网络类图表可能缺失；日志走 `logcat`。
 
 ```bash
 ./scripts/build-android-server.sh assembleRelease   # 需要 Go、JDK 17、ANDROID_HOME（SDK 35）
@@ -264,7 +273,7 @@ flutter analyze && flutter test
 
 | | 产物 |
 |---|---|
-| 服务端 `monitord` | macOS arm64（Apple 芯片）/ amd64（Intel）、Windows amd64、Linux amd64 / arm64、Android arm64 APK |
+| 服务端 `monitord` | macOS arm64（Apple 芯片）/ amd64（Intel）、Windows amd64、Linux amd64 / arm64、FreeBSD amd64 / arm64、Android arm64 APK |
 | 客户端 `Monitor` | macOS arm64 / amd64（.dmg + .zip）、Windows amd64（.zip）、Linux amd64（.tar.gz）、Android（.apk）、iOS（未签名 .ipa） |
 
 ```bash

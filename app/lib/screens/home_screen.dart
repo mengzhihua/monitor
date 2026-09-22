@@ -4,6 +4,7 @@ import '../api/models.dart';
 import '../state/app_state.dart';
 import '../widgets/alarms_view.dart';
 import '../widgets/charts_view.dart';
+import '../widgets/functions_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.state});
@@ -38,6 +39,10 @@ class _HomeScreenState extends State<HomeScreen> {
           key: ValueKey('alarms:${st.selectedNode}'),
           client: st.client!,
           node: _nodeParam),
+      FunctionsView(
+          key: ValueKey('functions:${st.selectedNode}'),
+          client: st.client!,
+          node: _nodeParam),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -62,6 +67,8 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: _AlarmIcon(counts: node?.alarms ?? info.alarms),
             label: 'Alarms',
           ),
+          const NavigationDestination(
+              icon: Icon(Icons.table_rows), label: 'Functions'),
         ],
       ),
     );

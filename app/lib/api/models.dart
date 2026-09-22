@@ -250,3 +250,65 @@ class LiveSample {
     );
   }
 }
+
+class FunctionInfo {
+  const FunctionInfo({required this.name, this.help = '', this.timeout = 10});
+
+  final String name;
+  final String help;
+  final int timeout;
+
+  factory FunctionInfo.fromJson(Map<String, dynamic> j) => FunctionInfo(
+        name: (j['name'] as String?) ?? '',
+        help: (j['help'] as String?) ?? '',
+        timeout: (j['timeout'] as num?)?.toInt() ?? 10,
+      );
+}
+
+class FunctionTable {
+  FunctionTable({required this.columns, required this.rows, required this.total});
+
+  final List<String> columns;
+  final List<Map<String, dynamic>> rows;
+  final int total;
+
+  factory FunctionTable.fromJson(Map<String, dynamic> j) {
+    final rawRows = (j['rows'] as List<dynamic>?) ?? const [];
+    return FunctionTable(
+      columns: ((j['columns'] as List<dynamic>?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      rows: rawRows.map((e) {
+        if (e is Map<String, dynamic>) return e;
+        if (e is Map) return Map<String, dynamic>.from(e);
+        return <String, dynamic>{'value': e};
+      }).toList(),
+      total: (j['total'] as num?)?.toInt() ?? rawRows.length,
+    );
+  }
+}
+
+class FunctionResult {
+  FunctionResult({required this.name, required this.time, this.table, this.raw});
+
+  final String name;
+  final int time;
+  final FunctionTable? table;
+  final Object? raw;
+
+  factory FunctionResult.fromJson(Map<String, dynamic> j) {
+    final result = j['result'];
+    FunctionTable? table;
+    Object? raw = result;
+    if (result is Map<String, dynamic> && result['columns'] is List) {
+      table = FunctionTable.fromJson(result);
+      raw = null;
+    }
+    return FunctionResult(
+      name: (j['function'] as String?) ?? '',
+      time: (j['time'] as num?)?.toInt() ?? 0,
+      table: table,
+      raw: raw,
+    );
+  }
+}
