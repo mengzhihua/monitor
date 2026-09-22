@@ -12,7 +12,7 @@
 | [docs/01-netdata-capability-study.md](docs/01-netdata-capability-study.md) | Netdata 能力调研：组件、数据流水线、平台覆盖、部署拓扑、安全模型 |
 | [docs/02-architecture.md](docs/02-architecture.md) | Monitor 架构设计：总体架构、技术选型、服务端模块（采集/TSDB/健康/ML/流式/API/Functions）、Hub、Android 服务端专项、客户端、仓库结构、路线图、能力对照表 |
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
-| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M18 移植计划 |
+| [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 
 ## 快速开始（M0）
 
@@ -123,7 +123,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | API | `GET /api/v1/contexts`；`GET\|POST /api/v1/alarms/silence`；`GET /api/v1/alarm_variables`；`/api/v1/allmetrics?format=csv\|shell` |
 | 导出 / 通知 | OpenTSDB `/api/put`；Telegram / Discord / PagerDuty |
 | Dashboard | 告警面板全部静默 / 单条静默 |
-| 差距清单 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 全量移植对照与 M8–M16 批次 |
+| 差距清单 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 全量移植对照与 M19–M26 后续批次 |
 
 ### 已实现能力（M8：proc 剩余 / 存储 / 时间 / 硬件）
 
@@ -318,4 +318,6 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0 骨架 → M1 单机 Agent → M2 Hub 集中 → M3 Flutter 客户端 → M4 Android 服务端 → M5 ML/摄入/导出/合成检查 → M6 日志/OTLP/集群/更多应用采集器。详见架构文档 §11。
+M0–M18 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐。
+
+后续：M19 内核深度（eBPF/perf）→ M20 日志/查看器 → M21 Windows.plugin → M22 freebsd.plugin → M23 IBM/残留 → M24 API v3 → M25 Cloud 产品面 → M26 集成目录。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
