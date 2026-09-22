@@ -3,8 +3,10 @@ package collect
 import (
 	"context"
 	"os"
+	"os/user"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +62,8 @@ type pidState struct {
 	name    string
 	cmdline string
 	group   *appGroup
+	user    string
+	osGroup string
 	cpuMs   float64 // user+system, ms
 	hasCPU  bool
 	readB   uint64
@@ -81,10 +85,12 @@ type appsCollector struct {
 	mu   sync.Mutex
 	pids map[int32]*pidState
 	// monotonically increasing per-group counters fed as Incremental
-	cpuMs  map[string]float64
-	readB  map[string]float64
-	writeB map[string]float64
-	last   time.Time
+	cpuMs               map[string]float64
+	readB               map[string]float64
+	writeB              map[string]float64
+	cpuUser, cpuOSGroup map[string]float64
+	groupCache          map[string]string
+	last                time.Time
 }
 
 func init() {
@@ -148,6 +154,8 @@ func (a *appsCollector) Init(reg *registry.Registry) error {
 	}
 	a.pids = map[int32]*pidState{}
 	a.cpuMs, a.readB, a.writeB = map[string]float64{}, map[string]float64{}, map[string]float64{}
+	a.cpuUser, a.cpuOSGroup = map[string]float64{}, map[string]float64{}
+	a.groupCache = map[string]string{}
 
 	all := append(append([]*appGroup{}, a.groups...), a.other)
 	mk := func(id, title, units string, prio int, algo registry.Algorithm, mul, div int64) *registry.Chart {
@@ -165,6 +173,16 @@ func (a *appsCollector) Init(reg *registry.Registry) error {
 	if a.hasIO = probeProcIO(); a.hasIO {
 		reg.AddChart(mk("apps.io_read", "Apps disk read", "KiB/s", 20040, registry.Incremental, 1, 1024))
 		reg.AddChart(mk("apps.io_write", "Apps disk write", "KiB/s", 20041, registry.Incremental, 1, 1024))
+	}
+	for _, ch := range []*registry.Chart{
+		{ID: "apps.cpu_user", Family: "apps", Title: "Apps CPU by user", Units: "percentage", Type: registry.Stacked, Priority: 20050, Plugin: "apps", Module: "apps"},
+		{ID: "apps.cpu_group", Family: "apps", Title: "Apps CPU by user group", Units: "percentage", Type: registry.Stacked, Priority: 20051, Plugin: "apps", Module: "apps"},
+		{ID: "apps.mem_user", Family: "apps", Title: "Apps memory by user", Units: "MiB", Type: registry.Stacked, Priority: 20052, Plugin: "apps", Module: "apps"},
+		{ID: "apps.mem_group", Family: "apps", Title: "Apps memory by user group", Units: "MiB", Type: registry.Stacked, Priority: 20053, Plugin: "apps", Module: "apps"},
+		{ID: "apps.processes_user", Family: "apps", Title: "Apps processes by user", Units: "processes", Type: registry.Stacked, Priority: 20054, Plugin: "apps", Module: "apps"},
+		{ID: "apps.processes_group", Family: "apps", Title: "Apps processes by user group", Units: "processes", Type: registry.Stacked, Priority: 20055, Plugin: "apps", Module: "apps"},
+	} {
+		reg.AddChart(ch)
 	}
 	return nil
 }
@@ -225,6 +243,12 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			st.cmdline, _ = p.CmdlineWithContext(ctx)
 			st.ppid, _ = p.PpidWithContext(ctx)
 			st.group = a.match(name, st.cmdline)
+			if uname, err := p.UsernameWithContext(ctx); err == nil {
+				st.user = appsOwnerID(uname)
+			}
+			if gids, err := p.GidsWithContext(ctx); err == nil && len(gids) > 0 {
+				st.osGroup = a.lookupOSGroup(gids[0])
+			}
 			a.pids[p.Pid] = st
 		}
 		st.seenAt = now
@@ -288,7 +312,90 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		_ = reg.Collect("apps.io_read", now, rd)
 		_ = reg.Collect("apps.io_write", now, wr)
 	}
+	a.collectOwners(reg, now, elapsed)
 	return nil
+}
+
+func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, elapsed float64) {
+	memU, nprocU := map[string]float64{}, map[string]float64{}
+	memG, nprocG := map[string]float64{}, map[string]float64{}
+	for _, st := range a.pids {
+		if st.seenAt != now {
+			continue
+		}
+		if st.user != "" {
+			nprocU[st.user]++
+			memU[st.user] += float64(st.rss)
+			if st.hasCPU {
+				// cpu delta already applied to group in Collect; recompute from cpuPct
+				if st.cpuPct > 0 {
+					a.cpuUser[st.user] += st.cpuPct * elapsed * 10
+				}
+			}
+		}
+		if st.osGroup != "" {
+			nprocG[st.osGroup]++
+			memG[st.osGroup] += float64(st.rss)
+			if st.cpuPct > 0 {
+				a.cpuOSGroup[st.osGroup] += st.cpuPct * elapsed * 10
+			}
+		}
+	}
+	addCPU := func(chart string, vals map[string]float64) {
+		ch, ok := reg.Chart(chart)
+		if !ok {
+			return
+		}
+		for id := range vals {
+			ch.AddDimension(&registry.Dimension{ID: id, Algorithm: registry.Incremental, Multiplier: 1, Divisor: 10})
+		}
+		_ = reg.Collect(chart, now, vals)
+	}
+	addAbs := func(chart string, vals map[string]float64, div int64) {
+		ch, ok := reg.Chart(chart)
+		if !ok {
+			return
+		}
+		for id := range vals {
+			ch.AddDimension(&registry.Dimension{ID: id, Algorithm: registry.Absolute, Multiplier: 1, Divisor: div})
+		}
+		_ = reg.Collect(chart, now, vals)
+	}
+	addCPU("apps.cpu_user", a.cpuUser)
+	addCPU("apps.cpu_group", a.cpuOSGroup)
+	addAbs("apps.mem_user", memU, 1<<20)
+	addAbs("apps.mem_group", memG, 1<<20)
+	addAbs("apps.processes_user", nprocU, 1)
+	addAbs("apps.processes_group", nprocG, 1)
+}
+
+func (a *appsCollector) lookupOSGroup(gid uint32) string {
+	key := strconv.FormatUint(uint64(gid), 10)
+	if a.groupCache != nil {
+		if n, ok := a.groupCache[key]; ok {
+			return n
+		}
+	}
+	name := key
+	if g, err := user.LookupGroupId(key); err == nil && g.Name != "" {
+		name = g.Name
+	}
+	name = appsOwnerID(name)
+	if a.groupCache != nil {
+		a.groupCache[key] = name
+	}
+	return name
+}
+
+func appsOwnerID(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if i := strings.LastIndexAny(s, `/\`); i >= 0 {
+		s = s[i+1:]
+	}
+	return sanitizeID(s)
 }
 
 // ProcessRow is one line of the `processes` function output.

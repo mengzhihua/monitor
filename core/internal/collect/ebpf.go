@@ -12,8 +12,8 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-// ebpfConfig is collectors.modules.ebpf (`bpftool prog show`). Portable
-// approximation of Netdata's ebpf.plugin: program count / memlock / run time.
+// ebpfConfig is collectors.modules.ebpf (`bpftool prog show` plus procfs
+// approximations of Netdata ebpf.plugin program families).
 type ebpfConfig struct {
 	Command string        `yaml:"command"`
 	Timeout time.Duration `yaml:"timeout"`
@@ -22,6 +22,11 @@ type ebpfConfig struct {
 type ebpfCollector struct {
 	cfg ebpfConfig
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+	haveTool                                                                          bool
+	vmstat, dentry, filenr, inodes, diskstats, mounts, kprobes, shm, stat, interrupts string
+	haveCache, haveDC, haveFD, haveVFS, haveOOM, haveProc                             bool
+	haveSHM, haveSwap, haveDisk, haveMount, haveIRQ, haveSync, haveMD, haveKprobe     bool
 }
 
 func init() {
@@ -52,43 +57,53 @@ func (e *ebpfCollector) Init(reg *registry.Registry) error {
 	if e.run == nil {
 		e.run = execRun(e.cfg.Timeout)
 	}
-	if _, err := e.programs(context.Background()); err != nil {
+	if _, err := e.programs(context.Background()); err == nil {
+		e.haveTool = true
+	}
+	e.probeProgSources()
+	if !e.haveTool && !e.anyProgs() {
 		if _, statErr := os.Stat("/sys/fs/bpf"); statErr != nil {
-			return fmt.Errorf("ebpf: bpftool unavailable and /sys/fs/bpf missing")
+			return fmt.Errorf("ebpf: bpftool unavailable and no procfs program-family sources")
 		}
-		return err
+		return fmt.Errorf("ebpf: bpftool unavailable")
 	}
-	for _, c := range []*registry.Chart{
-		{ID: "ebpf.programs", Title: "eBPF programs loaded", Units: "programs", Priority: 58200,
-			Dimensions: []*registry.Dimension{{ID: "loaded"}}},
-		{ID: "ebpf.bytes", Title: "eBPF program memlock", Units: "bytes", Priority: 58210, Type: registry.Area,
-			Dimensions: []*registry.Dimension{{ID: "memlock"}}},
-		{ID: "ebpf.run_time", Title: "eBPF program run time", Units: "ns/s", Priority: 58220, Type: registry.Area,
-			Dimensions: []*registry.Dimension{incDim("run_time")}},
-		{ID: "ebpf.run_count", Title: "eBPF program invocations", Units: "calls/s", Priority: 58230,
-			Dimensions: []*registry.Dimension{incDim("run_cnt")}},
-	} {
-		c.Family, c.Plugin, c.Module = "ebpf", "ebpf", "ebpf"
-		reg.AddChart(c)
+	if e.haveTool {
+		for _, c := range []*registry.Chart{
+			{ID: "ebpf.programs", Title: "eBPF programs loaded", Units: "programs", Priority: 58200,
+				Dimensions: []*registry.Dimension{{ID: "loaded"}}},
+			{ID: "ebpf.bytes", Title: "eBPF program memlock", Units: "bytes", Priority: 58210, Type: registry.Area,
+				Dimensions: []*registry.Dimension{{ID: "memlock"}}},
+			{ID: "ebpf.run_time", Title: "eBPF program run time", Units: "ns/s", Priority: 58220, Type: registry.Area,
+				Dimensions: []*registry.Dimension{incDim("run_time")}},
+			{ID: "ebpf.run_count", Title: "eBPF program invocations", Units: "calls/s", Priority: 58230,
+				Dimensions: []*registry.Dimension{incDim("run_cnt")}},
+		} {
+			c.Family, c.Plugin, c.Module = "ebpf", "ebpf", "ebpf"
+			reg.AddChart(c)
+		}
 	}
+	e.addProgCharts(reg)
 	return nil
 }
 
 func (e *ebpfCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	progs, err := e.programs(ctx)
-	if err != nil {
-		return err
+	if e.haveTool {
+		progs, err := e.programs(ctx)
+		if err != nil {
+			return err
+		}
+		var mem, runNS, runCnt float64
+		for _, p := range progs {
+			mem += p.Memlock
+			runNS += p.RunTimeNS
+			runCnt += p.RunCnt
+		}
+		_ = reg.Collect("ebpf.programs", now, map[string]float64{"loaded": float64(len(progs))})
+		_ = reg.Collect("ebpf.bytes", now, map[string]float64{"memlock": mem})
+		_ = reg.Collect("ebpf.run_time", now, map[string]float64{"run_time": runNS})
+		_ = reg.Collect("ebpf.run_count", now, map[string]float64{"run_cnt": runCnt})
 	}
-	var mem, runNS, runCnt float64
-	for _, p := range progs {
-		mem += p.Memlock
-		runNS += p.RunTimeNS
-		runCnt += p.RunCnt
-	}
-	_ = reg.Collect("ebpf.programs", now, map[string]float64{"loaded": float64(len(progs))})
-	_ = reg.Collect("ebpf.bytes", now, map[string]float64{"memlock": mem})
-	_ = reg.Collect("ebpf.run_time", now, map[string]float64{"run_time": runNS})
-	_ = reg.Collect("ebpf.run_count", now, map[string]float64{"run_cnt": runCnt})
+	e.collectProgs(reg, now)
 	return nil
 }
 

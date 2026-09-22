@@ -120,7 +120,7 @@ func TestDefaultRulesCompile(t *testing.T) {
 	for _, r := range rules {
 		found[r.Spec.Name] = true
 	}
-	for _, name := range []string{"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors", "threads_in_use", "freebsd_cpu_temperature"} {
+	for _, name := range []string{"10min_cpu_steal", "allocated_file_descriptors", "10min_disk_await", "1m_ipv4_udp_errors", "threads_in_use", "freebsd_cpu_temperature", "zfs_memory_throttle", "freebsd_ipfw_drops", "freebsd_softnet_drops"} {
 		if !found[name] {
 			t.Fatalf("missing M13 builtin rule %q", name)
 		}
