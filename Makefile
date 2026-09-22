@@ -39,3 +39,14 @@ cross:
 
 clean:
 	rm -rf $(BIN) core/internal/api/ui/dist/assets core/internal/api/ui/dist/index.html core/internal/api/ui/dist/favicon.svg
+
+.PHONY: verify-durability bench soak
+verify-durability: core
+	python3 scripts/verify-durability.py
+
+bench:
+	cd core && go test -run '^$$' -bench 'Benchmark(Append2000Series|Query24Hours600Points)' -benchtime=10000x -benchmem ./internal/tsdb
+	cd core && go test -run '^$$' -bench BenchmarkCheckpoint2000Series -benchtime=1x -benchmem ./internal/tsdb
+
+soak: core
+	python3 scripts/soak.py --seconds 120

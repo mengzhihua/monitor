@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,11 +49,15 @@ func run() error {
 	listen := flag.String("listen", "", "override web.listen (e.g. :19999)")
 	dataDir := flag.String("data-dir", "", "override global.data_dir")
 	logLevel := flag.String("log-level", "info", "debug|info|warn|error")
+	listCollectors := flag.Bool("list-collectors", false, "print registered collector names as JSON and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	backupDir := flag.String("backup-dir", "", "offline backup to a new directory and exit")
 	restoreFrom := flag.String("restore-from", "", "restore backup into a new data directory and exit")
 	flag.Parse()
 
+	if *listCollectors {
+		return json.NewEncoder(os.Stdout).Encode(collect.Available())
+	}
 	if *showVersion {
 		fmt.Printf("monitord %s %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
 		return nil

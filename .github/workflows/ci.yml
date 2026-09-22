@@ -56,6 +56,10 @@ jobs:
         run: ./scripts/smoke.sh
         shell: bash
 
+      - name: crash recovery and backup
+        if: runner.os != 'Windows'
+        run: python3 scripts/verify-durability.py
+
   cross:
     needs: web
     runs-on: ubuntu-latest
