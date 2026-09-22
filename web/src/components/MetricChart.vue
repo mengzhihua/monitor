@@ -78,7 +78,18 @@ function makeOpts(width: number): uPlot.Options {
       fill: st || props.chart.chart_type === 'area' ? color + (st ? 'cc' : '33') : undefined,
       spanGaps: false,
       value: (_u, _v, s, idx) => (idx == null ? '-' : fmt(raw[dimIndex(s)]?.[idx])),
-      points: { show: false },
+      points: {
+        show: true,
+        size: 5,
+        filter: (_u, si) => {
+          const values = raw[dimIndex(si)] ?? []
+          const isolated: number[] = []
+          values.forEach((value, index) => {
+            if (value != null && values[index-1] == null && values[index+1] == null) isolated.push(index)
+          })
+          return isolated
+        },
+      },
     })
   }
   return {
@@ -141,7 +152,7 @@ function render() {
 function onLive(t: number, v: Record<string, number>) {
   lastSample.value = Math.max(lastSample.value, t)
   latest.value = v
-  if (props.window > 3600) return // long windows refresh downsampled history; never grow per-second arrays
+  if (props.window > 1200) return // long windows refresh downsampled history; never grow per-second arrays
   if (times.length && t <= times[times.length - 1]!) return
   // a missed collection period becomes a single null so uPlot breaks the line
   if (times.length && t - times[times.length - 1]! > 2 * step()) {
@@ -151,7 +162,7 @@ function onLive(t: number, v: Record<string, number>) {
   times.push(t)
   dims.forEach((id, i) => raw[i]!.push(id in v ? v[id]! : null))
   const cutoff = t - props.window
-  while (times.length && times[0]! < cutoff) {
+  while (times.length && (times[0]! < cutoff || times.length > 1200)) {
     times.shift()
     raw.forEach((r) => r.shift())
   }

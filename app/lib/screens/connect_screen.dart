@@ -15,6 +15,7 @@ class ConnectScreen extends StatefulWidget {
 class _ConnectScreenState extends State<ConnectScreen> {
   final _url = TextEditingController(text: 'http://127.0.0.1:19999');
   final _token = TextEditingController();
+  bool _remember = true;
   final _form = GlobalKey<FormState>();
 
   @override
@@ -29,6 +30,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final url = _url.text.trim().replaceAll(RegExp(r'/+$'), '');
     await widget.state.connect(
       ServerConfig(baseUrl: url, token: _token.text.trim()),
+      remember: _remember,
     );
   }
 
@@ -65,7 +67,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     ),
                     validator: (v) {
                       final u = Uri.tryParse((v ?? '').trim());
-                      if (u == null || !u.hasScheme || u.host.isEmpty) {
+                      if (u == null ||
+                          !(u.scheme == 'http' || u.scheme == 'https') ||
+                          u.host.isEmpty ||
+                          u.userInfo.isNotEmpty ||
+                          u.hasQuery ||
+                          u.hasFragment) {
                         return 'Enter a http(s) URL';
                       }
                       return null;
@@ -77,10 +84,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     obscureText: true,
                     decoration: const InputDecoration(
                       labelText: 'API token (optional)',
-                      helperText: 'Token is kept only until this app closes.',
+                      helperText:
+                          'Stored with the operating system secure storage.',
                       border: OutlineInputBorder(),
                     ),
                     onFieldSubmitted: (_) => _submit(),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Remember token securely'),
+                    value: _remember,
+                    onChanged: st.loading
+                        ? null
+                        : (value) => setState(() => _remember = value ?? false),
                   ),
                   const SizedBox(height: 16),
                   if (st.error != null)

@@ -192,7 +192,7 @@ onMounted(async () => {
   if (!needToken.value) live.start()
   timer = window.setInterval(refresh, 30000)
 })
-onBeforeUnmount(() => clearInterval(timer))
+onBeforeUnmount(() => { clearInterval(timer); live.stop() })
 </script>
 
 <template>

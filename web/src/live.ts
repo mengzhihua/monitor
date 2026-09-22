@@ -8,6 +8,8 @@ class Live {
   private ws: WebSocket | null = null
   private handlers = new Map<string, Set<Handler>>()
   private retry = 1000
+  private retryTimer: number | undefined
+  private enabled = false
   private wanted = new Set<string>()
   private sendTimer: number | undefined
 
@@ -15,33 +17,54 @@ class Live {
   onState: ((up: boolean) => void) | null = null
   onAlarm: ((e: AlarmLogEntry) => void) | null = null
 
+  constructor() {
+    window.addEventListener('offline', () => this.dropSocket())
+    window.addEventListener('online', () => { if (this.enabled) this.start() })
+  }
+
   start() {
-    if (this.ws) return
+    this.enabled = true
+    if (this.ws || !navigator.onLine) return
+    clearTimeout(this.retryTimer)
     const ws = new WebSocket(api.liveURL([...this.wanted]), api.liveProtocols())
     this.ws = ws
-    ws.onopen = () => { this.retry = 1000; this.connected = true; this.onState?.(true); this.flush() }
+    ws.onopen = () => {
+      if (this.ws !== ws) return
+      this.retry = 1000; this.connected = true; this.onState?.(true); this.flush()
+    }
     ws.onmessage = (e) => {
-      const m = JSON.parse(e.data) as LiveMsg | LiveAlarmMsg
-      // the socket is scoped to one node; ignore anything else (e.g. after a switch)
+      if (this.ws !== ws) return
+      let m: LiveMsg | LiveAlarmMsg
+      try { m = JSON.parse(e.data) } catch { return }
       if ((m.node ?? '') !== selection.node) return
       if ('alarm' in m) { this.onAlarm?.(m.alarm); return }
       this.handlers.get(m.chart)?.forEach((h) => h(m))
     }
     ws.onclose = () => {
+      if (this.ws !== ws) return
       this.ws = null; this.connected = false; this.onState?.(false)
-      setTimeout(() => this.start(), this.retry)
-      this.retry = Math.min(this.retry * 2, 15000)
+      if (this.enabled && navigator.onLine) {
+        this.retryTimer = window.setTimeout(() => this.start(), this.retry)
+        this.retry = Math.min(this.retry * 2, 15000)
+      }
     }
     ws.onerror = () => ws.close()
   }
 
-  /** Drop the current socket (e.g. after credentials or node change) and reconnect now. */
-  restart() {
-    const ws = this.ws
-    if (!ws) { this.start(); return }
-    ws.onclose = () => { this.ws = null; this.connected = false; this.onState?.(false); this.start() }
-    ws.close()
+  private dropSocket() {
+    clearTimeout(this.retryTimer)
+    clearTimeout(this.sendTimer)
+    const old = this.ws
+    this.ws = null
+    this.connected = false
+    this.onState?.(false)
+    old?.close()
   }
+
+  stop() { this.enabled = false; this.dropSocket() }
+
+  /** Replace immediately; an offline TCP close handshake can take 30 seconds. */
+  restart() { this.dropSocket(); this.start() }
 
   subscribe(chart: string, h: Handler) {
     let set = this.handlers.get(chart)

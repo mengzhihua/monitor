@@ -3,13 +3,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
 import '../api/models.dart';
+import 'credential_store.dart';
 
-/// Server URL and selected node persist; credentials remain in memory only.
+/// Credentials persist only in the operating system secure store.
 class AppState extends ChangeNotifier {
   static const _kUrl = 'server.url';
   static const _kToken = 'server.token';
   static const _kNode = 'server.node';
 
+  final _credentials = CredentialStore();
   ServerConfig? _config;
   ApiClient? _client;
   ServerInfo? info;
@@ -32,13 +34,21 @@ class AppState extends ChangeNotifier {
   Future<void> restore() async {
     final p = await SharedPreferences.getInstance();
     final url = p.getString(_kUrl);
+    await p.remove(_kToken);
     if (url == null || url.isEmpty) return;
     selectedNode = p.getString(_kNode) ?? 'local';
     await p.remove(_kToken); // Remove credentials saved by earlier versions.
-    await connect(ServerConfig(baseUrl: url));
+    try {
+      final token = await _credentials.load(url);
+      await connect(ServerConfig(baseUrl: url, token: token));
+    } catch (_) {
+      error = 'Secure storage is unavailable. Enter your token to connect.';
+      notifyListeners();
+    }
   }
 
-  Future<bool> connect(ServerConfig cfg) async {
+  Future<bool> connect(ServerConfig cfg, {bool remember = true}) async {
+    if (loading) return false;
     loading = true;
     error = null;
     notifyListeners();
@@ -53,6 +63,12 @@ class AppState extends ChangeNotifier {
       await p.setString(_kUrl, cfg.baseUrl);
       await p.remove(_kToken);
       await refreshNodes();
+      try {
+        await _credentials.save(cfg, remember: remember);
+      } catch (_) {
+        error =
+            'Connected for this session. Secure storage is unavailable; the token was not saved.';
+      }
       return true;
     } catch (e) {
       c.close();
@@ -95,6 +111,11 @@ class AppState extends ChangeNotifier {
     await p.remove(_kUrl);
     await p.remove(_kToken);
     await p.remove(_kNode);
+    try {
+      await _credentials.clear();
+    } catch (_) {
+      error = "Could not remove the saved credential from secure storage.";
+    }
     notifyListeners();
   }
 }

@@ -29,6 +29,8 @@ class _ChartsViewState extends State<ChartsView> {
   StreamSubscription<LiveSample>? _liveSub;
   Timer? _reconnect;
   Timer? _refresh;
+  int _loadGeneration = 0;
+  final _historyRequests = <String>{};
 
   @override
   void initState() {
@@ -39,17 +41,25 @@ class _ChartsViewState extends State<ChartsView> {
 
   @override
   void dispose() {
+    ++_loadGeneration;
     _refresh?.cancel();
     _reconnect?.cancel();
     _liveSub?.cancel();
     _live?.close();
+    for (final series in _series.values) {
+      series.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     try {
       final list = await widget.client.charts(node: widget.node);
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
+      for (final series in _series.values) {
+        series.loaded = false;
+      }
       setState(() {
         _charts = list;
         _error = null;
@@ -57,7 +67,7 @@ class _ChartsViewState extends State<ChartsView> {
       });
       _openLive();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -67,10 +77,13 @@ class _ChartsViewState extends State<ChartsView> {
 
   Iterable<Chart> get _visible {
     final f = _filter.trim().toLowerCase();
-    return _charts.where((c) => f.isEmpty ||
-        c.id.toLowerCase().contains(f) ||
-        c.title.toLowerCase().contains(f) ||
-        c.family.toLowerCase().contains(f));
+    return _charts.where(
+      (c) =>
+          f.isEmpty ||
+          c.id.toLowerCase().contains(f) ||
+          c.title.toLowerCase().contains(f) ||
+          c.family.toLowerCase().contains(f),
+    );
   }
 
   void _openLive() {
@@ -84,7 +97,7 @@ class _ChartsViewState extends State<ChartsView> {
     _liveSub = live.samples.listen(
       (s) {
         final sr = _series[s.chart];
-        if (sr != null) {
+        if (sr != null && _windowSeconds <= 1200) {
           sr.add(s.t, s.values);
           sr.notify();
         }
@@ -105,13 +118,27 @@ class _ChartsViewState extends State<ChartsView> {
 
   Future<void> _fetchHistory(Chart c) async {
     final sr = _seriesFor(c);
-    if (sr.loaded && sr.window == _windowSeconds) return;
+    if ((sr.loaded && sr.window == _windowSeconds) ||
+        !_historyRequests.add(c.id)) {
+      return;
+    }
+    final requestedWindow = _windowSeconds;
     try {
-      final d = await widget.client.data(c.id,
-          node: widget.node, afterSeconds: _windowSeconds, points: 240);
-      sr.reset(d, _windowSeconds);
+      final d = await widget.client.data(
+        c.id,
+        node: widget.node,
+        afterSeconds: requestedWindow,
+        points: 240,
+      );
+      if (!mounted || requestedWindow != _windowSeconds) return;
+      sr.reset(d, requestedWindow);
     } catch (_) {
-      // keep what we have; live updates still arrive
+      // Keep existing samples; the next refresh retries the missing history.
+    } finally {
+      _historyRequests.remove(c.id);
+      if (mounted && requestedWindow != _windowSeconds) {
+        unawaited(_fetchHistory(c));
+      }
     }
   }
 
@@ -123,7 +150,9 @@ class _ChartsViewState extends State<ChartsView> {
     }
     final families = <String, List<Chart>>{};
     for (final c in _visible) {
-      families.putIfAbsent(c.family.isEmpty ? 'other' : c.family, () => []).add(c);
+      families
+          .putIfAbsent(c.family.isEmpty ? 'other' : c.family, () => [])
+          .add(c);
     }
     final keys = families.keys.toList()..sort();
     return Column(
@@ -173,8 +202,10 @@ class _ChartsViewState extends State<ChartsView> {
         if (_error != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(_error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ),
         Expanded(
           child: RefreshIndicator(
@@ -221,11 +252,12 @@ class _FamilySection extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text(family.toUpperCase(),
-              style: Theme.of(context)
-                  .textTheme
-                  .labelLarge
-                  ?.copyWith(letterSpacing: 1.2)),
+          child: Text(
+            family.toUpperCase(),
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(letterSpacing: 1.2),
+          ),
         ),
         if (wide)
           GridView.builder(
@@ -233,12 +265,15 @@ class _FamilySection extends StatelessWidget {
             physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.symmetric(horizontal: 8),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 480, mainAxisExtent: 220),
+              maxCrossAxisExtent: 480,
+              mainAxisExtent: 220,
+            ),
             itemCount: charts.length,
             itemBuilder: (context, i) => ChartCard(
-                chart: charts[i],
-                series: seriesFor(charts[i]),
-                onVisible: onVisible),
+              chart: charts[i],
+              series: seriesFor(charts[i]),
+              onVisible: onVisible,
+            ),
           )
         else
           for (final c in charts)
@@ -275,12 +310,15 @@ class ChartSeries extends ChangeNotifier {
   }
 
   void add(int t, Map<String, double> values) {
+    // Long windows are reloaded as 240 server-aggregated points every 30s.
+    // Appending second-resolution samples would grow them without a useful bound.
+    if (window > 1200) return;
     final cutoff = (t - window).toDouble();
     for (final e in values.entries) {
       final pts = points.putIfAbsent(e.key, () => []);
       if (pts.isNotEmpty && pts.last.x >= t) continue;
       pts.add(FlSpot(t.toDouble(), e.value));
-      while (pts.isNotEmpty && pts.first.x < cutoff) {
+      while (pts.isNotEmpty && (pts.first.x < cutoff || pts.length > 1200)) {
         pts.removeAt(0);
       }
     }
@@ -351,13 +389,14 @@ class _ChartCardState extends State<ChartCard> {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(c.title.isEmpty ? c.id : c.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleSmall),
+                      child: Text(
+                        c.title.isEmpty ? c.id : c.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
                     ),
-                    Text(c.units,
-                        style: Theme.of(context).textTheme.bodySmall),
+                    Text(c.units, style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -367,9 +406,11 @@ class _ChartCardState extends State<ChartCard> {
                       ? LineChart(_lineData(dims))
                       : const Center(
                           child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))),
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
                 ),
                 const SizedBox(height: 6),
                 Wrap(
@@ -399,16 +440,19 @@ class _ChartCardState extends State<ChartCard> {
       final pts = widget.series.points[dims[i].id] ?? const <FlSpot>[];
       if (pts.length < 2) continue;
       final color = _palette[i % _palette.length];
-      bars.add(LineChartBarData(
-        spots: pts,
-        color: color,
-        barWidth: 1.5,
-        isCurved: false,
-        dotData: const FlDotData(show: false),
-        belowBarData: BarAreaData(
+      bars.add(
+        LineChartBarData(
+          spots: pts,
+          color: color,
+          barWidth: 1.5,
+          isCurved: false,
+          dotData: const FlDotData(show: false),
+          belowBarData: BarAreaData(
             show: stacked || widget.chart.type == 'area',
-            color: color.withValues(alpha: 0.25)),
-      ));
+            color: color.withValues(alpha: 0.25),
+          ),
+        ),
+      );
     }
     final now = DateTime.now().millisecondsSinceEpoch / 1000;
     return LineChartData(
@@ -426,8 +470,8 @@ class _ChartCardState extends State<ChartCard> {
           sideTitles: SideTitles(
             showTitles: true,
             reservedSize: 44,
-            getTitlesWidget: (v, meta) => Text(_fmt(v),
-                style: const TextStyle(fontSize: 10)),
+            getTitlesWidget: (v, meta) =>
+                Text(_fmt(v), style: const TextStyle(fontSize: 10)),
           ),
         ),
       ),
@@ -452,8 +496,10 @@ class _Legend extends StatelessWidget {
         const SizedBox(width: 4),
         Text(name, style: style),
         const SizedBox(width: 4),
-        Text(value == null ? '-' : _fmt(value!),
-            style: style?.copyWith(fontWeight: FontWeight.bold)),
+        Text(
+          value == null ? '-' : _fmt(value!),
+          style: style?.copyWith(fontWeight: FontWeight.bold),
+        ),
       ],
     );
   }
@@ -481,9 +527,11 @@ class _ErrorRetry extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
           const SizedBox(height: 12),
           FilledButton.tonal(onPressed: onRetry, child: const Text('Retry')),
         ],
