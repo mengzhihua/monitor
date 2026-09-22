@@ -286,6 +286,15 @@ flutter run -d macos      # 或 linux / windows / <android-device> / <ios-device
 flutter analyze && flutter test
 ```
 
+Linux 桌面运行需要 GTK 3 和 **libEGL**（缺 `libEGL.so.1` 会立刻退出）：
+
+```bash
+# Debian / Ubuntu
+sudo apt install libegl1 libgtk-3-0
+# Fedora
+sudo dnf install mesa-libEGL gtk3
+```
+
 ### Android 服务端（M4 起步）
 
 `android/` 是原生 Kotlin 壳：前台服务拉起随包分发的静态 `monitord`（`jniLibs/arm64-v8a/libmonitord.so`），可设置监听端口、可选上报到 Hub、开机自启，并直接打开内嵌 Dashboard。Android 沙箱限制 `/proc/net` 等接口，网络类图表可能缺失；日志走 `logcat`。
@@ -307,7 +316,7 @@ flutter analyze && flutter test
 git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 ```
 
-目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。
+目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。Linux 客户端请先安装 `libegl1`（见上文）。
 
 ## 仓库规划
 

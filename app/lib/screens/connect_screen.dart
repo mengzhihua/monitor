@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../state/app_state.dart';
+import '../version.dart';
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key, required this.state});
@@ -51,6 +52,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   Text('Monitor',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium),
+                  const SizedBox(height: 4),
+                  Text('v$appVersion',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall),
                   const SizedBox(height: 24),
                   TextFormField(
                     controller: _url,
