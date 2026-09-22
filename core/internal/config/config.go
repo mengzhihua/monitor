@@ -35,7 +35,7 @@ type Config struct {
 	Web struct {
 		Listen    string   `yaml:"listen"`
 		AllowFrom []string `yaml:"allow_from"` // CIDRs; empty = all
-		Token     string   `yaml:"token"`      // optional bearer token for the API (admin)
+		Token     string   `yaml:"token"`      // admin password/bearer token; generated when no auth is configured
 		Users     []User   `yaml:"users"`      // named credentials with roles
 		OIDC      OIDC     `yaml:"oidc"`
 		LDAP      LDAP     `yaml:"ldap"`

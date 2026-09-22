@@ -21,7 +21,9 @@
 ```bash
 make all          # 1) 构建 Vue Dashboard 并嵌入  2) 编译 core/bin/monitord
 ./core/bin/monitord -listen :19999 -data-dir ./data
-# 浏览器打开 http://localhost:19999/
+# 在另一终端读取本机生成的登录密码（无需用户名）：
+cat ./data/web-password
+# 浏览器打开 http://localhost:19999/，输入上面的密码
 ```
 
 也可以只用 Go（不构建前端则 Dashboard 为空页，API 正常）：
@@ -31,6 +33,10 @@ cd core && go run ./cmd/monitord -listen :19999
 ```
 
 配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
+
+默认开启登录保护：未配置 `web.token`、`web.users`、OIDC 或 LDAP 时，首次启动生成独立的随机管理员密码，保存在 `<data_dir>/web-password`（Unix 权限 `0600`）。重启沿用该密码；升级旧的无认证部署也会启用登录。启动日志只提示文件位置，不输出密码。Web 和 Flutter 客户端均在密码/令牌框输入它；API 使用 `Authorization: Bearer <密码>`。Android 服务端可点击“查看登录密码”。
+
+已有认证配置保持生效，不会额外生成管理员密码。要自定义密码，在私有 `monitor.yaml` 中设置足够长的随机 `web.token` 并重启；忘记自动生成的密码时，停止服务、删除 `web-password`、重启后读取新密码。文件损坏或无法保存时服务拒绝启动。备份包含密码，请保护备份；Windows 请通过数据目录 ACL 限制其他用户读取。远程部署应通过 HTTPS 反向代理或可信加密网络访问，密码认证本身不加密 HTTP。
 
 跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、freebsd(amd64/arm64)、android(arm64) 二进制。
 
@@ -45,7 +51,7 @@ cd core && go run ./cmd/monitord -listen :19999
 | plugins.d | 外部采集器进程（任意语言）通过 stdout 文本协议接入：`CHART/DIMENSION/CLABEL/BEGIN/SET/END/FLUSH/VARIABLE/DISABLE/EXIT`；自动发现 `plugins.d/*.plugin`，也可在 `plugins.list` 显式声明；崩溃自动重启（1s→60s 指数退避）、无输出看门狗、进程组回收、`DISABLE` 自禁用；状态在 `/api/v1/collectors.plugins` 与 `/api/v1/info.plugins` |
 | 应用/服务采集器 | `apps`：进程按应用分组 → `apps.cpu/mem/processes/threads/io_*`；`systemd`：cgroup v2 每服务 CPU/内存/IO；`docker`：每容器 cpu/mem/net/blkio；`nginx`（stub_status）；`apache`（server-status?auto）；`phpfpm`；`redis`（内置 RESP）；`memcached`（STATS）。目标不可达时自动禁用 |
 | Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`、`services`、`logs`、`containers`、`disks`、`mounts`、`network-interfaces`；Hub 上 `streaming` |
-| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/contexts` `/collectors` `/functions` `/function` `/weights` `/logs`；`POST /api/v1/ingest/openmetrics` `/otlp`；`/api/v1/alarms` `/alarm_log` `/alarm_rules` `/alarm_variables` `/alarms/silence`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；可选 `token` 与 `allow_from` CIDR 访问控制 |
+| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/contexts` `/collectors` `/functions` `/function` `/weights` `/logs`；`POST /api/v1/ingest/openmetrics` `/otlp`；`/api/v1/alarms` `/alarm_log` `/alarm_rules` `/alarm_variables` `/alarms/silence`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；默认密码认证与可选 `allow_from` CIDR 访问控制 |
 | Dashboard | Vue3 + uPlot，按 family 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板，Functions 面板（进程/连接/服务表） |
 
 ### 已实现能力（M1：健康/告警）

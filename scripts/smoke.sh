@@ -19,6 +19,9 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 sleep 4
+# Exercise the default generated credential, without opting out of authentication.
+SMOKE_PASSWORD=$(cat "$DATA/web-password")
+curl() { command curl -H "Authorization: Bearer $SMOKE_PASSWORD" "$@"; }
 
 fail() { echo "SMOKE FAIL: $*"; exit 1; }
 
@@ -53,7 +56,16 @@ curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5" | grep '
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
 curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"
-curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=logs" | grep '"cursor"' >/dev/null || fail "logs function"
+# The scheduler omits a function while its collector is busy. Retry only that
+# transient 404; authentication failures and other HTTP errors still fail.
+for i in $(seq 1 50); do
+  code=$(curl -s -o "$DATA/logs-result.json" -w '%{http_code}' "http://127.0.0.1:$PORT/api/v1/function?function=logs")
+  [[ "$code" == "200" ]] && break
+  [[ "$code" == "404" ]] || fail "logs function HTTP $code"
+  sleep 0.2
+done
+[[ "$code" == "200" ]] || fail "logs function unavailable"
+grep '"cursor"' "$DATA/logs-result.json" >/dev/null || fail "logs function columns"
 curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=network-connections" | grep '"inode"' >/dev/null || fail "network-connections inode"
 collectors=$(curl -sf "http://127.0.0.1:$PORT/api/v1/collectors") || fail "collectors"
 echo "$collectors" | grep '"name":"macos"' >/dev/null || fail "collector macos missing"
@@ -88,6 +100,7 @@ global:
 hub:
   space: smoke
   room: edge
+  peer_token: smoke-ring-test-only
 EOF
 "$BIN" -config "$HUBDATA/monitor.yaml" -listen "127.0.0.1:$HUBPORT" -log-level warn &
 HPID=$!
@@ -98,14 +111,15 @@ for i in $(seq 1 30); do
 done
 curl -sf "http://127.0.0.1:$HUBPORT/healthz" >/dev/null || fail "hub healthz"
 
-eval "$(python3 - "$HUBPORT" <<'PY'
-import json, sys, urllib.request, urllib.error
+eval "$(python3 - "$HUBPORT" "$HUBDATA/data/web-password" <<'PY'
+import json, sys, pathlib, urllib.request, urllib.error
 base = f"http://127.0.0.1:{sys.argv[1]}"
+password = pathlib.Path(sys.argv[2]).read_text().strip()
 def get(path):
-    return json.load(urllib.request.urlopen(base + path))
+    return req("GET", path)
 def req(method, path, body=None, headers=None):
     data = None if body is None else json.dumps(body).encode()
-    r = urllib.request.Request(base + path, data=data, method=method, headers=headers or {"Content-Type": "application/json"})
+    r = urllib.request.Request(base + path, data=data, method=method, headers=headers or {"Content-Type": "application/json", "Authorization": "Bearer " + password})
     with urllib.request.urlopen(r) as resp:
         raw = resp.read()
         return json.loads(raw) if raw else {}
@@ -125,7 +139,7 @@ ring = req("POST", "/api/v1/hub/ring", {
     "host": {"id": "peer-agent", "hostname": "peer-agent", "os": "linux", "update_every": 1},
     "charts": [{"id": "system.ram", "context": "system.ram", "units": "MiB", "dimensions": [{"id": "used"}, {"id": "free"}]}],
     "samples": [{"chart": "system.ram", "t": 1, "v": {"used": 11, "free": 22}}],
-})
+}, headers={"Content-Type": "application/json", "Authorization": "Bearer smoke-ring-test-only"})
 assert ring.get("replica") is True, ring
 nodes = get("/api/v1/nodes")["nodes"]
 assert any(n.get("id") == "peer-agent" and n.get("replica") for n in nodes), nodes

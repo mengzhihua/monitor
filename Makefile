@@ -60,6 +60,7 @@ hub-load: core
 acceptance:
 	$(MAKE) all
 	$(MAKE) test
+	python3 scripts/verify-default-auth.py
 	python3 scripts/verify-durability.py
 	python3 scripts/load-hub.py
 	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}

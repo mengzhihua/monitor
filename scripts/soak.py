@@ -19,13 +19,15 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
   for _ in range(200):
    try:urllib.request.urlopen(base+'/healthz',timeout=1).close();break
    except OSError:time.sleep(.1)
+  token=(root/'data'/'web-password').read_text().strip()
+  def authed(path):return urllib.request.Request(base+path,headers={'Authorization':'Bearer '+token})
   deadline=time.monotonic()+a.seconds
   while time.monotonic()<deadline:
    try:
     started=time.perf_counter()
-    with urllib.request.urlopen(base+'/api/v1/data?chart=system.ram&after=-60&points=60',timeout=10) as r:body=json.load(r)
+    with urllib.request.urlopen(authed('/api/v1/data?chart=system.ram&after=-60&points=60'),timeout=10) as r:body=json.load(r)
     latencies.append((time.perf_counter()-started)*1000)
-    with urllib.request.urlopen(base+'/api/v1/info',timeout=10) as r:info=json.load(r)
+    with urllib.request.urlopen(authed('/api/v1/info'),timeout=10) as r:info=json.load(r)
     charts=info['charts_count']
     persistence=info.get('db',{}).get('persistence',{})
     if persistence.get('error'): errors.append('checkpoint: '+persistence['error'])

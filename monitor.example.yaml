@@ -19,7 +19,7 @@ db:
 web:
   listen: ":19999"
   allow_from: []       # CIDRs allowed to reach the API/UI, e.g. ["10.0.0.0/8", "127.0.0.1"]
-  token: ""            # if set, /api and /metrics require ?token= or "Authorization: Bearer" (admin)
+  token: ""            # admin login password / bearer token. Empty + no users/OIDC/LDAP generates data_dir/web-password; NEVER enables anonymous access.
   users: []            # named credentials with roles; any token/users setting turns anonymous access off
   # - { name: ops,   token: "change-me-1", role: admin }          # everything, incl. DELETE /api/v1/nodes
   # - { name: oncall, token: "change-me-2", role: troubleshooter } # read + Functions (processes table…)

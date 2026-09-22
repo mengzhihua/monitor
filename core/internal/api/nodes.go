@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
@@ -64,11 +65,11 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 	if tok == "" {
 		return User{}, false
 	}
-	if s.opt.Token != "" && tok == s.opt.Token {
+	if s.opt.Token != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.opt.Token)) == 1 {
 		return User{Name: "admin", Role: RoleAdmin}, true
 	}
 	for _, u := range s.opt.Users {
-		if u.Token == tok {
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(u.Token)) == 1 {
 			return u, true
 		}
 	}

@@ -16,6 +16,7 @@ core/internal/api/ui/dist/*
 .DS_Store
 *.log
 monitor.yaml
+web-password
 
 # Browser acceptance artifacts
 web/test-results/

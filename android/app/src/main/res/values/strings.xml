@@ -7,6 +7,8 @@
     <string name="start">Start</string>
     <string name="stop">Stop</string>
     <string name="open_dashboard">Open dashboard</string>
+    <string name="login_password">查看登录密码</string>
+    <string name="password_not_ready">请先启动服务，首次启动后会生成登录密码。</string>
     <string name="port_label">Listen port</string>
     <string name="start_on_boot">Start on boot</string>
     <string name="hub_url_label">Hub URL (optional, e.g. wss://hub:19999)</string>

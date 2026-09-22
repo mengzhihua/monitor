@@ -15,6 +15,9 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
+import android.view.WindowManager
+import java.io.File
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -64,6 +67,17 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.open).setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:${settings.port}/")))
+        }
+        findViewById<Button>(R.id.password).setOnClickListener {
+            val password = runCatching { File(filesDir, "data/web-password").readText().trim() }.getOrNull()
+            val dialog = AlertDialog.Builder(this)
+                .setTitle(R.string.login_password)
+                .setMessage(password ?: getString(R.string.password_not_ready))
+                .setPositiveButton(android.R.string.ok, null)
+                .create()
+            dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            dialog.show()
+            dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
         }
     }
 

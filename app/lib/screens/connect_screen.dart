@@ -90,7 +90,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     controller: _token,
                     obscureText: true,
                     decoration: const InputDecoration(
-                      labelText: 'API token (optional)',
+                      labelText: 'Login password / API token',
                       helperText:
                           'Stored with the operating system secure storage.',
                       border: OutlineInputBorder(),

@@ -98,6 +98,13 @@ func run() error {
 		return err
 	}
 	defer lock.Close()
+	passwordFile, err := cfg.EnsureWebAuth()
+	if err != nil {
+		return fmt.Errorf("web authentication: %w", err)
+	}
+	if passwordFile != "" {
+		log.Warn("dashboard login required; read the password file on this server", "password_file", passwordFile)
+	}
 
 	h, err := hostIdentity(cfg)
 	if err != nil {

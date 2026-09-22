@@ -17,6 +17,7 @@ const charts = ref<Chart[]>([])
 const error = ref('')
 const needToken = ref(false)
 const tokenInput = ref('')
+const loginError = ref('')
 const connected = ref(false)
 const windowSec = ref(300)
 const filter = ref('')
@@ -117,6 +118,15 @@ async function refresh() {
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
+      live.stop()
+      connected.value = false
+      info.value = null
+      charts.value = []
+      nodes.value = []
+      alarms.value = []
+      alarmLog.value = []
+      functions.value = []
+      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = false
       error.value = ''
       return
     }
@@ -170,10 +180,15 @@ async function logout() {
 }
 
 async function submitToken() {
+  loginError.value = ''
   auth.token = tokenInput.value.trim()
   tokenInput.value = ''
   await refresh()
   if (!needToken.value) live.restart()
+  else {
+    auth.token = ''
+    loginError.value = '密码或访问令牌不正确，请重试。'
+  }
 }
 
 function fmtUptime(s: number) {
@@ -279,8 +294,10 @@ onBeforeUnmount(() => { clearInterval(timer); live.stop() })
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
       <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { filter = id; showCloud = false }" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
-        <p>此服务需要身份验证，请输入访问令牌或使用 OIDC 登录。</p>
-        <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />
+        <p>请输入登录密码或访问令牌。</p>
+        <p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>
+        <input v-model="tokenInput" type="password" placeholder="登录密码或访问令牌" aria-label="登录密码或访问令牌" autocomplete="current-password" required autofocus />
+        <p v-if="loginError" role="alert">{{ loginError }}</p>
         <button type="submit">进入</button>
         <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
