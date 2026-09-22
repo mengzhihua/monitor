@@ -5,22 +5,22 @@
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
 > **不要重做 go.d**：`init.go` 除故意跳过的 `testrandom` 外已打勾。
 
-## 0. 现状一句话（M0–M19、M22、M23、M26 合入 main；M25 本轮）
+## 0. 现状一句话（M0–M19、M21、M22、M23、M26 合入 main；M25 本轮）
 
 Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
-剩下主要是 **Windows Perflib、日志/查看器、真 eBPF CO-RE**。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M26 点名 Prometheus 原生 ID 已合入。本轮 M25 补 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
+剩下主要是 **日志/查看器、真 eBPF CO-RE**。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M21 Windows Perflib 已合入；M26 点名 Prometheus 原生 ID 已合入。本轮 M25 补 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
 
 | 面 | 完成度 | 说明 |
 | --- | --- | --- |
 | go.d 应用采集器 | **完成** | 除 `testrandom`；约 154 个原生模块 |
 | Linux proc / debugfs 常规图 | **完成** | 含 InfiniBand、tc、EDAC、SLAB、zswap、RAPL、DRM、bcache、timex |
 | 原生 C 插件便携近似 | **骨架完成** | cups / xenstat / ioping / nftables / ipmi / ebpf(bpftool) / journalctl / wevtutil |
-| Windows.plugin | **骨架** | 进程/线程/句柄 + Function `windows-services`；缺 Perflib 全家桶 |
+| Windows.plugin | **M21** | 进程/线程/句柄 + Perflib 全家桶（IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 出图）；无角色则跳过 |
 | freebsd.plugin | **完成（M22）** | sysctl 全家桶 + ZFS ARC/trim + ipfw + gstat/df/netstat 近似；非 FreeBSD 自动禁用 |
 | Hub / Cloud | **产品面（M25）** | claim/Space/Room/OIDC/环复制/LDAP/share + ACLK MQTT-over-WSS + Cloud 控制台 + 图上异常高亮 + Correlations UI |
 | 850+ Prometheus 集成名 | **M26 点名包装** | 具名 profile 出原生 ID（etcd/minio/vault/…）；其余仍 `prom.*`；已有采集器的不重复包装 |
 
-约 **178** 个内置采集器。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **21%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在真 eBPF CO-RE 与 Windows Perflib。
+约 **178** 个内置采集器。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **21%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在真 eBPF CO-RE 与日志/查看器。
 
 ## 1. 现在有什么（M0–M19 / M22 / M23）
 
@@ -57,17 +57,15 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 
 ### 2.3 Windows.plugin（Perflib 全家桶）
 
-M16 只有 `system.processes/threads/handles/ctxt` + Function `windows-services`。Netdata `windows.plugin` 还缺：
+**M21 已有：** `system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS 站点与应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature` / `system.hw.sensor.temperature.*`、AD/ADCS/ADFS、Exchange、Terminal Services、`windows.service_state.*` + `windows.services` 汇总、`powersupply.capacity`。数据源：WMI `Win32_PerfFormattedData_*` 主路径（无 CGO PDH）；`typeperf -sc 1` 仅 `typeperf_scan: true` 时启用。对象/角色不存在则跳过。
 
-| 批次优先级 | Perflib / 模块 | 图表族（对齐 Netdata ID） |
+| 状态 | Perflib / 模块 | 图表族 |
 | --- | --- | --- |
-| 高 | processor / memory / objects / processes / storage / network | CPU 队列、内存池、磁盘物理/逻辑、网卡 |
-| 高 | web-service（IIS）、asp、netframework | IIS 请求/队列、ASP.NET、.NET CLR |
-| 中 | hyperv、smb、thermalzone、numa、terminal-services | Hyper-V VM、SMB、温度、NUMA、RDS |
-| 低 | ad / adcs / adfs / exchange | 仅当角色存在时自动启用 |
-| 中 | GetServicesStatus **出图**（不仅 Function）、GetSensors、GetPowerSupply、GetHardwareInfo | `windows.service.*`、传感器、电源、硬件清单 |
-
-无 CGO PDH 时走 WMI `Win32_PerfRawData_*` / `typeperf`；Init 失败即禁用。
+| **M21** | processor queue / memory pool / objects / storage / network | `system.cpu_queue` `mem.system_pool_size` `windows.logical_disk.*` `windows.physical_disk.*` `windows.net.*` |
+| **M21** | web-service（IIS）、APP_POOL_WAS、asp、netframework | `iis.website_*` `iis.application_pool_*` `aspnet.*` `netframework.clr_*` |
+| **M21** | hyperv、smb、thermalzone、numa、terminal-services | `hyperv.vm_cpu` `smb.server_shares_*` `system.thermalzone_temperature` `mem.numa_node_mem_usage` `windows.terminal_services.sessions` |
+| **M21** | ad / adcs / adfs / exchange | 角色存在时自动启用 |
+| **M21** | GetServicesStatus 出图、GetPowerSupply、GetSensors、GetHardwareInfo | `windows.service_state.*` `windows.power.charge` `powersupply.capacity` `cpu.temperature` `system.hw.sensor.temperature.*` |
 
 ### 2.4 freebsd.plugin（M22 已合入）
 
@@ -110,7 +108,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 
 原则不变：每批可合并、可测、图表 ID 对齐、目标缺失即禁用。完成标准一律 `go test -race`、`vue-tsc`、`scripts/smoke.sh`。
 
-### 3.1 已完成（M7–M18）
+### 3.1 已完成（M7–M19、M22、M23、M26）
 
 | 批次 | 搬什么 | 状态 |
 | --- | --- | --- |
@@ -126,6 +124,11 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | **M16** | Windows/FreeBSD 骨架、Flutter Functions、Android logcat | 合入 |
 | **M17** | proc 剩余 + libvirt/proxmox/ebpf 近似；manage/health；维护窗口；Kinesis/Pub/Sub；LDAP/share | 合入 |
 | **M18** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q | 合入 |
+| **M19** | eBPF 程序族、perf、extfrag/audit、idlejitter、apps user/group、nfacct | 合入 |
+| **M22** | freebsd.plugin 剩余：sysctl/ZFS ARC/ipfw/net.inet*/gstat/df | 合入 |
+| **M23** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 合入 |
+| **M26** | Prometheus 点名 profile 原生 ID + `/api/v1/prometheus/catalog` | 合入 |
+| **M21（合入）** | Windows Perflib：WMI 主路径 + IIS 应用池/传感器/硬件温度 | `go test -race`、Windows CI fixture |
 
 ### 3.2 后续批次（M19–M26）
 
@@ -133,7 +136,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | --- | --- | --- | --- |
 | **M19（合入）** | eBPF 程序族、perf、extfrag/audit、idlejitter、apps user/group、nfacct | Linux 与 Netdata 差异最大的一块 | fixture + smoke `system.idlejitter` |
 | **M20 日志与查看器** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | Function 列与 Netdata 对齐的单测；macOS 交叉编译 |
-| **M21 Windows.plugin** | Perflib：processor/memory/storage/network/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows 目前几乎只有进程计数 | WMI/typeperf fixture；无角色则禁用；Windows CI |
+| **M21 Windows.plugin（合入）** | 合入：Perflib 全家桶（见 §2.3 / §4） | 与 M19/M20 并行 | WMI/typeperf fixture；无角色则跳过 |
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
 | **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 图表 ID 对齐 `mq.queue.depth` / `db2.bufferpool_hit_ratio` / `as400.memory_pool_usage`；无驱动禁用 |
 | **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
@@ -159,7 +162,7 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 ## 4. 本轮（M25）交付清单
 
-Hub Cloud 产品面。不碰 go.d；M19/M22/M23/M26 已在 main。
+Hub Cloud 产品面。不碰 go.d；M19/M21/M22/M23/M26 已在 main。
 
 1. **ACLK MQTT-over-WSS**
    - `/api/v1/aclk`：MQTT 3.1.1 CONNECT/CONNACK/PUBLISH/SUBSCRIBE/PING，payload 仍是既有 JSON `stream.Frame`
@@ -178,7 +181,17 @@ Hub Cloud 产品面。不碰 go.d；M19/M22/M23/M26 已在 main。
    - 故障窗 / 基线窗、分数条、点选筛选图表
 5. **测试**：MQTT round-trip、ACLK 端到端、console、correlate group、data anomaly；smoke 覆盖新路径
 
-## 4.0 M26（已合入 main）
+## 4.0 M21（已合入 main）
+
+Windows.plugin Perflib 全家桶，不碰 go.d，不扩 eBPF/FreeBSD。
+
+1. WMI `Win32_PerfFormattedData_*` 为直播路径（无 CGO PDH）；缺失类写入 skip map，后续 Collect 不再查。`typeperf -sc 1` 仅 `typeperf_scan: true` 时按对象通配查询
+2. 核心 OS（System/Memory/Objects/Processor/LogicalDisk/PhysicalDisk/Network）+ 可选角色（IIS/ASP.NET/.NET/Hyper-V/SMB/NTDS/…）+ `Win32_Battery` / `MSAcpi_ThermalZoneTemperature` / `Win32_TemperatureProbe`
+3. 图表：CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS 站点与应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature`、传感器 histogram、AD/ADCS/ADFS、Exchange、RDS、`powersupply.capacity`
+4. `sc query` → `windows.service_state.{name}` + 汇总 `windows.services`
+5. health.d `system_m21.yaml`
+
+## 4.1 M26（已合入 main）
 
 点名 Prometheus 包装，不扩 go.d、不重做已有原生采集器。
 
@@ -188,7 +201,7 @@ Hub Cloud 产品面。不碰 go.d；M19/M22/M23/M26 已在 main。
 4. health.d `system_m26.yaml`（etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列）
 5. 目录见本节与 catalog API；850+ 其余集成不手写
 
-## 4.1 M19（已合入 main）
+## 4.2 M19（已合入 main）
 
 1. eBPF 程序族：`ebpf.cachestat/dcstat/fd/vfs/oomkill/process/shm/swap/disk/mount/hardirq`（kprobe_profile 优先，否则 `/proc` 近似）；bpftool 库存图保留；无源则禁用子图
 2. `perf`：`perf stat -a -x,` → `perf.cpu` / `perf.instructions` / `perf.cache_misses`；无权限禁用
@@ -198,7 +211,7 @@ Hub Cloud 产品面。不碰 go.d；M19/M22/M23/M26 已在 main。
 6. `nfacct`：`netfilter.nfacct_packets/bytes.{name}`
 7. health.d `system_m19.yaml`
 
-## 4.2 M22（已合入 main）
+## 4.3 M22（已合入 main）
 
 freebsd.plugin 剩余，不碰 go.d。
 
@@ -210,7 +223,7 @@ freebsd.plugin 剩余，不碰 go.d。
 6. **health.d** `system_m22.yaml`：`zfs_memory_throttle` / `freebsd_ipfw_drops` / `freebsd_softnet_drops`
 7. **测试**：sysctl+ipfw+gstat+df+netstat fixture 两拍；`GOOS=freebsd go test -c`
 
-## 4.3 M23（已合入 main）
+## 4.4 M23（已合入 main）
 
 ibm.d / python.d 残留 / 专用容器运行时。默认无 CGO；Init 失败即禁用。图表 ID 对齐 Netdata：
 
