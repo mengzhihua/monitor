@@ -64,6 +64,10 @@ func TestDestURL(t *testing.T) {
 	if _, err := destURL("ftp://hub"); err == nil {
 		t.Fatal("expected error for ftp scheme")
 	}
+	got, err := destURLPath("hub:19999", PathACLK)
+	if err != nil || got != "ws://hub:19999/api/v1/aclk" {
+		t.Fatalf("aclk dest = %q %v", got, err)
+	}
 }
 
 func TestDataFrameOmitsEmpty(t *testing.T) {

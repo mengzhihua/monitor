@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
@@ -257,4 +258,111 @@ func (s *Server) handleRing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"node": node.ID, "replica": true, "samples": len(body.Samples)})
+}
+
+// handleConsole is GET /api/v1/hub/console: Space→Room→node topology, ACLK
+// summary, alarm routing and raised alarms (Cloud product surface).
+func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
+	org := s.requireOrg(w)
+	if org == nil {
+		return
+	}
+	now := time.Now()
+	assigned := map[string]bool{}
+	spaceOut := make([]map[string]any, 0)
+	for _, sp := range org.Spaces() {
+		rooms := org.Rooms(sp.ID)
+		roomOut := make([]map[string]any, 0, len(rooms))
+		for _, rm := range rooms {
+			var nodes []map[string]any
+			var warn, crit int
+			var alarms []any
+			seen := map[string]bool{}
+			ids := append([]string{}, rm.Nodes...)
+			if s.opt.Nodes != nil {
+				for _, n := range s.opt.Nodes.List() {
+					_, rid := org.Membership(n.ID)
+					if rid == rm.ID && !seen[n.ID] {
+						ids = append(ids, n.ID)
+					}
+				}
+			}
+			for _, nid := range ids {
+				if seen[nid] {
+					continue
+				}
+				seen[nid] = true
+				assigned[nid] = true
+				item, raised := s.consoleNode(nid, now)
+				nodes = append(nodes, item)
+				if a, ok := item["alarms"].(map[string]int); ok {
+					warn += a["warning"]
+					crit += a["critical"]
+				}
+				alarms = append(alarms, raised...)
+			}
+			roomOut = append(roomOut, map[string]any{
+				"id": rm.ID, "name": rm.Name, "nodes": nodes,
+				"alarms":     map[string]int{"warning": warn, "critical": crit},
+				"alarm_list": alarms,
+			})
+		}
+		spaceOut = append(spaceOut, map[string]any{"id": sp.ID, "name": sp.Name, "created": sp.Created, "rooms": roomOut})
+	}
+	var unassigned []map[string]any
+	if s.opt.Nodes != nil {
+		for _, n := range s.opt.Nodes.List() {
+			if assigned[n.ID] {
+				continue
+			}
+			item, _ := s.consoleNode(n.ID, now)
+			unassigned = append(unassigned, item)
+		}
+	}
+	routing := map[string]any{"roles": map[string][]string{}, "channels": []any{}}
+	if s.opt.Health != nil {
+		routing = s.opt.Health.RoutingInfo()
+	}
+	aclk := map[string]any{"available": true, "protocol": "stream+mqtt", "storage": "full"}
+	if s.opt.Nodes != nil {
+		live := 0
+		for _, n := range s.opt.Nodes.List() {
+			if n.Info(now).Status == hub.StatusLive {
+				live++
+			}
+		}
+		aclk["online"] = s.opt.Nodes.IngestEnabled() && live > 0
+		aclk["nodes"] = len(s.opt.Nodes.List())
+		aclk["live"] = live
+		aclk["storage"] = s.opt.Nodes.Storage()
+	}
+	writeJSON(w, map[string]any{
+		"spaces": spaceOut, "unassigned": unassigned, "routing": routing, "aclk": aclk,
+	})
+}
+
+func (s *Server) consoleNode(id string, now time.Time) (map[string]any, []any) {
+	item := map[string]any{"id": id, "hostname": id, "status": hub.StatusOffline, "aclk": false, "protocol": "", "alarms": map[string]int{"warning": 0, "critical": 0}}
+	var raised []any
+	if s.opt.Nodes == nil {
+		return item, raised
+	}
+	n, ok := s.opt.Nodes.Get(id)
+	if !ok {
+		return item, raised
+	}
+	inf := n.Info(now)
+	item["hostname"] = inf.Hostname
+	item["status"] = inf.Status
+	item["aclk"] = inf.ACLK
+	item["protocol"] = inf.Protocol
+	item["alarms"] = inf.Alarms
+	item["charts_count"] = inf.ChartsCount
+	item["last_seen"] = inf.LastSeen
+	for _, e := range n.Alarms() {
+		if e.Status == health.StatusWarning || e.Status == health.StatusCritical {
+			raised = append(raised, e)
+		}
+	}
+	return item, raised
 }

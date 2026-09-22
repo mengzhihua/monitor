@@ -49,6 +49,15 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	if !ok {
 		return
 	}
+	if v.node != nil && s.opt.Nodes != nil && s.opt.Nodes.Storage() == "proxy" && v.node.Online() {
+		args := map[string]string{"chart": q.Get("chart"), "after": q.Get("after"), "before": q.Get("before"), "points": q.Get("points")}
+		raw, err := v.node.Query(r.Context(), args)
+		if err == nil && len(raw) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(raw)
+			return
+		}
+	}
 	out, code, errMsg := s.queryData(v, q, api)
 	if errMsg != "" {
 		http.Error(w, errMsg, code)
@@ -187,6 +196,7 @@ type dataResult struct {
 	Group           tsdb.GroupFunc
 	DimensionIDs    []string
 	DimensionNames  []string
+	Anomaly         []int
 	Min             float64
 	Max             float64
 	Labels          []string
@@ -211,6 +221,7 @@ func (d *dataResult) jsonMap() map[string]any {
 		"group":             d.Group,
 		"dimension_ids":     d.DimensionIDs,
 		"dimension_names":   d.DimensionNames,
+		"anomaly":           d.Anomaly,
 		"min":               round3(d.Min),
 		"max":               round3(d.Max),
 		"result":            map[string]any{"labels": d.Labels, "data": d.Rows},
@@ -409,11 +420,21 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 			}
 		}
 	}
+	anomMap := s.anomalies()
+	anomBits := make([]int, len(dims))
+	for i, d := range dims {
+		for _, c := range d.charts {
+			if anomMap[registry.SeriesID(c.ID, d.id)] {
+				anomBits[i] = 1
+				break
+			}
+		}
+	}
 	return &dataResult{
 		API: api, Node: v.id, ID: id, Name: id, Context: ctx, Units: head.Units,
 		ChartType: head.Type, UpdateEvery: everySec, ViewUpdateEvery: step, Tier: tier,
 		After: resAfter, Before: resBefore, Group: group, DimensionIDs: ids, DimensionNames: names,
-		Min: minV, Max: maxV, Labels: append([]string{"time"}, names...), Rows: rows,
+		Anomaly: anomBits, Min: minV, Max: maxV, Labels: append([]string{"time"}, names...), Rows: rows,
 	}, 0, ""
 }
 

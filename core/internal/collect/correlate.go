@@ -12,58 +12,88 @@ import (
 // Correlate ranks charts by how much they changed between a baseline window
 // and a highlighted window (Netdata Metric Correlations: ks2 / volume).
 func Correlate(reg *registry.Registry, db tsdb.Reader, method string, after, before, baseAfter, baseBefore int64) []Weight {
+	return CorrelateGrouped(reg, db, method, after, before, baseAfter, baseBefore, "chart", 50)
+}
+
+// CorrelateGrouped ranks charts, contexts, or dimensions (group = chart|context|dimension).
+func CorrelateGrouped(reg *registry.Registry, db tsdb.Reader, method string, after, before, baseAfter, baseBefore int64, group string, top int) []Weight {
 	if before <= after {
 		before = after + 1
 	}
 	if baseBefore <= baseAfter {
 		baseBefore = baseAfter + 1
 	}
-	out := make([]Weight, 0, 64)
+	if top <= 0 || top > 200 {
+		top = 50
+	}
+	group = strings.ToLower(group)
+	type row struct {
+		chart, ctx, title, dim string
+		score, rate            float64
+	}
+	var rows []row
 	for _, ch := range reg.Charts() {
 		if ch == nil || strings.HasPrefix(ch.ID, "anomaly_detection.") {
 			continue
 		}
-		var scores []float64
-		var rates []float64
+		title := ch.Title
+		if title == "" {
+			title = ch.ID
+		}
+		ctx := ch.Context
+		if ctx == "" {
+			ctx = ch.ID
+		}
+		var best float64
+		var bestRate float64
 		for _, d := range ch.Dims() {
 			win := seriesValues(db, registry.SeriesID(ch.ID, d.ID), after, before)
 			base := seriesValues(db, registry.SeriesID(ch.ID, d.ID), baseAfter, baseBefore)
 			if len(win) < 5 || len(base) < 5 {
 				continue
 			}
+			var score float64
 			switch method {
 			case "ks2":
-				scores = append(scores, ks2(base, win))
-			default: // volume
-				scores = append(scores, volumeShift(base, win))
+				score = ks2(base, win)
+			default:
+				score = volumeShift(base, win)
 			}
-			rates = append(rates, meanAbs(win))
-		}
-		if len(scores) == 0 {
-			continue
-		}
-		score := 0.0
-		for _, s := range scores {
-			if s > score {
-				score = s
+			if score == 0 {
+				continue
+			}
+			rate := meanAbs(win)
+			if group == "dimension" {
+				rows = append(rows, row{chart: ch.ID, ctx: ctx, title: title, dim: d.ID, score: score, rate: rate})
+			}
+			if score > best {
+				best, bestRate = score, rate
 			}
 		}
-		if score == 0 {
-			continue
+		if group != "dimension" && best > 0 {
+			rows = append(rows, row{chart: ch.ID, ctx: ctx, title: title, score: best, rate: bestRate})
 		}
-		rate := 0.0
-		if len(rates) > 0 {
-			rate = rates[0]
-		}
-		title := ch.Title
-		if title == "" {
-			title = ch.ID
-		}
-		out = append(out, Weight{Chart: ch.ID, Context: ch.Context, Title: title, Score: score, AnomalyRate: rate})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
-	if len(out) > 50 {
-		out = out[:50]
+	if group == "context" {
+		by := map[string]row{}
+		for _, r := range rows {
+			cur, ok := by[r.ctx]
+			if !ok || r.score > cur.score {
+				by[r.ctx] = r
+			}
+		}
+		rows = rows[:0]
+		for _, r := range by {
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].score > rows[j].score })
+	if len(rows) > top {
+		rows = rows[:top]
+	}
+	out := make([]Weight, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Weight{Chart: r.chart, Context: r.ctx, Title: r.title, Dimension: r.dim, Score: r.score, AnomalyRate: r.rate})
 	}
 	return out
 }
