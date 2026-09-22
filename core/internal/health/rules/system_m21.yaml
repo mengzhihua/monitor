@@ -1,0 +1,68 @@
+# M21 Windows.plugin Perflib. Rules bind only when the matching
+# chart exists (role-specific objects auto-disable when missing).
+alarms:
+  - name: windows_cpu_queue
+    on: system.cpu_queue
+    class: Utilization
+    type: System
+    component: CPU
+    lookup: average -1m unaligned of load
+    units: processes
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (8) : (16))'
+    crit: '$this > (($status == $CRITICAL) ? (16) : (32))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Windows processor queue length (runnable threads waiting for a CPU)
+    to: sysadmin
+
+  - name: iis_errors
+    on: iis.website_errors_rate
+    class: Errors
+    type: Web Server
+    component: IIS
+    lookup: average -1m unaligned of not_found
+    units: errors/s
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (5) : (20))'
+    info: IIS website 404 / locked errors per second
+    to: webmaster
+
+  - name: aspnet_queue
+    on: aspnet.requests_in_application_queue
+    class: Utilization
+    type: Web Server
+    component: ASP.NET
+    lookup: average -1m unaligned of queued
+    units: requests
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (20) : (100))'
+    crit: '$this > (($status == $CRITICAL) ? (100) : (250))'
+    delay: down 2m multiplier 1.5 max 30m
+    info: ASP.NET requests waiting in the application queue
+    to: webmaster
+
+  - name: windows_thermalzone
+    on: system.thermalzone_temperature
+    class: Temperature
+    type: System
+    component: Thermal
+    lookup: average -1m unaligned of temperature
+    units: Celsius
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (95))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Windows ACPI thermal zone temperature
+    to: sysadmin
+
+  - name: exchange_poison_queue
+    on: exchange.transport_queues
+    class: Errors
+    type: Mail
+    component: Exchange
+    lookup: last -30s unaligned of poison
+    units: messages
+    every: 30s
+    warn: '$this > 0'
+    info: Exchange transport poison queue is not empty
+    to: sysadmin

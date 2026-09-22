@@ -480,7 +480,7 @@ sequenceDiagram
 | **M18 原生插件** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q + alert_transitions | 合入 main |
 | **M19 内核深度（下一轮）** | eBPF 程序族、perf.plugin、debugfs extfrag/audit、idlejitter、apps user/group、nfacct | `go test -race`、`vue-tsc`、`smoke.sh` |
 | **M20 日志与查看器** | journald 跟随流、Windows Events 分页、macos.plugin、network-viewer、systemd-units 出图 | 同上 |
-| **M21 Windows.plugin** | Perflib IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows CI fixture |
+| **M21 Windows.plugin（本轮）** | Perflib IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 图 | Windows CI fixture |
 | **M22 freebsd.plugin** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
 | **M23 IBM 与残留** | ibm.d db2/as400/mq/websphere；pandas/go_expvar/am2320；lxc/ecs/containerd | 无驱动禁用 |
 | **M24 查询 API 深度** | `/api/v3`、`group_by=dimension`、`alert_config`、每维 anomaly | API 单测 |

@@ -15,7 +15,7 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | go.d 应用采集器 | **完成** | 除 `testrandom`；约 154 个原生模块 |
 | Linux proc / debugfs 常规图 | **完成** | 含 InfiniBand、tc、EDAC、SLAB、zswap、RAPL、DRM、bcache、timex |
 | 原生 C 插件便携近似 | **骨架完成** | cups / xenstat / ioping / nftables / ipmi / ebpf(bpftool) / journalctl / wevtutil |
-| Windows.plugin | **骨架** | 进程/线程/句柄 + Function `windows-services`；缺 Perflib 全家桶 |
+| Windows.plugin | **M21** | 进程/线程/句柄 + Perflib 全家桶（IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 出图）；无角色则跳过 |
 | freebsd.plugin | **骨架** | ctxt/intr/softirq/forks/wired/laundry/IPC/温度；缺 ZFS/ipfw/net.inet*/devstat |
 | Hub / Cloud | **骨架** | claim/Space/Room/OIDC/环复制/LDAP/share；缺真 ACLK MQTT 与 Cloud 控制台 |
 | 850+ Prometheus 集成名 | **过渡覆盖** | 走已有 `prometheus` 采集器（`prom.*` ID），不逐个原生化 |
@@ -57,17 +57,15 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 
 ### 2.3 Windows.plugin（Perflib 全家桶）
 
-M16 只有 `system.processes/threads/handles/ctxt` + Function `windows-services`。Netdata `windows.plugin` 还缺：
+**M21 已有：** `system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、Terminal Services、`windows.service_state.*` + `windows.services` 汇总。数据源：`typeperf`（无 CGO PDH）+ WMI `Win32_PerfFormattedData_*`；对象/角色不存在则跳过。
 
-| 批次优先级 | Perflib / 模块 | 图表族（对齐 Netdata ID） |
+| 状态 | Perflib / 模块 | 图表族 |
 | --- | --- | --- |
-| 高 | processor / memory / objects / processes / storage / network | CPU 队列、内存池、磁盘物理/逻辑、网卡 |
-| 高 | web-service（IIS）、asp、netframework | IIS 请求/队列、ASP.NET、.NET CLR |
-| 中 | hyperv、smb、thermalzone、numa、terminal-services | Hyper-V VM、SMB、温度、NUMA、RDS |
-| 低 | ad / adcs / adfs / exchange | 仅当角色存在时自动启用 |
-| 中 | GetServicesStatus **出图**（不仅 Function）、GetSensors、GetPowerSupply、GetHardwareInfo | `windows.service.*`、传感器、电源、硬件清单 |
-
-无 CGO PDH 时走 WMI `Win32_PerfRawData_*` / `typeperf`；Init 失败即禁用。
+| **M21** | processor queue / memory pool / objects / storage / network | `system.cpu_queue` `mem.system_pool_size` `windows.logical_disk.*` `windows.physical_disk.*` `windows.net.*` |
+| **M21** | web-service（IIS）、asp、netframework | `iis.website_*` `aspnet.*` `netframework.clr_*` |
+| **M21** | hyperv、smb、thermalzone、numa、terminal-services | `hyperv.vm_cpu` `smb.server_shares_*` `system.thermalzone_temperature` `mem.numa_node_mem_usage` `windows.terminal_services.sessions` |
+| **M21** | ad / adcs / adfs / exchange | 角色存在时自动启用 |
+| **M21** | GetServicesStatus 出图、GetPowerSupply（电池） | `windows.service_state.*` `windows.power.charge` |
 
 ### 2.4 freebsd.plugin 剩余
 
@@ -134,6 +132,7 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | **M16** | Windows/FreeBSD 骨架、Flutter Functions、Android logcat | 合入 |
 | **M17** | proc 剩余 + libvirt/proxmox/ebpf 近似；manage/health；维护窗口；Kinesis/Pub/Sub；LDAP/share | 合入 |
 | **M18** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q | 合入 |
+| **M21（本轮）** | Windows Perflib：CPU 队列/内核池/磁盘/网卡/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 出图 | `go test -race`、Windows CI fixture |
 
 ### 3.2 后续批次（M19–M26）
 
@@ -141,7 +140,7 @@ M16 有 ctxt/intr/softirq/forks/wired/laundry/IPC/cpu.temperature。对照 `plug
 | --- | --- | --- | --- |
 | **M19 内核深度** | eBPF 程序族（tracefs/`bpftool`/可选 cilium）；`perf`；debugfs extfrag+audit；idlejitter；nfacct 回退增强；apps user/group | Linux 服务器与 Netdata 差异最大的一块 | fixture 解析 `/sys/kernel/debug`、`perf stat` 文本；无权限自动禁用 |
 | **M20 日志与查看器** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | Function 列与 Netdata 对齐的单测；macOS 交叉编译 |
-| **M21 Windows.plugin** | Perflib：processor/memory/storage/network/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows 目前几乎只有进程计数 | WMI/typeperf fixture；无角色则禁用；Windows CI |
+| **M21 Windows.plugin** | 合入本轮：Perflib 全家桶（见 §2.3 / §4） | 与 M19/M20 并行 | WMI/typeperf fixture；无角色则跳过 |
 | **M22 freebsd.plugin** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
 | **M23 IBM 与残留应用** | ibm.d db2/as400/mq/websphere（CGO 或 CLI）；pandas/go_expvar/am2320；lxc/ecs/containerd；可选 Kafka 协议采集 | 长尾，不挡主路径 | 无驱动/无 socket 禁用；cgo 用 build tag |
 | **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
@@ -165,25 +164,15 @@ flowchart LR
 
 M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定后再动查询协议。M25 依赖 M24。M23 可随时插空。
 
-## 4. 下一轮（M19）交付清单
+## 4. 本轮（M21）交付清单
 
-内核深度，不碰 go.d，不扩 Windows/FreeBSD（留给 M21/M22）。
+Windows.plugin Perflib 全家桶，不碰 go.d，不扩 eBPF/FreeBSD。
 
-1. **eBPF 程序族（便携优先）**
-   - 新文件建议：`core/internal/collect/ebpf_progs.go`（或按 program 拆）
-   - 数据源优先级：`/sys/kernel/debug/tracing` / bpffs 统计 → `bpftool prog show --json` 扩展 → 可选 `cilium/ebpf-go`（`//go:build linux,cgo,ebpf`）
-   - 图表 ID 对齐 Netdata：`ebpf.cachestat` `ebpf.dcstat` `ebpf.disk` `ebpf.fd` `ebpf.vfs` `ebpf.oomkill` `ebpf.process` `ebpf.shm` `ebpf.swap` `ebpf.sync` `ebpf.mdflush` `ebpf.mount` `ebpf.hardirq` 等
-   - 无 `CAP_BPF` / debugfs 则保持现有 bpftool 库存图，程序族禁用而不是整模块失败
-2. **perf.plugin**
-   - `perf stat -a -x,` 或 `unix.PerfEventOpen`（linux-only 文件）
-   - 图：`perf.cpu`（cycles/instructions/cache-misses/branch-misses）
-   - 容器无 perf_event_paranoid 权限 → Init 失败禁用
-3. **debugfs 剩余**：NUMA `extfrag`、kernel `audit` backlog
-4. **idlejitter**：用户态 sleep 抖动，图 `system.idlejitter`
-5. **apps user/group**：`apps.cpu_user` / `apps.cpu_group`（以及 mem 对应）；groups 来自 `/etc/passwd`+`/etc/group` 或 gopsutil
-6. **nfacct**：若 `nfacct list` 可用则出 `netfilter.nfacct`；否则保持 nftables
-7. **health.d** `system_m19.yaml`：oomkill、extfrag 高、perf 不可用不必告警（采集禁用即可）
-8. **测试**：纯 fixture，不在 CI 加载真实 kprobe；`GOOS=linux` 单测 + 其它 OS stub
+1. `typeperf -sc 1` 按对象通配查询（无 CGO PDH）；对象缺失跳过
+2. WMI `Win32_PerfFormattedData_PerfOS_{System,Memory,Objects}` 与 `Win32_Battery` 回填
+3. 图表：CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、RDS
+4. `sc query` → `windows.service_state.{name}` + 汇总 `windows.services`
+5. health.d `system_m21.yaml`
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 

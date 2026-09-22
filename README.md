@@ -235,7 +235,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 模块 | 说明 |
 | --- | --- |
 | FreeBSD | `freebsd` 采集器：sysctl → `system.ctxt/intr/softirq/forks`、`mem.wired/laundry`、IPC 信号量/共享内存/消息队列、`freebsd.cpu.temperature`；非 FreeBSD 自动禁用；`GOOS=freebsd` 交叉编译 |
-| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI `Win32_PerfRawData_PerfOS_System` + gopsutil）；Function `windows-services`（`sc query`）；非 Windows 自动禁用 |
+| Windows | `windows` 采集器：进程/线程/句柄/上下文切换（WMI + gopsutil）；Perflib（typeperf / WMI FormattedData）→ CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、Terminal Services；`windows.service_state.*` 出图 + Function `windows-services`；角色/对象缺失自动跳过；非 Windows 自动禁用 |
 | Flutter | 客户端增加 Functions 页（`/api/v1/functions` + `/function` 表），与 Web 面板同一套 API |
 | Android | Function `logs` 走 `logcat`；服务端壳默认关掉 Linux 专用采集器，声明 `READ_LOGS` |
 
@@ -257,6 +257,14 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | Linux proc | EDAC ECC、SLAB、zswap、RAPL powercap、DRM GPU busy/freq、bcache、adjtimex 时钟同步状态 |
 | 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
 | API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
+
+### 已实现能力（M21：Windows Perflib）
+
+| 模块 | 说明 |
+| --- | --- |
+| Perflib | `typeperf`（无 CGO PDH）+ WMI `Win32_PerfFormattedData_*`：`system.cpu_queue`、内核池/swapio、逻辑/物理磁盘、网卡、IIS、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、AD/ADCS/ADFS、Exchange、RDS |
+| 服务 | 每服务 `windows.service_state.*` 状态图 + 汇总 `windows.services`；Function `windows-services` 仍可用 |
+| 告警 | `system_m21.yaml`：CPU 队列、IIS 404、ASP.NET 排队、热区温度、Exchange poison queue |
 
 ### 开发
 

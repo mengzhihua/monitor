@@ -15,10 +15,11 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-// windowsConfig is collectors.modules.windows (Netdata windows.plugin subset).
+// windowsConfig is collectors.modules.windows (Netdata windows.plugin).
 type windowsConfig struct {
-	Command string        `yaml:"command"` // sc.exe for the services function
-	Timeout time.Duration `yaml:"timeout"`
+	Command  string        `yaml:"command"`  // sc.exe for the services function
+	Typeperf string        `yaml:"typeperf"` // typeperf.exe for Perflib (no CGO PDH)
+	Timeout  time.Duration `yaml:"timeout"`
 }
 
 // windowsSnap is one sample of Windows process accounting.
@@ -30,9 +31,11 @@ type windowsSnap struct {
 }
 
 type windowsCollector struct {
-	cfg  windowsConfig
-	snap func(ctx context.Context) (windowsSnap, error)
-	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
+	cfg     windowsConfig
+	snap    func(ctx context.Context) (windowsSnap, error)
+	perflib func(ctx context.Context) (perflibSnap, error)
+	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
+	seen    map[string]bool
 }
 
 func init() {
@@ -48,8 +51,11 @@ func (w *windowsCollector) Configure(decode func(v any) error) error {
 	if w.cfg.Command == "" {
 		w.cfg.Command = "sc"
 	}
+	if w.cfg.Typeperf == "" {
+		w.cfg.Typeperf = "typeperf"
+	}
 	if w.cfg.Timeout <= 0 {
-		w.cfg.Timeout = 5 * time.Second
+		w.cfg.Timeout = 8 * time.Second
 	}
 	return nil
 }
@@ -94,6 +100,13 @@ func (w *windowsCollector) Init(reg *registry.Registry) error {
 		add(&registry.Chart{ID: "system.handles", Family: "processes", Title: "System handles", Units: "handles",
 			Priority: 216, Dimensions: []*registry.Dimension{{ID: "handles"}}})
 	}
+	w.seen = map[string]bool{}
+	if pf, err := w.samplePerflib(context.Background()); err == nil && !pf.empty() {
+		w.applyPerflib(reg, pf)
+	}
+	if rows := w.scRows(context.Background()); len(rows) > 0 {
+		w.ensureServiceCharts(reg, rows)
+	}
 	return nil
 }
 
@@ -115,6 +128,14 @@ func (w *windowsCollector) Collect(ctx context.Context, reg *registry.Registry, 
 	}
 	if _, ok := reg.Chart("system.handles"); ok {
 		_ = reg.Collect("system.handles", now, map[string]float64{"handles": float64(s.Handles)})
+	}
+	if pf, err := w.samplePerflib(ctx); err == nil && !pf.empty() {
+		w.applyPerflib(reg, pf)
+		w.collectPerflib(reg, now, pf)
+	}
+	if rows := w.scRows(ctx); len(rows) > 0 {
+		w.ensureServiceCharts(reg, rows)
+		w.collectServiceCharts(reg, now, rows)
 	}
 	return nil
 }
@@ -195,15 +216,18 @@ type winServiceRow struct {
 }
 
 func (w *windowsCollector) services(ctx context.Context, args map[string]string) (Table, error) {
-	run := w.run
-	if run == nil {
-		run = execRun(w.cfg.Timeout)
+	rows := w.scRows(ctx)
+	if len(rows) == 0 {
+		run := w.run
+		if run == nil {
+			run = execRun(w.cfg.Timeout)
+		}
+		out, err := run(ctx, w.cfg.Command, "query", "state=", "all")
+		if err != nil {
+			return Table{}, fmt.Errorf("sc query: %w", err)
+		}
+		rows = parseSCQuery(out)
 	}
-	out, err := run(ctx, w.cfg.Command, "query", "state=", "all")
-	if err != nil {
-		return Table{}, fmt.Errorf("sc query: %w", err)
-	}
-	rows := parseSCQuery(out)
 	q := strings.ToLower(args["query"])
 	filtered := rows
 	if q != "" {
@@ -219,6 +243,21 @@ func (w *windowsCollector) services(ctx context.Context, args map[string]string)
 		tab.Rows[i] = filtered[i]
 	}
 	return tab, nil
+}
+
+func (w *windowsCollector) scRows(ctx context.Context) []winServiceRow {
+	run := w.run
+	if run == nil {
+		if runtime.GOOS != "windows" {
+			return nil
+		}
+		run = execRun(w.cfg.Timeout)
+	}
+	out, err := run(ctx, w.cfg.Command, "query", "state=", "all")
+	if err != nil {
+		return nil
+	}
+	return parseSCQuery(out)
 }
 
 func parseSCQuery(b []byte) []winServiceRow {

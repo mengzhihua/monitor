@@ -175,6 +175,10 @@ collectors:
     ipmi:                    # ipmitool sdr; missing ipmitool auto-disables
       command: ipmitool
       timeout: 8s
+    windows:                 # Windows.plugin: process accounting + Perflib (typeperf / WMI)
+      command: sc            # services Function + windows.service_state.* charts
+      typeperf: typeperf     # cooked counters; missing object/role auto-skips
+      timeout: 8s
     sslcheck:
       timeout: 5s
       jobs: []               # e.g. [{ name: web, target: example.com:443 }]
