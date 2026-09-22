@@ -1,0 +1,98 @@
+# M26 named Prometheus integrations: native chart IDs for health.d templates.
+# Rules stay dormant until a matching scrape job is configured.
+alarms:
+  - name: etcd_no_leader
+    on: etcd.has_leader
+    class: Availability
+    type: Database
+    component: etcd
+    lookup: last -10s unaligned of value
+    units: boolean
+    every: 10s
+    crit: '$this == 0'
+    info: etcd cluster has no leader
+    to: sysadmin
+
+  - name: vault_sealed
+    on: vault.unsealed
+    class: Availability
+    type: Security
+    component: Vault
+    lookup: last -10s unaligned of value
+    units: boolean
+    every: 10s
+    crit: '$this == 0'
+    info: Vault is sealed
+    to: sysadmin
+
+  - name: minio_unhealthy
+    on: minio.cluster_health
+    class: Availability
+    type: Storage
+    component: MinIO
+    lookup: last -10s unaligned of value
+    units: status
+    every: 10s
+    warn: '$this == 0'
+    info: MinIO cluster health is not ready
+    to: sysadmin
+
+  - name: blackbox_probe_fail
+    on: blackbox.probe_success
+    class: Availability
+    type: Web
+    component: Blackbox
+    lookup: last -10s unaligned of value
+    units: boolean
+    every: 10s
+    crit: '$this == 0'
+    info: blackbox probe failed
+    to: sysadmin
+
+  - name: prometheus_notifications_dropped
+    on: prometheus.notifications_dropped
+    class: Errors
+    type: Web
+    component: Prometheus
+    lookup: average -1m unaligned of value
+    units: alerts/s
+    every: 15s
+    warn: '$this > 0'
+    info: Prometheus is dropping alert notifications
+    to: sysadmin
+
+  - name: kafka_no_brokers
+    on: kafka.brokers
+    class: Availability
+    type: Database
+    component: Kafka
+    lookup: last -10s unaligned of value
+    units: brokers
+    every: 15s
+    crit: '$this == 0'
+    info: Kafka exporter reports zero brokers
+    to: sysadmin
+
+  - name: alertmanager_notify_fail
+    on: alertmanager.notifications_failed
+    class: Errors
+    type: Web
+    component: Alertmanager
+    lookup: average -1m unaligned
+    units: notifications/s
+    every: 15s
+    warn: '$this > 0'
+    info: Alertmanager failed to deliver notifications
+    to: sysadmin
+
+  - name: jenkins_queue_backlog
+    on: jenkins.queue
+    class: Latency
+    type: Web
+    component: Jenkins
+    lookup: last -30s unaligned of value
+    units: jobs
+    every: 30s
+    warn: '$this > 20'
+    info: Jenkins build queue is backing up
+    to: sysadmin

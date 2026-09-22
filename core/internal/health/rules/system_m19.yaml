@@ -1,0 +1,39 @@
+# M19 kernel depth: eBPF program families, idlejitter, NUMA extfrag, audit, nfacct.
+alarms:
+  - name: oom_kills
+    on: ebpf.oomkill
+    class: Errors
+    type: System
+    component: Memory
+    lookup: sum -1m unaligned of kills
+    units: kills
+    every: 10s
+    warn: '$this > 0'
+    crit: '$this > 2'
+    info: Out-of-memory killer ran
+    to: sysadmin
+
+  - name: numa_extfrag_high
+    on: mem.extfrag
+    class: Errors
+    type: System
+    component: Memory
+    lookup: max -1m unaligned of index
+    units: index
+    every: 30s
+    warn: '$this > (($status >= $WARNING) ? (0.8) : (0.9))'
+    info: NUMA zone external fragmentation index is high
+    to: sysadmin
+
+  - name: audit_backlog
+    on: audit.backlog_utilization
+    class: Errors
+    type: System
+    component: Audit
+    lookup: last -10s unaligned of utilization
+    units: percentage
+    every: 10s
+    warn: '$this > 80'
+    crit: '$this > 95'
+    info: Linux audit backlog is filling up
+    to: sysadmin

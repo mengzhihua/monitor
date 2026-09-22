@@ -19,12 +19,22 @@ import (
 type freebsdConfig struct {
 	Command string        `yaml:"command"`
 	Timeout time.Duration `yaml:"timeout"`
+	IPFW    string        `yaml:"ipfw"`
+	Gstat   string        `yaml:"gstat"`
+	DF      string        `yaml:"df"`
+	Netstat string        `yaml:"netstat"`
 }
 
 type freebsdCollector struct {
 	cfg  freebsdConfig
 	read func(ctx context.Context) (map[string]string, error)
+	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	cpus []string
+
+	// Optional CLI dumps (tests inject; live collection shells out).
+	ipfwList, gstatOut, dfOut, netstatOut []byte
+	ipfwSeen, diskSeen, ifSeen, mntSeen   map[string]bool
+	irqSeen                               map[string]bool
 }
 
 func init() {
@@ -42,6 +52,18 @@ func (f *freebsdCollector) Configure(decode func(v any) error) error {
 	}
 	if f.cfg.Timeout <= 0 {
 		f.cfg.Timeout = 3 * time.Second
+	}
+	if f.cfg.IPFW == "" {
+		f.cfg.IPFW = "ipfw"
+	}
+	if f.cfg.Gstat == "" {
+		f.cfg.Gstat = "gstat"
+	}
+	if f.cfg.DF == "" {
+		f.cfg.DF = "df"
+	}
+	if f.cfg.Netstat == "" {
+		f.cfg.Netstat = "netstat"
 	}
 	return nil
 }
@@ -63,6 +85,7 @@ func (f *freebsdCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("freebsd: no sysctl metrics")
 	}
 	f.addCharts(reg, m)
+	f.addChartsM22(reg, m)
 	return nil
 }
 
@@ -135,6 +158,7 @@ func (f *freebsdCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		vals["hottest"] = hottest
 		_ = reg.Collect("freebsd.cpu.temperature", now, vals)
 	}
+	f.collectM22(ctx, reg, now, m)
 	return nil
 }
 
@@ -232,16 +256,28 @@ func (f *freebsdCollector) sysctls(ctx context.Context) (map[string]string, erro
 			m[k] = v
 		}
 	}
+	for _, p := range freebsdSysctlPrefixes {
+		f.mergeSysctl(ctx, m, "-e", p)
+	}
 	return m, nil
 }
 
 var freebsdSysctlKeys = []string{
 	"hw.pagesize", "vm.stats.vm.v_page_size",
 	"vm.stats.sys.v_swtch", "vm.stats.sys.v_intr", "vm.stats.sys.v_soft",
+	"vm.stats.sys.v_syscall", "vm.stats.sys.v_syscalls",
 	"vm.stats.vm.v_forks", "vm.stats.vm.v_wire_count", "vm.stats.vm.v_laundry_count",
+	"vm.stats.vm.v_free_count", "vm.stats.vm.v_active_count", "vm.stats.vm.v_inactive_count",
+	"vm.stats.vm.v_cache_count", "vm.stats.vm.v_vm_faults", "vm.stats.vm.v_io_faults",
+	"vm.stats.vm.v_cow_faults", "vm.stats.vm.v_cow_optim", "vm.stats.vm.v_intrans",
+	"vm.stats.vm.v_swappgsin", "vm.stats.vm.v_swappgsout",
 	"kern.ipc.semmni", "kern.ipc.semmns", "kern.ipc.semusz", "kern.ipc.semaem",
 	"kern.ipc.shmmni", "kern.ipc.shm_nused", "kern.ipc.shmmax",
 	"kern.ipc.msgmni", "kern.ipc.msgtql",
+	"kstat.zfs.misc.arcstats.size", "dev.cpu.0.freq",
+	"vfs.bufspace", "hw.intrcnt", "hw.intrnames",
+	"net.isr.dispatched", "net.isr.hybrid_dispatched", "net.isr.qdrops", "net.isr.queued",
+	"net.inet.tcp.states", "net.inet.ip.fw.dyn_count", "net.inet.ip.fw.enable",
 }
 
 func parseSysctl(b []byte) map[string]string {
@@ -292,7 +328,15 @@ func freebsdHasMetrics(m map[string]string) bool {
 			return true
 		}
 	}
-	return len(freebsdCPUTemps(m)) > 0
+	if len(freebsdCPUTemps(m)) > 0 {
+		return true
+	}
+	for _, p := range freebsdSysctlPrefixes {
+		if sysctlHas(m, p) || sysctlHasPrefix(m, p+".") {
+			return true
+		}
+	}
+	return false
 }
 
 func freebsdCPUTemps(m map[string]string) []string {
