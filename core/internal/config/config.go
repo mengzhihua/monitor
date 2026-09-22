@@ -193,7 +193,7 @@ func Default() *Config {
 	c.Global.DataDir = "./data"
 	c.DB.Tier0Retention = 14 * 24 * time.Hour
 	c.DB.Tier0RetentionSize = "1GiB"
-	c.DB.Checkpoint = 10 * time.Minute
+	c.DB.Checkpoint = 30 * time.Second
 	c.DB.Tiers = 3
 	c.DB.Tier1Retention = 90 * 24 * time.Hour
 	c.DB.Tier2Retention = 2 * 365 * 24 * time.Hour

@@ -69,14 +69,17 @@ type series struct {
 }
 
 type Store struct {
-	opt    Options
-	log    *slog.Logger
-	mu     sync.RWMutex
-	series map[string]*series
-	tiers  []*tier
-	stop   chan struct{}
-	wg     sync.WaitGroup
-	closed bool
+	checkpointMu  sync.RWMutex
+	persistenceMu sync.Mutex
+	persistence   PersistenceStatus
+	opt           Options
+	log           *slog.Logger
+	mu            sync.RWMutex
+	series        map[string]*series
+	tiers         []*tier
+	stop          chan struct{}
+	wg            sync.WaitGroup
+	closed        bool
 }
 
 func Open(opt Options) (*Store, error) {
@@ -289,46 +292,82 @@ func (s *Store) flushSeries(sr *series) error {
 		sr.mu.Unlock()
 		return nil
 	}
-	ts, vals := sr.ts, sr.vals
-	sr.ts, sr.vals = make([]int64, 0, s.opt.BlockSize), make([]float64, 0, s.opt.BlockSize)
-	sr.dirty = false
+	// Keep pending values queryable until the durable block is published.
+	// Appends can extend the active buffer while this snapshot is being written.
+	ts, vals := append([]int64(nil), sr.ts...), append([]float64(nil), sr.vals...)
 	sr.mu.Unlock()
-
 	meta, err := writeBlock(s.seriesDir(sr.id), sr.id, ts, vals)
 	if err != nil {
-		// put the data back at the front so it is not lost
-		sr.mu.Lock()
-		sr.ts = append(ts, sr.ts...)
-		sr.vals = append(vals, sr.vals...)
-		sr.dirty = true
-		sr.mu.Unlock()
 		return err
 	}
 	sr.mu.Lock()
 	sr.blocks = append(sr.blocks, meta)
+	sr.ts, sr.vals = sr.ts[len(ts):], sr.vals[len(vals):]
+	sr.dirty = len(sr.ts) > 0
 	sr.mu.Unlock()
 	return nil
 }
 
 // Flush writes every active block to disk.
-func (s *Store) Flush() error {
+func (s *Store) Flush() (flushErr error) {
+	s.checkpointMu.Lock()
+	defer s.checkpointMu.Unlock()
+	started := time.Now().Unix()
+	defer func() {
+		s.persistenceMu.Lock()
+		defer s.persistenceMu.Unlock()
+		if flushErr != nil {
+			s.persistence.Error = flushErr.Error()
+			return
+		}
+		s.persistence.LastCheckpoint = started
+		s.persistence.Finished = time.Now().Unix()
+		s.persistence.Error = ""
+	}()
 	s.mu.RLock()
 	all := make([]*series, 0, len(s.series))
 	for _, sr := range s.series {
 		all = append(all, sr)
 	}
 	s.mu.RUnlock()
-	var firstErr error
+	var jobs []func() error
 	for _, sr := range all {
-		if err := s.flushSeries(sr); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		jobs = append(jobs, func() error { return s.flushSeries(sr) })
 	}
 	for _, t := range s.tiers {
-		if err := t.flushAll(); err != nil && firstErr == nil {
-			firstErr = err
+		for _, sr := range t.all() {
+			jobs = append(jobs, func() error {
+				if err := t.flush(sr); err != nil {
+					return err
+				}
+				return t.saveOpen(sr)
+			})
 		}
 	}
+	var firstErr error
+	var errMu sync.Mutex
+	var wg sync.WaitGroup
+	work := make(chan func() error)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range work {
+				if err := job(); err != nil {
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					errMu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, job := range jobs {
+		work <- job
+	}
+	close(work)
+	wg.Wait()
 	return firstErr
 }
 
@@ -427,15 +466,7 @@ func (s *Store) Close() error {
 	s.mu.Unlock()
 	close(s.stop)
 	s.wg.Wait()
-	err := s.Flush()
-	for _, t := range s.tiers {
-		for _, sr := range t.all() {
-			if e := t.saveOpen(sr); e != nil && err == nil {
-				err = e
-			}
-		}
-	}
-	return err
+	return s.Flush()
 }
 
 // ---- block file format ----
@@ -476,10 +507,17 @@ func writeBlockFile(path, id string, start, end int64, count int, data []byte) (
 		f.Close()
 		return blockMeta{}, err
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return blockMeta{}, err
+	}
 	if err := f.Close(); err != nil {
 		return blockMeta{}, err
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		return blockMeta{}, err
+	}
+	if err := syncBlockDir(filepath.Dir(path)); err != nil {
 		return blockMeta{}, err
 	}
 	return blockMeta{path: path, start: start, end: end, count: count, size: int64(hdr.Len() + len(data))}, nil
@@ -566,4 +604,20 @@ func readBlockData(path string) (blockMeta, []byte, error) {
 		return blockMeta{}, nil, err
 	}
 	return meta, data, nil
+}
+
+// PersistenceStatus distinguishes a completed checkpoint from its configured cadence.
+type PersistenceStatus struct {
+	LastCheckpoint  int64   `json:"last_checkpoint"`
+	Finished        int64   `json:"finished"`
+	Error           string  `json:"error,omitempty"`
+	IntervalSeconds float64 `json:"interval_seconds"`
+}
+
+func (s *Store) Persistence() PersistenceStatus {
+	s.persistenceMu.Lock()
+	defer s.persistenceMu.Unlock()
+	out := s.persistence
+	out.IntervalSeconds = s.opt.Checkpoint.Seconds()
+	return out
 }

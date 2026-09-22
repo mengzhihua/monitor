@@ -296,7 +296,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"plugins":       s.pluginStatus(),
 		"alarms":        s.alarmSummary(),
 		"db": map[string]any{
-			"tiers": s.db.Tiers(), "dir": s.db.Dir(),
+			"tiers": s.db.Tiers(), "dir": s.db.Dir(), "persistence": s.db.Persistence(),
 		},
 		"user": userOf(r),
 	}

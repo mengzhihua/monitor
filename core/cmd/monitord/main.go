@@ -22,6 +22,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/mengzhihua/monitor/core/internal/api"
+	"github.com/mengzhihua/monitor/core/internal/backup"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/export"
@@ -48,6 +49,8 @@ func run() error {
 	dataDir := flag.String("data-dir", "", "override global.data_dir")
 	logLevel := flag.String("log-level", "info", "debug|info|warn|error")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	backupDir := flag.String("backup-dir", "", "offline backup to a new directory and exit")
+	restoreFrom := flag.String("restore-from", "", "restore backup into a new data directory and exit")
 	flag.Parse()
 
 	if *showVersion {
@@ -72,9 +75,24 @@ func run() error {
 	if *dataDir != "" {
 		cfg.Global.DataDir = *dataDir
 	}
+	if *backupDir != "" && *restoreFrom != "" {
+		return errors.New("backup and restore are mutually exclusive")
+	}
+	if *restoreFrom != "" {
+		return backup.Restore(*restoreFrom, cfg.Global.DataDir)
+	}
+	if *backupDir != "" {
+		return backup.Create(cfg.Global.DataDir, *backupDir)
+	}
 	if err := os.MkdirAll(cfg.Global.DataDir, 0o755); err != nil {
 		return err
 	}
+
+	lock, err := backup.Lock(cfg.Global.DataDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 
 	h, err := hostIdentity(cfg)
 	if err != nil {

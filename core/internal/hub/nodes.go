@@ -122,6 +122,7 @@ type persisted struct {
 }
 
 type persistedNode struct {
+	Replica   bool                  `json:"replica,omitempty"`
 	ID        string                `json:"id"`
 	Host      registry.Host         `json:"host"`
 	Version   string                `json:"version"`
@@ -172,6 +173,7 @@ func Open(db *tsdb.Store, dir string, opt Options) (*Nodes, error) {
 		node := n.newNode(pn.ID, pn.Host)
 		node.Version, node.FirstSeen, node.LastSeen, node.keyHash = pn.Version, pn.FirstSeen, pn.LastSeen, pn.KeyHash
 		node.functions = pn.Functions
+		node.replica = pn.Replica
 		for _, cd := range pn.Charts {
 			node.reg.AddChart(cd.ToChart())
 		}
@@ -216,7 +218,7 @@ func (n *Nodes) Save() error {
 	var p persisted
 	for _, node := range n.nodes {
 		node.mu.Lock()
-		e := persistedNode{ID: node.ID, Host: node.Host, Version: node.Version, FirstSeen: node.FirstSeen, LastSeen: node.LastSeen, KeyHash: node.keyHash, Functions: node.functions}
+		e := persistedNode{Replica: node.replica, ID: node.ID, Host: node.Host, Version: node.Version, FirstSeen: node.FirstSeen, LastSeen: node.LastSeen, KeyHash: node.keyHash, Functions: node.functions}
 		for _, a := range node.alarms {
 			e.Alarms = append(e.Alarms, a)
 		}
@@ -333,9 +335,11 @@ func (n *Nodes) AcceptReplica(host registry.Host, charts []*registry.Chart, samp
 		if s.Chart == "" {
 			continue
 		}
-		_ = node.reg.Collect(s.Chart, time.Unix(s.T, 0), s.V)
+		_ = node.reg.Ingest(s.Chart, s.T, s.V)
 		node.mu.Lock()
-		node.lastData = s.T
+		if s.T > node.lastData {
+			node.lastData = s.T
+		}
 		node.mu.Unlock()
 	}
 	return node, nil

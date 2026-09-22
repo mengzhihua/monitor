@@ -58,12 +58,13 @@ type TierInfo struct {
 }
 
 type tierSeries struct {
-	id      string
-	mu      sync.Mutex
-	open    *Bucket
-	done    []Bucket
-	blocks  []blockMeta
-	flushMu sync.Mutex
+	id        string
+	mu        sync.Mutex
+	open      *Bucket
+	savedOpen *Bucket
+	done      []Bucket
+	blocks    []blockMeta
+	flushMu   sync.Mutex
 }
 
 type tier struct {
@@ -160,7 +161,6 @@ func (t *tier) load() (int, error) {
 				sr.open = &b
 			}
 		}
-		_ = os.Remove(path)
 	}
 	return n, nil
 }
@@ -191,6 +191,10 @@ func (t *tier) saveOpen(sr *tierSeries) error {
 	sr.mu.Lock()
 	var b *Bucket
 	if sr.open != nil {
+		if sr.savedOpen != nil && *sr.savedOpen == *sr.open {
+			sr.mu.Unlock()
+			return nil
+		}
 		cp := *sr.open
 		b = &cp
 	}
@@ -204,6 +208,11 @@ func (t *tier) saveOpen(sr *tierSeries) error {
 		return nil
 	}
 	_, err := writeBlockFile(path, sr.id, b.TS, b.TS, 1, encodeBuckets([]Bucket{*b}))
+	if err == nil {
+		sr.mu.Lock()
+		sr.savedOpen = b
+		sr.mu.Unlock()
+	}
 	return err
 }
 
@@ -255,19 +264,16 @@ func (t *tier) flush(sr *tierSeries) error {
 		sr.mu.Unlock()
 		return nil
 	}
-	done := sr.done
-	sr.done = nil
+	done := append([]Bucket(nil), sr.done...)
 	sr.mu.Unlock()
 
 	meta, err := writeBlockData(t.seriesDir(sr.id), sr.id, done[0].TS, done[len(done)-1].TS, len(done), encodeBuckets(done))
 	if err != nil {
-		sr.mu.Lock()
-		sr.done = append(done, sr.done...)
-		sr.mu.Unlock()
 		return err
 	}
 	sr.mu.Lock()
 	sr.blocks = append(sr.blocks, meta)
+	sr.done = sr.done[len(done):]
 	sr.mu.Unlock()
 	return nil
 }

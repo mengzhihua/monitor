@@ -108,3 +108,65 @@ func TestClusterRingPush(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func TestRingBackfillsAllSamplesAfterRejection(t *testing.T) {
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	nodes, err := Open(db, t.TempDir(), Options{Keys: []string{"key"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := nodes.newNode("box", registry.Host{ID: "box", UpdateEvery: 1})
+	nodes.nodes["box"] = node
+	ch := node.reg.AddChart(&registry.Chart{ID: "counter", Dimensions: []*registry.Dimension{{ID: "rate", Algorithm: registry.Incremental}}})
+	start := time.Now().Unix() - 20
+	for i := int64(0); i < 20; i++ {
+		node.reg.Ingest(ch.ID, start+i, map[string]float64{"rate": float64(i + 1)})
+	}
+	var attempts int
+	var received RingPayload
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "unavailable", 503)
+			return
+		}
+		json.NewDecoder(r.Body).Decode(&received)
+	}))
+	defer peer.Close()
+	c := NewCluster([]string{peer.URL}, "", nil)
+	c.SetNodes(nodes)
+	c.pushRing()
+	if len(c.ringCursor) != 0 {
+		t.Fatal("rejected page advanced cursor")
+	}
+	c.pushRing()
+	if len(received.Samples) != 20 {
+		t.Fatalf("lost history: %d", len(received.Samples))
+	}
+	replicaDB, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replicaDB.Close()
+	replicas, err := Open(replicaDB, t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied, err := replicas.AcceptReplica(received.Host, []*registry.Chart{received.Charts[0].ToChart()}, received.Samples, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pts, err := copied.db.QueryTier(registry.SeriesID("counter", "rate"), 0, start, start+19)
+	if err != nil || len(pts) != 20 {
+		t.Fatalf("replica points %d %v", len(pts), err)
+	}
+	for i, p := range pts {
+		if p.Last != float64(i+1) {
+			t.Fatalf("normalized rate transformed twice: %v", p)
+		}
+	}
+}

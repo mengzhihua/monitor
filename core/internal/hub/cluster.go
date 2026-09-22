@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,9 +29,10 @@ type Cluster struct {
 	log   *slog.Logger
 	http  *http.Client
 
-	mu    sync.RWMutex
-	index map[string]peerNode // node id → location
-	nodes *Nodes
+	mu         sync.RWMutex
+	index      map[string]peerNode // node id → location
+	nodes      *Nodes
+	ringCursor map[string]int64
 }
 
 type peerNode struct {
@@ -54,7 +56,7 @@ func NewCluster(peers []string, token string, log *slog.Logger) *Cluster {
 		clean = append(clean, p)
 	}
 	return &Cluster{peers: append([]string(nil), clean...), token: token, log: log,
-		http: &http.Client{Timeout: 5 * time.Second}, index: map[string]peerNode{}}
+		http: &http.Client{Timeout: 5 * time.Second}, index: map[string]peerNode{}, ringCursor: map[string]int64{}}
 }
 
 func (c *Cluster) Empty() bool { return c == nil || len(c.peers) == 0 }
@@ -181,39 +183,110 @@ type RingPayload struct {
 	Samples []ReplicaSample    `json:"samples"`
 }
 
+// pushRing replays normalized history in bounded pages. Acknowledged cursors
+// retain a 60-second overlap for the normal 30-second receiver checkpoint.
 func (c *Cluster) pushRing() {
 	if c.nodes == nil {
 		return
 	}
 	for _, node := range c.nodes.List() {
-		host, charts, samples := node.SnapshotRing()
-		if len(samples) == 0 {
-			continue
-		}
-		defs := make([]*stream.ChartDef, 0, len(charts))
-		for _, ch := range charts {
-			defs = append(defs, stream.DefOf(ch))
-		}
-		body, err := json.Marshal(RingPayload{Host: host, Charts: defs, Samples: samples})
-		if err != nil {
+		node.mu.Lock()
+		replica, host := node.replica, node.Host
+		node.mu.Unlock()
+		if replica {
 			continue
 		}
 		for _, peer := range c.peers {
-			req, err := http.NewRequest(http.MethodPost, peer+"/api/v1/hub/ring", bytes.NewReader(body))
-			if err != nil {
-				continue
+			for _, chart := range node.reg.Charts() {
+				key := peer + "\x00" + node.ID + "\x00" + chart.ID
+				var first, last int64
+				for _, dim := range chart.Dims() {
+					f, l, ok := node.db.Bounds(registry.SeriesID(chart.ID, dim.ID))
+					if !ok {
+						continue
+					}
+					if first == 0 || f < first {
+						first = f
+					}
+					if l > last {
+						last = l
+					}
+				}
+				if first == 0 {
+					continue
+				}
+				after := c.ringCursor[key] - 60
+				if after < first-1 {
+					after = first - 1
+				}
+				for page := 0; page < 4 && after < last; page++ {
+					before := after + 300
+					if before > last {
+						before = last
+					}
+					samples, err := ringHistory(node, chart, after, before)
+					if err != nil {
+						c.log.Warn("ring history", "err", err)
+						break
+					}
+					body, err := json.Marshal(RingPayload{Host: host, Charts: []*stream.ChartDef{stream.DefOf(chart)}, Samples: samples})
+					if err != nil {
+						break
+					}
+					if len(body) > 8<<20 {
+						c.log.Error("ring page exceeds receiver limit", "node", node.ID, "chart", chart.ID)
+						break
+					}
+					req, err := http.NewRequest(http.MethodPost, peer+"/api/v1/hub/ring", bytes.NewReader(body))
+					if err != nil {
+						break
+					}
+					req.Header.Set(clusterHopHeader, "1")
+					req.Header.Set("Content-Type", "application/json")
+					if c.token != "" {
+						req.Header.Set("Authorization", "Bearer "+c.token)
+					}
+					resp, err := c.http.Do(req)
+					if err != nil {
+						c.log.Warn("cluster ring push", "peer", peer, "err", err)
+						break
+					}
+					io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+					resp.Body.Close()
+					if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+						c.log.Warn("cluster ring rejected", "peer", peer, "status", resp.StatusCode)
+						break
+					}
+					c.ringCursor[key] = before
+					after = before
+				}
 			}
-			req.Header.Set(clusterHopHeader, "1")
-			req.Header.Set("Content-Type", "application/json")
-			if c.token != "" {
-				req.Header.Set("Authorization", "Bearer "+c.token)
-			}
-			resp, err := c.http.Do(req)
-			if err != nil {
-				c.log.Warn("cluster ring push", "peer", peer, "err", err)
-				continue
-			}
-			resp.Body.Close()
 		}
 	}
+}
+
+func ringHistory(node *Node, chart *registry.Chart, after, before int64) ([]ReplicaSample, error) {
+	byTime := map[int64]map[string]float64{}
+	for _, dim := range chart.Dims() {
+		points, err := node.db.QueryTier(registry.SeriesID(chart.ID, dim.ID), 0, after+1, before)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range points {
+			if byTime[p.TS] == nil {
+				byTime[p.TS] = map[string]float64{}
+			}
+			byTime[p.TS][dim.ID] = p.Last
+		}
+	}
+	times := make([]int64, 0, len(byTime))
+	for ts := range byTime {
+		times = append(times, ts)
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+	out := make([]ReplicaSample, 0, len(times))
+	for _, ts := range times {
+		out = append(out, ReplicaSample{Chart: chart.ID, T: ts, V: byTime[ts]})
+	}
+	return out, nil
 }

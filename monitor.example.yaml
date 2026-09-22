@@ -11,7 +11,7 @@ global:
 db:
   tier0_retention: 336h        # 14 days of per-second data
   tier0_retention_size: 1GiB   # or delete oldest blocks beyond this size
-  checkpoint: 10m              # flush in-memory samples to disk this often
+  checkpoint: 30s              # flush in-memory samples to disk this often
   tiers: 3                     # 1 = raw only, 2 = +1-minute rollups, 3 = +1-hour rollups
   tier1_retention: 2160h       # 90 days of per-minute min/max/avg/sum/count
   tier2_retention: 17520h      # 2 years of per-hour rollups

@@ -161,3 +161,14 @@ M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不
 
 CI 与 Release 使用同一 Go/Node 版本；开发机不再依赖 PATH 中的旧 Node 18。
 TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意证书。
+
+## 6. 阶段3：持久化、备份和历史复制
+
+- TSDB 检查点默认 30s；块内容同步后原子替换，Unix 同步所在目录；Windows 目录同步由系统管理。
+- `/api/v1/info` 的 `db.persistence` 报告最后成功检查点的开始/完成时间及错误。**30s 是调度间隔，不是硬性丢失上限**：异常退出可能丢失上次成功检查点之后的数据；尚未实现逐样本 WAL 或跨层事务。
+- 检查点最多8个并发写任务，不阻塞正常采样；写块期间保留可查询的缓冲区，避免瞬时数据空洞。未结束的 rollup bucket 也进入检查点。
+- `monitord -config monitor.yaml -data-dir ./data -backup-dir /path/new-backup`：停服备份，SHA-256 清单，拒绝正在使用的数据目录。
+- `monitord -config monitor.yaml -data-dir /path/new-data -restore-from /path/new-backup`：校验后恢复，只允许新目录；失败留下的目录不应启动使用，应检查原因并换一个新目录重试。备份包含监控数据和可能的 Hub 凭证，应限制访问。
+- Hub ring 改成每图每次最多4页、每页5分钟原始分辨率历史；仅HTTP成功后推进进度，保留60s重叠；速率不再二次计算，副本身份跨重启保留。
+- **HA边界**：还不是共识集群或任意故障零丢失；60s重叠不能覆盖任意慢检查点或副本盘丢失。完整重建可重启源Hub重新回放尚在保留期内的历史；超8MiB单页会记录错误而不会错误推进游标。
+- 验证：备份占用/损坏/覆盖保护，检查点后异常退出的 raw/rollup 恢复，查询与检查点并发，Hub历史补传及拒绝重试，进程级 SIGKILL 与备份恢复比对。复现：`make verify-durability`。
