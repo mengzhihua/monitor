@@ -6,7 +6,7 @@
 
 ## 1. 现在有什么（M0–M6）
 
-约 **154** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense` `storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq` `icecast` `phpdaemon` `pika` `maxscale` `nginxplus` `nginxunit` `docker_engine` `riakkv` `litespeed` `boinc` `spigotmc` `w1sensor` `ap` `dockerhub` `ethtool` `intelgpu` `logind` `dcgm` `panos` `powerstore` `powervault` `s3check` `scaleio` `smbios_memory` `vcsa` `mssql` `oracledb` `sql` `cloudwatch` `azure_monitor` `vsphere` `cato_networks` `snmp_traps` `snmp_topology`。
+约 **156** 个内置采集器：`cpu` `load` `mem` `disk` `diskspace` `net` `uptime` `apps` `systemd` `docker` `nginx` `redis` `apache` `phpfpm` `memcached` `mysql` `postgres` `elasticsearch` `rabbitmq` `proc`（intr/forks/熵/fd/PSI/IPv4+IPv6 SNMP、conntrack、softnet、IPC、mdstat、battery、IPVS、NFS、ZFS、Btrfs、wireless、KSM、zram）`sensors` `netstat` `statsd` `prometheus` `otlp` `httpcheck` `portcheck` `ping` `sslcheck` `dnsquery` `nvidia` `logs` `ml` `haproxy` `lighttpd` `consul` `whoisquery` `mongodb` `pgbouncer` `chrony` `ntpd` `smartctl` `nvme` `apcupsd` `lvm` `zookeeper` `nats` `varnish` `squid` `tomcat` `traefik` `bind` `unbound` `coredns` `hdfs` `postfix` `exim` `dovecot` `fail2ban` `weblog` `squidlog` `openldap` `wireguard` `samba` `freeradius` `tor` `cgroup` `k8s_kubelet` `k8s_kubeproxy` `k8s_apiserver` `k8s_state` `proxysql` `clickhouse` `cockroachdb` `pulsar` `envoy` `upsd` `zfspool` `dmcache` `filecheck` `supervisord` `monit` `snmp` `fluentd` `logstash` `cassandra` `ceph` `couchdb` `couchbase` `hddtemp` `openvpn` `beanstalk` `uwsgi` `powerdns` `dnsmasq` `megacli` `hpssa` `adaptecraid` `redfish` `activemq` `gearman` `geth` `ipfs` `pihole` `powerdns_recursor` `rspamd` `typesense` `storcli` `nginxvts` `tengine` `nsd` `dnsdist` `dnsmasq_dhcp` `isc_dhcpd` `puppet` `openvpn_status_log` `rethinkdb` `yugabytedb` `vernemq` `icecast` `phpdaemon` `pika` `maxscale` `nginxplus` `nginxunit` `docker_engine` `riakkv` `litespeed` `boinc` `spigotmc` `w1sensor` `ap` `dockerhub` `ethtool` `intelgpu` `logind` `dcgm` `panos` `powerstore` `powervault` `s3check` `scaleio` `smbios_memory` `vcsa` `mssql` `oracledb` `sql` `cloudwatch` `azure_monitor` `vsphere` `cato_networks` `snmp_traps` `snmp_topology` `freebsd` `windows`。
 
 平台骨架已齐：三层 TSDB、Health 表达式、plugins.d、Child→Parent 流、Hub 查询扇出、RBAC、异常顾问（k-sigma / ks2 / volume）、Graphite/Influx/JSON/Prom remote write、Webhook/Slack/SMTP/钉钉/企微/飞书、Vue Dashboard。
 
@@ -100,7 +100,8 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | 有 | Vue 实时图、告警/Functions/日志/异常顾问、Hub 节点切换 |
 | **M7** | 告警静默按钮 |
 | **M14** | Hub 面板（Space/Room/claim/配置下发）、OIDC 登录入口、replica 标注 |
-| 未做 | context 总览页、静默倒计时、Netdata 式 metric correlation UI 深化、Flutter 五端（M3）、Android 服务端壳（M4）、Windows/FreeBSD proc 对等 |
+| **M16** | Flutter Functions 页；Android logcat；Windows 进程/线程/句柄；FreeBSD sysctl IPC/温度 |
+| 未做 | context 总览页、静默倒计时、Netdata 式 metric correlation UI 深化 |
 
 ### 2.8 ML / Functions
 
@@ -108,6 +109,7 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | --- | --- |
 | 有 | k-sigma 一阶差分回退、anomaly-rate/ks2/volume；functions：processes、network-connections、services、logs、streaming |
 | **M15** | k-means 多窗口模型（Netdata ML）；`weights?method=kmeans`；Functions `containers`/`disks`/`mounts`/`network-interfaces`；MongoDB 导出 |
+| **M16** | Windows `system.processes/threads/handles/ctxt` + `windows-services`；FreeBSD sysctl IPC/wired/laundry/温度；Flutter Functions；Android logcat |
 | 未做 | ebpf 网络观察；systemd-journal 原生库（现为 journalctl 子进程）；Windows ETW 深化 |
 
 ## 3. 分批计划（全部搬完）
@@ -130,16 +132,16 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | **M12 续 6** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | go.d init.go 收尾（跳过 testrandom） |
 | **M13** | 剩余系统 health.d 模板；data context 聚合；data csv/ssv/jsonp；`/api/v2` 子集；alarm_count；badge | 规则编译测试 |
 | **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
-| **M15（本轮）** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
-| **M16** | Windows/FreeBSD 对等、Flutter、Android Agent | 跨平台 CI |
+| **M15** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
+| **M16（本轮）** | Windows/FreeBSD 对等、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
 
 M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
 
-## 4. 本轮（M15）交付清单
+## 4. 本轮（M16）交付清单
 
-1. 每维度 k-means（k=2，lag 窗口一阶差分，多训练窗口投票）；未训练前回退 k-sigma  
-2. `GET /api/v1/weights?method=kmeans` 与 anomaly-rate 对比排序  
-3. Functions：`containers`、`disks`、`mounts`、`network-interfaces`  
-4. `export.destinations.type: mongodb` OP_MSG insert
+1. FreeBSD `sysctl` 采集器（IPC / wired / laundry / forks / interrupts / CPU 温度），fixture 单测；`make cross` 与 Release 增加 `GOOS=freebsd`  
+2. Windows 进程/线程/句柄/上下文切换采集器（非 Windows 自动禁用）+ Function `windows-services`  
+3. Flutter 客户端 Functions 页（`/api/v1/functions` + `/function`）  
+4. Android：`logcat` 接入 Function `logs`；服务端壳默认禁用 Linux 专用采集器，声明 `READ_LOGS`
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。

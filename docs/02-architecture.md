@@ -65,7 +65,7 @@ flowchart TB
 
 | 层 | 选型 | 理由 |
 | --- | --- | --- |
-| 服务端核心（Agent / Hub） | **Go 1.22+**，单静态二进制 | 一份代码交叉编译 linux/darwin/windows/android(arm64,arm,amd64)；`gopsutil` 覆盖四平台系统指标；goroutine 适合上千采集器并发；`gomobile bind` 可编成 Android AAR。 |
+| 服务端核心（Agent / Hub） | **Go 1.22+**，单静态二进制 | 一份代码交叉编译 linux/darwin/windows/freebsd/android(arm64)；`gopsutil` 覆盖系统指标；goroutine 适合上千采集器并发。 |
 | 时序库 | 自研嵌入式 **tsdb**（Gorilla XOR + delta-of-delta，分层降采样） | 对标 dbengine 的 ~1 byte/sample；无外部依赖；Android 可用。 |
 | 元数据库 | **SQLite**（`modernc.org/sqlite` 纯 Go） ；Hub 大规模可切 **PostgreSQL** | 纯 Go 无 cgo，四平台一致；Hub 用 `Store` 接口抽象。 |
 | 节点 ↔ Hub 通信 | **WebSocket over TLS + Protobuf 帧**（单端口 443 友好） | 对标 ACLK；穿代理/NAT；双向：上行流数据，下行控制/函数调用。 |
@@ -474,8 +474,8 @@ sequenceDiagram
 | **M12 续 6 云/SQL/SNMP** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | 对标 Netdata go.d init.go 收尾（跳过 testrandom） |
 | **M13 规则与查询** | 剩余系统 health.d 模板、`data?context=`、data csv/ssv/jsonp、`/api/v2` 子集、alarm_count、badge | 告警与跨图查询对齐 |
 | **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
-| **M15 ML / Functions / 导出（本轮）** | k-means、containers/disks/mounts/ifaces、Mongo 导出 | weights 对比 |
-| **M16** | Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
+| **M15 ML / Functions / 导出** | k-means、containers/disks/mounts/ifaces、Mongo 导出 | weights 对比 |
+| **M16 平台（本轮）** | Windows/FreeBSD 采集、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 
@@ -516,4 +516,7 @@ sequenceDiagram
 | ap / dockerhub / ethtool / intelgpu / logind / dcgm / panos / powerstore / powervault / s3check / scaleio / smbios_memory | `internal/collect` | M12 续 5 |
 | vcsa / mssql / oracledb / sql / cloudwatch / azure_monitor / vsphere / cato_networks / snmp_traps / snmp_topology | `internal/collect` | M12 续 6 |
 | （无）Android 服务端 | `android/` + `core/mobile` | M4 |
-| （仅移动）五端原生客户端 | `app/` | M3 |
+| （仅移动）五端原生客户端 | `app/` Charts / Alarms / Functions | M3 / M16 |
+| Windows.plugin 进程/线程/句柄 | `internal/collect/windows.go` | M16 |
+| freebsd.plugin sysctl | `internal/collect/freebsd.go` | M16 |
+| Android logcat | `internal/collect/logs.go` | M16 |

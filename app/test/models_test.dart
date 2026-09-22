@@ -35,4 +35,29 @@ void main() {
     expect(local.selector, 'local');
     expect(remote.selector, 'abc');
   });
+
+  test('FunctionResult parses table rows', () {
+    final r = FunctionResult.fromJson({
+      'function': 'processes',
+      'time': 1700000000,
+      'result': {
+        'columns': ['pid', 'name', 'cpu'],
+        'total': 1,
+        'rows': [
+          {'pid': 1, 'name': 'init', 'cpu': 0.5}
+        ],
+      },
+    });
+    expect(r.name, 'processes');
+    expect(r.table, isNotNull);
+    expect(r.table!.columns, ['pid', 'name', 'cpu']);
+    expect(r.table!.rows.first['name'], 'init');
+    expect(r.raw, isNull);
+  });
+
+  test('FunctionInfo fromJson', () {
+    final f = FunctionInfo.fromJson({'name': 'logs', 'help': 'h', 'timeout': 8});
+    expect(f.name, 'logs');
+    expect(f.timeout, 8);
+  });
 }

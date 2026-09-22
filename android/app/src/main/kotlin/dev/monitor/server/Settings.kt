@@ -23,7 +23,7 @@ class Settings(context: Context) {
         get() = p.getBoolean("boot", false)
         set(v) = p.edit().putBoolean("boot", v).apply()
 
-    /** YAML for monitord. Collectors that need /proc/net or root are disabled. */
+    /** YAML for monitord. Linux-only collectors and those needing /proc/net or root are disabled; logs use logcat. */
     fun toYaml(dataDir: String): String {
         val stream = if (hubUrl.isNotBlank() && apiKey.isNotBlank()) {
             """
@@ -41,7 +41,9 @@ class Settings(context: Context) {
         |web:
         |  listen: ":$port"
         |collectors:
-        |  disabled: [docker, systemd, nginx, redis]
+        |  disabled: [docker, systemd, nginx, redis, cgroup, k8s_kubelet, k8s_kubeproxy, k8s_apiserver, k8s_state, nvidia, intelgpu, dcgm, ethtool, ap, logind, smbios_memory, wireguard, zfspool, lvm, nvme, smartctl, megacli, hpssa, adaptecraid, storcli]
+        |  modules:
+        |    logs: {}
         |$stream
         |""".trimMargin()
     }

@@ -71,6 +71,9 @@ func logsAvailable(files []string) bool {
 	if _, err := exec.LookPath("journalctl"); err == nil {
 		return true
 	}
+	if logcatAvailable() {
+		return true
+	}
 	if runtime.GOOS == "windows" {
 		if _, err := exec.LookPath("wevtutil"); err == nil {
 			return true
@@ -89,7 +92,18 @@ func logsAvailable(files []string) bool {
 	return false
 }
 
+func logcatAvailable() bool {
+	if runtime.GOOS == "android" {
+		return true
+	}
+	_, err := exec.LookPath("logcat")
+	return err == nil
+}
+
 func defaultLogFiles() []string {
+	if runtime.GOOS == "android" {
+		return nil
+	}
 	return []string{"/var/log/syslog", "/var/log/messages", "/var/log/system.log"}
 }
 
@@ -120,7 +134,7 @@ func (l *logsCollector) files() []string {
 func (l *logsCollector) Functions() []Function {
 	return []Function{{
 		Name:    "logs",
-		Help:    "Recent system logs (journald, Windows Event Log, or configured files)",
+		Help:    "Recent system logs (journald, logcat, Windows Event Log, or configured files)",
 		Timeout: 10,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
 			q := LogQuery{Limit: l.cfg.Top, Files: l.files(), Query: args["query"], Source: args["source"]}
@@ -175,8 +189,16 @@ func QueryLogs(q LogQuery) []LogRow {
 	if q.Source == "eventlog" || q.Source == "windows" {
 		return queryEventLog(q)
 	}
+	if q.Source == "logcat" || q.Source == "android" {
+		return queryLogcat(q)
+	}
 	if rows := queryJournal(q); len(rows) > 0 || q.Source == "journal" || q.Source == "journald" {
 		return rows
+	}
+	if runtime.GOOS == "android" {
+		if rows := queryLogcat(q); len(rows) > 0 || q.Source == "" {
+			return rows
+		}
 	}
 	if runtime.GOOS == "windows" {
 		if rows := queryEventLog(q); len(rows) > 0 {
@@ -184,6 +206,133 @@ func QueryLogs(q LogQuery) []LogRow {
 		}
 	}
 	return queryFileLogs(q)
+}
+
+func queryLogcat(q LogQuery) []LogRow {
+	if _, err := exec.LookPath("logcat"); err != nil {
+		return nil
+	}
+	n := q.Limit
+	if n <= 0 {
+		n = 200
+	}
+	args := []string{"-d", "-v", "threadtime", "-t", strconv.Itoa(n)}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "logcat", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return parseLogcat(string(out), q)
+}
+
+func parseLogcat(s string, q LogQuery) []LogRow {
+	var rows []LogRow
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" || strings.HasPrefix(line, "---------") {
+			continue
+		}
+		row, ok := parseLogcatLine(line)
+		if !ok {
+			continue
+		}
+		if q.Query != "" && !strings.Contains(strings.ToLower(row.Message+" "+row.Unit), strings.ToLower(q.Query)) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) > q.Limit && q.Limit > 0 {
+		rows = rows[len(rows)-q.Limit:]
+	}
+	return rows
+}
+
+func parseLogcatLine(line string) (LogRow, bool) {
+	row := LogRow{Priority: "info", Time: time.Now().Unix(), Message: line}
+	// threadtime: "01-02 15:04:05.123  1234  5678 I Tag: message"
+	if len(line) > 18 && line[2] == '-' && line[5] == ' ' {
+		if ts, err := time.Parse("01-02 15:04:05.000", line[:18]); err == nil {
+			now := time.Now()
+			ts = ts.AddDate(now.Year(), 0, 0)
+			if ts.After(now.Add(24 * time.Hour)) {
+				ts = ts.AddDate(-1, 0, 0)
+			}
+			row.Time = ts.Unix()
+		}
+		rest := strings.TrimSpace(line[18:])
+		f := strings.Fields(rest)
+		if len(f) >= 4 {
+			row.PID = f[0]
+			row.Priority = logcatPri(f[2])
+			tag := strings.TrimSuffix(f[3], ":")
+			row.Unit = tag
+			if i := strings.Index(rest, ": "); i >= 0 {
+				row.Message = strings.TrimSpace(rest[i+2:])
+			} else if i := strings.IndexByte(rest, ':'); i >= 0 {
+				row.Message = strings.TrimSpace(rest[i+1:])
+			}
+			return row, true
+		}
+	}
+	// epoch: "1750000000.500  W/System  (  42): low memory"
+	if i := strings.IndexByte(line, ' '); i > 0 {
+		if sec, err := strconv.ParseFloat(line[:i], 64); err == nil && sec > 1e9 {
+			row.Time = int64(sec)
+			rest := strings.TrimSpace(line[i+1:])
+			row.Message = rest
+			if p, tag, pid, msg, ok := parseLogcatBrief(rest); ok {
+				row.Priority, row.Unit, row.PID, row.Message = p, tag, pid, msg
+			}
+			return row, true
+		}
+	}
+	if p, tag, pid, msg, ok := parseLogcatBrief(line); ok {
+		row.Priority, row.Unit, row.PID, row.Message = p, tag, pid, msg
+		return row, true
+	}
+	return row, strings.TrimSpace(line) != ""
+}
+
+func parseLogcatBrief(s string) (pri, tag, pid, msg string, ok bool) {
+	// I/Tag( 123): message  or I/Tag ( 123): message
+	if len(s) < 4 || s[1] != '/' {
+		return "", "", "", "", false
+	}
+	pri = logcatPri(s[:1])
+	rest := s[2:]
+	paren := strings.IndexByte(rest, '(')
+	colon := strings.LastIndex(rest, "):")
+	if paren > 0 && colon > paren {
+		tag = strings.TrimSpace(rest[:paren])
+		pid = strings.TrimSpace(rest[paren+1 : colon])
+		msg = strings.TrimSpace(rest[colon+2:])
+		return pri, tag, pid, msg, true
+	}
+	if i := strings.IndexByte(rest, ':'); i > 0 {
+		return pri, strings.TrimSpace(rest[:i]), "", strings.TrimSpace(rest[i+1:]), true
+	}
+	return pri, "", "", rest, true
+}
+
+func logcatPri(s string) string {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "F", "0":
+		return "emerg"
+	case "E", "3":
+		return "err"
+	case "W", "4":
+		return "warning"
+	case "I", "6":
+		return "info"
+	case "D", "7", "V":
+		return "debug"
+	case "A", "S":
+		return "alert"
+	default:
+		return normalizePri(s)
+	}
 }
 
 func queryJournal(q LogQuery) []LogRow {

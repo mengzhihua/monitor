@@ -1,0 +1,56 @@
+# M16 Windows / FreeBSD health.d templates. Rules bind only when the
+# matching chart exists (collectors auto-disable off-platform).
+alarms:
+  - name: threads_in_use
+    on: system.threads
+    class: Utilization
+    type: System
+    component: Processes
+    lookup: average -1m unaligned of threads
+    units: threads
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (4000) : (8000))'
+    crit: '$this > (($status == $CRITICAL) ? (8000) : (16000))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: operating-system thread count (Windows / process accounting)
+    to: sysadmin
+
+  - name: handles_in_use
+    on: system.handles
+    class: Utilization
+    type: System
+    component: Processes
+    lookup: average -1m unaligned of handles
+    units: handles
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (50000) : (100000))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: Windows kernel handle table size
+    to: sysadmin
+
+  - name: freebsd_cpu_temperature
+    on: freebsd.cpu.temperature
+    class: Temperature
+    type: System
+    component: CPU
+    lookup: average -1m unaligned of hottest
+    units: Celsius
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (95))'
+    delay: down 5m multiplier 1.5 max 1h
+    info: hottest CPU core temperature from sysctl dev.cpu.N.temperature
+    to: sysadmin
+
+  - name: freebsd_ipc_semaphores
+    on: system.ipc_semaphores
+    class: Utilization
+    type: System
+    component: IPC
+    lookup: average -1m unaligned of semaphores
+    calc: '$this * 100 / $max'
+    units: '%'
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (70) : (85))'
+    info: FreeBSD IPC semaphore identifiers used versus kern.ipc.semmni
+    to: sysadmin

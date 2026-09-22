@@ -33,6 +33,8 @@ cross:
 	GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-darwin-amd64  ./cmd/monitord && \
 	GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-darwin-arm64  ./cmd/monitord && \
 	GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-windows-amd64.exe ./cmd/monitord && \
+	GOOS=freebsd GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-freebsd-amd64 ./cmd/monitord && \
+	GOOS=freebsd GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-freebsd-arm64 ./cmd/monitord && \
 	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-android-arm64 ./cmd/monitord
 
 clean:

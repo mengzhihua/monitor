@@ -141,6 +141,28 @@ class ApiClient {
     return LiveSubscription._(ch);
   }
 
+  Future<List<FunctionInfo>> functions({String? node}) async {
+    final res = await _http
+        .get(config.uri('/api/v1/functions', _q(node)), headers: config.headers)
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => FunctionInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<FunctionResult> function(
+    String name, {
+    String? node,
+    Map<String, String> args = const {},
+  }) async {
+    final j = await _get('/function', _q(node, {'function': name, ...args}));
+    return FunctionResult.fromJson(j);
+  }
+
   void close() => _http.close();
 }
 

@@ -119,6 +119,8 @@ jobs:
           - { goos: linux,   goarch: amd64, label: linux-amd64 }
           - { goos: linux,   goarch: arm64, label: linux-arm64 }
           - { goos: windows, goarch: amd64, label: windows-amd64 }
+          - { goos: freebsd, goarch: amd64, label: freebsd-amd64 }
+          - { goos: freebsd, goarch: arm64, label: freebsd-arm64 }
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.meta.outputs.ref }}" }
@@ -345,6 +347,7 @@ jobs:
             | macOS Apple Silicon | `monitord-*-macos-arm64.tar.gz` |
             | macOS Intel | `monitord-*-macos-amd64.tar.gz` |
             | Windows x64 | `monitord-*-windows-amd64.zip` |
+            | FreeBSD x64 / arm64 | `monitord-*-freebsd-{amd64,arm64}.tar.gz` |
             | Linux x64 / arm64 | `monitord-*-linux-{amd64,arm64}.tar.gz` |
             | Android (arm64, foreground service) | `monitord-*-android-arm64*.apk` |
 
