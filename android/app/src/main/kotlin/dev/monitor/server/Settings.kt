@@ -41,7 +41,7 @@ class Settings(context: Context) {
         |web:
         |  listen: ":$port"
         |collectors:
-        |  disabled: [docker, systemd, nginx, redis, cgroup, k8s_kubelet, k8s_kubeproxy, k8s_apiserver, k8s_state, nvidia, intelgpu, dcgm, ethtool, ap, logind, smbios_memory, wireguard, zfspool, lvm, nvme, smartctl, megacli, hpssa, adaptecraid, storcli, libvirt, proxmox, ebpf, cups, xenstat, ioping, nftables, podman, ipmi]
+        |  disabled: [docker, systemd, nginx, redis, cgroup, k8s_kubelet, k8s_kubeproxy, k8s_apiserver, k8s_state, nvidia, intelgpu, dcgm, ethtool, ap, logind, smbios_memory, wireguard, zfspool, lvm, nvme, smartctl, megacli, hpssa, adaptecraid, storcli, libvirt, proxmox, ebpf, cups, xenstat, ioping, nftables, podman, ipmi, perf, nfacct]
         |  modules:
         |    logs: {}
         |$stream

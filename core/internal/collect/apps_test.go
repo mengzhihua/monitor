@@ -58,4 +58,11 @@ func TestAppsCollectorGroupsAndProcessesFunction(t *testing.T) {
 	if len(fns) != 1 || fns[0].Name != "processes" {
 		t.Fatalf("functions = %+v", fns)
 	}
+	if _, ok := reg.Chart("apps.processes_user"); !ok {
+		t.Fatal("missing apps.processes_user")
+	}
+	uch, _ := reg.Chart("apps.processes_user")
+	if len(uch.Dims()) == 0 {
+		t.Log("user dimensions empty (username lookup failed on this host)")
+	}
 }

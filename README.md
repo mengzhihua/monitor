@@ -258,6 +258,16 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
 | API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
 
+### 已实现能力（M19：内核深度）
+
+| 模块 | 说明 |
+| --- | --- |
+| eBPF | bpftool 库存图 + 程序族 `ebpf.cachestat/dcstat/fd/vfs/oomkill/process/shm/swap/disk/mount/hardirq`（kprobe_profile 优先，否则 /proc 近似）；无源则禁用子图而不是整模块 |
+| perf | `perf stat -a` → `perf.cpu` / `perf.instructions` / `perf.cache_misses`；无权限自动禁用 |
+| proc | NUMA `mem.extfrag.*`、`audit.backlog`（`auditctl -s`） |
+| 其它 | `idlejitter`（`system.idlejitter`）；`nfacct`；apps `cpu/mem/processes` 按 user / user group |
+| 告警 | oomkill、extfrag 高、audit backlog |
+
 ### 开发
 
 ```bash

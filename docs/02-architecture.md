@@ -478,7 +478,7 @@ sequenceDiagram
 | **M16 平台** | Windows/FreeBSD 采集、Flutter Functions、Android logcat、freebsd 交叉编译 | 跨平台 CI |
 | **M17 剩余缺口** | proc 剩余、libvirt/proxmox/ebpf、manage/health、v2 group_by=node、维护窗口、Kinesis/Pub/Sub、LDAP/share/ACLK、Vue context | `go test -race`、`vue-tsc`、`smoke.sh` |
 | **M18 原生插件** | EDAC/SLAB/zswap/RAPL/DRM/bcache/timex；cups/xenstat/ioping/nftables/podman/ipmi；Kafka REST；v2/q + alert_transitions | 合入 main |
-| **M19 内核深度（下一轮）** | eBPF 程序族、perf.plugin、debugfs extfrag/audit、idlejitter、apps user/group、nfacct | `go test -race`、`vue-tsc`、`smoke.sh` |
+| **M19 内核深度（本轮）** | eBPF 程序族、perf.plugin、debugfs extfrag/audit、idlejitter、apps user/group、nfacct | `go test -race`、`vue-tsc`、`smoke.sh` |
 | **M20 日志与查看器** | journald 跟随流、Windows Events 分页、macos.plugin、network-viewer、systemd-units 出图 | 同上 |
 | **M21 Windows.plugin** | Perflib IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows CI fixture |
 | **M22 freebsd.plugin** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo | freebsd 交叉编译 |
