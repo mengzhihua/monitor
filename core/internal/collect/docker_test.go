@@ -84,6 +84,14 @@ func TestDockerCollectorFakeEngine(t *testing.T) {
 	if sv["running"] != 2 || sv["exited"] != 1 {
 		t.Fatalf("states = %v", sv)
 	}
+	tab, err := d.Functions()[0].Run(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, ok := tab.(Table)
+	if !ok || ct.Total != 2 { // pause excluded
+		t.Fatalf("containers function = %+v", tab)
+	}
 
 	// container goes away → charts removed
 	mu.Lock()

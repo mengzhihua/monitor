@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"context"
 	"runtime"
 	"testing"
 
@@ -45,5 +46,24 @@ func TestLoadEveryNeverBelowScheduler(t *testing.T) {
 	reg = registry.New(&registry.Host{UpdateEvery: 1}, nil)
 	if got := loadEvery(reg); got != 5 {
 		t.Fatalf("loadEvery = %d, want 5", got)
+	}
+}
+
+func TestSystemFunctions(t *testing.T) {
+	ctx := context.Background()
+	if tab, err := (&diskCollector{}).Functions()[0].Run(ctx, nil); err != nil {
+		t.Fatal("disks", err)
+	} else if t0, ok := tab.(Table); !ok || t0.Total == 0 {
+		t.Fatalf("disks table = %+v", tab)
+	}
+	if tab, err := (&diskSpaceCollector{}).Functions()[0].Run(ctx, nil); err != nil {
+		t.Fatal("mounts", err)
+	} else if t0, ok := tab.(Table); !ok || len(t0.Columns) == 0 {
+		t.Fatalf("mounts table = %+v", tab)
+	}
+	if tab, err := (&netCollector{}).Functions()[0].Run(ctx, nil); err != nil {
+		t.Fatal("ifaces", err)
+	} else if t0, ok := tab.(Table); !ok || t0.Total == 0 {
+		t.Fatalf("ifaces table = %+v", tab)
 	}
 }

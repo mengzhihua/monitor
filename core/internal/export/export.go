@@ -25,6 +25,9 @@ type Destination struct {
 	Prefix  string            `yaml:"prefix"`
 	Headers map[string]string `yaml:"headers"`
 	Every   time.Duration     `yaml:"every"`
+	// MongoDB only (type: mongodb).
+	Database   string `yaml:"database"`
+	Collection string `yaml:"collection"`
 }
 
 type Engine struct {
@@ -104,6 +107,8 @@ func (e *Engine) flush(ctx context.Context, d Destination) error {
 		return e.flushPromRW(ctx, d)
 	case "opentsdb", "open_tsdb":
 		return e.flushOpenTSDB(ctx, d)
+	case "mongodb", "mongo":
+		return e.flushMongo(ctx, d)
 	default:
 		return fmt.Errorf("unknown exporter %q", d.Type)
 	}

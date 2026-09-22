@@ -28,6 +28,7 @@ onMounted(load)
         异常顾问
         <select v-model="method" @change="load">
           <option value="anomaly-rate">anomaly-rate</option>
+          <option value="kmeans">kmeans</option>
           <option value="ks2">ks2</option>
           <option value="volume">volume</option>
         </select>

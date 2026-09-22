@@ -82,7 +82,8 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | **M12 续 5** | 光模块温度、Intel GPU busy、DCGM GPU 温度、PAN-OS session、PowerStore/PowerVault health、S3 check、ScaleIO capacity |
 | **M12 续 6** | VCSA red、MSSQL blocked、Oracle sessions、vSphere disconnected、Cato site、SNMP trap flood、topology 无邻居、SQL 慢查询 |
 | **M13** | CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
-| 未做 | Netdata `health.d` 其余应用/Windows 模板；维护窗口日历；告警聚合摘要；MongoDB 导出；Kinesis/Pub/Sub |
+| **M15** | MongoDB 导出（OP_MSG insert） |
+| 未做 | Netdata `health.d` 其余应用/Windows 模板；维护窗口日历；告警聚合摘要；Kinesis/Pub/Sub |
 
 ### 2.6 Hub / Cloud
 
@@ -105,8 +106,9 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 
 | 状态 | 能力 |
 | --- | --- |
-| 有 | k-sigma 一阶差分、anomaly-rate/ks2/volume；functions：processes、network-connections、services、logs、streaming |
-| 未做 | k-means 多窗口模型（Netdata ML）；ebpf 网络观察；systemd-journal 原生库（现为 journalctl 子进程）；Windows ETW 深化 |
+| 有 | k-sigma 一阶差分回退、anomaly-rate/ks2/volume；functions：processes、network-connections、services、logs、streaming |
+| **M15** | k-means 多窗口模型（Netdata ML）；`weights?method=kmeans`；Functions `containers`/`disks`/`mounts`/`network-interfaces`；MongoDB 导出 |
+| 未做 | ebpf 网络观察；systemd-journal 原生库（现为 journalctl 子进程）；Windows ETW 深化 |
 
 ## 3. 分批计划（全部搬完）
 
@@ -127,18 +129,17 @@ go.d `init.go` 除故意跳过的 `testrandom` 外已打勾。未轮到原生实
 | **M12 续 5** | ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory | 第六批长尾 12 个 |
 | **M12 续 6** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | go.d init.go 收尾（跳过 testrandom） |
 | **M13** | 剩余系统 health.d 模板；data context 聚合；data csv/ssv/jsonp；`/api/v2` 子集；alarm_count；badge | 规则编译测试 |
-| **M14（本轮）** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
-| **M15** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
+| **M14** | Hub claim/Space/Room/OIDC/配置下发/环复制 | 双 Hub 冒烟 |
+| **M15（本轮）** | k-means ML、更多 Functions、导出 Mongo | weights 对比 |
 | **M16** | Windows/FreeBSD 对等、Flutter、Android Agent | 跨平台 CI |
 
 M12 的「长尾」按 `src/go/plugin/go.d/collector/init.go` 逐个打勾，不跳过；硬件 RAID / 云厂商 API 等需要外部密钥的，默认关闭、配置即启用。
 
-## 4. 本轮（M14）交付清单
+## 4. 本轮（M15）交付清单
 
-1. Hub 签发一次性 claim token；Agent `stream.claim_token` 兑换 stream API key 并加入 Room  
-2. Space / Room CRUD；节点列表带 `space_id` / `room_id`  
-3. `PUT /api/v1/hub/config` 下发 `disabled` 采集器；Agent 握手后拉取并 `SetEnabled`  
-4. `hub.peers` 环复制最近样本（`POST /api/v1/hub/ring`）；replica 节点不再回推；live 连接优先  
-5. `web.oidc` 授权码登录，铸造本地 session；Dashboard Hub 面板
+1. 每维度 k-means（k=2，lag 窗口一阶差分，多训练窗口投票）；未训练前回退 k-sigma  
+2. `GET /api/v1/weights?method=kmeans` 与 anomaly-rate 对比排序  
+3. Functions：`containers`、`disks`、`mounts`、`network-interfaces`  
+4. `export.destinations.type: mongodb` OP_MSG insert
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
