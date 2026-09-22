@@ -7,13 +7,15 @@
     "dev": "vite",
     "build": "node -e \"fs.rmSync('../core/internal/api/ui/dist/assets',{recursive:true,force:true})\" && vue-tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc -b"
+    "typecheck": "vue-tsc -b",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "uplot": "^1.6.32",
     "vue": "^3.5.42"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/tsconfig": "^0.9.1",

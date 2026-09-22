@@ -16,3 +16,7 @@ core/internal/api/ui/dist/*
 .DS_Store
 *.log
 monitor.yaml
+
+# Browser acceptance artifacts
+web/test-results/
+web/playwright-report/

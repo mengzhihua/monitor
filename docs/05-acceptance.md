@@ -1,0 +1,68 @@
+# 五阶段交付与验收
+
+本页记录2026-09-22的开发交付。五阶段的代码、复现入口和本机验收已补齐；它不是全部平台、真实外部服务或72小时连续运行的验收证书。历史结果保留在[差距清单](04-netdata-gap.md)。
+
+| 阶段 | 开发交付 | 本机证据 | 环境验收边界 |
+| --- | --- | --- | --- |
+| 1：工程基线 | Go/Node/Flutter版本统一，采集器注册清单，CI、Release和统一验收入口 | Go 1.27.1、Node 24.19.0、Flutter 3.35.4；编译注册177个模块 | 注册不代表依赖齐全或真实目标采集通过 |
+| 2：可靠性和安全修复 | OIDC签名/issuer/audience/nonce/PKCE、会话过期/退出；LDAP访问控制/LDAPS；采集TLS默认校验、MSSQL计数语义、初始化重试 | Go vet/race；模拟IdP正反例、TLS拒绝/私有CA、RBAC、采集器恢复测试 | 外部IdP、目录服务器、SQL Server及专用硬件须由部署方联调 |
+| 3：持久化和Hub | 合并检查点、完整性校验、失败重试、旧数据读取、备份恢复、历史补传和副本身份持久化 | 强杀后固定历史数据一致；写失败保留上次检查点；损坏文件拒绝启动；跨封块恢复不重复聚合；1000模拟节点重启核对 | 没有逐样本WAL、共识选主或任意故障零丢失承诺 |
+| 4：Web和客户端 | 长窗口有界数据、孤立点显示、离线状态/重连、Flutter安全存储及历史刷新、Android服务恢复 | Chrome桌面/390px窄屏4项端到端测试；Flutter 11项单测/analyze；macOS完整构建和真实Keychain读/写/删除集成测试 | 当前没有ADB设备；Android/iOS真机后台、耗电、权限与推送不在已通过范围 |
+| 5：性能和验收闭环 | 三类微基准、Hub HTTP阶梯负载、持续采集、崩溃/备份、浏览器与跨平台CI | 下列基准、600秒持续采集、10→100→1000模拟节点；8目标交叉编译 | 尚未完成72小时运行、1000台实际Agent、Linux独立Hub极限负载或物理断电测试 |
+
+## 检查点设计及升级
+
+旧实现每次检查点分别同步每条序列和各层未闭合桶，2000条序列在本机需要249.66秒。新实现复制一致的内存状态后释放采样锁，将原始缓冲区、各层已闭合/未闭合桶合并成一个gzip编码、SHA-256校验的`checkpoint.v1`文件；同步文件、原子替换，再同步目录。磁盘I/O期间仍可采样和查询。写满的数据块保留原有归档格式。
+
+恢复先读取原有块，再恢复检查点并排除重复数据；检查点之后已经归档的原始样本会补入聚合层。创建于检查点之后的新序列也包含在补算中。检查点损坏会明确报错，避免无声忽略已确认数据。单个检查点的压缩前/后大小都限制为512MiB，超出或写失败会显示持久化错误，保留之前的检查点。
+
+- 默认30秒是调度间隔，异常退出的保证只到**最后成功检查点**，不能称为30秒硬性丢失上限。
+- `db.persistence`包含检查点时间、错误、耗时和文件字节数；这些字节与各层归档块字节分开统计。
+- `tier0_retention_size`约束原始归档块，检查点和rollup另占磁盘；应给活跃缓冲区及备份预留空间。
+- 旧版数据可直接读取；升级前仍应停服备份。**旧二进制不能读取新检查点内的未封块数据**，降级应恢复升级前的备份，不能直接使用升级后的数据目录。
+- 全块归档仍采用逐序列文件，长期大规模写入、归档时延和恢复速度还须在目标存储上测量。单次小检查点结果不能外推到数百万序列。
+
+## 本机测量
+
+设备：Intel i7-9750H、macOS amd64；测试期间存在其他构建负载。
+
+| 项目 | 结果 | 范围 |
+| --- | --- | --- |
+| 2000序列内存追加 | 330 ns/sample | 不含归档/持久化 |
+| 24小时查询并聚合600点 | 0.405 ms/query | TSDB微基准 |
+| 2000序列首次检查点 | 50.14 ms | 每序列1个样本；另测3轮均值46.20 ms |
+| 600秒采集 | 74张图、298次请求、错误0 | cpu/mem/load/disk/net |
+| 600秒查询延迟 | 中位2.47 ms、最大11.09 ms | 本机HTTP |
+| 600秒资源 | 最大RSS29.40 MiB，最终数据165708字节 | 本次受控采集集合 |
+| 1000模拟节点阶梯最后一级 | 180000个新增维度样本，0.729秒，约24.68万samples/s | 单机HTTP ring；16请求并发、每节点1图20维、每维10样本 |
+| Hub重启 | 节点数/副本身份保持；节点0、500、999全部测试历史行一致 | 合成负载，非真实Agent舰队 |
+
+## 复现
+
+先安装对应Go/Node/Flutter工具链。前端必须先构建，Go才能嵌入最新资源。
+
+```sh
+make all
+make test
+make verify-durability
+make bench
+make hub-load
+python3 scripts/soak.py --seconds 600 --output soak.json
+cd web && npx playwright install chromium && npm run test:e2e
+cd ../app && flutter analyze && flutter test
+flutter test integration_test/secure_storage_test.dart -d macos
+flutter build macos --debug
+cd .. && make cross
+```
+
+装有Chrome时可用`MONITOR_BROWSER_CHANNEL=chrome npm run test:e2e`。浏览器测试占用`127.0.0.1:19997`，配置和数据均为临时目录，不复用已有服务；冒烟使用19998/18999。各进程测试均清理自己启动的进程。
+
+`make acceptance`顺序运行构建、Go/Web测试、强杀恢复、Hub负载、持续采集、浏览器、Flutter单测及交叉编译。`MONITOR_SOAK_SECONDS`可调整验收时长；CI另保存负载JSON与浏览器截图/失败trace。原生Keychain测试须在macOS桌面环境单独运行。集成测试会生成测试应用，完成后需重新`flutter build macos --debug`交付主程序。
+
+72小时测试可在稳定、禁止休眠的目标机器运行：
+
+```sh
+python3 scripts/soak.py --seconds 259200 --output soak-72h.json
+```
+
+这条命令是待执行入口，**本轮没有运行满72小时**。系统Keychain/Keystore实现使用[flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage)；没有安全存储的环境只维持当前会话，绝不退回明文保存。macOS采用非共享Keychain，删除操作可重复调用；iOS Keychain能力已配置，仍须签名及真机验收。

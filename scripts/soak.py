@@ -27,6 +27,10 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
     latencies.append((time.perf_counter()-started)*1000)
     with urllib.request.urlopen(base+'/api/v1/info',timeout=10) as r:info=json.load(r)
     charts=info['charts_count']
+    persistence=info.get('db',{}).get('persistence',{})
+    if persistence.get('error'): errors.append('checkpoint: '+persistence['error'])
+    last=persistence.get('last_checkpoint',0)
+    if last and time.time()-last>max(120,2*persistence.get('interval_seconds',30)): errors.append('checkpoint overdue')
     errors.extend(c['name']+': '+c['error'] for c in info['collectors'] if c.get('error'))
     usage=subprocess.check_output(['ps','-o','rss=','-p',str(proc.pid)],text=True).strip()
     rss.append(int(usage)/1024)

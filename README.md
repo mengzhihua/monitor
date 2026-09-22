@@ -358,3 +358,7 @@ packaging/ 安装包与安装脚本
 M0–M19、M22、M23 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → FreeBSD 插件剩余 → IBM/pandas/容器运行时。
 
 后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面。本 PR 为 **M26 点名 Prometheus 原生 ID**。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+
+## 开发验收
+
+五阶段交付范围、性能数字、升级/降级注意事项和复现命令见[验收记录](docs/05-acceptance.md)。工具链和浏览器就绪后运行 `make acceptance`；跨平台编译及本机模拟负载不等同于真实设备或72小时验收。

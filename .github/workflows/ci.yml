@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "codex/reliability-stages-3-5"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   web:
@@ -59,6 +60,39 @@ jobs:
       - name: crash recovery and backup
         if: runner.os != 'Windows'
         run: python3 scripts/verify-durability.py
+      - name: Hub capacity and restart
+        if: runner.os == 'Linux'
+        run: python3 scripts/load-hub.py --output hub-load.json
+      - name: Agent soak
+        if: runner.os == 'Linux'
+        run: python3 scripts/soak.py --seconds 120 --output agent-soak.json
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && always()
+        with:
+          name: runtime-acceptance
+          path: |
+            hub-load.json
+            agent-soak.json
+
+  browser:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .node-version }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.27.1", cache-dependency-path: core/go.sum }
+      - uses: actions/download-artifact@v4
+        with: { name: ui-dist, path: core/internal/api/ui/dist }
+      - run: make core
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:e2e
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: browser-acceptance, path: web/test-results/ }
 
   cross:
     needs: web

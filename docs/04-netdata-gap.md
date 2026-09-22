@@ -1,5 +1,7 @@
 # Monitor 全量移植 Netdata：差距清单与后续计划
 
+> 当前五阶段交付及最新验收见[验收记录](05-acceptance.md)。下方阶段快照保留了本轮早期结果和当时的待办；检查点性能、客户端安全存储、浏览器和macOS打包状态已在新记录中更新。
+
 > 对照 [Netdata](https://github.com/netdata/netdata) Agent + Cloud 全表面。
 > **目标：全部搬过来**（图表 ID / 语义对齐；目标不存在则零配置自动禁用）。
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。

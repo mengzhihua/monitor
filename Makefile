@@ -50,3 +50,19 @@ bench:
 
 soak: core
 	python3 scripts/soak.py --seconds 120
+
+.PHONY: acceptance hub-load
+hub-load: core
+	python3 scripts/load-hub.py
+
+# Install the documented Go/Node/Flutter toolchains and Playwright browser first.
+# Keep UI generation before compilation of the embedded server.
+acceptance:
+	$(MAKE) all
+	$(MAKE) test
+	python3 scripts/verify-durability.py
+	python3 scripts/load-hub.py
+	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}
+	cd web && npm run test:e2e
+	cd app && flutter analyze && flutter test
+	$(MAKE) cross
