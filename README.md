@@ -283,7 +283,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 
 | 模块 | 说明 |
 | --- | --- |
-| ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
+| ibm.d | `db2`（db2 CLI）、`as400`（isql）、`mq`（dspmq/runmqsc；`mq.queue.depth` current/max、`mq.qmgr.status`）、`websphere`（PMI JSON / Prometheus）；无 DSN/命令/URL 则自动禁用；默认无 CGO |
 | python.d 残留 | `pandas`（JSON/CSV 首行，不 eval Python）、`go_expvar`（`/debug/vars` memstats）、`am2320`（sysfs I2C） |
 | 容器 | `lxc`（lxc-ls / cgroup）、`ecs`（task metadata v4）、`containerd`（ctr）；Functions `lxc-containers` / `ecs-containers` / `containerd-containers` |
 
@@ -357,4 +357,4 @@ packaging/ 安装包与安装脚本
 
 M0–M19、M22、M23 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → FreeBSD 插件剩余 → IBM/pandas/容器运行时。
 
-后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面。本 PR 为 **M26 点名 Prometheus 原生 ID**。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+后续：M20 日志/查看器 → M21 Windows.plugin → M24 API v3 → M25 Cloud 产品面。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。

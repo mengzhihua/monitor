@@ -79,7 +79,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 
 | 状态 | 模块 | 说明 |
 | --- | --- | --- |
-| **M23** | ibm.d `db2` / `as400` / `mq` / `websphere` | CLI/HTTP 便携实现（`db2`/`isql`/`dspmq`/`runmqsc`/PMI JSON）；无 DSN/命令则禁用。真 ODBC CGO 仍可选后续 |
+| **M23** | ibm.d `db2` / `as400` / `mq` / `websphere` | 合入：CLI/HTTP 便携实现；图表 ID 对齐 `mq.queue.depth`/`mq.qmgr.status`、`db2.bufferpool_hit_ratio`/`db2.log_space`、`as400.memory_pool_usage`。真 ODBC CGO 仍可选后续 |
 | **M23** | python.d `pandas` / `go_expvar` / `am2320` | pandas 抓 JSON/CSV 首行（**不** eval Python）；go_expvar `/debug/vars`；am2320 sysfs |
 | **M23** | 容器运行时 | Docker / Podman / 通用 cgroup / k8s 之外：`lxc`、`ecs`、`containerd` |
 | 近似 | Kafka | 导出走 Kafka REST；采集可走 prometheus。原生 broker 协议仅在需要原生 ID 时做 |
@@ -135,7 +135,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | **M20 日志与查看器** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | Function 列与 Netdata 对齐的单测；macOS 交叉编译 |
 | **M21 Windows.plugin** | Perflib：processor/memory/storage/network/IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/services 图 | Windows 目前几乎只有进程计数 | WMI/typeperf fixture；无角色则禁用；Windows CI |
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
-| **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 无驱动/无 socket 禁用 |
+| **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 图表 ID 对齐 `mq.queue.depth` / `db2.bufferpool_hit_ratio` / `as400.memory_pool_usage`；无驱动禁用 |
 | **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
 | **M25 Hub Cloud 产品** | 真 ACLK（MQTT over WSS 或保持 WS 并完整对等语义）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
 | **M26 集成目录（本轮）** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | `GET /api/v1/prometheus/catalog`；fixture 抓取 |
@@ -191,12 +191,16 @@ freebsd.plugin 剩余，不碰 go.d。
 
 ## 4.3 M23（已合入 main）
 
-与 M19–M22 并行落地。默认无 CGO；Init 失败即禁用。
+ibm.d / python.d 残留 / 专用容器运行时。默认无 CGO；Init 失败即禁用。图表 ID 对齐 Netdata：
 
-1. `db2` / `as400` / `mq` / `websphere`：ibm.d 图表 ID 子集（connections/locking/deadlocks、cpu/jobs/ASP、queue managers/depth、JVM heap/threads/sessions）
-2. `pandas` JSON/CSV 首行；`go_expvar` memstats；`am2320` sysfs
-3. `lxc` / `ecs` / `containerd` 状态图 + Functions
-4. health.d `system_m23.yaml`
+1. `db2` / `as400` / `mq` / `websphere`：ibm.d 图表 ID 子集
+   - db2：`db2.connections` / `db2.locking` / `db2.deadlocks` / `db2.log_utilization`（dim `utilization`）/ `db2.log_space` / `db2.bufferpool_hit_ratio` / `db2.service_health`
+   - as400：cpu/jobs/ASP + `as400.memory_pool_usage` / `as400.temporary_storage`
+   - mq：`mq.qmgr.status`、`mq.queues.overview`、`mq.queue.depth`（dims `current`/`max`）、`mq.queue.depth_percentage`、`mq.queue.messages`、`mq.queue.connections`（`dspmq`/`runmqsc`，无 CGO PCF）
+   - websphere：JVM heap/threads/sessions；JSON 与 Prometheus 文本
+2. `pandas` JSON/CSV 首行（dimension 按 key 排序）；`go_expvar` memstats；`am2320` sysfs
+3. `lxc` / `ecs` / `containerd` 状态图 + Functions `lxc-containers` / `ecs-containers` / `containerd-containers`
+4. health.d `system_m23.yaml`（`mq.queue.depth` of `current`）
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 
