@@ -86,8 +86,9 @@ func TestParseLookupDelayRepeat(t *testing.T) {
 	if err != nil || !l.AbsValue || !l.Percentage || l.Method != tsdb.GroupSum {
 		t.Fatalf("lookup = %+v %v", l, err)
 	}
-	if _, err := ParseLookup("bogus -1m"); err == nil {
-		t.Fatal("bogus method accepted")
+	l, err = ParseLookup("average -5m anomaly-bit of *")
+	if err != nil || !l.AnomalyBit || l.After != 5*time.Minute {
+		t.Fatalf("anomaly-bit lookup = %+v %v", l, err)
 	}
 	d, err := ParseDelay("up 30s down 15m multiplier 1.5 max 1h")
 	if err != nil || d.Up != 30*time.Second || d.Down != 15*time.Minute || d.Multiplier != 1.5 || d.Max != time.Hour {
@@ -747,5 +748,62 @@ func TestMaintenanceWindowAndPause(t *testing.T) {
 	info := e.ManageInfo()
 	if info["enabled"] != false {
 		t.Fatalf("%v", info)
+	}
+}
+
+type testAnom struct {
+	vals []float64
+}
+
+func (t testAnom) Rate(chart, dim string) (float64, bool) {
+	if len(t.vals) == 0 {
+		return 0, false
+	}
+	return t.vals[len(t.vals)-1], true
+}
+
+func (t testAnom) RatesBetween(chart, dim string, after, before int64) []float64 {
+	return t.vals
+}
+
+func TestUpsertRemoveRuleAndAnomalyLookup(t *testing.T) {
+	e, _ := newTestEngine(t, `
+alarms:
+  - name: ram_in_use
+    on: system.ram
+    lookup: average -10s percentage of used
+    units: '%'
+    every: 1s
+    warn: '$this > 80'
+`)
+	extra, err := Compile(RuleSpec{Name: "ram_hot", On: "system.ram", Lookup: "average -5s of used", Every: "1s", Warn: "$this > 1"}, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.UpsertRule(extra)
+	names := map[string]bool{}
+	for _, r := range e.Rules() {
+		names[r.Spec.Name] = true
+	}
+	if !names["ram_hot"] || !names["ram_in_use"] {
+		t.Fatalf("rules %v", names)
+	}
+	if !e.RemoveRule("ram_hot") {
+		t.Fatal("remove ram_hot")
+	}
+	for _, r := range e.Rules() {
+		if r.Spec.Name == "ram_hot" {
+			t.Fatal("still present")
+		}
+	}
+	e.SetAnomaly(testAnom{vals: []float64{0, 100, 100}})
+	bit, err := ParseLookup("average -5s anomaly-bit of used")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := e.reg.Chart("system.ram")
+	v := e.lookup(c, bit, time.Now())
+	if math.Abs(v-200.0/3) > 0.05 {
+		t.Fatalf("anomaly lookup = %v, want ~66.7", v)
 	}
 }

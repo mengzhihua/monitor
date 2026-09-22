@@ -5,10 +5,10 @@
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
 > **不要重做 go.d**：`init.go` 除故意跳过的 `testrandom` 外已打勾。
 
-## 0. 现状一句话（M0–M19、M21、M22、M23、M26 合入 main；M25 本轮）
+## 0. 现状一句话（M0–M19、M21、M22、M23、M25、M26 合入 main；M24 本轮）
 
 Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
-剩下主要是 **日志/查看器、真 eBPF CO-RE**。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M21 Windows Perflib 已合入；M26 点名 Prometheus 原生 ID 已合入。本轮 M25 补 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
+剩下主要是 **日志/查看器、真 eBPF CO-RE** 以及本轮查询 API。FreeBSD 插件剩余已由 M22 补齐；M23 IBM/pandas/容器运行时已合入；M19 内核深度已合入；M21 Windows Perflib 已合入；M26 点名 Prometheus 原生 ID 已合入；M25 ACLK MQTT / Cloud 控制台 / Correlations 已合入。
 
 | 面 | 完成度 | 说明 |
 | --- | --- | --- |
@@ -87,10 +87,8 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | 状态 | 能力 |
 | --- | --- |
 | 有 | v1 全套常用端点；v2 contexts/nodes/data/q/badge；`group_by=node`；alert_transitions；manage/health |
-| **未做** | `/api/v3`；`group_by=dimension`；`alert_config`（单条规则 CRUD） |
-| **有（M25）** | 每维 anomaly bit（`charts`/`chart`/`data.anomaly`）；Metric Correlations 完整 UI（group/top/窗口/分数条/点选筛选） |
-| **有（M25）** | ACLK：MQTT 3.1.1 over WSS（`/api/v1/aclk`）承载既有 JSON Frame；JSON `/api/v1/stream` 仍是默认 |
-| **有（M25）** | Cloud 控制台：`GET /api/v1/hub/console` + Vue 面板（Space/Room 拓扑、ACLK、告警路由） |
+| **M24** | `/api/v3` 子集（info/data/q/contexts/context/nodes/weights/alerts/alert_transitions/alert_config/functions/badge/allmetrics）；`group_by=dimension` 与 `group_by=node,dimension`；`alert_config` CRUD；`options=anomaly-bit` 与 `dimension_anomaly`（0–100）兼 `anomaly`（0/1）；Vue 图上 ANOM 高亮 |
+| **有（M25）** | Metric Correlations 完整 UI（group/top/窗口/分数条/点选筛选）；ACLK MQTT 3.1.1 over WSS；Cloud 控制台 |
 | **有（M26）** | `GET /api/v1/prometheus/catalog`；prometheus job `profile`/`fallback` |
 
 ### 2.7 明确不做 / 延后
@@ -136,11 +134,11 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | --- | --- | --- | --- |
 | **M19（合入）** | eBPF 程序族、perf、extfrag/audit、idlejitter、apps user/group、nfacct | Linux 与 Netdata 差异最大的一块 | fixture + smoke `system.idlejitter` |
 | **M20 日志与查看器** | journald 跟随流；Windows Events 分页；macos.plugin + macos-logs；network-viewer；systemd-units 出图 | Functions/日志是排障主路径 | Function 列与 Netdata 对齐的单测；macOS 交叉编译 |
-| **M21 Windows.plugin（合入）** | 合入：Perflib 全家桶（见 §2.3 / §4） | 与 M19/M20 并行 | WMI/typeperf fixture；无角色则跳过 |
+| **M21 Windows.plugin（合入）** | Perflib 全家桶（见 §2.3 / §4.5） | 与 M19/M20 并行 | WMI/typeperf fixture；无角色则跳过 |
 | **M22 freebsd.plugin（合入）** | ZFS ARC、ipfw、net.inet*、devstat、getmntinfo、getifaddrs、swap/RAM/pgfaults | FreeBSD 骨架太薄 | sysctl fixture + `GOOS=freebsd` 交叉编译 |
 | **M23 IBM 与残留应用（合入）** | ibm.d db2/as400/mq/websphere（CLI/HTTP，无 CGO）；pandas/go_expvar/am2320；lxc/ecs/containerd | 长尾，不挡主路径 | 图表 ID 对齐 `mq.queue.depth` / `db2.bufferpool_hit_ratio` / `as400.memory_pool_usage`；无驱动禁用 |
-| **M24 查询 API 深度** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
-| **M25 Hub Cloud 产品（本轮）** | 真 ACLK（MQTT over WSS）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
+| **M24 查询 API 深度（本轮）** | `/api/v3` 子集；`group_by=dimension`；`alert_config` CRUD；每维 anomaly 写入 data 响应 | Cloud UI 和关联分析的前置 | API 单测 + smoke 新路径 |
+| **M25 Hub Cloud 产品（合入）** | 真 ACLK（MQTT over WSS）；Cloud 控制台；告警路由可视化；图上异常高亮；完整 Correlations UI | 产品面对齐，不是再堆采集器 | Hub 双节点冒烟；Vue 面板 |
 | **M26 集成目录（合入）** | 仅为**点名需要原生 ID** 的 Prometheus 集成做包装；目录文档化「prom.* vs 原生」 | 850+ 名不值得逐个手写 | `GET /api/v1/prometheus/catalog`；fixture 抓取 |
 
 ### 3.3 批次依赖
@@ -160,46 +158,12 @@ flowchart LR
 
 M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定后再动查询协议。M25 依赖 M24。M23 可随时插空。
 
-## 4. 本轮（M25）交付清单
+## 4. 本轮（M24）交付清单
 
-Hub Cloud 产品面。不碰 go.d；M19/M21/M22/M23/M26 已在 main。
-
-1. **ACLK MQTT-over-WSS**
-   - `/api/v1/aclk`：MQTT 3.1.1 CONNECT/CONNACK/PUBLISH/SUBSCRIBE/PING，payload 仍是既有 JSON `stream.Frame`
-   - JSON `/api/v1/stream` 保持默认；`stream.protocol: mqtt|aclk` 切换
-   - hello 广告 capabilities；`info.aclk` 含 protocol / claimed / storage / dest
-   - Hub `TypeQuery` 在 `hub.storage=proxy` 时 live-query Agent；`TypeConfig` 下发 disabled 采集器
-2. **Cloud 控制台**
-   - `GET /api/v1/hub/console`：Space → Room → nodes（status/aclk/alarms）+ 告警路由 + ACLK 摘要
-   - Vue `CloudPanel`：拓扑、路由渠道、点选节点筛选
-3. **图上异常高亮**
-   - `charts`/`chart` 每维 `anomaly` + 图级 `anomaly`
-   - `/api/v1/data` 返回与 dimension_ids 对齐的 `anomaly: []int`（最新 bit）
-   - MetricChart：异常维红色加粗 + 卡片 badge
-4. **完整 Correlations UI**
-   - `weights?method=ks2|volume&group=chart|context|dimension&top=`
-   - 故障窗 / 基线窗、分数条、点选筛选图表
-5. **测试**：MQTT round-trip、ACLK 端到端、console、correlate group、data anomaly；smoke 覆盖新路径
-
-## 4.0 M21（已合入 main）
-
-Windows.plugin Perflib 全家桶，不碰 go.d，不扩 eBPF/FreeBSD。
-
-1. WMI `Win32_PerfFormattedData_*` 为直播路径（无 CGO PDH）；缺失类写入 skip map，后续 Collect 不再查。`typeperf -sc 1` 仅 `typeperf_scan: true` 时按对象通配查询
-2. 核心 OS（System/Memory/Objects/Processor/LogicalDisk/PhysicalDisk/Network）+ 可选角色（IIS/ASP.NET/.NET/Hyper-V/SMB/NTDS/…）+ `Win32_Battery` / `MSAcpi_ThermalZoneTemperature` / `Win32_TemperatureProbe`
-3. 图表：CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS 站点与应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature`、传感器 histogram、AD/ADCS/ADFS、Exchange、RDS、`powersupply.capacity`
-4. `sc query` → `windows.service_state.{name}` + 汇总 `windows.services`
-5. health.d `system_m21.yaml`
-
-## 4.1 M26（已合入 main）
-
-点名 Prometheus 包装，不扩 go.d、不重做已有原生采集器。
-
-1. `prometheus` 采集器 `profiles: auto|off` + job `profile` / `fallback`
-2. 内置 profile：etcd、minio、vault、jenkins、grafana、prometheus、alertmanager、kafka、blackbox、gitlab、harbor、argocd、cert_manager、cilium、istio、vllm、litellm；显式：fastapi、go_runtime、python_gc
-3. 未匹配族仍为 `prom.*`；`GET /api/v1/prometheus/catalog` 列出 profile / dedicated / fallback
-4. health.d `system_m26.yaml`（etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列）
-5. 目录见本节与 catalog API；850+ 其余集成不手写
+1. `/api/v3` 子集：info / data / q / contexts / context / nodes / weights / alerts / alert_transitions / alert_config / functions / function / badge.svg / allmetrics；payload `api: 3`
+2. `group_by=dimension`（同 context 下按维度 ID 合并实例）；`group_by=node,dimension`（列名为 `node.dim`）
+3. `GET|PUT|POST|DELETE /api/v3/alert_config`（及 v1 别名）：YAML 或 JSON 规则 CRUD，`hash` 查询
+4. 每维 anomaly：ML 保存 0/100 bit 环；`data` 响应 `dimension_anomaly`（0–100）与 `anomaly`（0/1）；`options=anomaly-bit` 把数值换成 0–100；health lookup 支持 `anomaly-bit`；Vue 异常维度标红 + ANOM 徽标
 
 ## 4.2 M19（已合入 main）
 
@@ -235,6 +199,35 @@ ibm.d / python.d 残留 / 专用容器运行时。默认无 CGO；Init 失败即
 2. `pandas` JSON/CSV 首行（dimension 按 key 排序）；`go_expvar` memstats；`am2320` sysfs
 3. `lxc` / `ecs` / `containerd` 状态图 + Functions `lxc-containers` / `ecs-containers` / `containerd-containers`
 4. health.d `system_m23.yaml`（`mq.queue.depth` of `current`）
+
+## 4.4 M26（已合入 main）
+
+点名 Prometheus 包装，不扩 go.d、不重做已有原生采集器。
+
+1. `prometheus` 采集器 `profiles: auto|off` + job `profile` / `fallback`
+2. 内置 profile：etcd、minio、vault、jenkins、grafana、prometheus、alertmanager、kafka、blackbox、gitlab、harbor、argocd、cert_manager、cilium、istio、vllm、litellm；显式：fastapi、go_runtime、python_gc
+3. 未匹配族仍为 `prom.*`；`GET /api/v1/prometheus/catalog` 列出 profile / dedicated / fallback
+4. health.d `system_m26.yaml`（etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列）
+5. 目录见本节与 catalog API；850+ 其余集成不手写
+
+## 4.5 M21（已合入 main）
+
+Windows.plugin Perflib 全家桶，不碰 go.d，不扩 eBPF/FreeBSD。
+
+1. WMI `Win32_PerfFormattedData_*` 为直播路径（无 CGO PDH）；缺失类写入 skip map，后续 Collect 不再查。`typeperf -sc 1` 仅 `typeperf_scan: true` 时按对象通配查询
+2. 核心 OS（System/Memory/Objects/Processor/LogicalDisk/PhysicalDisk/Network）+ 可选角色（IIS/ASP.NET/.NET/Hyper-V/SMB/NTDS/…）+ `Win32_Battery` / `MSAcpi_ThermalZoneTemperature` / `Win32_TemperatureProbe`
+3. 图表：CPU 队列、内核池、逻辑/物理磁盘、网卡、IIS 站点与应用池、ASP.NET、.NET CLR、Hyper-V、SMB、NUMA、thermal、`cpu.temperature`、传感器 histogram、AD/ADCS/ADFS、Exchange、RDS、`powersupply.capacity`
+4. `sc query` → `windows.service_state.{name}` + 汇总 `windows.services`
+5. health.d `system_m21.yaml`
+
+## 4.6 M25（已合入 main）
+
+Hub Cloud 产品面。不碰 go.d。
+
+1. **ACLK MQTT-over-WSS**：`/api/v1/aclk` MQTT 3.1.1，payload 仍是 JSON `stream.Frame`；JSON `/api/v1/stream` 默认；`stream.protocol: mqtt|aclk`
+2. **Cloud 控制台**：`GET /api/v1/hub/console` + Vue `CloudPanel`
+3. **图上异常高亮**：`charts`/`chart` 每维 `anomaly`；`/data` 同时返回 `anomaly`（0/1）与 `dimension_anomaly`（0–100）
+4. **完整 Correlations UI**：`weights?method=ks2|volume&group=&top=`
 
 每完成一批，把本节的「未做」改成「有」，不要另开平行文档。
 

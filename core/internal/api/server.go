@@ -62,6 +62,8 @@ type Options struct {
 	OIDC *OIDCConfig
 	// LDAP enables POST /api/v1/auth/ldap.
 	LDAP *LDAPConfig
+	// Anomaly overrides the ML collector as the per-dimension bit source.
+	Anomaly health.AnomalySource
 }
 
 type Server struct {
@@ -138,6 +140,27 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v2/alert_transitions", s.handleAlertTransitions)
 	m.HandleFunc("GET /api/v1/alarm_transitions", s.handleAlertTransitions)
 	m.HandleFunc("GET /api/v2/badge.svg", s.handleBadge)
+	m.HandleFunc("GET /api/v3/info", s.handleInfoV3)
+	m.HandleFunc("GET /api/v3/data", s.handleDataV3)
+	m.HandleFunc("GET /api/v3/q", s.handleDataV3)
+	m.HandleFunc("GET /api/v3/contexts", s.handleContextsV3)
+	m.HandleFunc("GET /api/v3/context", s.handleContext)
+	m.HandleFunc("GET /api/v3/nodes", s.handleNodesV3)
+	m.HandleFunc("GET /api/v3/weights", s.handleWeights)
+	m.HandleFunc("GET /api/v3/alerts", s.handleAlarms)
+	m.HandleFunc("GET /api/v3/alert_transitions", s.handleAlertTransitionsV3)
+	m.HandleFunc("GET /api/v3/alert_config", s.handleAlertConfig)
+	m.HandleFunc("PUT /api/v3/alert_config", s.handleAlertConfig)
+	m.HandleFunc("POST /api/v3/alert_config", s.handleAlertConfig)
+	m.HandleFunc("DELETE /api/v3/alert_config", s.handleAlertConfig)
+	m.HandleFunc("GET /api/v1/alert_config", s.handleAlertConfig)
+	m.HandleFunc("PUT /api/v1/alert_config", s.handleAlertConfig)
+	m.HandleFunc("POST /api/v1/alert_config", s.handleAlertConfig)
+	m.HandleFunc("DELETE /api/v1/alert_config", s.handleAlertConfig)
+	m.HandleFunc("GET /api/v3/functions", s.handleFunctions)
+	m.HandleFunc("GET /api/v3/function", s.handleFunction)
+	m.HandleFunc("GET /api/v3/badge.svg", s.handleBadge)
+	m.HandleFunc("GET /api/v3/allmetrics", s.handleAllMetrics)
 	m.HandleFunc("GET /api/v1/collectors", s.handleCollectors)
 	m.HandleFunc("GET /api/v1/prometheus/catalog", s.handlePrometheusCatalog)
 	m.HandleFunc("GET /api/v1/functions", s.handleFunctions)
@@ -285,6 +308,14 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	s.serveInfo(w, r, 0)
+}
+
+func (s *Server) handleInfoV3(w http.ResponseWriter, r *http.Request) {
+	s.serveInfo(w, r, 3)
+}
+
+func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 	h := s.reg.Host
 	charts := s.reg.Charts()
 	var dims int
@@ -357,6 +388,9 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["aclk"] = aclk
+	if api > 0 {
+		out["api"] = api
+	}
 	writeJSON(w, out)
 }
 
@@ -401,6 +435,15 @@ func (s *Server) chartJSON(c *registry.Chart, db tsdb.Reader) map[string]any {
 		if anom[registry.SeriesID(c.ID, d.ID)] {
 			m["anomaly"] = true
 			anomalous = true
+		}
+		if src := s.anomaly(); src != nil {
+			if r, ok := src.Rate(c.ID, d.ID); ok {
+				m["dimension_anomaly"] = r
+				if r >= 50 {
+					m["anomaly"] = true
+					anomalous = true
+				}
+			}
 		}
 		dimOut = append(dimOut, m)
 	}
@@ -525,19 +568,20 @@ func (s *Server) handleContexts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.contextsPayload(v, 1))
 }
 
+type ctxInfo struct {
+	Family     string   `json:"family"`
+	Title      string   `json:"title"`
+	Units      string   `json:"units"`
+	ChartType  string   `json:"chart_type"`
+	Priority   int      `json:"priority"`
+	Plugin     string   `json:"plugin"`
+	Charts     []string `json:"charts"`
+	Dimensions []string `json:"dimensions"`
+	FirstEntry int64    `json:"first_entry"`
+	LastEntry  int64    `json:"last_entry"`
+}
+
 func (s *Server) contextsPayload(v *view, api int) map[string]any {
-	type ctxInfo struct {
-		Family     string   `json:"family"`
-		Title      string   `json:"title"`
-		Units      string   `json:"units"`
-		ChartType  string   `json:"chart_type"`
-		Priority   int      `json:"priority"`
-		Plugin     string   `json:"plugin"`
-		Charts     []string `json:"charts"`
-		Dimensions []string `json:"dimensions"`
-		FirstEntry int64    `json:"first_entry"`
-		LastEntry  int64    `json:"last_entry"`
-	}
 	out := map[string]*ctxInfo{}
 	for _, c := range v.reg.Charts() {
 		ctx := c.Context

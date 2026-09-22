@@ -114,6 +114,14 @@ func (s *Server) handleAlarmLog(w http.ResponseWriter, r *http.Request) {
 // GET /api/v2/alert_transitions and /api/v1/alarm_transitions wrap alarm_log
 // in the Netdata v2 shape {transitions:[...], api:2}.
 func (s *Server) handleAlertTransitions(w http.ResponseWriter, r *http.Request) {
+	s.serveAlertTransitions(w, r, 2)
+}
+
+func (s *Server) handleAlertTransitionsV3(w http.ResponseWriter, r *http.Request) {
+	s.serveAlertTransitions(w, r, 3)
+}
+
+func (s *Server) serveAlertTransitions(w http.ResponseWriter, r *http.Request, api int) {
 	v, ok := s.target(w, r)
 	if !ok {
 		return
@@ -141,7 +149,7 @@ func (s *Server) handleAlertTransitions(w http.ResponseWriter, r *http.Request) 
 	if entries == nil {
 		entries = []health.LogEntry{}
 	}
-	writeJSON(w, map[string]any{"api": 2, "transitions": entries, "count": len(entries)})
+	writeJSON(w, map[string]any{"api": api, "transitions": entries, "count": len(entries)})
 }
 
 // GET /api/v1/alarm_rules — the compiled rule set (for debugging / UI).

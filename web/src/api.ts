@@ -41,7 +41,10 @@ export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
   dimension_ids: string[]; dimension_names: string[]
+  dimension_anomaly?: number[]
   anomaly?: number[]
+  group_by?: string
+  api?: number
   result: { labels: string[]; data: (number | null)[][] }
 }
 export interface LiveMsg { node?: string; chart: string; t: number; v: Record<string, number> }

@@ -295,6 +295,15 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | python.d 残留 | `pandas`（JSON/CSV 首行，不 eval Python）、`go_expvar`（`/debug/vars` memstats）、`am2320`（sysfs I2C） |
 | 容器 | `lxc`（lxc-ls / cgroup）、`ecs`（task metadata v4）、`containerd`（ctr）；Functions `lxc-containers` / `ecs-containers` / `containerd-containers` |
 
+### 已实现能力（M24：查询 API 深度）
+
+| 模块 | 说明 |
+| --- | --- |
+| `/api/v3` | info / data / q / contexts / context / nodes / weights / alerts / alert_transitions / alert_config / functions / badge / allmetrics（`api: 3`） |
+| 分组 | `group_by=dimension` 按维度合并实例；`group_by=node,dimension` 列名为 `node.dim` |
+| alert_config | `GET\|PUT\|POST\|DELETE /api/v3/alert_config` YAML/JSON 规则 CRUD，`?hash=` / `?name=` |
+| 每维 anomaly | data 的 `dimension_anomaly`（0–100）与 `anomaly`（0/1）；`options=anomaly-bit` 返回 0–100；health `lookup: … anomaly-bit`；Dashboard 异常维度标红 |
+
 ### 已实现能力（M25：ACLK / Cloud 控制台 / 异常高亮 / Correlations）
 
 | 模块 | 说明 |
@@ -381,6 +390,8 @@ packaging/ 安装包与安装脚本
 
 ## 路线图
 
-M0–M19、M21、M22、M23、M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 点名 Prometheus 原生 ID。M25 补齐 ACLK MQTT、Cloud 控制台、图上异常高亮与 Correlations UI。
+## 路线图
 
-后续：M20 日志/查看器 → M24 API v3。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
+M0–M19、M21、M22、M23、M25、M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → Prometheus 点名原生 ID → ACLK MQTT / Cloud 控制台 / Correlations。
+
+后续：M20 日志/查看器 → **M24 API v3（本轮）**。详见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) 与架构文档 §11。
