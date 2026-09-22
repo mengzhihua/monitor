@@ -12,20 +12,39 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-// mlConfig is collectors.modules.ml. A lightweight edge detector flags
-// dimensions whose latest first-difference is more than `sigma` standard
-// deviations from the trailing window (Netdata's anomaly bit / rate).
+// mlConfig is collectors.modules.ml.
+// Detection is Netdata-style k-means (k=2 on lag-window first-differences)
+// with a k-sigma fallback until the first model trains.
 type mlConfig struct {
-	Enabled *bool   `yaml:"enabled"`
-	Window  int     `yaml:"window"` // samples of history, default 120
-	Sigma   float64 `yaml:"sigma"`  // default 3
+	Enabled    *bool         `yaml:"enabled"`
+	Window     int           `yaml:"window"` // sample ring, default 120
+	Sigma      float64       `yaml:"sigma"`  // k-sigma fallback, default 3
+	Lag        int           `yaml:"lag"`    // feature length, default 3
+	K          int           `yaml:"k"`      // clusters, default 2
+	Models     int           `yaml:"models"` // voting models on different train windows
+	MinTrain   int           `yaml:"min_train"`
+	TrainEvery time.Duration `yaml:"train_every"`
+	MaxTrain   int           `yaml:"max_train_samples"`
+	Threshold  float64       `yaml:"threshold"` // percentile of train distances, default 0.99
+}
+
+type kmModel struct {
+	c0, c1 []float64
+	thresh float64
+	ok     bool
 }
 
 type dimML struct {
-	values []float64 // ring of last Window values
-	i, n   int
-	anom   bool
-	chart  string
+	values    []float64 // ring of last Window values
+	diffs     []float64 // first-diff ring (max MaxTrain)
+	i, n      int
+	prev      float64
+	hasPrev   bool
+	models    []kmModel
+	lastTrain int64
+	anom      bool
+	votes     float64 // 0..1 fraction of models calling anomalous
+	chart     string
 }
 
 type mlCollector struct {
@@ -51,6 +70,27 @@ func (m *mlCollector) Configure(decode func(v any) error) error {
 	if m.cfg.Sigma <= 0 {
 		m.cfg.Sigma = 3
 	}
+	if m.cfg.Lag <= 0 {
+		m.cfg.Lag = 3
+	}
+	if m.cfg.K <= 0 {
+		m.cfg.K = 2
+	}
+	if m.cfg.Models <= 0 {
+		m.cfg.Models = 4
+	}
+	if m.cfg.MinTrain <= 0 {
+		m.cfg.MinTrain = 900 // Netdata default; tests override
+	}
+	if m.cfg.TrainEvery <= 0 {
+		m.cfg.TrainEvery = 3 * time.Hour
+	}
+	if m.cfg.MaxTrain <= 0 {
+		m.cfg.MaxTrain = 14400
+	}
+	if m.cfg.Threshold <= 0 || m.cfg.Threshold > 1 {
+		m.cfg.Threshold = 0.99
+	}
 	return nil
 }
 
@@ -74,7 +114,7 @@ func (m *mlCollector) Init(reg *registry.Registry) error {
 	return nil
 }
 
-func (m *mlCollector) onSample(chartID string, _ int64, values map[string]float64) {
+func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float64) {
 	if strings.HasPrefix(chartID, "anomaly_detection.") {
 		return
 	}
@@ -95,22 +135,62 @@ func (m *mlCollector) onSample(chartID string, _ int64, values map[string]float6
 		if st.n < len(st.values) {
 			st.n++
 		}
-		st.anom = m.isAnomalous(st)
+		if st.hasPrev {
+			st.diffs = append(st.diffs, v-st.prev)
+			if len(st.diffs) > m.cfg.MaxTrain {
+				st.diffs = st.diffs[len(st.diffs)-m.cfg.MaxTrain:]
+			}
+		}
+		st.prev, st.hasPrev = v, true
+		m.maybeTrain(st, ts)
+		st.anom, st.votes = m.detect(st)
 	}
 }
 
-func (m *mlCollector) isAnomalous(st *dimML) bool {
-	if st.n < 30 { // need a little history before flagging
+func (m *mlCollector) maybeTrain(st *dimML, ts int64) {
+	if len(st.diffs) < m.cfg.MinTrain || len(st.diffs) < m.cfg.Lag+8 {
+		return
+	}
+	every := int64(m.cfg.TrainEvery.Seconds())
+	if every < 1 {
+		every = 1
+	}
+	if st.lastTrain != 0 && ts-st.lastTrain < every {
+		return
+	}
+	st.models = trainModels(st.diffs, m.cfg.Lag, m.cfg.Models, m.cfg.Threshold)
+	st.lastTrain = ts
+}
+
+func (m *mlCollector) detect(st *dimML) (bool, float64) {
+	feat := lastFeature(st.diffs, m.cfg.Lag)
+	var trained, votes int
+	for _, md := range st.models {
+		if !md.ok {
+			continue
+		}
+		trained++
+		if kmAnomalous(md, feat) {
+			votes++
+		}
+	}
+	if trained > 0 {
+		frac := float64(votes) / float64(trained)
+		return votes*2 >= trained, frac // majority
+	}
+	return m.sigmaAnomalous(st), 0
+}
+
+func (m *mlCollector) sigmaAnomalous(st *dimML) bool {
+	if st.n < 30 {
 		return false
 	}
-	// first differences of the occupied window
 	n := st.n
 	if n > len(st.values) {
 		n = len(st.values)
 	}
 	var diffs []float64
 	prev := math.NaN()
-	// walk oldest → newest
 	start := 0
 	if st.n == len(st.values) {
 		start = st.i
@@ -125,7 +205,7 @@ func (m *mlCollector) isAnomalous(st *dimML) bool {
 	if len(diffs) < 20 {
 		return false
 	}
-	mean, std := meanStd(diffs[:len(diffs)-1]) // train on all but last
+	mean, std := meanStd(diffs[:len(diffs)-1])
 	if std < 1e-9 {
 		return false
 	}
@@ -175,14 +255,22 @@ func (m *mlCollector) Weights(method string) []Weight {
 	if m.dims == nil {
 		return nil
 	}
-	byChart := map[string]struct{ total, anom int }{}
+	type agg struct {
+		total, anom int
+		votes       float64
+	}
+	byChart := map[string]*agg{}
 	for _, st := range m.dims {
 		c := byChart[st.chart]
+		if c == nil {
+			c = &agg{}
+			byChart[st.chart] = c
+		}
 		c.total++
+		c.votes += st.votes
 		if st.anom {
 			c.anom++
 		}
-		byChart[st.chart] = c
 	}
 	out := make([]Weight, 0, len(byChart))
 	for chart, c := range byChart {
@@ -190,14 +278,164 @@ func (m *mlCollector) Weights(method string) []Weight {
 		if c.total > 0 {
 			rate = 100 * float64(c.anom) / float64(c.total)
 		}
-		if method == "anomaly-rate" && rate == 0 {
+		score := rate
+		if method == "kmeans" {
+			if c.total > 0 {
+				score = 100 * c.votes / float64(c.total)
+			}
+			if score == 0 {
+				continue
+			}
+		} else if method == "anomaly-rate" && rate == 0 {
 			continue
 		}
-		out = append(out, Weight{Chart: chart, Context: chart, Score: rate, AnomalyRate: rate})
+		out = append(out, Weight{Chart: chart, Context: chart, Score: score, AnomalyRate: rate})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > 50 {
 		out = out[:50]
 	}
 	return out
+}
+
+func lastFeature(diffs []float64, lag int) []float64 {
+	if lag <= 0 || len(diffs) < lag {
+		return nil
+	}
+	return append([]float64(nil), diffs[len(diffs)-lag:]...)
+}
+
+func trainModels(diffs []float64, lag, nModels int, pct float64) []kmModel {
+	if nModels < 1 {
+		nModels = 1
+	}
+	out := make([]kmModel, nModels)
+	for i := 0; i < nModels; i++ {
+		frac := float64(i+1) / float64(nModels)
+		n := int(math.Round(frac * float64(len(diffs))))
+		if n < lag+8 {
+			continue
+		}
+		out[i] = trainOne(diffs[len(diffs)-n:], lag, pct)
+	}
+	return out
+}
+
+func trainOne(diffs []float64, lag int, pct float64) kmModel {
+	pts := features(diffs, lag)
+	if len(pts) < 8 {
+		return kmModel{}
+	}
+	c0, c1 := kmeans2(pts, 16)
+	if c0 == nil {
+		return kmModel{}
+	}
+	dists := make([]float64, len(pts))
+	for i, p := range pts {
+		dists[i] = min(l2(p, c0), l2(p, c1))
+	}
+	sort.Float64s(dists)
+	idx := int(pct * float64(len(dists)-1))
+	if idx < 0 {
+		idx = 0
+	}
+	th := dists[idx]
+	if th < 1e-12 {
+		th = 1e-12
+	}
+	return kmModel{c0: c0, c1: c1, thresh: th, ok: true}
+}
+
+func features(diffs []float64, lag int) [][]float64 {
+	if len(diffs) < lag {
+		return nil
+	}
+	out := make([][]float64, 0, len(diffs)-lag+1)
+	for i := lag; i <= len(diffs); i++ {
+		out = append(out, append([]float64(nil), diffs[i-lag:i]...))
+	}
+	return out
+}
+
+func kmAnomalous(m kmModel, feat []float64) bool {
+	if !m.ok || len(feat) != len(m.c0) {
+		return false
+	}
+	return min(l2(feat, m.c0), l2(feat, m.c1)) > m.thresh
+}
+
+func kmeans2(points [][]float64, iters int) (c0, c1 []float64) {
+	if len(points) < 2 {
+		return nil, nil
+	}
+	// Deterministic init: smallest / largest L2 from origin.
+	minI, maxI := 0, 0
+	minN, maxN := l2(points[0], nil), l2(points[0], nil)
+	for i, p := range points {
+		n := l2(p, nil)
+		if n < minN {
+			minN, minI = n, i
+		}
+		if n > maxN {
+			maxN, maxI = n, i
+		}
+	}
+	if minI == maxI {
+		maxI = len(points) - 1
+	}
+	c0, c1 = append([]float64(nil), points[minI]...), append([]float64(nil), points[maxI]...)
+	dim := len(c0)
+	assign := make([]int, len(points))
+	for it := 0; it < iters; it++ {
+		changed := false
+		for i, p := range points {
+			a := 0
+			if l2(p, c1) < l2(p, c0) {
+				a = 1
+			}
+			if assign[i] != a {
+				assign[i] = a
+				changed = true
+			}
+		}
+		sum0, sum1 := make([]float64, dim), make([]float64, dim)
+		n0, n1 := 0, 0
+		for i, p := range points {
+			if assign[i] == 0 {
+				n0++
+				for d := 0; d < dim; d++ {
+					sum0[d] += p[d]
+				}
+			} else {
+				n1++
+				for d := 0; d < dim; d++ {
+					sum1[d] += p[d]
+				}
+			}
+		}
+		if n0 == 0 || n1 == 0 {
+			return c0, c1
+		}
+		for d := 0; d < dim; d++ {
+			c0[d] = sum0[d] / float64(n0)
+			c1[d] = sum1[d] / float64(n1)
+		}
+		if it > 0 && !changed {
+			break
+		}
+	}
+	return c0, c1
+}
+
+func l2(a, b []float64) float64 {
+	var s float64
+	for i, x := range a {
+		y := 0.0
+		if b != nil && i < len(b) {
+			y = b[i]
+		}
+		d := x - y
+		s += d * d
+	}
+	return math.Sqrt(s)
 }

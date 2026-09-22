@@ -36,6 +36,8 @@ curl -sf "http://127.0.0.1:$PORT/api/v2/contexts" | grep '"api":2' >/dev/null ||
 curl -sf "http://127.0.0.1:$PORT/api/v2/nodes" | grep '"api":2' >/dev/null || fail "v2 nodes"
 curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_count" | grep '"count"' >/dev/null || fail "alarm_count"
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
+curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
+curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"
 
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"
 echo "$data" | grep '"points":[1-9]' >/dev/null || fail "no data points: $data"

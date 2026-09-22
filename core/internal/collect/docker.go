@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -136,10 +137,11 @@ func (d *dockerCollector) Init(reg *registry.Registry) error {
 }
 
 type dockerListEntry struct {
-	ID    string   `json:"Id"`
-	Names []string `json:"Names"`
-	Image string   `json:"Image"`
-	State string   `json:"State"`
+	ID     string   `json:"Id"`
+	Names  []string `json:"Names"`
+	Image  string   `json:"Image"`
+	State  string   `json:"State"`
+	Status string   `json:"Status"`
 }
 
 type dockerStats struct {
@@ -318,4 +320,55 @@ func sanitizeID(s string) string {
 		b.WriteString(hex.EncodeToString(sum[:3]))
 	}
 	return b.String()
+}
+
+type ContainerRow struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	State  string `json:"state"`
+	Status string `json:"status"`
+}
+
+func (d *dockerCollector) Functions() []Function {
+	return []Function{{
+		Name: "containers", Help: "Docker containers (name, image, state)", Timeout: 10,
+		Run: func(ctx context.Context, args map[string]string) (any, error) {
+			if d.client == nil {
+				return Table{}, fmt.Errorf("docker engine not connected")
+			}
+			var list []dockerListEntry
+			if err := d.get(ctx, "/containers/json?all=1", &list); err != nil {
+				return Table{}, err
+			}
+			want := strings.ToLower(args["state"])
+			rows := make([]ContainerRow, 0, len(list))
+			for _, e := range list {
+				name := dockerContName(e)
+				if d.excluded(name) {
+					continue
+				}
+				if want != "" && !strings.EqualFold(e.State, want) {
+					continue
+				}
+				id := e.ID
+				if len(id) > 12 {
+					id = id[:12]
+				}
+				rows = append(rows, ContainerRow{ID: id, Name: name, Image: e.Image, State: e.State, Status: e.Status})
+			}
+			sort.Slice(rows, func(i, j int) bool {
+				if rows[i].State != rows[j].State {
+					return rows[i].State < rows[j].State
+				}
+				return rows[i].Name < rows[j].Name
+			})
+			out := Table{Columns: []string{"id", "name", "image", "state", "status"}, Total: len(rows)}
+			out.Rows = make([]any, len(rows))
+			for i, r := range rows {
+				out.Rows[i] = r
+			}
+			return out, nil
+		},
+	}}
 }

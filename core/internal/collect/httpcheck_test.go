@@ -159,3 +159,57 @@ func TestMLAnomalyRate(t *testing.T) {
 		t.Fatalf("expected a positive rate, got %v (weights=%v)", v, m.Weights("anomaly-rate"))
 	}
 }
+
+func TestMLKMeansWeights(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "demo.steady", Dimensions: []*registry.Dimension{{ID: "v"}}})
+	reg.AddChart(&registry.Chart{ID: "demo.spike", Dimensions: []*registry.Dimension{{ID: "v"}}})
+	m := &mlCollector{}
+	_ = m.Configure(func(any) error { return nil })
+	m.cfg.Window = 80
+	m.cfg.MinTrain = 24
+	m.cfg.TrainEvery = time.Hour
+	m.cfg.Lag = 3
+	m.cfg.Models = 3
+	m.cfg.Threshold = 0.95
+	if err := m.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 40; i++ {
+		t0 := now.Add(time.Duration(i) * time.Second)
+		_ = reg.Collect("demo.steady", t0, map[string]float64{"v": 10})
+		_ = reg.Collect("demo.spike", t0, map[string]float64{"v": 10})
+	}
+	spikeT := now.Add(40 * time.Second)
+	_ = reg.Collect("demo.steady", spikeT, map[string]float64{"v": 10})
+	_ = reg.Collect("demo.spike", spikeT, map[string]float64{"v": 800})
+	_ = m.Collect(context.Background(), reg, spikeT)
+	km := m.Weights("kmeans")
+	ar := m.Weights("anomaly-rate")
+	if len(ar) == 0 {
+		t.Fatalf("anomaly-rate empty (kmeans=%v)", km)
+	}
+	if ar[0].Chart != "demo.spike" {
+		t.Fatalf("anomaly-rate ranked %s first: %v", ar[0].Chart, ar)
+	}
+	if len(km) == 0 || km[0].Chart != "demo.spike" {
+		t.Fatalf("kmeans ranked %#v, want demo.spike first", km)
+	}
+}
+
+func TestKMeans2Separates(t *testing.T) {
+	var pts [][]float64
+	for i := 0; i < 20; i++ {
+		pts = append(pts, []float64{0.1, 0.0, -0.1})
+		pts = append(pts, []float64{8, 8.2, 7.9})
+	}
+	c0, c1 := kmeans2(pts, 12)
+	if c0 == nil || c1 == nil {
+		t.Fatal("no centroids")
+	}
+	d := l2(c0, c1)
+	if d < 5 {
+		t.Fatalf("centroids too close: %v %v d=%g", c0, c1, d)
+	}
+}

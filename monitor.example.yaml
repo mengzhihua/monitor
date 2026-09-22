@@ -102,10 +102,17 @@ collectors:
     ping:
       timeout: 2s
       jobs: []           # e.g. [{ name: gw, host: 1.1.1.1, protocol: icmp }]
-    ml:                  # edge anomaly detection (k-sigma on first differences)
+    ml:                  # edge anomaly detection (k-means + k-sigma fallback)
       enabled: true
       window: 120
       sigma: 3
+      lag: 3             # k-means feature length (first-differences)
+      k: 2
+      models: 4          # vote across different training windows
+      min_train: 900     # samples before first model; tests may lower this
+      train_every: 3h
+      max_train_samples: 14400
+      threshold: 0.99    # percentile of training distances
     mysql:
       address: 127.0.0.1:3306
       user: root
@@ -636,7 +643,8 @@ health:
       routing_key: ""    # Events API v2 routing key
 
 # Types: graphite (TCP line protocol), influx (InfluxDB 1.x /write), json (HTTP POST),
-# prometheus (Prometheus remote write: snappy + protobuf), opentsdb (/api/put JSON).
+# prometheus (Prometheus remote write: snappy + protobuf), opentsdb (/api/put JSON),
+# mongodb (OP_MSG insert into database.collection).
 export:
   destinations: []
   # - { type: graphite, address: "127.0.0.1:2003", prefix: monitor, every: 10s }
@@ -644,3 +652,4 @@ export:
   # - { type: json, url: "http://127.0.0.1:9000/ingest", every: 10s }
   # - { type: prometheus, url: "http://127.0.0.1:9090/api/v1/write", prefix: monitor, every: 10s }
   # - { type: opentsdb, url: "http://127.0.0.1:4242/api/put", prefix: monitor, every: 10s }
+  # - { type: mongodb, address: "127.0.0.1:27017", database: netdata, collection: metrics, prefix: monitor, every: 10s }

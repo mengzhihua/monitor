@@ -273,6 +273,9 @@ REST 前缀 `/api/v1`（Agent 与 Hub 一致；Hub 额外 `/api/v1/hub/*`）。�
 | `services`（systemd/launchd/SCM 状态） | ✓ | ✓ | ✓ | - |
 | `logs`（journald / Event Log / 文件 tail） | ✓ | ✓ | ✓ | logcat(本应用) |
 | `containers`（docker ps 等价） | ✓ | ✓ | ✓ | - |
+| `disks`（块设备 IO） | ✓ | ✓ | ✓ | ✓ |
+| `mounts`（挂载点容量） | ✓ | ✓ | ✓ | ✓ |
+| `network-interfaces`（网卡计数器） | ✓ | ✓ | ✓ | ✓ |
 | `streaming`（该 Hub 下所有节点连接状态） | Hub | Hub | Hub | Hub |
 
 Hub 收到函数请求时，若目标 host 在线，通过流控制通道转发到 Agent 并回传（超时默认 10s）。
@@ -470,8 +473,9 @@ sequenceDiagram
 | **M12 续 5 硬件/REST** | ap/dockerhub/ethtool/intelgpu/logind/dcgm/panos/powerstore/powervault/s3check/scaleio/smbios_memory | 对标 Netdata 第六批长尾 |
 | **M12 续 6 云/SQL/SNMP** | vcsa/mssql/oracledb/sql/cloudwatch/azure_monitor/vsphere/cato_networks/snmp_traps/snmp_topology | 对标 Netdata go.d init.go 收尾（跳过 testrandom） |
 | **M13 规则与查询** | 剩余系统 health.d 模板、`data?context=`、data csv/ssv/jsonp、`/api/v2` 子集、alarm_count、badge | 告警与跨图查询对齐 |
-| **M14 Hub Cloud（本轮）** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
-| **M15–M16** | k-means ML、Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
+| **M14 Hub Cloud** | claim / Space / Room / OIDC / 配置下发 / 环复制 | 对标 Netdata Cloud |
+| **M15 ML / Functions / 导出（本轮）** | k-means、containers/disks/mounts/ifaces、Mongo 导出 | weights 对比 |
+| **M16** | Windows/FreeBSD、Flutter、Android Agent | 平台与客户端 |
 
 每个阶段都以 `scripts/smoke.sh`（后端 API 冒烟）+ 平台 e2e（Playwright Web、Flutter integration test）作为完成标准。
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -320,6 +321,42 @@ func (c *diskCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	return nil
 }
 
+type DiskRow struct {
+	Device string `json:"device"`
+	Reads  uint64 `json:"reads"`
+	Writes uint64 `json:"writes"`
+	ReadB  uint64 `json:"read_bytes"`
+	WriteB uint64 `json:"write_bytes"`
+	UtilMs uint64 `json:"util_ms"`
+}
+
+func (c *diskCollector) Functions() []Function {
+	return []Function{{
+		Name: "disks", Help: "Block devices (bytes, operations, busy time)", Timeout: 5,
+		Run: func(ctx context.Context, _ map[string]string) (any, error) {
+			io, err := disk.IOCountersWithContext(ctx)
+			if err != nil {
+				return Table{}, err
+			}
+			rows := make([]DiskRow, 0, len(io))
+			for name, st := range io {
+				if isPartitionLike(name) {
+					continue
+				}
+				rows = append(rows, DiskRow{Device: name, Reads: st.ReadCount, Writes: st.WriteCount,
+					ReadB: st.ReadBytes, WriteB: st.WriteBytes, UtilMs: st.IoTime})
+			}
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Device < rows[j].Device })
+			out := Table{Columns: []string{"device", "reads", "writes", "read_bytes", "write_bytes", "util_ms"}, Total: len(rows)}
+			out.Rows = make([]any, len(rows))
+			for i, r := range rows {
+				out.Rows[i] = r
+			}
+			return out, nil
+		},
+	}}
+}
+
 // ratePerOp is (delta amount) / (delta operations); 0 when no ops completed.
 func ratePerOp(curAmt, prevAmt, curOps, prevOps uint64) float64 {
 	dOps := float64(curOps) - float64(prevOps)
@@ -406,6 +443,47 @@ func (c *diskSpaceCollector) Collect(ctx context.Context, reg *registry.Registry
 	return nil
 }
 
+type MountRow struct {
+	Mount  string  `json:"mount"`
+	Device string  `json:"device"`
+	FS     string  `json:"fs"`
+	Total  uint64  `json:"total"`
+	Used   uint64  `json:"used"`
+	Avail  uint64  `json:"avail"`
+	Pct    float64 `json:"used_percent"`
+}
+
+func (c *diskSpaceCollector) Functions() []Function {
+	return []Function{{
+		Name: "mounts", Help: "Mounted filesystems (capacity and usage)", Timeout: 5,
+		Run: func(ctx context.Context, _ map[string]string) (any, error) {
+			parts, err := disk.PartitionsWithContext(ctx, false)
+			if err != nil {
+				return Table{}, err
+			}
+			rows := make([]MountRow, 0, len(parts))
+			for _, p := range parts {
+				if skipFS[p.Fstype] {
+					continue
+				}
+				u, err := disk.UsageWithContext(ctx, p.Mountpoint)
+				if err != nil || u.Total == 0 {
+					continue
+				}
+				rows = append(rows, MountRow{Mount: p.Mountpoint, Device: p.Device, FS: p.Fstype,
+					Total: u.Total, Used: u.Used, Avail: u.Free, Pct: u.UsedPercent})
+			}
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Mount < rows[j].Mount })
+			out := Table{Columns: []string{"mount", "device", "fs", "total", "used", "avail", "used_percent"}, Total: len(rows)}
+			out.Rows = make([]any, len(rows))
+			for i, r := range rows {
+				out.Rows[i] = r
+			}
+			return out, nil
+		},
+	}}
+}
+
 // ---- network ----
 
 type netCollector struct{ known map[string]bool }
@@ -472,6 +550,43 @@ func (c *netCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 		_ = reg.Collect("net_drops."+i.Name, now, map[string]float64{"inbound": float64(i.Dropin), "outbound": float64(i.Dropout)})
 	}
 	return nil
+}
+
+type IfaceRow struct {
+	Name   string `json:"name"`
+	Rx     uint64 `json:"rx_bytes"`
+	Tx     uint64 `json:"tx_bytes"`
+	RxPkt  uint64 `json:"rx_packets"`
+	TxPkt  uint64 `json:"tx_packets"`
+	RxErr  uint64 `json:"rx_errors"`
+	TxErr  uint64 `json:"tx_errors"`
+	RxDrop uint64 `json:"rx_drops"`
+	TxDrop uint64 `json:"tx_drops"`
+}
+
+func (c *netCollector) Functions() []Function {
+	return []Function{{
+		Name: "network-interfaces", Help: "Network interface counters (bytes, packets, errors, drops)", Timeout: 5,
+		Run: func(ctx context.Context, _ map[string]string) (any, error) {
+			ifs, err := net.IOCountersWithContext(ctx, true)
+			if err != nil {
+				return Table{}, err
+			}
+			rows := make([]IfaceRow, 0, len(ifs))
+			for _, i := range ifs {
+				rows = append(rows, IfaceRow{Name: i.Name, Rx: i.BytesRecv, Tx: i.BytesSent,
+					RxPkt: i.PacketsRecv, TxPkt: i.PacketsSent, RxErr: i.Errin, TxErr: i.Errout,
+					RxDrop: i.Dropin, TxDrop: i.Dropout})
+			}
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+			out := Table{Columns: []string{"name", "rx_bytes", "tx_bytes", "rx_packets", "tx_packets", "rx_errors", "tx_errors", "rx_drops", "tx_drops"}, Total: len(rows)}
+			out.Rows = make([]any, len(rows))
+			for i, r := range rows {
+				out.Rows[i] = r
+			}
+			return out, nil
+		},
+	}}
 }
 
 // ---- uptime ----

@@ -2,6 +2,7 @@ package export
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"net/http"
@@ -95,6 +96,53 @@ func TestFlushGraphite(t *testing.T) {
 	case s := <-got:
 		if !strings.Contains(s, "mon.h.system_ram.used 3 1700000000") {
 			t.Fatalf("%q", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout")
+	}
+}
+
+func TestFlushMongo(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan []byte, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		var hdr [16]byte
+		if _, err := io.ReadFull(c, hdr[:]); err != nil {
+			return
+		}
+		n := int(uint32(hdr[0]) | uint32(hdr[1])<<8 | uint32(hdr[2])<<16 | uint32(hdr[3])<<24)
+		if n < 16 {
+			return
+		}
+		rest := make([]byte, n-16)
+		_, _ = io.ReadFull(c, rest)
+		got <- append(hdr[:], rest...)
+		reply := make([]byte, 20)
+		binary.LittleEndian.PutUint32(reply[0:4], 20)
+		binary.LittleEndian.PutUint32(reply[12:16], mongoOpMsg)
+		_, _ = c.Write(reply)
+	}()
+	reg := registry.New(&registry.Host{Hostname: "box", UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	_ = reg.Collect("system.ram", time.Unix(1_700_000_000, 0), map[string]float64{"used": 12.5})
+	e := New(reg, []Destination{{Type: "mongodb", Address: ln.Addr().String(), Database: "netdata", Collection: "metrics"}}, nil)
+	if err := e.flushMongo(context.Background(), e.dest[0]); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case b := <-got:
+		s := string(b)
+		if !strings.Contains(s, "system.ram") || !strings.Contains(s, "box") || !strings.Contains(s, "used") {
+			t.Fatalf("mongo payload missing fields: %q", s)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout")
