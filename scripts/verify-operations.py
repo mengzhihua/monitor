@@ -86,6 +86,16 @@ health:
             try:
                 process = start()
                 before = wait_ready()
+                views = request('/views')
+                assert views['enabled'] and views['persistent'] and views['revision'] == 0
+                personal_view = {'name': 'Restart queue', 'query': 'memory', 'severity': 'WARNING',
+                                 'nodeStatus': 'live', 'pendingOnly': True, 'ownerFilter': 'mine', 'progressFilter': 'watching'}
+                saved_views = request('/views', {'revision': 0, 'views': [personal_view]})
+                assert saved_views['views'] == [personal_view] and saved_views['revision'] == 1
+                view_file = root / 'data/operations/views.json'
+                assert token not in view_file.read_text()
+                if os.name != 'nt':
+                    assert view_file.stat().st_mode & 0o777 == 0o600
                 old = before['problems'][0]
                 request('/acknowledgements', {'id': old['id'], 'action': 'acknowledge',
                         'revision': 0, 'note': 'Restart acceptance: record must survive.'})
@@ -103,6 +113,13 @@ health:
                 stop()
                 process = start()
                 after = wait_ready()
+                assert request('/views') == saved_views
+                try:
+                    request('/views', {'revision': 0, 'views': []})
+                    raise AssertionError('stale view revision accepted after restart')
+                except urllib.error.HTTPError as error:
+                    assert error.code == 409
+                assert request('/views') == saved_views
                 record = next(r for r in after['activity'] if r['id'] == old['id'])
                 assert record['acknowledged'] and record['history'][-1]['note'].startswith('Restart acceptance')
                 assert record['assignee'] == 'admin' and record['status'] == 'investigating'
@@ -122,7 +139,7 @@ health:
                     raise AssertionError('snapshot from before restart was accepted')
                 except urllib.error.HTTPError as error:
                     assert error.code == 409
-                print('PASS: real samples, durable workflow, restart, history search/export, expired snapshot rejection')
+                print('PASS: real samples, durable workflow, restart, history search/export, expired snapshot rejection, personal views persistence and conflict rejection')
             finally:
                 stop()
 

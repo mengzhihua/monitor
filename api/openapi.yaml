@@ -17,6 +17,58 @@ paths:
           description: Snapshot with now, nodes, problems, summary, activity (latest 100 handled episodes), persistent, current_user and assignees (eligible configured operators plus the current eligible identity; no credentials). Summary includes unassigned, open, investigating and watching counts across current problems.
         "401":
           description: Authentication required
+  /api/v1/operations/views:
+    get:
+      summary: Read the current account's personal operations views
+      description: Ignores node selection. Static credentials use separate token-derived namespaces (rotation creates a new space); OIDC uses verified issuer and subject; LDAP uses directory configuration and exact login name. Anonymous and temporary share-link callers receive enabled=false and an empty collection. No owner parameter or cross-account API. Cache-Control no-store.
+      responses:
+        "200":
+          description: revision, views, enabled, persistent, limit (10), and user (name and role only). Empty views is an array. No credentials or principal keys.
+        "401":
+          description: Authentication required
+    post:
+      summary: Replace only the current account's view collection
+      description: All authenticated account roles including viewer may maintain their own filters. This does not grant alarm handling permissions. Requires the last read revision; successful writes increment it even when deleting all views. Concurrent stale requests fail without changing state. At most 10 uniquely named views per account, 1000 account spaces including deletion tombstones, and 16 MiB storage. No automatic eviction. Request body limit 32768 bytes. Cache-Control no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, views]
+              properties:
+                revision: {type: integer, minimum: 0, maximum: 9007199254740991}
+                views:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [name, severity, nodeStatus, ownerFilter, progressFilter]
+                    properties:
+                      name: {type: string, minLength: 1, maxLength: 40, description: Unique within this account; no leading or trailing whitespace or control characters.}
+                      query: {type: string, default: "", description: At most 1024 UTF-8 bytes; no control characters.}
+                      severity: {type: string, enum: [all, WARNING, CRITICAL]}
+                      nodeStatus: {type: string, enum: [all, live, stale, offline]}
+                      pendingOnly: {type: boolean, default: false}
+                      ownerFilter: {type: string, enum: [all, mine, unassigned, assigned]}
+                      progressFilter: {type: string, enum: [all, open, investigating, watching]}
+      responses:
+        "200":
+          description: Updated collection using the GET response shape, persisted before publication.
+        "400":
+          description: Invalid JSON, unknown fields, missing revision, invalid filters, duplicate names or too many views
+        "401":
+          description: Authentication required
+        "403":
+          description: Anonymous or temporary share-link callers cannot persist personal views
+        "409":
+          description: Collection changed; reload and review before retrying
+        "422":
+          description: Account or file storage capacity reached
+        "503":
+          description: Persistence failed; in-memory collection unchanged
   /api/v1/operations/history:
     get:
       summary: Search all retained handling episodes with consistent pagination

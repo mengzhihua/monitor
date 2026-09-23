@@ -27,9 +27,10 @@ const (
 
 // User is a named API credential (`web.users` in monitor.yaml).
 type User struct {
-	Name  string `json:"name"`
-	Token string `json:"-"`
-	Role  Role   `json:"role"`
+	principal string // private stable identity for personal preferences; never serialized
+	Name      string `json:"name"`
+	Token     string `json:"-"`
+	Role      Role   `json:"role"`
 }
 
 type userKey struct{}
@@ -66,10 +67,11 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 		return User{}, false
 	}
 	if s.opt.Token != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.opt.Token)) == 1 {
-		return User{Name: "admin", Role: RoleAdmin}, true
+		return User{Name: "admin", Role: RoleAdmin, principal: viewPrincipal("legacy", s.opt.Token)}, true
 	}
 	for _, u := range s.opt.Users {
 		if subtle.ConstantTimeCompare([]byte(tok), []byte(u.Token)) == 1 {
+			u.principal = viewPrincipal("static", u.Token)
 			return u, true
 		}
 	}
@@ -98,7 +100,7 @@ func publicAPI(path string) bool {
 // allows is the RBAC matrix: reads for everyone, Functions from
 // troubleshooter up, mutations admin only.
 func (ro Role) allows(r *http.Request) bool {
-	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/oidc/logout" {
+	if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/auth/oidc/logout" || r.URL.Path == "/api/v1/operations/views") {
 		return true
 	}
 	switch ro {

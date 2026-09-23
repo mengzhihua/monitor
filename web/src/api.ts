@@ -68,6 +68,13 @@ export interface OperationsSnapshot {
   activity: HandlingRecord[]
   now: number; nodes: OperationsNode[]; problems: Problem[]; summary: Record<string, number>; persistent: boolean
 }
+export interface OperationsView {
+  name: string; query: string; severity: string; nodeStatus: string; pendingOnly: boolean; ownerFilter: string; progressFilter: string
+}
+export interface OperationsViews {
+  revision: number; views: OperationsView[]; enabled: boolean; persistent: boolean; limit: number
+  user: { name: string; role: string }
+}
 export interface HandlingHistoryRecord extends HandlingRecord {
   updated_at: number; history_truncated: boolean
 }
@@ -207,6 +214,8 @@ function q(params: Record<string, string | number>): string {
 }
 
 export const api = {
+  operationsViews: (signal?: AbortSignal) => get<OperationsViews>('/api/v1/operations/views', signal),
+  saveOperationsViews: (revision: number, views: OperationsView[]) => post<OperationsViews>('/api/v1/operations/views', { revision, views }),
   operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
   handlingHistory: (params: Record<string, string>, signal?: AbortSignal) =>
     get<HandlingHistoryPage>('/api/v1/operations/history?' + new URLSearchParams(params), signal),

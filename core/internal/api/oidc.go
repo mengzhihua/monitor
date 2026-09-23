@@ -265,7 +265,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	session := randomToken()
 	s.oidc.mu.Lock()
-	s.oidc.sessions[session] = oidcSession{User: User{Name: name, Token: session, Role: Role(s.oidc.cfg.Role)}, Expires: expires}
+	s.oidc.sessions[session] = oidcSession{User: User{Name: name, Token: session, Role: Role(s.oidc.cfg.Role), principal: viewPrincipal("oidc", idToken.Issuer, idToken.Subject)}, Expires: expires}
 	s.oidc.mu.Unlock()
 	if strings.Contains(r.Header.Get("Accept"), "text/html") {
 		http.Redirect(w, r, "/?token="+url.QueryEscape(session), http.StatusFound)

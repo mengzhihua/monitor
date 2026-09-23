@@ -116,11 +116,12 @@ type shareStore struct {
 }
 
 type shareTok struct {
-	Token string
-	Role  Role
-	Node  string
-	Name  string
-	Until int64
+	principal string
+	Token     string
+	Role      Role
+	Node      string
+	Name      string
+	Until     int64
 }
 
 func newShareStore() *shareStore { return &shareStore{toks: map[string]shareTok{}} }
@@ -148,16 +149,16 @@ func (s *shareStore) user(tok string) (User, bool) {
 		}
 		return User{}, false
 	}
-	return User{Name: st.Name, Role: st.Role, Token: tok}, true
+	return User{Name: st.Name, Role: st.Role, Token: tok, principal: st.principal}, true
 }
 
-func (s *shareStore) issueUser(name string, role Role, ttl time.Duration) shareTok {
+func (s *shareStore) issueUser(name string, role Role, ttl time.Duration, principal string) shareTok {
 	tok := randomToken()
 	until := time.Now().Add(ttl).Unix()
 	if role == "" {
 		role = RoleViewer
 	}
-	st := shareTok{Token: tok, Role: role, Name: name, Until: until}
+	st := shareTok{Token: tok, Role: role, Name: name, Until: until, principal: principal}
 	s.mu.Lock()
 	s.toks[tok] = st
 	s.mu.Unlock()
@@ -246,7 +247,7 @@ func (s *Server) handleLDAP(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = string(RoleViewer)
 	}
-	st := s.shares.issueUser(body.User, Role(role), 24*time.Hour)
+	st := s.shares.issueUser(body.User, Role(role), 24*time.Hour, viewPrincipal("ldap", s.ldap.URL, s.ldap.UserDN, body.User))
 	writeJSON(w, map[string]any{"token": st.Token, "user": body.User, "role": role, "until": st.Until})
 }
 

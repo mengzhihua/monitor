@@ -272,6 +272,14 @@ func testOIDCLogin(t *testing.T, mode string) {
 	if out.Token == "" || out.Name != "ops@example.com" || out.Role != "viewer" {
 		t.Fatalf("oidc session = %+v", out)
 	}
+	user, ok := srv.oidc.session(out.Token)
+	if !ok || user.principal != viewPrincipal("oidc", idp.URL, "u1") {
+		t.Fatal("personal identity must use verified issuer and subject")
+	}
+	viewRequest(t, srv, "POST", "/api/v1/operations/views", out.Token, testViewsBody, 200)
+	if v := readViews(t, srv, out.Token); !v.Enabled || v.Revision != 1 {
+		t.Fatal(v)
+	}
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/info", nil)
 	req.Header.Set("Authorization", "Bearer "+out.Token)
 	resp, err = http.DefaultClient.Do(req)
@@ -294,6 +302,31 @@ func testOIDCLogin(t *testing.T, mode string) {
 	}
 	if _, ok := srv.oidc.session(out.Token); ok {
 		t.Fatal("logout did not revoke session")
+	}
+	resp, err = client.Get(ts.URL + "/api/v1/auth/oidc/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loc = resp.Header.Get("Location")
+	resp.Body.Close()
+	resp, err = client.Get(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb = resp.Header.Get("Location")
+	resp.Body.Close()
+	resp, err = client.Get(cb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relogin struct{ Token string }
+	err = json.NewDecoder(resp.Body).Decode(&relogin)
+	resp.Body.Close()
+	if err != nil || relogin.Token == "" || relogin.Token == out.Token {
+		t.Fatal("new OIDC login failed", err)
+	}
+	if v := readViews(t, srv, relogin.Token); v.Revision != 1 || len(v.Views) != 1 {
+		t.Fatal("OIDC re-login lost personal views", v)
 	}
 }
 

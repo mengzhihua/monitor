@@ -35,7 +35,7 @@ import (
 var uiFS embed.FS
 
 type Options struct {
-	OperationsDir string // persistent acknowledgements; empty only for ephemeral tests
+	OperationsDir string // persistent handling and personal views; empty only for ephemeral tests
 	Version       string
 	Mode          string // agent | hub (informational)
 	StartedAt     time.Time
@@ -70,6 +70,7 @@ type Options struct {
 
 type Server struct {
 	operations *operations.Store
+	views      *operations.ViewStore
 	reg        *registry.Registry
 	db         *tsdb.Store
 	sched      *collect.Scheduler
@@ -135,6 +136,10 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	if err != nil {
 		return nil, fmt.Errorf("open operations store: %w", err)
 	}
+	s.views, err = operations.OpenViews(opt.OperationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("open personal views store: %w", err)
+	}
 	s.routes()
 	return s, nil
 }
@@ -152,6 +157,8 @@ func (s *Server) PublishNodeAlarm(nodeID string, e health.LogEntry) {
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/operations", s.handleOperations)
+	m.HandleFunc("GET /api/v1/operations/views", s.handleOperationsViews)
+	m.HandleFunc("POST /api/v1/operations/views", s.handleOperationsViews)
 	m.HandleFunc("GET /api/v1/operations/history", s.handleOperationsHistory)
 	m.HandleFunc("GET /api/v1/operations/history/export", s.handleOperationsHistoryExport)
 	m.HandleFunc("POST /api/v1/operations/acknowledgements", s.handleAcknowledgement)

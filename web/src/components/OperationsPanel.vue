@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { api, ApiError } from '../api'
-import type { HandlingAction, HandlingChange, HandlingStatus, OperationsSnapshot, Problem, ResourceMetric } from '../api'
+import type { HandlingAction, HandlingChange, HandlingStatus, OperationsSnapshot, OperationsView, Problem, ResourceMetric } from '../api'
 import { usePolling } from '../polling'
 import OperationsHistory from './OperationsHistory.vue'
+import OperationsViews from './OperationsViews.vue'
 
 const props = defineProps<{ role: string }>()
 const emit = defineEmits<{ drill: [node: string, chart: string] }>()
@@ -24,20 +25,6 @@ const owners = ref<Record<string, string>>({})
 const progress = ref<Record<string, HandlingStatus>>({})
 const draftRevisions = ref<Record<string, number>>({})
 const visibleCount = ref(50)
-const viewName = ref('')
-const viewMessage = ref('')
-const viewsKey = 'monitor.operations.views.v1'
-type SavedView = { name: string; query: string; severity: string; nodeStatus: string; pendingOnly: boolean; ownerFilter: string; progressFilter: string }
-const savedViews = ref<SavedView[]>([])
-try {
-  const v = JSON.parse(localStorage.getItem(viewsKey) || '[]')
-  if (Array.isArray(v)) savedViews.value = v.filter(v => typeof v.name === 'string' && typeof v.query === 'string'
-    && ['all', 'CRITICAL', 'WARNING'].includes(v.severity) && ['all', 'live', 'stale', 'offline'].includes(v.nodeStatus)
-    && typeof v.pendingOnly === 'boolean').slice(0, 10).map(v => ({ ...v,
-      ownerFilter: ['all', 'mine', 'unassigned', 'assigned'].includes(v.ownerFilter) ? v.ownerFilter : 'all',
-      progressFilter: ['all', 'open', 'investigating', 'watching'].includes(v.progressFilter) ? v.progressFilter : 'all',
-    }))
-} catch { /* storage may be unavailable; monitoring still works */ }
 let disposed = false
 onBeforeUnmount(() => { disposed = true })
 const canHandle = computed(() => ['admin', 'troubleshooter'].includes(props.role))
@@ -135,22 +122,9 @@ function assign(p: Problem) {
   const assignee = owners.value[p.id] ?? p.handling.assignee
   void update(p, assignee ? { action: 'assign', assignee } : { action: 'unassign' })
 }
-function saveView() {
-  const name = viewName.value.trim().slice(0, 40)
-  if (!name) return
-  const next = [{ name, query: query.value, severity: severity.value, nodeStatus: nodeStatus.value, pendingOnly: pendingOnly.value, ownerFilter: ownerFilter.value, progressFilter: progressFilter.value },
-    ...savedViews.value.filter(v => v.name !== name)].slice(0, 10)
-  try { localStorage.setItem(viewsKey, JSON.stringify(next)); savedViews.value = next; viewName.value = ''; viewMessage.value = '视图已保存在当前浏览器。' }
-  catch { viewMessage.value = '浏览器未允许保存视图。' }
-}
-function applyView(v: SavedView) {
+function applyView(v: OperationsView) {
   query.value = v.query; severity.value = v.severity; nodeStatus.value = v.nodeStatus; pendingOnly.value = v.pendingOnly; visibleCount.value = 50
   ownerFilter.value = v.ownerFilter; progressFilter.value = v.progressFilter
-}
-function removeView(name: string) {
-  const next = savedViews.value.filter(v => v.name !== name)
-  try { localStorage.setItem(viewsKey, JSON.stringify(next)); savedViews.value = next }
-  catch { viewMessage.value = '删除失败，请检查浏览器存储权限。' }
 }
 function exportSnapshot() {
   if (!snapshot.value) return
@@ -186,18 +160,15 @@ function exportSnapshot() {
         <button @click="ownerFilter = 'mine'; visibleCount = 50">分配给我 {{ mineCount }}</button>
       </div>
       <p v-if="snapshot.summary.coverage_unknown" class="notice">{{ snapshot.summary.coverage_unknown }} 个节点尚无告警规则、告警未启用或不在此 Hub 的可见范围内，零问题不代表已完成健康检查。</p>
-      <form class="filters" @submit.prevent="saveView">
+      <div class="filters">
         <input v-model="query" placeholder="搜索主机、问题、图表或标签…" aria-label="搜索主机或问题" @input="visibleCount = 50" />
         <select v-model="nodeStatus" aria-label="节点状态"><option value="all">全部连接状态</option><option value="live">在线</option><option value="stale">数据过期</option><option value="offline">离线</option></select>
         <select v-model="severity" aria-label="问题级别"><option value="all">全部问题级别</option><option value="CRITICAL">严重</option><option value="WARNING">警告</option></select>
         <select v-model="ownerFilter" aria-label="责任人筛选" @change="visibleCount = 50"><option value="all">全部责任人</option><option value="mine">分配给我</option><option value="unassigned">未分配</option><option value="assigned">已分配</option></select>
         <select v-model="progressFilter" aria-label="处理进度筛选" @change="visibleCount = 50"><option value="all">全部处理进度</option><option value="open">待处理</option><option value="investigating">排查中</option><option value="watching">观察中</option></select>
         <label><input type="checkbox" v-model="pendingOnly" />只看待确认</label>
-        <input v-model="viewName" placeholder="视图名称" aria-label="视图名称" maxlength="40" class="view-name" />
-        <button type="submit" :disabled="!viewName.trim()">保存视图</button>
-      </form>
-      <div class="saved-views" v-if="savedViews.length"><span class="muted">浏览器视图</span><span v-for="v in savedViews" :key="v.name"><button @click="applyView(v)">{{ v.name }}</button><button :aria-label="'删除视图 ' + v.name" @click="removeView(v.name)">×</button></span></div>
-      <p role="status" v-if="viewMessage">{{ viewMessage }}</p>
+      </div>
+      <OperationsViews :filters="{ query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter }" @apply="applyView" />
 
       <h2>主机资源 <small>{{ filteredNodes.length }} 个节点</small></h2>
       <div class="node-grid">
