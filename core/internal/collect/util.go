@@ -14,6 +14,45 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
+// sampleDue reports whether a slow collector should run at now. The first call
+// and any call after every has elapsed return true and remember now.
+func sampleDue(last *time.Time, now time.Time, every time.Duration) bool {
+	if every <= 0 || last.IsZero() || now.Sub(*last) >= every {
+		*last = now
+		return true
+	}
+	return false
+}
+
+// readInto reads path into buf, reusing the caller's backing array.
+func readInto(path string, buf *[]byte) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b := (*buf)[:0]
+	var tmp [1024]byte
+	for {
+		n, err := f.Read(tmp[:])
+		if n > 0 {
+			b = append(b, tmp[:n]...)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			*buf = b
+			return nil, err
+		}
+		if n == 0 {
+			break
+		}
+	}
+	*buf = b
+	return b, nil
+}
+
 func execRun(timeout time.Duration) func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cctx, cancel := context.WithTimeout(ctx, timeout)

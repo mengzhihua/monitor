@@ -90,3 +90,38 @@ func TestAppsAbortedPassPreservesPublishedCountersAndRecovery(t *testing.T) {
 		t.Fatal("caller modified the published table")
 	}
 }
+
+func TestAppsCancelledPassDoesNotConsumeIOSample(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	a := &appsCollector{}
+	if err := a.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	a.hasIO = true
+	start := time.Unix(1700000000, 0)
+	if err := a.finishSamples(context.Background(), reg, start); err != nil {
+		t.Fatal(err)
+	}
+	if a.ioAt != start || a.ioSampleDue(start.Add(time.Second)) {
+		t.Fatal("successful sample did not retain its I/O cadence")
+	}
+	due := start.Add(appsIOEvery)
+	if !a.ioSampleDue(due) {
+		t.Fatal("I/O sample was not due")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.finishSamples(ctx, reg, due); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled sample: %v", err)
+	}
+	retry := due.Add(time.Second)
+	if a.ioAt != start || !a.ioSampleDue(retry) {
+		t.Fatal("cancelled pass consumed the I/O sample; retry must still sample")
+	}
+	if err := a.finishSamples(context.Background(), reg, retry); err != nil {
+		t.Fatal(err)
+	}
+	if a.ioAt != retry || a.ioSampleDue(retry.Add(time.Second)) {
+		t.Fatal("successful retry did not restart the I/O cadence")
+	}
+}

@@ -16,9 +16,12 @@ type logindConfig struct {
 }
 
 type logindCollector struct {
-	cfg logindConfig
-	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	cfg  logindConfig
+	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
+	last time.Time
 }
+
+const logindEvery = 10 * time.Second
 
 func init() {
 	Register("logind", func() Collector { return &logindCollector{} })
@@ -68,6 +71,9 @@ func (l *logindCollector) Init(reg *registry.Registry) error {
 }
 
 func (l *logindCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&l.last, now, logindEvery) {
+		return nil
+	}
 	st, err := l.stats(ctx)
 	if err != nil {
 		return err

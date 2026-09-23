@@ -41,7 +41,7 @@ type anomBit struct {
 
 type dimML struct {
 	values    []float64 // ring of last Window values
-	diffRing  []float64 // first-diff ring; grows to MaxTrain, not allocated up front
+	diffRing  []float32 // first-diff ring; grows to MaxTrain, not allocated up front
 	diffI     int
 	diffN     int
 	i, n      int
@@ -205,13 +205,13 @@ func (st *dimML) pushDiff(d float64, max int) {
 		if n > max {
 			n = max
 		}
-		st.diffRing = make([]float64, n)
+		st.diffRing = make([]float32, n)
 	} else if st.diffN == len(st.diffRing) && len(st.diffRing) < max {
 		n := len(st.diffRing) * 2
 		if n > max || n < len(st.diffRing) {
 			n = max
 		}
-		next := make([]float64, n)
+		next := make([]float32, n)
 		start := st.diffI - st.diffN
 		if start < 0 {
 			start += len(st.diffRing)
@@ -222,7 +222,7 @@ func (st *dimML) pushDiff(d float64, max int) {
 		st.diffRing = next
 		st.diffI = st.diffN
 	}
-	st.diffRing[st.diffI] = d
+	st.diffRing[st.diffI] = float32(d)
 	st.diffI++
 	if st.diffI == len(st.diffRing) {
 		st.diffI = 0
@@ -280,7 +280,7 @@ func (st *dimML) copyDiffs() []float64 {
 		start += len(st.diffRing)
 	}
 	for i := 0; i < st.diffN; i++ {
-		out[i] = st.diffRing[(start+i)%len(st.diffRing)]
+		out[i] = float64(st.diffRing[(start+i)%len(st.diffRing)])
 	}
 	return out
 }
@@ -298,7 +298,7 @@ func (st *dimML) lastDiffs(dst []float64) int {
 		start += len(st.diffRing)
 	}
 	for i := 0; i < n; i++ {
-		dst[i] = st.diffRing[(start+i)%len(st.diffRing)]
+		dst[i] = float64(st.diffRing[(start+i)%len(st.diffRing)])
 	}
 	return n
 }

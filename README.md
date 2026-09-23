@@ -1,11 +1,27 @@
-# Monitor 实时监控平台
+# Monitor 实时监控平台 · 2.0 开发版
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
 - **服务端** `monitord`（Go 单二进制，配置 `mode: agent` 或 `mode: hub`）：macOS / Linux / Windows / FreeBSD / Android
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
-代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。开发分支采用[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
+代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。完成验证后将改动合入 `main` 并[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
+
+## 2.0 运维工作台
+
+内嵌 Web Dashboard 新增「运维总览」：集中查看本机及 Hub 节点的 CPU、内存、在线状态、数据新鲜度和严重问题；可按主机、级别、状态和待确认条件筛选，并直接跳转到对应图表。缺失或过期指标明确标注，不显示为正常数值。
+
+「问题中心」支持管理员/排障人员确认、撤销确认和添加备注，保存操作者及处理记录，重启可读取；严重级别变化或恢复后再次触发需要重新确认。确认不会停止通知或改变告警状态。支持保存浏览器视图、导出当前 JSON 快照，刷新失败时显示上次成功时间。
+
+新增责任人指派、分配给我和「待处理 / 排查中 / 观察中」进度，可筛选个人队列、未分配问题和处理阶段，并保存为浏览器视图。多人同时修改会提示冲突并保留草稿；责任人变更与进度流转写入历史，观察中不代表告警恢复。旧版处置记录自动兼容读取，首次保存升级存储格式，降级前需恢复升级前备份。
+
+「指标图表 → 常用聚合看板」内置 54 个可搜索、按场景分类的样板，覆盖研发总览、数据库与缓存、容器、Kubernetes、入口与证书、容量、硬件、云平台及操作系统等场景，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。可以复制为个人看板，配置分组、具体图表、顺序、时间范围与列数，并通过 JSON 备份和选择性导入。详见[聚合看板说明](docs/07-preset-dashboards.md)。
+
+本轮 Web 看板收尾更新整合中文指标说明、收藏与分组导航、编辑草稿恢复、整个看板统一历史时间、图表放大与采样统计、相邻时段对比及 CSV 导出。个人看板导入先预览内容与当前节点覆盖情况，再勾选保存为副本；保留未采集的图表配置。使用方式及验收范围见 [Web 看板更新说明](docs/09-dashboard-final-update.md)。
+
+本轮是 **2.0 开发版**，新增工作台目前位于 Web，原有 Flutter 客户端继续可用。对标 Netdata、Grafana、Zabbix、Datadog 的具体范围、API、持久化限制与后续计划见 [2.0 说明](docs/06-monitor-2.0.md)。构建使用 `make all VERSION=2.0.0-dev`，尚未发布正式 `v2.0.0` 标签。
+
+本轮性能与发布收尾将进程快照、历史查询优化与最新看板整合，并补齐跨平台打包依赖和验收入口，详见 [最终整合更新](docs/10-final-integration.md)。
 
 ## 文档
 
@@ -16,6 +32,10 @@
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
+| [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
+| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 54 个常用聚合样板、个人看板配置、中文说明与历史对比 |
+| [docs/09-dashboard-final-update.md](docs/09-dashboard-final-update.md) | Web 看板收尾更新、导入预览与选择、功能范围及验证边界 |
+| [docs/10-final-integration.md](docs/10-final-integration.md) | 性能与发布收尾、升级说明及本轮验证范围 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始
@@ -248,7 +268,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | --- | --- |
 | 查询 | `/api/v1/data?context=` 同名维度跨图求和；`format=csv\|ssv\|jsonp`；`GET /api/v1/alarm_count`；`GET /api/v1/badge.svg` |
 | `/api/v2` | `contexts` / `nodes` / `data` / `badge.svg`（`api: 2` 包装） |
-| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
+| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed（仅 `vm.overcommit_memory=2`）、writeback、TIME_WAIT、Docker exited |
 
 ### 已实现能力（M14：Hub Cloud）
 
@@ -421,13 +441,13 @@ flutter run -d macos      # 或 linux / windows / <android-device> / <ios-device
 flutter analyze && flutter test
 ```
 
-Linux 桌面运行需要 GTK 3 和 **libEGL**（缺 `libEGL.so.1` 会立刻退出）：
+Linux 桌面运行需要 GTK 3、**libEGL** 和 **libsecret**（安全存储插件依赖）；缺少动态库会导致客户端无法启动：
 
 ```bash
 # Debian / Ubuntu
-sudo apt install libegl1 libgtk-3-0
+sudo apt install libegl1 libgtk-3-0 libsecret-1-0
 # Fedora
-sudo dnf install mesa-libEGL gtk3
+sudo dnf install mesa-libEGL gtk3 libsecret
 ```
 
 ### Android 服务端（M4 起步）
@@ -504,16 +524,19 @@ M0–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/�
 
 ## 双仓库推送
 
-每次完成开发和必要验证后，将本次改动提交到当前开发分支，并推送到 GitHub、GitLab 两边。推送开发分支不会自动合并到 `main`；GitHub 上的 Issue、PR、Release 安装包和工作流运行记录不会随 Git 推送复制到 GitLab。
+每次完成开发和必要验证后，将本次负责的改动提交并安全合入 `main`，再将 `main` 同步到 GitHub、GitLab 两边。开发分支或独立工作树中的改动应先完成整合和验证，不得夹带其他开发会话尚未完成的改动。用户当次明确指定其他分支或不推送时，以当次要求为准。GitHub 上的 Issue、PR、Release 安装包和工作流运行记录不会随 Git 推送复制到 GitLab。
 
 ### 首次配置
 
-远程配置保存在本地 Git 配置中，不随代码克隆。新克隆后先运行 `git remote -v` 检查；以下命令将 `origin` 设为从 GitHub 拉取、向两个仓库推送（会替换 `origin` 原有的推送地址，可重复执行）：
+远程配置保存在本地 Git 配置中，不随代码克隆。新克隆或独立配置的工作树先运行 `git remote -v` 检查；以下命令将 `origin` 设为从 GitHub 拉取，并只补充缺少的推送地址，保留已有有效配置：
 
 ```bash
 git remote set-url origin git@github.com:mengzhihua/monitor.git
-git config --local --replace-all remote.origin.pushurl git@github.com:mengzhihua/monitor.git
-git config --local --add remote.origin.pushurl https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git
+for target in git@github.com:mengzhihua/monitor.git https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git; do
+  if ! git config --local --get-all remote.origin.pushurl | grep -Fxq "$target"; then
+    git config --local --add remote.origin.pushurl "$target"
+  fi
+done
 git remote -v
 ```
 
@@ -521,25 +544,25 @@ GitHub 使用已获授权的 SSH 密钥；GitLab 使用 HTTPS，用户名为 `oa
 
 ### 日常提交与验证
 
-检查实际分支和改动，只暂存本次需要交付的文件，完成提交后推送：
+检查实际分支、工作区与远程配置，只暂存本次需要交付的文件。若在开发分支中完成工作，先提交本次改动，再在干净的 `main` 工作树中拉取最新代码并安全合并开发分支，解决冲突后重新完成必要验证。确认当前分支为 `main` 后推送：
 
 ```bash
 git status --short --branch
+git remote -v
 # git add <本次改动的文件>
 # git commit -m "说明本次改动"
-git push -u origin HEAD
+test "$(git branch --show-current)" = main && git push -u origin main
 ```
 
-该命令将当前分支推送到两个仓库，并设置上游；后续在该分支执行 `git push` 即可。默认不会推送其他分支或全部标签。推送后分别核对两边返回的提交 SHA 与 `git rev-parse HEAD` 一致：
+该命令将 `main` 推送到两个仓库，并设置上游；不会推送其他分支或全部标签。推送后分别核对两边 `main` 返回的提交 SHA 与本地 `main` 一致，两边均匹配才算双仓库同步完成：
 
 ```bash
-branch=$(git branch --show-current)
-git rev-parse HEAD
-git ls-remote git@github.com:mengzhihua/monitor.git "refs/heads/$branch"
-git ls-remote https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git "refs/heads/$branch"
+git rev-parse main
+git ls-remote git@github.com:mengzhihua/monitor.git refs/heads/main
+git ls-remote https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git refs/heads/main
 ```
 
-两边推送独立执行，一边成功不代表另一边成功。如果失败，先处理认证、网络或远程历史分歧，再重试 `git push`；已同步的一边会显示无需更新。不要使用强制推送覆盖远程提交。GitHub 工作流自动生成的标签只存在于其创建位置，需要同步标签时再显式拉取并推送对应标签。
+两边推送独立执行，一边成功不代表另一边成功。如果失败，保留已成功的一边，先处理认证、网络或远程历史分歧，再补推失败的一边并重新核对。不要使用强制推送覆盖远程提交。推送 `main` 会触发 GitHub 的自动 Release 流程；代码同步完成后仍需单独检查工作流和安装包发布状态。GitHub 工作流自动生成的标签只存在于其创建位置，需要同步标签时再显式拉取并推送对应标签。
 
 ## 开发验收
 

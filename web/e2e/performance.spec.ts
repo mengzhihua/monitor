@@ -17,9 +17,9 @@ test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async (
   }))
   await page.route('**/api/v1/charts*', route => route.fulfill({ json: { charts } }))
   await page.route('**/api/v1/data?*', route => route.fulfill({ json: {
-    dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
+    units: 'value', dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
   } }))
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
   await expect(cards).toHaveCount(100)
   await expect(cards.first().locator('canvas')).toBeVisible()
@@ -28,7 +28,12 @@ test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async (
     await cards.nth(i).scrollIntoViewIfNeeded()
     await expect(cards.nth(i).locator('canvas')).toBeVisible()
   }
-  await expect.poll(() => page.locator('.card canvas').count()).toBeLessThanOrEqual(18)
+  // The cache holds eight offscreen plots; visible plots depend on card height,
+  // responsive columns and the chart observer's 300px prefetch margin.
+  await expect.poll(() => cards.evaluateAll(elements => elements.filter(card => {
+    const rect = card.getBoundingClientRect()
+    return card.querySelector('canvas') && (rect.bottom < -300 || rect.top > innerHeight + 300)
+  }).length)).toBeLessThanOrEqual(8)
   await expect(cards.first().locator('canvas')).toHaveCount(0)
   expect(await firstCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false)
   await cards.first().scrollIntoViewIfNeeded()
@@ -51,7 +56,7 @@ test('long history unsubscribes metrics and a hidden dashboard stops requests an
       if (message.charts) subscriptions.push(message.charts)
     })
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   await expect(page.locator('[title="live"]')).toBeVisible()
   await page.getByPlaceholder('筛选图表…').fill('system.ram')
   await expect.poll(() => subscriptions.at(-1)).toEqual(['system.ram'])
@@ -84,7 +89,7 @@ test('slow function requests never overlap and background panels stop polling', 
     await gate
     await route.fulfill({ json: { time: 1, result: { columns: ['pid', 'cpu'], rows: [{ pid: 123, cpu: 2 }], total: 1 } } })
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   await page.getByTitle('Functions（实时进程表等）', { exact: true }).click()
   await expect.poll(() => calls).toBe(1)
   await page.clock.fastForward(12000)
@@ -113,7 +118,7 @@ test('superseded history fetches are aborted when changing the time range', asyn
       await route.abort().catch(() => {})
     } else await route.continue()
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   await page.getByPlaceholder('筛选图表…').fill('system.ram')
   await expect(page.locator('.card canvas')).toBeVisible()
   await page.locator('.controls select').selectOption('86400')

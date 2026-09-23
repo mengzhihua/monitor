@@ -53,6 +53,27 @@ func openWAL(dir string) (*walLog, error) {
 			f.Close()
 			return nil, err
 		}
+	} else if end, err := walValidEnd(f, st.Size()); err != nil {
+		f.Close()
+		return nil, err
+	} else if end < st.Size() {
+		// A torn tail must not stay in front of records appended on the next
+		// run. Recovery stops at the first short record, so anything written
+		// after the tear would never be replayed.
+		if err := f.Truncate(end); err != nil {
+			f.Close()
+			return nil, err
+		}
+		if end == 0 {
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				f.Close()
+				return nil, err
+			}
+			if _, err := f.Write([]byte{walMagic[0], walMagic[1], walMagic[2], walMagic[3], walVersion}); err != nil {
+				f.Close()
+				return nil, err
+			}
+		}
 	}
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		f.Close()
@@ -186,6 +207,54 @@ func (w *walLog) close() error {
 	}
 	w.f = nil
 	return err
+}
+
+// walValidEnd is the offset just past the last complete record. A short or
+// illegal record stops the scan; bytes at and after that offset are a torn tail.
+func walValidEnd(f *os.File, size int64) (int64, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	r := bufio.NewReaderSize(f, 256*1024)
+	hdr := make([]byte, walHeader)
+	if _, err := io.ReadFull(r, hdr); err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if string(hdr[:4]) != walMagic || hdr[4] != walVersion {
+		return 0, fmt.Errorf("wal: bad header")
+	}
+	off := int64(walHeader)
+	var idBuf [256]byte
+	var rest [16]byte
+	for off+2 <= size {
+		var lenBuf [2]byte
+		if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+			return off, nil
+		}
+		n := int(binary.LittleEndian.Uint16(lenBuf[:]))
+		if n == 0 || n > walMaxIDLen {
+			return off, nil
+		}
+		rec := int64(2 + n + 16)
+		if off+rec > size {
+			return off, nil
+		}
+		copied, err := io.CopyBuffer(io.Discard, io.LimitReader(r, int64(n)), idBuf[:])
+		if err != nil {
+			return 0, err
+		}
+		if copied != int64(n) {
+			return off, nil
+		}
+		if _, err := io.ReadFull(r, rest[:]); err != nil {
+			return off, nil
+		}
+		off += rec
+	}
+	return off, nil
 }
 
 func readWAL(path string) ([]walRec, error) {

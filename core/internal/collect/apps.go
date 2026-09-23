@@ -100,9 +100,15 @@ type appsCollector struct {
 	groupCache          map[string]string
 	userCache           map[string]string
 	pidBuf              []int32
+	dirBuf              []byte
 	scratch             []byte
 	last                time.Time
+	ioAt                time.Time
 }
+
+// appsIOEvery is how often per-process disk counters are opened. CPU still
+// comes from stat every tick; io charts are incremental, so a gap keeps the rate.
+const appsIOEvery = 5 * time.Second
 
 // procCounters is one process sample. ok is false when CPU counters could not be read.
 type procCounters struct {
@@ -302,8 +308,9 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	pids, native := listProcPIDs(a.pidBuf)
+	pids, native := listProcPIDs(a.pidBuf, &a.dirBuf)
 	a.pidBuf = pids
+	ioNow := a.ioSampleDue(now)
 	var procs []appProcess
 	if !native {
 		var err error
@@ -333,7 +340,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		st := a.previousPID(pid, startedAt)
 		var sample procCounters
 		if native {
-			sample = readProcSample(pid, st != nil && st.skipIO, &a.scratch)
+			sample = readProcSample(pid, !ioNow || (st != nil && st.skipIO), &a.scratch)
 		}
 		if st == nil {
 			if native {
@@ -371,13 +378,20 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			continue // exited between readdir and stat; drop it below
 		}
 		if !native {
-			sample = readAppProcessSample(ctx, gp, a.hasIO)
+			sample = readAppProcessSample(ctx, gp, ioNow)
 		}
 		a.samples = append(a.samples, appProcessUpdate{pid: pid, state: st, counters: sample})
 	}
 	// No counters, rates, charts or public rows advance until every PID has
 	// been sampled. Keep newly resolved identities cached for the next try.
 	return a.finishSamples(ctx, reg, now)
+}
+
+// Checking the cadence must not advance it until a whole pass succeeds.
+// Otherwise a cancelled pass consumes an I/O slot without publishing its data.
+func (a *appsCollector) ioSampleDue(now time.Time) bool {
+	last := a.ioAt
+	return a.hasIO && sampleDue(&last, now, appsIOEvery)
 }
 
 func (a *appsCollector) finishSamples(ctx context.Context, reg *registry.Registry, now time.Time) error {
@@ -389,6 +403,7 @@ func (a *appsCollector) finishSamples(ctx context.Context, reg *registry.Registr
 }
 
 func (a *appsCollector) commitSamples(reg *registry.Registry, now time.Time) {
+	ioNow := a.ioSampleDue(now)
 	mem := map[string]float64{}
 	nproc := map[string]float64{}
 	nthr := map[string]float64{}
@@ -459,13 +474,14 @@ func (a *appsCollector) commitSamples(reg *registry.Registry, now time.Time) {
 	_ = reg.Collect("apps.mem", now, mem)
 	_ = reg.Collect("apps.processes", now, nproc)
 	_ = reg.Collect("apps.threads", now, nthr)
-	if a.hasIO {
+	if a.hasIO && ioNow {
 		rd, wr := make(map[string]float64, len(all)), make(map[string]float64, len(all))
 		for _, g := range all {
 			rd[g.name], wr[g.name] = a.readB[g.name], a.writeB[g.name]
 		}
 		_ = reg.Collect("apps.io_read", now, rd)
 		_ = reg.Collect("apps.io_write", now, wr)
+		a.ioAt = now
 	}
 	a.collectOwners(reg, now)
 	a.tableMu.Lock()

@@ -451,7 +451,7 @@ cd .. && make cross
 
 装有Chrome时可用`MONITOR_BROWSER_CHANNEL=chrome npm run test:e2e`。浏览器测试占用`127.0.0.1:19997`，配置和数据均为临时目录，不复用已有服务；冒烟使用19998/18999。各进程测试均清理自己启动的进程。
 
-`make acceptance`顺序运行构建、Go/Web测试、默认登录保护、强杀恢复、Hub负载、持续采集、浏览器、Flutter单测及交叉编译。`MONITOR_SOAK_SECONDS`可调整验收时长；CI另保存负载JSON与浏览器截图/失败trace。原生Keychain测试须在macOS桌面环境单独运行。集成测试会生成测试应用，完成后需重新`flutter build macos --debug`交付主程序。
+`make acceptance`顺序运行构建、Go/Web测试、默认登录保护、强杀恢复、运维记录重启持久化、macOS进程身份、Hub负载、持续采集、浏览器、Flutter单测及交叉编译。`MONITOR_SOAK_SECONDS`可调整验收时长；CI另保存负载JSON与浏览器截图/失败trace。原生Keychain测试须在macOS桌面环境单独运行。集成测试会生成测试应用，完成后需重新`flutter build macos --debug`交付主程序。
 
 72小时测试可在稳定、禁止休眠的目标机器运行：
 

@@ -235,7 +235,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.meta.outputs.ref }}" }
-      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libegl1-mesa-dev
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libegl1-mesa-dev libsecret-1-dev
       - uses: subosito/flutter-action@v2
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
@@ -405,8 +405,8 @@ jobs:
             | Android | `monitor-app-*-android.apk` |
             | iOS (unsigned; sideload with your own signing) | `monitor-app-*-ios-unsigned.ipa` |
 
-            Linux desktop needs `libEGL.so.1` (otherwise `./monitor` exits immediately):
-            `sudo apt install libegl1 libgtk-3-0` (Debian/Ubuntu) or `sudo dnf install mesa-libEGL gtk3` (Fedora).
+            Linux desktop needs GTK 3, `libEGL.so.1`, and libsecret for secure storage:
+            `sudo apt install libegl1 libgtk-3-0 libsecret-1-0` (Debian/Ubuntu) or `sudo dnf install mesa-libEGL gtk3 libsecret` (Fedora).
 
             macOS/iOS/Windows packages are not code-signed or notarized yet; on macOS run
             `xattr -dr com.apple.quarantine <app>` after unpacking. `SHA256SUMS.txt` lists all checksums.

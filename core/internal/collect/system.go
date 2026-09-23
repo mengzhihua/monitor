@@ -3,8 +3,10 @@ package collect
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +32,11 @@ func init() {
 
 // ---- cpu ----
 
-type cpuCollector struct{ ncpu int }
+type cpuCollector struct {
+	ncpu    int
+	scratch []byte
+	times   []cpu.TimesStat
+}
 
 func (c *cpuCollector) Name() string { return "cpu" }
 
@@ -98,7 +104,11 @@ func sumCPUTimes(per []cpu.TimesStat) cpu.TimesStat {
 func (c *cpuCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	// One per-CPU read covers the aggregate. A second total-only read parses
 	// the same /proc/stat (or the same host call) again.
-	per, err := cpu.TimesWithContext(ctx, true)
+	per, ok := c.linuxTimes()
+	var err error
+	if !ok {
+		per, err = cpu.TimesWithContext(ctx, true)
+	}
 	if err != nil || len(per) == 0 {
 		total, err2 := cpu.TimesWithContext(ctx, false)
 		if err2 != nil || len(total) == 0 {
@@ -183,7 +193,28 @@ func (c *loadCollector) Collect(ctx context.Context, reg *registry.Registry, now
 
 // ---- memory ----
 
-type memCollector struct{ hasSwap bool }
+type memCollector struct {
+	hasSwap       bool
+	limitEnforced bool
+}
+
+// linuxCommitLimitEnforced reports whether Committed_AS / CommitLimit is a
+// real capacity ratio. Mode 2 is the only Linux overcommit setting that
+// refuses allocations past CommitLimit. Modes 0 and 1 allow Committed_AS to
+// sit above that number, and with no swap the number is only half of RAM.
+func linuxCommitLimitEnforced(mode int) bool { return mode == 2 }
+
+func overcommitMemoryMode() int {
+	b, err := os.ReadFile("/proc/sys/vm/overcommit_memory")
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 func (c *memCollector) Name() string { return "mem" }
 
@@ -207,9 +238,24 @@ func (c *memCollector) Init(reg *registry.Registry) error {
 	reg.AddChart(&registry.Chart{ID: "mem.writeback", Family: "ram", Title: "Writeback memory", Units: "MiB",
 		Priority: 303, Plugin: "system", Module: "mem",
 		Dimensions: []*registry.Dimension{{ID: "dirty", Divisor: 1024 * 1024}, {ID: "writeback", Divisor: 1024 * 1024}}})
-	reg.AddChart(&registry.Chart{ID: "mem.committed", Family: "ram", Title: "Committed (overcommit) memory", Units: "MiB", Type: registry.Area,
-		Priority: 304, Plugin: "system", Module: "mem",
-		Dimensions: []*registry.Dimension{{ID: "committed", Divisor: 1024 * 1024}, {ID: "limit", Divisor: 1024 * 1024, Hidden: true}}})
+	// CommitLimit is collected only where the kernel enforces it. On the common
+	// heuristic overcommit setting it is not a ceiling, so publishing it makes
+	// committed/limit look like memory exhaustion.
+	c.limitEnforced = runtime.GOOS == "linux" && linuxCommitLimitEnforced(overcommitMemoryMode())
+	committedDims := []*registry.Dimension{{ID: "committed", Divisor: 1024 * 1024}}
+	var committedLabels map[string]string
+	if c.limitEnforced || runtime.GOOS != "linux" {
+		committedDims = append(committedDims, &registry.Dimension{ID: "limit", Divisor: 1024 * 1024, Hidden: true})
+	}
+	if c.limitEnforced {
+		committedLabels = map[string]string{"commit_limit": "enforced"}
+	}
+	committed := reg.AddChart(&registry.Chart{ID: "mem.committed", Family: "ram", Title: "Committed (Allocated) Memory", Units: "MiB", Type: registry.Area,
+		Priority: 304, Plugin: "system", Module: "mem", Labels: committedLabels,
+		Dimensions: committedDims})
+	if c.limitEnforced {
+		committed.MergeLabels(committedLabels)
+	}
 	reg.AddChart(&registry.Chart{ID: "mem.pgfaults", Family: "ram", Title: "Memory page faults", Units: "faults/s",
 		Priority: 305, Plugin: "system", Module: "mem",
 		Dimensions: []*registry.Dimension{incDim("minor"), incDim("major")}})
@@ -240,7 +286,11 @@ func (c *memCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 	_ = reg.Collect("mem.kernel", now, map[string]float64{
 		"slab": float64(vm.Slab), "sunreclaim": float64(vm.Sunreclaim), "page_tables": float64(vm.PageTables), "vmalloc_used": float64(vm.VmallocUsed)})
 	_ = reg.Collect("mem.writeback", now, map[string]float64{"dirty": float64(vm.Dirty), "writeback": float64(vm.WriteBack)})
-	_ = reg.Collect("mem.committed", now, map[string]float64{"committed": float64(vm.CommittedAS), "limit": float64(vm.CommitLimit)})
+	committedVals := map[string]float64{"committed": float64(vm.CommittedAS)}
+	if c.limitEnforced || runtime.GOOS != "linux" {
+		committedVals["limit"] = float64(vm.CommitLimit)
+	}
+	_ = reg.Collect("mem.committed", now, committedVals)
 	sw, err := mem.SwapMemoryWithContext(ctx)
 	if err != nil {
 		if c.hasSwap {
@@ -402,7 +452,13 @@ func ratePerOp(curAmt, prevAmt, curOps, prevOps uint64) float64 {
 
 // ---- disk space ----
 
-type diskSpaceCollector struct{ mounts map[string]string }
+type diskSpaceCollector struct {
+	mounts map[string]string
+	last   time.Time
+}
+
+// diskSpaceEvery is how often statfs runs. Capacity moves slowly.
+const diskSpaceEvery = 15 * time.Second
 
 func (c *diskSpaceCollector) Name() string { return "diskspace" }
 
@@ -460,6 +516,9 @@ func (c *diskSpaceCollector) ensure(reg *registry.Registry, mp string, inodes bo
 }
 
 func (c *diskSpaceCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&c.last, now, diskSpaceEvery) {
+		return nil
+	}
 	for mp, id := range c.mounts {
 		u, err := disk.UsageWithContext(ctx, mp)
 		if err != nil {

@@ -19,6 +19,8 @@
 | --- | --- | --- |
 | `smoke.sh` | Agent / Hub API、默认密码、claim 和 ring | `bash scripts/smoke.sh` |
 | `verify-default-auth.py` | 默认认证、错误密码、WebSocket 拒绝、重启和重置 | `python3 scripts/verify-default-auth.py` |
+| `verify-operations.py` | 2.0 真实采样、确认记录持久化、服务重启及新阶段重新确认 | `python3 scripts/verify-operations.py` |
+| `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
 | `soak.py` | 指定时长的持续采集和查询测量 | `python3 scripts/soak.py --seconds 120` |
@@ -26,7 +28,7 @@
 | `benchmark-browser.mjs` | 遍历100张模拟图表后的画布、DOM、事件监听器和 GC 后 JS 堆 | `node scripts/benchmark-browser.mjs --output reports/browser.json` |
 | `e2e-server.mjs` | 为 Playwright 启动临时服务 | 由 `web/playwright.config.ts` 调用，无需手动启动 |
 
-运行验收前先 `make all`。`make acceptance` 串联 Go/Web、默认认证、恢复、Hub 负载、持续采集、浏览器、Flutter 和跨平台编译，所需环境见 [验收记录](../docs/05-acceptance.md)。
+运行验收前先 `make all`。`make acceptance` 串联 Go/Web、默认认证、恢复、运维记录重启持久化、macOS 进程身份、Hub 负载、持续采集、浏览器、Flutter 和跨平台编译，所需环境见 [验收记录](../docs/05-acceptance.md)。进程身份脚本只在 macOS 上运行，`--require-clean-startup` 同时要求启动和稳定阶段的采集失败数为零；其他平台由 Go 测试覆盖通用采集逻辑。
 
 命令行进程测试使用临时配置和数据，读取测试目录生成的密码，不使用部署密码。冒烟占用 `19998` / `18999`，浏览器测试占用 `19997`；其余 Python 进程测试选择本机空闲端口。
 

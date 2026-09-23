@@ -2,6 +2,7 @@ package collect
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -29,17 +30,16 @@ type systemdConfig struct {
 }
 
 type systemdCollector struct {
-	cfg          systemdConfig
-	hasIO        bool
-	hasCgroup    bool
-	hasUnits     bool
-	units        map[string]bool
-	run          func(ctx context.Context, name string, args ...string) ([]byte, error)
-	scanned      []sdUnit
-	scanAt       time.Time
-	unitAt       time.Time
-	unitCounts   map[string]float64
-	unitRestarts float64
+	cfg       systemdConfig
+	hasIO     bool
+	hasCgroup bool
+	hasUnits  bool
+	units     map[string]bool
+	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
+	scanned   []sdUnit
+	scanAt    time.Time
+	unitAt    time.Time
+	scratch   []byte
 }
 
 // cgroupWalkEvery is how often the cgroup tree is listed. Per-unit counters
@@ -219,14 +219,14 @@ func (s *systemdCollector) collectCgroup(reg *registry.Registry, now time.Time) 
 				addDim("systemd.io_write", &registry.Dimension{ID: dimID, Name: u.name, Algorithm: registry.Incremental, Divisor: 1024})
 			}
 		}
-		if v, ok := readKV(filepath.Join(u.dir, "cpu.stat"))["usage_usec"]; ok {
+		if v, ok := readKVKey(filepath.Join(u.dir, "cpu.stat"), "usage_usec", &s.scratch); ok {
 			cpu[dimID] = v
 		}
-		if v, err := readUint(filepath.Join(u.dir, "memory.current")); err == nil {
+		if v, err := readUintBuf(filepath.Join(u.dir, "memory.current"), &s.scratch); err == nil {
 			mem[dimID] = v
 		}
 		if s.hasIO {
-			r, w, ok := readIOStat(filepath.Join(u.dir, "io.stat"))
+			r, w, ok := readIOStatBuf(filepath.Join(u.dir, "io.stat"), &s.scratch)
 			if ok {
 				rd[dimID], wr[dimID] = r, w
 			}
@@ -241,34 +241,26 @@ func (s *systemdCollector) collectCgroup(reg *registry.Registry, now time.Time) 
 }
 
 func (s *systemdCollector) collectUnits(ctx context.Context, reg *registry.Registry, now time.Time) {
-	if s.unitAt.IsZero() || now.Sub(s.unitAt) >= unitPollEvery {
-		rows, err := s.unitRows(ctx)
-		if err != nil {
-			if s.unitCounts == nil {
-				return
-			}
-		} else {
-			counts := map[string]float64{"active": 0, "inactive": 0, "activating": 0, "deactivating": 0, "failed": 0, "other": 0}
-			var restarts float64
-			for _, r := range rows {
-				st := strings.ToLower(r.ActiveState)
-				if _, ok := counts[st]; ok && st != "other" {
-					counts[st]++
-				} else {
-					counts["other"]++
-				}
-				restarts += float64(r.NRestarts)
-			}
-			s.unitCounts = counts
-			s.unitRestarts = restarts
-			s.unitAt = now
-		}
-	}
-	if s.unitCounts == nil {
+	if !sampleDue(&s.unitAt, now, unitPollEvery) {
 		return
 	}
-	_ = reg.Collect("systemd.service_units", now, s.unitCounts)
-	_ = reg.Collect("systemd.service_restarts", now, map[string]float64{"restarts": s.unitRestarts})
+	rows, err := s.unitRows(ctx)
+	if err != nil {
+		return
+	}
+	counts := map[string]float64{"active": 0, "inactive": 0, "activating": 0, "deactivating": 0, "failed": 0, "other": 0}
+	var restarts float64
+	for _, r := range rows {
+		st := strings.ToLower(r.ActiveState)
+		if _, ok := counts[st]; ok && st != "other" {
+			counts[st]++
+		} else {
+			counts["other"]++
+		}
+		restarts += float64(r.NRestarts)
+	}
+	_ = reg.Collect("systemd.service_units", now, counts)
+	_ = reg.Collect("systemd.service_restarts", now, map[string]float64{"restarts": restarts})
 }
 
 // readKV parses "key value" lines (cpu.stat, memory.stat).
@@ -292,38 +284,104 @@ func readKV(path string) map[string]float64 {
 	return out
 }
 
+func readKVKey(path, key string, buf *[]byte) (float64, bool) {
+	b, err := readInto(path, buf)
+	if err != nil {
+		return 0, false
+	}
+	return kvKey(b, key)
+}
+
+func kvKey(b []byte, key string) (float64, bool) {
+	rest := b
+	for len(rest) > 0 {
+		line := rest
+		if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+			line = rest[:i]
+			rest = rest[i+1:]
+		} else {
+			rest = nil
+		}
+		line = bytes.TrimSpace(line)
+		k, v, ok := bytes.Cut(line, []byte{' '})
+		if !ok || string(k) != key {
+			continue
+		}
+		n, err := strconv.ParseFloat(string(bytes.TrimSpace(v)), 64)
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
 func readUint(path string) (float64, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
-	s := strings.TrimSpace(string(b))
-	if s == "max" {
+	return parseUintBytes(b)
+}
+
+func readUintBuf(path string, buf *[]byte) (float64, error) {
+	b, err := readInto(path, buf)
+	if err != nil {
+		return 0, err
+	}
+	return parseUintBytes(b)
+}
+
+func parseUintBytes(b []byte) (float64, error) {
+	s := bytes.TrimSpace(b)
+	if bytes.Equal(s, []byte("max")) {
 		return 0, errors.New("max")
 	}
-	n, err := strconv.ParseUint(s, 10, 64)
+	n, err := strconv.ParseUint(string(s), 10, 64)
 	return float64(n), err
 }
 
 // readIOStat sums rbytes/wbytes across devices in a cgroup v2 io.stat file.
 func readIOStat(path string) (rd, wr float64, ok bool) {
-	f, err := os.Open(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return 0, 0, false
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		for _, fld := range strings.Fields(sc.Text())[1:] {
-			k, v, found := strings.Cut(fld, "=")
+	return parseIOStat(b)
+}
+
+func readIOStatBuf(path string, buf *[]byte) (rd, wr float64, ok bool) {
+	b, err := readInto(path, buf)
+	if err != nil {
+		return 0, 0, false
+	}
+	return parseIOStat(b)
+}
+
+func parseIOStat(b []byte) (rd, wr float64, ok bool) {
+	rest := b
+	for len(rest) > 0 {
+		line := rest
+		if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+			line = rest[:i]
+			rest = rest[i+1:]
+		} else {
+			rest = nil
+		}
+		fields := bytes.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		for _, fld := range fields[1:] {
+			k, v, found := bytes.Cut(fld, []byte{'='})
 			if !found {
 				continue
 			}
-			n, err := strconv.ParseFloat(v, 64)
+			n, err := strconv.ParseFloat(string(v), 64)
 			if err != nil {
 				continue
 			}
-			switch k {
+			switch string(k) {
 			case "rbytes":
 				rd += n
 			case "wbytes":

@@ -4,7 +4,8 @@ import type { Alarm, AlarmLogEntry, SilenceState } from '../api'
 import { api } from '../api'
 import { usePolling } from '../polling'
 
-const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[] }>()
+const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[]; canManage: boolean }>()
+const actionError = ref('')
 const emit = defineEmits<{ close: [] }>()
 const silence = ref<SilenceState>({ all: false, alarms: {} })
 const now = ref(Math.floor(Date.now() / 1000))
@@ -12,6 +13,7 @@ onMounted(() => { void refreshSilence() })
 usePolling(async () => { now.value = Math.floor(Date.now() / 1000) }, 1000)
 
 async function refreshSilence() {
+  if (!props.canManage) return
   try { silence.value = await api.silenceState() } catch { /* token / role */ }
 }
 
@@ -35,17 +37,24 @@ function alarmUntil(a: Alarm) {
 }
 
 async function silenceAll(on: boolean) {
+  if (!props.canManage) return
+  actionError.value = ''
+  const addressedAlarms = props.alarms
   try {
-    silence.value = await api.silence(on ? { all: true, until: -3600 } : { all: false, clear: true })
-    for (const a of props.alarms) a.silenced = on
-  } catch { /* token / role */ }
+    const result = await api.silence(on ? { all: true, until: -3600 } : { all: false, clear: true })
+    if (props.alarms !== addressedAlarms || !props.canManage) return
+    silence.value = result
+    for (const a of addressedAlarms) a.silenced = on
+  } catch (e) { actionError.value = `静默操作失败：${String(e)}` }
 }
 
 async function silenceOne(a: Alarm, on: boolean) {
+  if (!props.canManage) return
+  actionError.value = ''
   try {
     silence.value = await api.silence({ chart: a.chart, alarm: a.name, clear: !on, until: on ? -3600 : 0 })
     a.silenced = on
-  } catch { /* token / role */ }
+  } catch (e) { actionError.value = `静默操作失败：${String(e)}` }
 }
 
 function fmt(v: number | null) {
@@ -66,7 +75,7 @@ function ago(t: number) {
     <div class="head">
       <h3>告警 <small>{{ alarms.length }} 条规则</small></h3>
       <div class="actions">
-        <button class="mute" @click="silenceAll(!allSilenced)" :title="allSilenced ? '解除全部静默' : '静默全部通知'">
+        <button v-if="canManage" class="mute" @click="silenceAll(!allSilenced)" :title="allSilenced ? '解除全部静默' : '静默全部通知'">
           {{ allSilenced ? '解除静默' : '全部静默' }}
         </button>
         <span v-if="silence.all" class="dim">{{ remain(silence.until) }}</span>
@@ -74,6 +83,8 @@ function ago(t: number) {
         <button class="x" @click="emit('close')" title="关闭">×</button>
       </div>
     </div>
+    <p v-if="actionError" role="alert">{{ actionError }}</p>
+    <p v-if="!canManage" class="dim">通知静默仅允许管理员在本机执行；跨节点问题请在运维总览中确认和记录。</p>
     <table>
       <thead>
         <tr><th>状态</th><th>告警</th><th>图表</th><th class="num">当前值</th><th>持续</th><th></th></tr>
@@ -85,7 +96,7 @@ function ago(t: number) {
           <td class="dim">{{ a.chart }}</td>
           <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
           <td class="dim">{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</td>
-          <td><button class="mute tiny" @click="silenceOne(a, !a.silenced)">{{ a.silenced ? '响铃' : '静默' }}</button>
+          <td><button v-if="canManage" class="mute tiny" @click="silenceOne(a, !a.silenced)">{{ a.silenced ? '响铃' : '静默' }}</button>
             <span v-if="a.silenced || alarmUntil(a)" class="dim"> {{ remain(alarmUntil(a) || silence.until) }}</span>
           </td>
         </tr>

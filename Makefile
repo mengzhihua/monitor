@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell cat VERSION)
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 BIN      = core/bin
 
@@ -64,6 +64,10 @@ acceptance:
 	$(MAKE) test
 	python3 scripts/verify-default-auth.py
 	python3 scripts/verify-durability.py
+	python3 scripts/verify-operations.py
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		python3 scripts/verify-apps-identity.py --require-clean-startup; \
+	fi
 	python3 scripts/load-hub.py
 	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}
 	cd web && npm run test:e2e

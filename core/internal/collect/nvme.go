@@ -21,7 +21,10 @@ type nvmeCollector struct {
 	cfg     nvmeConfig
 	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
 	devSeen map[string]bool
+	last    time.Time
 }
+
+const nvmeEvery = 15 * time.Second
 
 func init() {
 	Register("nvme", func() Collector { return &nvmeCollector{} })
@@ -60,6 +63,9 @@ func (n *nvmeCollector) Init(reg *registry.Registry) error {
 }
 
 func (n *nvmeCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&n.last, now, nvmeEvery) {
+		return nil
+	}
 	devs, err := n.list(ctx)
 	if err != nil {
 		return err
