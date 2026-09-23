@@ -6,6 +6,7 @@ package tsdb
 type Reader interface {
 	Bounds(id string) (first, last int64, ok bool)
 	QueryTier(id string, tier int, after, before int64) ([]Bucket, error)
+	QueryAggregated(id string, tier int, after, before int64, points int, fn GroupFunc) (Result, error)
 	TierCovers(id string, tier int, after int64) bool
 	PlanTier(after, before int64, points int) int
 	TierEvery(tier int) (int64, bool)
@@ -26,6 +27,9 @@ func (v *View) Append(id string, ts int64, val float64) { v.s.Append(v.prefix+id
 func (v *View) Bounds(id string) (int64, int64, bool)   { return v.s.Bounds(v.prefix + id) }
 func (v *View) QueryTier(id string, tier int, after, before int64) ([]Bucket, error) {
 	return v.s.QueryTier(v.prefix+id, tier, after, before)
+}
+func (v *View) QueryAggregated(id string, tier int, after, before int64, points int, fn GroupFunc) (Result, error) {
+	return v.s.QueryAggregated(v.prefix+id, tier, after, before, points, fn)
 }
 func (v *View) TierCovers(id string, tier int, after int64) bool {
 	return v.s.TierCovers(v.prefix+id, tier, after)

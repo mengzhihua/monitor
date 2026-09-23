@@ -534,27 +534,29 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 		}
 	}
 
-	every, _ := db.TierEvery(tier)
 	ids := make([]string, 0, len(dims))
 	names := make([]string, 0, len(dims))
 	values := make([][]float64, 0, len(dims))
 	var times []int64
 	var step, resAfter, resBefore int64
 	for _, d := range dims {
-		parts := make([][]tsdb.Bucket, 0, len(d.charts))
+		parts := make([][]float64, 0, len(d.charts))
 		for _, c := range d.charts {
-			bs, err := db.QueryTier(registry.SeriesID(c.ID, d.id), tier, after, before)
+			agg, err := db.QueryAggregated(registry.SeriesID(c.ID, d.id), tier, after, before, points, group)
 			if err != nil {
 				return nil, http.StatusInternalServerError, err.Error()
 			}
-			parts = append(parts, bs)
+			if times == nil {
+				times = agg.Times
+				step, resAfter, resBefore = agg.Step, agg.After, agg.Before
+			}
+			if len(agg.Values) == 0 {
+				parts = append(parts, nil)
+				continue
+			}
+			parts = append(parts, agg.Values[0])
 		}
-		agg := tsdb.AggregateBuckets(parts, every, after, before, points, group)
-		if times == nil {
-			times = agg.Times
-			step, resAfter, resBefore = agg.Step, agg.After, agg.Before
-		}
-		values = append(values, sumAligned(agg.Values))
+		values = append(values, sumAligned(parts))
 		ids = append(ids, d.id)
 		names = append(names, d.name)
 	}
