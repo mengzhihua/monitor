@@ -23,8 +23,10 @@ type cgroupConfig struct {
 }
 
 type cgroupCollector struct {
-	cfg  cgroupConfig
-	seen map[string]bool
+	cfg     cgroupConfig
+	seen    map[string]bool
+	cached  []cgroupUnit
+	cacheAt time.Time
 }
 
 func init() {
@@ -66,7 +68,7 @@ func (c *cgroupCollector) Init(reg *registry.Registry) error {
 }
 
 func (c *cgroupCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
-	groups := c.scan()
+	groups := c.cachedScan(now)
 	if len(groups) == 0 {
 		return fmt.Errorf("cgroup: no container/VM cgroups")
 	}
@@ -127,6 +129,15 @@ func (c *cgroupCollector) ensure(reg *registry.Registry, g cgroupUnit) {
 		ch.Family, ch.Plugin, ch.Module = "cgroup", "cgroup", "cgroup"
 		reg.AddChart(ch)
 	}
+}
+
+func (c *cgroupCollector) cachedScan(now time.Time) []cgroupUnit {
+	if len(c.cached) > 0 && !c.cacheAt.IsZero() && now.Sub(c.cacheAt) < cgroupWalkEvery {
+		return c.cached
+	}
+	c.cached = c.scan()
+	c.cacheAt = now
+	return c.cached
 }
 
 func (c *cgroupCollector) scan() []cgroupUnit {

@@ -20,6 +20,8 @@ type procM18 struct {
 	drmRoot, bcacheRoot                         string
 	edacSeen, drmSeen, bcacheSeen, raplSeen     map[string]bool
 	timex                                       func() (state, unsync, offset float64, ok bool)
+	slabAt                                      time.Time
+	slabTot                                     slabTotals
 }
 
 func (m procM18) any() bool {
@@ -130,11 +132,12 @@ func (p *procCollector) collectM18(reg *registry.Registry, now time.Time) {
 	if m.haveEDAC {
 		p.collectEDAC(reg, now)
 	}
-	if m.haveSlab {
+	if m.haveSlab && (m.slabAt.IsZero() || now.Sub(m.slabAt) >= slowSampleEvery) {
 		if raw, err := readTrim(m.slab); err == nil {
-			st := parseSlabinfo(raw)
-			_ = reg.Collect("mem.slabmemory", now, map[string]float64{"active": st.ActiveBytes, "total": st.TotalBytes})
-			_ = reg.Collect("mem.slab_objects", now, map[string]float64{"active": st.ActiveObjs, "total": st.TotalObjs})
+			m.slabTot = parseSlabinfo(raw)
+			m.slabAt = now
+			_ = reg.Collect("mem.slabmemory", now, map[string]float64{"active": m.slabTot.ActiveBytes, "total": m.slabTot.TotalBytes})
+			_ = reg.Collect("mem.slab_objects", now, map[string]float64{"active": m.slabTot.ActiveObjs, "total": m.slabTot.TotalObjs})
 		}
 	}
 	if m.haveZswap {

@@ -29,13 +29,25 @@ type systemdConfig struct {
 }
 
 type systemdCollector struct {
-	cfg       systemdConfig
-	hasIO     bool
-	hasCgroup bool
-	hasUnits  bool
-	units     map[string]bool
-	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
+	cfg          systemdConfig
+	hasIO        bool
+	hasCgroup    bool
+	hasUnits     bool
+	units        map[string]bool
+	run          func(ctx context.Context, name string, args ...string) ([]byte, error)
+	scanned      []sdUnit
+	scanAt       time.Time
+	unitAt       time.Time
+	unitCounts   map[string]float64
+	unitRestarts float64
 }
+
+// cgroupWalkEvery is how often the cgroup tree is listed. Per-unit counters
+// are still read every tick; only the directory walk is cached.
+const cgroupWalkEvery = 10 * time.Second
+
+// unitPollEvery is how often systemctl is spawned. Unit state is a gauge.
+const unitPollEvery = 10 * time.Second
 
 func init() {
 	Register("systemd", func() Collector { return &systemdCollector{} })
@@ -150,6 +162,15 @@ func (s *systemdCollector) scan() []sdUnit {
 	return out
 }
 
+func (s *systemdCollector) cachedUnits(now time.Time) []sdUnit {
+	if len(s.scanned) > 0 && !s.scanAt.IsZero() && now.Sub(s.scanAt) < cgroupWalkEvery {
+		return s.scanned
+	}
+	s.scanned = s.scan()
+	s.scanAt = now
+	return s.scanned
+}
+
 func (s *systemdCollector) wanted(name string) bool {
 	for _, p := range s.cfg.Exclude {
 		if globMatch(p, name) {
@@ -182,7 +203,7 @@ func (s *systemdCollector) collectCgroup(reg *registry.Registry, now time.Time) 
 	mem := map[string]float64{}
 	rd := map[string]float64{}
 	wr := map[string]float64{}
-	for _, u := range s.scan() {
+	for _, u := range s.cachedUnits(now) {
 		dimID := sanitizeID(u.name)
 		if !s.units[u.name] {
 			s.units[u.name] = true
@@ -220,23 +241,34 @@ func (s *systemdCollector) collectCgroup(reg *registry.Registry, now time.Time) 
 }
 
 func (s *systemdCollector) collectUnits(ctx context.Context, reg *registry.Registry, now time.Time) {
-	rows, err := s.unitRows(ctx)
-	if err != nil {
+	if s.unitAt.IsZero() || now.Sub(s.unitAt) >= unitPollEvery {
+		rows, err := s.unitRows(ctx)
+		if err != nil {
+			if s.unitCounts == nil {
+				return
+			}
+		} else {
+			counts := map[string]float64{"active": 0, "inactive": 0, "activating": 0, "deactivating": 0, "failed": 0, "other": 0}
+			var restarts float64
+			for _, r := range rows {
+				st := strings.ToLower(r.ActiveState)
+				if _, ok := counts[st]; ok && st != "other" {
+					counts[st]++
+				} else {
+					counts["other"]++
+				}
+				restarts += float64(r.NRestarts)
+			}
+			s.unitCounts = counts
+			s.unitRestarts = restarts
+			s.unitAt = now
+		}
+	}
+	if s.unitCounts == nil {
 		return
 	}
-	counts := map[string]float64{"active": 0, "inactive": 0, "activating": 0, "deactivating": 0, "failed": 0, "other": 0}
-	var restarts float64
-	for _, r := range rows {
-		st := strings.ToLower(r.ActiveState)
-		if _, ok := counts[st]; ok && st != "other" {
-			counts[st]++
-		} else {
-			counts["other"]++
-		}
-		restarts += float64(r.NRestarts)
-	}
-	_ = reg.Collect("systemd.service_units", now, counts)
-	_ = reg.Collect("systemd.service_restarts", now, map[string]float64{"restarts": restarts})
+	_ = reg.Collect("systemd.service_units", now, s.unitCounts)
+	_ = reg.Collect("systemd.service_restarts", now, map[string]float64{"restarts": s.unitRestarts})
 }
 
 // readKV parses "key value" lines (cpu.stat, memory.stat).

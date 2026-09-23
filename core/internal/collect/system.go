@@ -78,16 +78,45 @@ func cpuRaw(t cpu.TimesStat) map[string]float64 {
 	}
 }
 
-func (c *cpuCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	total, err := cpu.TimesWithContext(ctx, false)
-	if err != nil || len(total) == 0 {
-		return fmt.Errorf("cpu times: %w", err)
+func sumCPUTimes(per []cpu.TimesStat) cpu.TimesStat {
+	var t cpu.TimesStat
+	for _, p := range per {
+		t.User += p.User
+		t.System += p.System
+		t.Idle += p.Idle
+		t.Nice += p.Nice
+		t.Iowait += p.Iowait
+		t.Irq += p.Irq
+		t.Softirq += p.Softirq
+		t.Steal += p.Steal
+		t.Guest += p.Guest
+		t.GuestNice += p.GuestNice
 	}
-	if err := reg.Collect("system.cpu", now, cpuRaw(total[0])); err != nil {
+	return t
+}
+
+func (c *cpuCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	// One per-CPU read covers the aggregate. A second total-only read parses
+	// the same /proc/stat (or the same host call) again.
+	per, err := cpu.TimesWithContext(ctx, true)
+	if err != nil || len(per) == 0 {
+		total, err2 := cpu.TimesWithContext(ctx, false)
+		if err2 != nil || len(total) == 0 {
+			if err == nil {
+				err = err2
+			}
+			return fmt.Errorf("cpu times: %w", err)
+		}
+		return reg.Collect("system.cpu", now, cpuRaw(total[0]))
+	}
+	total := per[0]
+	if len(per) > 1 {
+		total = sumCPUTimes(per)
+	}
+	if err := reg.Collect("system.cpu", now, cpuRaw(total)); err != nil {
 		return err
 	}
-	per, err := cpu.TimesWithContext(ctx, true)
-	if err == nil && len(per) > 1 {
+	if len(per) > 1 {
 		for i, t := range per {
 			id := fmt.Sprintf("cpu.cpu%d", i)
 			if _, ok := reg.Chart(id); ok {
@@ -212,14 +241,15 @@ func (c *memCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 		"slab": float64(vm.Slab), "sunreclaim": float64(vm.Sunreclaim), "page_tables": float64(vm.PageTables), "vmalloc_used": float64(vm.VmallocUsed)})
 	_ = reg.Collect("mem.writeback", now, map[string]float64{"dirty": float64(vm.Dirty), "writeback": float64(vm.WriteBack)})
 	_ = reg.Collect("mem.committed", now, map[string]float64{"committed": float64(vm.CommittedAS), "limit": float64(vm.CommitLimit)})
-	if sw, err := mem.SwapMemoryWithContext(ctx); err == nil {
-		_ = reg.Collect("mem.pgfaults", now, map[string]float64{"minor": float64(sw.PgFault), "major": float64(sw.PgMajFault)})
-	}
-	if c.hasSwap {
-		sw, err := mem.SwapMemoryWithContext(ctx)
-		if err != nil {
+	sw, err := mem.SwapMemoryWithContext(ctx)
+	if err != nil {
+		if c.hasSwap {
 			return err
 		}
+		return nil
+	}
+	_ = reg.Collect("mem.pgfaults", now, map[string]float64{"minor": float64(sw.PgFault), "major": float64(sw.PgMajFault)})
+	if c.hasSwap {
 		_ = reg.Collect("mem.swap", now, map[string]float64{"free": float64(sw.Free), "used": float64(sw.Used)})
 		_ = reg.Collect("mem.swapio", now, map[string]float64{"in": float64(sw.Sin), "out": float64(sw.Sout)})
 	}
