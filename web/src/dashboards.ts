@@ -35,6 +35,15 @@ const clock = group('clock', '时钟同步', '对照系统同步状态、Chrony 
 const hardware = group('hardware', '温度与电源', '检查温度、UPS 电池、剩余供电时间与负载，区分系统负载和供电问题。', /^(sensors|apcupsd|upsd|powersupply)\./)
 const files = group('files', '关键文件与目录', '检查已监控文件是否存在、多久没有更新和大小变化；这些指标不证明备份可恢复。', /^filecheck\./)
 
+const virtualization = group('virtualization', '虚拟机与宿主平台', '观察已采集的虚拟机状态、资源与宿主平台连接；平台对象不等同于已安装 Agent 的节点。', /^(libvirt|proxmox|xen|vsphere)\./)
+const proxies = group('proxies', '反向代理与负载均衡', '对照代理连接、请求、错误和后端状态；各代理仅展示已采集指标。', /^(nginx|nginxplus|nginxvts|nginxunit|tengine|haproxy|traefik|envoy)\./)
+const shares = group('shares', '共享存储协议', '观察 NFS 服务端 I/O、回复缓存与 Samba 活动，再对照本机磁盘和网络。', /^(nfs|nfsd|samba)\./)
+const vpn = group('vpn', 'VPN 隧道', '观察 WireGuard 对端握手时间、流量及 OpenVPN 客户端；空闲隧道不一定持续握手。', /^(wireguard|openvpn|openvpn_status_log)\./)
+const mail = group('mail', '邮件队列与收取', '观察 Postfix / Exim 队列与 Dovecot 会话和认证；队列数量不代表最终投递结果。', /^(postfix|exim|dovecot)\./)
+const discovery = group('discovery', '服务发现与协调', '观察 Consul 健康检查与成员、ZooKeeper 状态和请求等待。', /^(consul|zookeeper)\./)
+const identity = group('identity', '目录与认证服务', '观察 OpenLDAP 操作和连接、FreeRADIUS 请求与响应；不展示用户凭据。', /^(openldap|freeradius)\./)
+const devices = group('devices', '网络设备接口', '观察 SNMP 接口状态、吞吐与设备运行时间，结合探测定位链路问题。', /^snmp\.(device_[a-z_]+|trap\.[a-z_]+)(\.|$)/)
+
 export const dashboards: Dashboard[] = [
   { id: 'developer', title: '研发总览', description: '日常巡检：从主机资源到接口和依赖，一屏串起常见排查路径。', category: '通用巡检', groups: [compute, memory, web, database, cache] },
   { id: 'services', title: '接口与网络', description: '接口变慢或访问失败时，对照网关、连接、网络与主机负载。', category: '通用巡检', groups: [web, network, compute] },
@@ -62,6 +71,14 @@ export const dashboards: Dashboard[] = [
   { id: 'clock', title: '时钟同步巡检', category: '运维值班', description: '排查时间漂移、日志时间错位和依赖时间校验的服务异常。', groups: [clock, network], checklist: ['先确认同步状态与偏移量。', '检查 NTP / Chrony 上游延迟与可用来源。', '对照网络异常；无指标时不能判断已经同步。'] },
   { id: 'hardware', title: '硬件与电源巡检', category: '运维值班', description: '检查主机温度、UPS 电源与存储设备状态。', groups: [hardware, storage, compute], checklist: ['先看温度和 UPS 是否转电池供电。', '再看剩余供电时间及存储健康状态。', '对照负载判断是否伴随资源压力。'] },
   { id: 'files', title: '关键文件更新巡检', category: '运维值班', description: '巡检已接入的日志、产物或备份文件是否存在并持续更新。', groups: [files, capacity], checklist: ['确认预期文件或目录存在。', '核对距上次更新的时间与大小变化。', '结合任务计划人工核实；备份还需独立恢复验证。'] },
+  { id: 'virtualization', title: '虚拟化平台', category: '平台服务', description: '虚拟机不可用或资源争用时，联查平台状态和采集节点的主机资源。', groups: [virtualization, compute, memory, disk], checklist: ["先按实例核对虚拟机与平台连接状态。", "对照虚拟机资源和采集节点负载，确认监控对象是否同一宿主机。", "继续检查存储延迟和资源余量，避免跨对象误判。"] },
+  { id: 'proxies', title: '反向代理与负载均衡', category: '平台服务', description: '入口错误或转发变慢时，联查代理、探测和连接压力。', groups: [proxies, probes, connections, certificates], checklist: ["先看哪个代理或后端出现状态、请求或错误变化。", "对照端口和 HTTP 探测，核对目标服务。", "检查连接压力与证书剩余天数，缩小入口故障范围。"] },
+  { id: 'shares', title: 'NFS / Samba 共享存储', category: '平台服务', description: '共享目录访问慢时，联查协议活动、网络、磁盘和空间。', groups: [shares, network, disk, capacity], checklist: ["先确定受影响的共享服务和对应主机。", "对照协议 I/O 与网卡流量、磁盘延迟。", "检查挂载点余量；无数据时不能判断远程挂载健康。"] },
+  { id: 'vpn', title: 'VPN 隧道巡检', category: '平台服务', description: '远程访问异常时，联查 WireGuard / OpenVPN、网络与探测。', groups: [vpn, network, probes], checklist: ["先核对已采集隧道、对端及活跃客户端。", "对照握手距今时间和流量；空闲对端不直接判离线。", "验证目标探测和底层网络，区分隧道与业务故障。"] },
+  { id: 'mail', title: '邮件服务巡检', category: '平台服务', description: '邮件发送积压或收取异常时，联查队列、会话和磁盘空间。', groups: [mail, capacity, network, probes], checklist: ["先看邮件队列是否持续增长及收取会话变化。", "检查磁盘余量、网络与端口探测。", "结合邮件服务日志核实投递结果，不能以队列为空证明投递成功。"] },
+  { id: 'discovery', title: '服务发现与协调', category: '平台服务', description: '服务注册或协调异常时，联查 Consul、ZooKeeper 与网络。', groups: [discovery, network, memory, probes], checklist: ["先看健康检查、成员与服务端状态变化。", "对照请求等待、耗时和连接数。", "检查底层网络和可用内存，并人工核对集群拓扑。"] },
+  { id: 'identity', title: '目录与认证巡检', category: '平台服务', description: '登录或认证请求异常时，联查 LDAP、RADIUS、时间与网络。', groups: [identity, clock, network, probes], checklist: ["先确认 LDAP / RADIUS 连接和请求响应变化。", "核对时钟同步、网络与服务端口探测。", "结合服务日志和权限配置核实原因，指标不直接证明账户被攻击。"] },
+  { id: 'devices', title: '网络设备巡检', category: '平台服务', description: '交换机或路由器链路异常时，联查 SNMP 接口状态、流量与探测。', groups: [devices, probes, network], checklist: ["先按设备和接口核对运行状态及设备重启迹象。", "对照接口流量、陷阱事件和端到端探测。", "确认所选节点网卡是否属于故障路径，避免混淆采集机与设备。"] },
 ]
 
 /** Match semantic contexts, falling back to IDs for collectors without a context. */
