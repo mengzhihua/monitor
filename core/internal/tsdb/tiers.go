@@ -348,19 +348,20 @@ func (t *tier) snapshot(id string, after, before int64) (blocks []blockMeta, mem
 		}
 	}
 	sr.mu.Lock()
-	blocks = make([]blockMeta, 0, len(sr.blocks))
-	for _, b := range sr.blocks {
-		if b.end >= lo && b.start <= before {
-			blocks = append(blocks, b)
-		}
+	blocks = snapshotBlocks(sr.blocks, lo, before)
+	first := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS >= lo })
+	end := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS > before })
+	if first > end {
+		first = end
 	}
-	mem = make([]Bucket, 0, len(sr.done)+1)
-	for _, b := range sr.done {
-		if b.TS >= lo && b.TS <= before {
-			mem = append(mem, b)
-		}
+	haveOpen := sr.open != nil && sr.open.TS >= lo && sr.open.TS <= before
+	capacity := end - first
+	if haveOpen {
+		capacity++
 	}
-	if sr.open != nil && sr.open.TS >= lo && sr.open.TS <= before {
+	mem = make([]Bucket, end-first, capacity)
+	copy(mem, sr.done[first:end])
+	if haveOpen {
 		mem = append(mem, *sr.open)
 	}
 	sr.mu.Unlock()

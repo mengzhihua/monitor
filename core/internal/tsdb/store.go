@@ -255,6 +255,33 @@ func (s *Store) Series() []string {
 	return out
 }
 
+// snapshotBlocks copies only overlapping metadata while the series is locked.
+// Starts are sorted, but ends need not be (e.g. overlapping files on reload),
+// so only the upper bound can use binary search. Count before allocating to
+// avoid reserving space for unrelated history, including gaps between matches.
+func snapshotBlocks(blocks []blockMeta, after, before int64) []blockMeta {
+	hi := sort.Search(len(blocks), func(i int) bool { return blocks[i].start > before })
+	first, count := hi, 0
+	for i := 0; i < hi; i++ {
+		if blocks[i].end >= after {
+			if count == 0 {
+				first = i
+			}
+			count++
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+	out := make([]blockMeta, 0, count)
+	for _, b := range blocks[first:hi] {
+		if b.end >= after {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // Query returns raw points with after <= ts <= before, ascending.
 func (s *Store) Query(id string, after, before int64) ([]Point, error) {
 	if s.opt.Retention > 0 {
@@ -267,17 +294,15 @@ func (s *Store) Query(id string, after, before int64) ([]Point, error) {
 		return nil, nil
 	}
 	sr.mu.Lock()
-	blocks := make([]blockMeta, 0, len(sr.blocks))
-	for _, b := range sr.blocks {
-		if b.end >= after && b.start <= before {
-			blocks = append(blocks, b)
-		}
+	blocks := snapshotBlocks(sr.blocks, after, before)
+	lo := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] >= after })
+	hi := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] > before })
+	if lo > hi {
+		lo = hi
 	}
-	active := make([]Point, 0, len(sr.ts))
-	for i, t := range sr.ts {
-		if t >= after && t <= before {
-			active = append(active, Point{t, sr.vals[i]})
-		}
+	active := make([]Point, hi-lo)
+	for i := range active {
+		active[i] = Point{sr.ts[lo+i], sr.vals[lo+i]}
 	}
 	sr.mu.Unlock()
 
@@ -356,12 +381,7 @@ func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
 		return nil
 	}
 	sr.mu.Lock()
-	blocks := make([]blockMeta, 0, len(sr.blocks))
-	for _, b := range sr.blocks {
-		if b.end >= after && b.start <= before {
-			blocks = append(blocks, b)
-		}
-	}
+	blocks := snapshotBlocks(sr.blocks, after, before)
 	lo := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] >= after })
 	hi := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] > before })
 	if hi > len(sr.vals) {
