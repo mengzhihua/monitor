@@ -40,7 +40,7 @@ let disposed = false
 onBeforeUnmount(() => { disposed = true })
 const canHandle = computed(() => ['admin', 'troubleshooter'].includes(props.role))
 const canSelfAssign = computed(() => snapshot.value?.assignees.some(u => u.name === snapshot.value?.current_user.name))
-const mineCount = computed(() => snapshot.value?.problems.filter(p => p.handling.assignee === snapshot.value?.current_user.name).length || 0)
+const mineCount = computed(() => snapshot.value?.problems.filter(p => !!p.handling.assignee && p.handling.assignee === snapshot.value?.current_user.name).length || 0)
 const refresh = usePolling(async signal => {
   try {
     const next = await api.operations(signal)
@@ -65,7 +65,7 @@ const problems = computed(() => {
   return (snapshot.value?.problems || []).filter(p => (severity.value === 'all' || p.severity === severity.value)
     && (nodeStatus.value === 'all' || p.node_status === nodeStatus.value)
     && (!pendingOnly.value || !p.handling.acknowledged)
-    && (ownerFilter.value === 'all' || (ownerFilter.value === 'mine' && p.handling.assignee === snapshot.value?.current_user.name)
+    && (ownerFilter.value === 'all' || (ownerFilter.value === 'mine' && !!p.handling.assignee && p.handling.assignee === snapshot.value?.current_user.name)
       || (ownerFilter.value === 'unassigned' && !p.handling.assignee) || (ownerFilter.value === 'assigned' && !!p.handling.assignee))
     && (progressFilter.value === 'all' || p.handling.status === progressFilter.value)
     && (!q || `${p.hostname} ${p.node} ${p.name} ${p.chart} ${p.family} ${p.info} ${p.handling.assignee}`.toLowerCase().includes(q)))
