@@ -70,7 +70,7 @@ test('node changes replace preset charts and scope history to the selected node'
     { id: 'remote-test', hostname: 'remote-test', local: false, status: 'live', alarms: {}, charts_count: 1 },
   ] } }))
   await page.route('**/api/v1/charts?node=remote-test', async route => {
-    const response = await route.fetch({ url: 'http://127.0.0.1:19997/api/v1/charts' })
+    const response = await route.fetch({ url: new URL('/api/v1/charts', route.request().url()).toString() })
     const body = await response.json()
     await route.fulfill({ json: { ...body, charts: { 'system.ram': body.charts['system.ram'] } } })
   })
@@ -78,11 +78,13 @@ test('node changes replace preset charts and scope history to the selected node'
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   await expect(page.locator('.dashboards .card .id').first()).toHaveText('system.cpu')
   const history = page.waitForRequest(r => r.url().includes('/api/v1/data?') && new URL(r.url()).searchParams.get('node') === 'remote-test')
-  await page.locator('.node-select').selectOption('remote-test')
+  await page.locator('.node-select-btn').click()
+  await page.getByRole('option', { name: /remote-test/ }).click()
   await expect(page.locator('.dashboards .card .id')).toHaveText(['system.ram'])
   await page.locator('.dashboards .card').scrollIntoViewIfNeeded()
   await history
-  await page.locator('.node-select').selectOption('')
+  await page.locator('.node-select-btn').click()
+  await page.getByRole('option', { name: /local-test/ }).click()
   await expect(page.locator('.dashboards .card .id').first()).toHaveText('system.cpu')
 })
 
