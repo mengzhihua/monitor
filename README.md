@@ -383,6 +383,8 @@ cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 
 `app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址和登录密码 / API token 即可连接，Hub 模式下可切换节点；图表页按 family 分组，仅为屏幕附近的图表加载历史和订阅实时数据，滚动或筛选复用已有 WebSocket（断线 3s 自动重连并补读历史）。切到其他页签时暂停图表轮询和实时连接；1 小时及更长窗口每 30 秒读取聚合历史，不接收逐秒实时点。告警页显示当前告警与最近状态变化；Functions 页调用 `/api/v1/function`（进程/连接/服务/日志等表）。
 
+图表保留缺失样本和断线间隔，孤立有效样本以圆点显示，最新值缺失时图例显示 `-`。历史刷新保留响应时间范围之后收到的实时点；首次读取失败会显示自动重试提示，后续刷新失败则保留已有曲线并显示状态图标。
+
 ```bash
 cd app && flutter pub get
 flutter run -d macos      # 或 linux / windows / <android-device> / <ios-device>

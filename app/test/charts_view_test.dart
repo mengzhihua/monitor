@@ -114,6 +114,82 @@ Set<String> _mountedCharts(WidgetTester tester) => tester
 
 void main() {
   testWidgets(
+    'failed initial history shows an error and a later refresh recovers',
+    (tester) async {
+      final client = _Client(count: 1)..deferHistory = true;
+      addTearDown(client.close);
+      await tester.pumpWidget(_view(client));
+      await _settleCharts(tester);
+      client.requests.single.result.completeError(
+        Exception('history unavailable'),
+      );
+      await _settleCharts(tester);
+      expect(
+        find.text('History unavailable. Retrying automatically.'),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      client.deferHistory = false;
+      await tester.pump(const Duration(seconds: 30));
+      await _settleCharts(tester);
+      final series = tester.widget<ChartCard>(find.byType(ChartCard)).series;
+      expect(series.loaded, isTrue);
+      expect(series.historyFailed, isFalse);
+      expect(
+        find.text('History unavailable. Retrying automatically.'),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'slow and failed refreshes preserve live readings already received',
+    (tester) async {
+      final client = _Client(count: 1)..deferHistory = true;
+      addTearDown(client.close);
+      await tester.pumpWidget(_view(client));
+      await _settleCharts(tester);
+      final time = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      client.requests.single.result.complete(
+        ChartData(
+          dimensionIds: ['value'],
+          rows: [
+            [time.toDouble(), 1],
+          ],
+        ),
+      );
+      await _settleCharts(tester);
+      await tester.pump(const Duration(seconds: 30));
+      await _settleCharts(tester);
+      client.sockets.single.controller.add(
+        LiveSample(chart: 'chart000', t: time + 1, values: {'value': 99}),
+      );
+      await tester.pump();
+      client.requests.last.result.complete(
+        ChartData(
+          dimensionIds: ['value'],
+          rows: [
+            [time.toDouble(), 2],
+          ],
+        ),
+      );
+      await _settleCharts(tester);
+      final series = tester.widget<ChartCard>(find.byType(ChartCard)).series;
+      expect(series.points['value']!.last.y, 99);
+      await tester.pump(const Duration(seconds: 30));
+      await _settleCharts(tester);
+      client.requests.last.result.completeError(
+        Exception('history unavailable'),
+      );
+      await _settleCharts(tester);
+      expect(series.points['value']!.last.y, 99);
+      expect(find.byIcon(Icons.sync_problem), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'removed charts release their subscription and stop history requests',
     (tester) async {
       final client = _Client(count: 1);

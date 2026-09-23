@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../api/models.dart';
+import '../state/chart_series.dart';
 
 /// Chart list grouped by family, with history from `/api/v1/data` and live
 /// updates from the WebSocket for the charts currently on screen.
@@ -184,8 +185,7 @@ class _ChartsViewState extends State<ChartsView> {
         if (series != null &&
             series.window == _windowSeconds &&
             series.loaded) {
-          series.add(sample.t, sample.values);
-          series.notify();
+          if (series.add(sample.t, sample.values)) series.notify();
         }
       },
       onError: (_) => _scheduleReconnect(live),
@@ -259,6 +259,14 @@ class _ChartsViewState extends State<ChartsView> {
     final requestedWindow = _windowSeconds;
     final source = _sourceGeneration;
     final definition = _definition(chart);
+    bool isCurrent() =>
+        mounted &&
+        widget.active &&
+        source == _sourceGeneration &&
+        requestedWindow == _windowSeconds &&
+        identical(_series[chart.id], series) &&
+        _activeCharts.containsKey(chart.id) &&
+        definition == _definition(_activeCharts[chart.id]!);
     try {
       final data = await widget.client.data(
         chart.id,
@@ -266,18 +274,11 @@ class _ChartsViewState extends State<ChartsView> {
         afterSeconds: requestedWindow,
         points: 240,
       );
-      if (!mounted ||
-          !widget.active ||
-          source != _sourceGeneration ||
-          requestedWindow != _windowSeconds ||
-          !identical(_series[chart.id], series) ||
-          !_activeCharts.containsKey(chart.id) ||
-          definition != _definition(_activeCharts[chart.id]!)) {
-        return;
-      }
+      if (!isCurrent()) return;
       series.reset(data, requestedWindow);
     } catch (_) {
       // Preserve samples and retry on the next refresh or viewport entry.
+      if (isCurrent()) series.markHistoryFailed();
     } finally {
       if (identical(_historyRequests[chart.id], request)) {
         _historyRequests.remove(chart.id);
@@ -437,50 +438,6 @@ class _ChartListEntry {
   final List<Chart> charts;
 }
 
-/// Rolling window of points per dimension for one chart.
-class ChartSeries extends ChangeNotifier {
-  ChartSeries(this.chart, this.window);
-
-  Chart chart;
-  int window;
-  bool loaded = false;
-  final Map<String, List<FlSpot>> points = {};
-
-  void reset(ChartData d, int window) {
-    this.window = window;
-    points.clear();
-    for (var i = 0; i < d.dimensionIds.length; i++) {
-      final id = d.dimensionIds[i];
-      final pts = <FlSpot>[];
-      for (final row in d.rows) {
-        final t = row.isEmpty ? null : row[0];
-        final v = i + 1 < row.length ? row[i + 1] : null;
-        if (t != null && v != null) pts.add(FlSpot(t, v));
-      }
-      points[id] = pts;
-    }
-    loaded = true;
-    notifyListeners();
-  }
-
-  void add(int t, Map<String, double> values) {
-    // Long windows are reloaded as 240 server-aggregated points every 30s.
-    // Appending second-resolution samples would grow them without a useful bound.
-    if (window > 1200) return;
-    final cutoff = (t - window).toDouble();
-    for (final e in values.entries) {
-      final pts = points.putIfAbsent(e.key, () => []);
-      if (pts.isNotEmpty && pts.last.x >= t) continue;
-      pts.add(FlSpot(t.toDouble(), e.value));
-      while (pts.isNotEmpty && (pts.first.x < cutoff || pts.length > 1200)) {
-        pts.removeAt(0);
-      }
-    }
-  }
-
-  void notify() => notifyListeners();
-}
-
 class ChartCard extends StatefulWidget {
   const ChartCard({
     super.key,
@@ -544,7 +501,9 @@ class _ChartCardState extends State<ChartCard> {
             final latest = <String, double>{};
             for (final d in dims) {
               final pts = widget.series.points[d.id];
-              if (pts != null && pts.isNotEmpty) latest[d.id] = pts.last.y;
+              if (pts != null && pts.isNotEmpty && pts.last.isNotNull()) {
+                latest[d.id] = pts.last.y;
+              }
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -560,13 +519,29 @@ class _ChartCardState extends State<ChartCard> {
                       ),
                     ),
                     Text(c.units, style: Theme.of(context).textTheme.bodySmall),
+                    if (widget.series.historyFailed &&
+                        (widget.series.loaded || latest.isNotEmpty))
+                      const Tooltip(
+                        message:
+                            'History refresh failed. Retrying automatically.',
+                        child: Padding(
+                          padding: EdgeInsets.only(left: 4),
+                          child: Icon(Icons.sync_problem, size: 16),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 SizedBox(
                   height: 120,
                   child: widget.series.loaded || latest.isNotEmpty
-                      ? LineChart(_lineData(dims))
+                      ? LineChart(_lineData(dims), duration: Duration.zero)
+                      : widget.series.historyFailed
+                      ? const Center(
+                          child: Text(
+                            'History unavailable. Retrying automatically.',
+                          ),
+                        )
                       : const Center(
                           child: SizedBox(
                             width: 18,
@@ -601,7 +576,15 @@ class _ChartCardState extends State<ChartCard> {
     final bars = <LineChartBarData>[];
     for (var i = 0; i < dims.length; i++) {
       final pts = widget.series.points[dims[i].id] ?? const <FlSpot>[];
-      if (pts.length < 2) continue;
+      if (!pts.any((point) => point.isNotNull())) continue;
+      final isolated = <double>{};
+      for (var j = 0; j < pts.length; j++) {
+        if (pts[j].isNotNull() &&
+            (j == 0 || pts[j - 1].isNull()) &&
+            (j == pts.length - 1 || pts[j + 1].isNull())) {
+          isolated.add(pts[j].x);
+        }
+      }
       final color = _palette[i % _palette.length];
       bars.add(
         LineChartBarData(
@@ -609,7 +592,12 @@ class _ChartCardState extends State<ChartCard> {
           color: color,
           barWidth: 1.5,
           isCurved: false,
-          dotData: const FlDotData(show: false),
+          dotData: FlDotData(
+            show: true,
+            checkToShowDot: (spot, _) => isolated.contains(spot.x),
+            getDotPainter: (spot, percent, bar, index) =>
+                FlDotCirclePainter(radius: 2.5, color: color, strokeWidth: 0),
+          ),
           belowBarData: BarAreaData(
             show: stacked || widget.chart.type == 'area',
             color: color.withValues(alpha: 0.25),
