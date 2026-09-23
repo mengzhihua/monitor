@@ -259,7 +259,27 @@ func (f *freebsdCollector) sysctls(ctx context.Context) (map[string]string, erro
 	for _, p := range freebsdSysctlPrefixes {
 		f.mergeSysctl(ctx, m, "-e", p)
 	}
+	if f.read == nil {
+		f.mergeBinaryTCP(ctx, m)
+	}
 	return m, nil
+}
+
+func (f *freebsdCollector) mergeBinaryTCP(ctx context.Context, m map[string]string) {
+	if sysctlHasPrefix(m, "net.inet.tcp.stats.") {
+		return
+	}
+	run := f.run
+	if run == nil {
+		run = execRun(f.cfg.Timeout)
+	}
+	out, err := run(ctx, f.cfg.Command, "-b", "net.inet.tcp.stats")
+	if err != nil || len(out) < 8 {
+		return
+	}
+	for k, v := range decodeTCPStat(out) {
+		m[k] = v
+	}
 }
 
 var freebsdSysctlKeys = []string{

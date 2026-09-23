@@ -387,7 +387,7 @@ Dart API 客户端由 OpenAPI 生成；模型与 Web 端共享一份 `openapi.ya
 
 Go 单元测试与包源码放在一起；Flutter、浏览器和真实进程验收分别由各自工程及 `scripts/` 管理。`dist/`、`reports/`、各工程的 `build/` 与本地数据目录是生成输出，不提交源码库。
 
-早期规划中的 `proto/`、根目录 `api/openapi.yaml`、`packaging/`、`core/mobile/` 和 `cmd/monitorctl/` 尚未落地。当前不为它们创建空目录；后续实现对应能力时再引入。TSDB 当前没有逐样本 WAL，不能将规划中的 WAL 当成现有持久化保证。
+`proto/stream.proto`、`api/openapi.yaml`、`packaging/monitord.service`、`core/mobile` 和 `core/cmd/monitorctl` 已落地。TSDB 在检查点之外写 `wal.v1`，约每秒 fsync；崩溃后重放检查点之后的样本。异常退出的保证是最后一次成功的 WAL sync 或检查点，不是每个样本都 fsync。
 
 ---
 

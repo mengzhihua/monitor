@@ -87,6 +87,7 @@ class MonitordService : Service() {
             return
         }
         val dataDir = File(filesDir, "data").apply { mkdirs() }
+        if (settings.usageStats) UsageSampler.write(this)
         val cfg = File(filesDir, "monitor.yaml")
         cfg.writeText(settings.toYaml(dataDir.absolutePath))
 

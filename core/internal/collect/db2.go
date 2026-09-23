@@ -145,6 +145,11 @@ func (d *db2Collector) status(ctx context.Context) (map[string]float64, error) {
 			return cmd.Output()
 		}
 	}
+	if b, err := queryODBC(ctx, d.cfg.DSN, db2SQL); err == nil {
+		if out := parseDB2KV(b); len(out) > 0 {
+			return out, nil
+		}
+	}
 	target := firstNonEmpty(d.cfg.Database, d.cfg.DSN)
 	b, err := run(ctx, d.cfg.Command, "-x", "-d", target)
 	if err != nil {

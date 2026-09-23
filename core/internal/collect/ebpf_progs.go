@@ -14,6 +14,7 @@ import (
 // otherwise fall back to /proc/vmstat, dentry-state, file-nr, etc.
 
 func (e *ebpfCollector) probeProgSources() {
+	attachTraceKprobes()
 	e.vmstat = firstNonEmpty(e.vmstat, "/proc/vmstat")
 	e.dentry = firstNonEmpty(e.dentry, "/proc/sys/fs/dentry-state")
 	e.filenr = firstNonEmpty(e.filenr, "/proc/sys/fs/file-nr")

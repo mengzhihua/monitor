@@ -470,7 +470,7 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 
 M0–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → 日志/查看器 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
 
-后续可选：真 eBPF CO-RE、profile.plugin 等（见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) §2.7）。
+后续仍不进默认二进制的是带 BTF 的 eBPF CO-RE 重定位，以及 850 个 Prometheus 集成名（继续 `prom.*`）。见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) §2.7。
 
 ## 开发验收
 

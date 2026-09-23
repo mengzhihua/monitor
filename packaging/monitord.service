@@ -1,0 +1,18 @@
+[Unit]
+Description=Monitor agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/monitord -config /etc/monitor/monitor.yaml
+Restart=on-failure
+RestartSec=2
+User=monitor
+Group=monitor
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/monitor
+
+[Install]
+WantedBy=multi-user.target

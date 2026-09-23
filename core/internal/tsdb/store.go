@@ -85,6 +85,7 @@ type Store struct {
 	stop            chan struct{}
 	wg              sync.WaitGroup
 	closed          bool
+	wal             *walLog
 }
 
 func Open(opt Options) (*Store, error) {
@@ -121,6 +122,14 @@ func Open(opt Options) (*Store, error) {
 	if err := s.loadCheckpoint(); err != nil {
 		return nil, err
 	}
+	if err := s.replayWAL(); err != nil {
+		return nil, err
+	}
+	w, err := openWAL(opt.Dir)
+	if err != nil {
+		return nil, err
+	}
+	s.wal = w
 	s.wg.Add(1)
 	go s.loop()
 	return s, nil
@@ -217,6 +226,7 @@ func (s *Store) Append(id string, ts int64, v float64) {
 	}
 	sr.mu.Unlock()
 	s.revision.Add(1)
+	s.walWrite(id, ts, v)
 	s.checkpointMu.RUnlock()
 	// Archiving does not change logical data. A concurrent checkpoint can capture
 	// either side; recovery deduplicates buffers against completed block files.
@@ -360,10 +370,20 @@ func (s *Store) Flush() (flushErr error) {
 		return nil
 	}
 	image := s.checkpointImage()
+	walOff, walErr := s.walSyncSize()
 	s.checkpointMu.Unlock()
+	if walErr != nil {
+		return walErr
+	}
 	if err := s.writeCheckpoint(image); err != nil {
 		return err
 	}
+	s.checkpointMu.Lock()
+	if err := s.walDiscard(walOff); err != nil {
+		s.checkpointMu.Unlock()
+		return err
+	}
+	s.checkpointMu.Unlock()
 	s.flushedRevision = revision
 	return nil
 }
@@ -372,6 +392,8 @@ func (s *Store) loop() {
 	defer s.wg.Done()
 	gc := time.NewTicker(time.Minute)
 	defer gc.Stop()
+	walTick := time.NewTicker(time.Second)
+	defer walTick.Stop()
 	var cp <-chan time.Time
 	if s.opt.Checkpoint > 0 {
 		t := time.NewTicker(s.opt.Checkpoint)
@@ -382,6 +404,10 @@ func (s *Store) loop() {
 		select {
 		case <-s.stop:
 			return
+		case <-walTick.C:
+			if err := s.walSync(); err != nil {
+				s.log.Warn("tsdb: wal sync failed", "err", err)
+			}
 		case <-gc.C:
 			s.enforceRetention()
 			for _, t := range s.tiers {
@@ -474,7 +500,11 @@ func (s *Store) Close() error {
 	s.mu.Unlock()
 	close(s.stop)
 	s.wg.Wait()
-	return s.Flush()
+	err := s.Flush()
+	if s.wal != nil {
+		_ = s.wal.close()
+	}
+	return err
 }
 
 // ---- block file format ----

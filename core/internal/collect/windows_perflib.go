@@ -99,6 +99,9 @@ func (w *windowsCollector) livePerflib(ctx context.Context) (perflibSnap, error)
 	if w.cfg.TypeperfScan {
 		w.scanTypeperf(ctx, s)
 	}
+	if w.cfg.PDH {
+		pdhFill(s)
+	}
 	wmiFillPerflib(s)
 	if s.empty() {
 		return nil, nil

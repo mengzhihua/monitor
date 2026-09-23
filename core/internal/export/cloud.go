@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/mengzhihua/monitor/core/internal/kafka"
 )
 
 // flushKinesis POSTs JSON records to a Kinesis Data Streams / Firehose HTTP
@@ -49,6 +53,13 @@ func (e *Engine) flushPubSub(ctx context.Context, d Destination) error {
 
 // flushKafka POSTs Kafka REST proxy JSON (application/vnd.kafka.json.v2+json).
 func (e *Engine) flushKafka(ctx context.Context, d Destination) error {
+	raw := d.URL
+	if raw == "" {
+		raw = d.Address
+	}
+	if addr, topic, ok := kafka.Broker(raw); ok && !strings.HasPrefix(raw, "http") {
+		return e.flushKafkaProtocol(addr, topic, d)
+	}
 	url := d.URL
 	if url == "" {
 		return fmt.Errorf("kafka: url required")
@@ -64,4 +75,18 @@ func (e *Engine) flushKafka(ctx context.Context, d Destination) error {
 		return err
 	}
 	return e.post(ctx, url, "application/vnd.kafka.json.v2+json", body, d.Headers)
+}
+
+func (e *Engine) flushKafkaProtocol(addr, topic string, d Destination) error {
+	var recs []map[string]any
+	for _, p := range e.snapshot() {
+		recs = append(recs, map[string]any{
+			"host": e.host, "prefix": d.Prefix, "chart": p.chart, "dimension": p.dim, "value": p.value, "timestamp": p.ts,
+		})
+	}
+	body, err := json.Marshal(map[string]any{"records": recs})
+	if err != nil {
+		return err
+	}
+	return kafka.Produce(addr, topic, body, 5*time.Second)
 }

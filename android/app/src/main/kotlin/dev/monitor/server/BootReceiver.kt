@@ -9,6 +9,7 @@ import android.util.Log
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED && Settings(context).startOnBoot) {
+            ReviveWorker.schedule(context)
             // Android 15 forbids dataSync foreground services from BOOT_COMPLETED.
             if (Build.VERSION.SDK_INT >= 35) {
                 Log.i("monitord", "Open Monitor to start monitoring after boot on Android 15+")

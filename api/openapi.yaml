@@ -1,0 +1,80 @@
+openapi: 3.0.3
+info:
+  title: Monitor API
+  version: "1"
+  description: |
+    Agent and Hub HTTP API. The hand-written Flutter client in app/lib/api
+    follows this contract. Authenticated routes take Authorization: Bearer.
+servers:
+  - url: http://127.0.0.1:19999
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: process is serving
+  /api/v1/info:
+    get:
+      summary: Agent or hub identity
+      responses:
+        "200":
+          description: info
+  /api/v1/charts:
+    get:
+      summary: Chart catalog
+      responses:
+        "200":
+          description: charts
+  /api/v1/data:
+    get:
+      summary: Samples for one chart or context
+      parameters:
+        - in: query
+          name: chart
+          schema: {type: string}
+        - in: query
+          name: after
+          schema: {type: integer}
+      responses:
+        "200":
+          description: points
+  /api/v1/alarms:
+    get:
+      summary: Active alarms
+      responses:
+        "200":
+          description: alarms
+  /api/v1/collectors:
+    get:
+      summary: Collector status
+      responses:
+        "200":
+          description: collectors
+  /api/v1/functions:
+    get:
+      summary: On-demand functions
+      responses:
+        "200":
+          description: functions
+  /api/v1/nodes:
+    get:
+      summary: Nodes visible to this process
+      responses:
+        "200":
+          description: nodes
+  /api/v1/hub/spaces:
+    get:
+      summary: Hub spaces
+      responses:
+        "200":
+          description: spaces
+        "404":
+          description: this process is not a hub
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+security:
+  - bearer: []

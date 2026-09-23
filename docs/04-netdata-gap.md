@@ -10,7 +10,7 @@
 ## 0. 现状一句话（M0–M26 已合入 main）
 
 Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用目录已经对齐**。
-计划内批次（M19–M26）均已合入。剩余深度项是 **真 eBPF CO-RE**（可选 CGO build tag）以及文档 §2.7 里明确延后的项。
+计划内批次（M19–M26）均已合入。随后补上的深度项：PerfEventOpen、NETLINK_AUDIT、NFNETLINK nfacct、tracefs kprobe、`bpf(2)` 加载、sd_journal（libsystemd）、ipmi-sensors、ODBC 连接串、Kafka 二进制协议、FreeBSD `tcpstat`、可选 PDH、profile.plugin、逐样本 WAL、mDNS、推送通道、monitorctl、OpenAPI/proto/packaging、Android Hub/UsageStats/WorkManager。真 CO-RE 重定位仍要带 BTF 的 ELF 和 `/sys/kernel/btf/vmlinux`，默认静态二进制不内嵌 clang。850+ Prometheus 名继续走 `prom.*`，不逐个手写。
 
 | 面 | 完成度 | 说明 |
 | --- | --- | --- |
@@ -38,24 +38,24 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 
 | 状态 | Netdata 插件 / 模块 | 我们现在 | 目标 |
 | --- | --- | --- | --- |
-| 近似 | `ebpf.plugin` | **M19** bpftool 库存 + procfs/kprobe_profile 程序族 | 真 kprobe/CO-RE 仍可选 CGO tag |
-| 近似 | `perf.plugin` | **M19** `perf stat` | `PerfEventOpen` 可后续补 |
-| 有 | `debugfs` extfrag / audit | **M19** `mem.extfrag.*`；`auditctl -s` → `audit.backlog` | NETLINK_AUDIT 原生 socket |
+| 有 | `ebpf.plugin` | tracefs kprobe + procfs/kprobe_profile；`bpf(2)` 可加载 socket filter | CO-RE 重定位要 BTF ELF，不进默认二进制 |
+| 有 | `perf.plugin` | Linux `PerfEventOpen`，失败回退 `perf stat` | — |
+| 有 | `debugfs` extfrag / audit | `mem.extfrag.*`；NETLINK_AUDIT，失败回退 `auditctl -s` | — |
 | 有 | `idlejitter.plugin` | **M19** `system.idlejitter` | — |
-| 有 | `nfacct.plugin` | **M19** `nfacct list`；无则保留 nftables | libmnl |
+| 有 | `nfacct.plugin` | NFNETLINK_ACCT，失败回退 `nfacct list` | — |
 | 有 | `apps.plugin` user/group | **M19** `apps.cpu_user` / `apps.cpu_group` 及 mem/processes | — |
-| 近似 | `freeipmi.plugin` | `ipmitool sdr` | 优先 `ipmi-sensors`/`freeipmi`；回退 ipmitool |
+| 有 | `freeipmi.plugin` | 先 `ipmi-sensors`，失败再 `ipmitool sdr` | — |
 
 ### 2.2 日志 / 查看器 / 其它 OS 插件
 
 | 状态 | Netdata | 我们现在 | 目标 |
 | --- | --- | --- | --- |
-| **M20** | `systemd-journal.plugin` | `journalctl -f`（`follow: false` 关闭）+ `-u`/`-p`/`-b`/`--after-cursor` | 真 sd-journal API 仍可选 |
+| **M20** | `systemd-journal.plugin` | `sd_journal_*`（libsystemd，无 CGO）；失败回退 `journalctl -f` | — |
 | **M20** | `windows-events.plugin` | `wevtutil` XPath（游标 / after / before）+ Record Id | 非 Windows 不调用 |
 | **M20** | `macos.plugin` / `macos-logs` | `macos.memory_pressure/swap/thermal_level/battery`；`log show --style json` | 非 Darwin 禁用；powermetrics 不默认跑 |
 | **M20** | `network-viewer.plugin` | `network-connections` 列含 inode、cmdline；解析失败留空 | inode 来自 `/proc/net/*`，其它 OS inode 为空 |
 | **M20** | `systemd-units.plugin` | `systemd.service_units` / `systemd.service_restarts` + Function 状态列 | 无 systemctl 时保留 cgroup 图 |
-| 延后 | `profile.plugin` | — | Agent 自身 CPU/锁剖析（可选，默认关） |
+| 有 | `profile.plugin` | `profile.cpu/memory/goroutines`；Function `profile` 返回 goroutine 栈。`stacks: true` 打开 mutex/block 采样 | — |
 
 ### 2.3 Windows.plugin（Perflib 全家桶）
 
@@ -79,10 +79,10 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 
 | 状态 | 模块 | 说明 |
 | --- | --- | --- |
-| **M23** | ibm.d `db2` / `as400` / `mq` / `websphere` | 合入：CLI/HTTP 便携实现；图表 ID 对齐 `mq.queue.depth`/`mq.qmgr.status`、`db2.bufferpool_hit_ratio`/`db2.log_space`、`as400.memory_pool_usage`。真 ODBC CGO 仍可选后续 |
+| **M23** | ibm.d `db2` / `as400` / `mq` / `websphere` | CLI/HTTP；DSN 含 `Driver=` 或 `DSN=` 时走 libodbc `SQLDriverConnect`。图表 ID 仍是 `mq.queue.depth` / `db2.bufferpool_hit_ratio` / `as400.memory_pool_usage` |
 | **M23** | python.d `pandas` / `go_expvar` / `am2320` | pandas 抓 JSON/CSV 首行（**不** eval Python）；go_expvar `/debug/vars`；am2320 sysfs |
 | **M23** | 容器运行时 | Docker / Podman / 通用 cgroup / k8s 之外：`lxc`、`ecs`、`containerd` |
-| 近似 | Kafka | 导出走 Kafka REST；采集可走 prometheus。原生 broker 协议仅在需要原生 ID 时做 |
+| 有 | Kafka | `kafka://host:9092/topic` 走 Produce/Metadata；`http` URL 仍是 REST。采集器 `kafka.broker.partitions` |
 
 ### 2.6 API / 查询 / ML / Dashboard
 
@@ -101,7 +101,7 @@ M16 骨架 + M22 剩余：sysctl（syscalls / pgfaults / swapio / RAM 明细 / a
 | `testrandom` | 永远跳过 |
 | 850+ Prometheus 集成名 | **M26** 点名 profile 已出原生 ID；其余继续 `prom.*`，不要逐个手写 |
 | charts.d bash 编排器 | 已有 plugins.d；不内嵌 bash 解释器 |
-| 真 CGO eBPF CO-RE | 后续可选 `cilium/ebpf-go` build tag；默认静态二进制仍无 CGO |
+| 真 CO-RE 重定位 | kprobe 与 `bpf(2)` 已接入；BTF ELF 重定位不进默认二进制 |
 | Netdata Cloud SaaS 账号体系 | 用自建 Hub 对等，不对接 netdata.cloud 账号 |
 
 ## 3. 分批计划
@@ -163,7 +163,7 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 ## 4. 本轮之后
 
-M19–M26 计划批次已全部合入。后续可选深度见 §2.7（真 eBPF CO-RE、profile.plugin、Kafka 原生协议等），不再按 MNN 强制排期。
+M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEventOpen、NETLINK、sd_journal、ODBC、WAL、mDNS 与推送通道已补上。仍不手写 850 个 Prometheus 名，也不把 CO-RE/BTF 重定位打进默认静态二进制。详见 §2.7。
 
 ## 4.0 M20（已合入 main）
 

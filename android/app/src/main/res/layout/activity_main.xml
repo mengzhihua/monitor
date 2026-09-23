@@ -89,6 +89,18 @@
             android:layout_marginTop="8dp"
             android:text="@string/start_on_boot" />
 
+        <CheckBox
+            android:id="@+id/hubMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/hub_mode" />
+
+        <CheckBox
+            android:id="@+id/usageStats"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/usage_stats" />
+
         <Button
             android:id="@+id/save"
             style="?attr/materialButtonOutlinedStyle"

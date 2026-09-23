@@ -20,6 +20,7 @@ type windowsConfig struct {
 	Command      string        `yaml:"command"`       // sc.exe for the services function
 	Typeperf     string        `yaml:"typeperf"`      // typeperf.exe for optional Perflib scan
 	TypeperfScan bool          `yaml:"typeperf_scan"` // sequential typeperf -sc 1 (slow; default off)
+	PDH          bool          `yaml:"pdh"`           // PdhOpenQuery instead of WMI for the core counters
 	Timeout      time.Duration `yaml:"timeout"`
 }
 

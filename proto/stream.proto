@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package monitor.stream;
+
+option go_package = "github.com/mengzhihua/monitor/core/internal/stream/pb;pb";
+
+// Frame is the JSON stream envelope (core/internal/stream.Frame) expressed
+// for clients that prefer protobuf. The live agent still speaks JSON.
+message Frame {
+  string type = 1;
+  string version = 2;
+  string protocol = 3;
+  bool claimed = 4;
+  repeated string capabilities = 5;
+  repeated string disabled = 6;
+  map<string, int64> last = 7;
+  int64 replicate_from = 8;
+  string id = 9;
+  string chart = 10;
+  bool replay = 11;
+}

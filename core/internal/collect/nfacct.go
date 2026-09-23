@@ -17,9 +17,10 @@ type nfacctConfig struct {
 }
 
 type nfacctCollector struct {
-	cfg  nfacctConfig
-	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
-	seen map[string]bool
+	cfg     nfacctConfig
+	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
+	seen    map[string]bool
+	netlink bool
 }
 
 func init() {
@@ -50,6 +51,11 @@ func (n *nfacctCollector) Init(reg *registry.Registry) error {
 	if n.run == nil {
 		n.run = execRun(n.cfg.Timeout)
 	}
+	if _, ok := readNfacctNetlink(); ok {
+		n.netlink = true
+		n.seen = map[string]bool{}
+		return nil
+	}
 	raw, err := n.run(context.Background(), n.cfg.Command, "list")
 	if err != nil {
 		return fmt.Errorf("nfacct: unavailable: %w", err)
@@ -62,11 +68,20 @@ func (n *nfacctCollector) Init(reg *registry.Registry) error {
 }
 
 func (n *nfacctCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	raw, err := n.run(ctx, n.cfg.Command, "list")
-	if err != nil {
-		return err
+	var objs []nfacctObj
+	if n.netlink {
+		if got, ok := readNfacctNetlink(); ok {
+			objs = got
+		}
 	}
-	for _, o := range parseNfacct(string(raw)) {
+	if objs == nil {
+		raw, err := n.run(ctx, n.cfg.Command, "list")
+		if err != nil {
+			return err
+		}
+		objs = parseNfacct(string(raw))
+	}
+	for _, o := range objs {
 		id := sanitizeID(o.Name)
 		pkts := "netfilter.nfacct_packets." + id
 		bytes := "netfilter.nfacct_bytes." + id
