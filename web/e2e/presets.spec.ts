@@ -7,7 +7,7 @@ test('built-in dashboards use real charts, filter, range and responsive layout',
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await expect(panel.getByRole('heading', { name: '研发总览', exact: true })).toBeVisible()
-  await expect(panel.locator('.presets button')).toHaveCount(42)
+  await expect(panel.locator('.presets button')).toHaveCount(50)
   await expect(panel.locator('.card .id')).toContainText(['system.cpu', 'system.load', 'system.ram'])
   await panel.locator('.card').first().scrollIntoViewIfNeeded()
   await expect(panel.locator('.card canvas').first()).toBeVisible()
@@ -93,7 +93,7 @@ test('catalog search and categories discover specialized dashboards without chan
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   const search = panel.getByRole('searchbox', { name: '搜索看板样板' })
   await panel.getByRole('button', { name: '数据服务', exact: true }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(6)
+  await expect(panel.locator('.presets button')).toHaveCount(7)
   await search.fill('redis')
   await expect(panel.locator('.presets button')).toHaveCount(1)
   await panel.locator('.presets button').click()
@@ -104,7 +104,7 @@ test('catalog search and categories discover specialized dashboards without chan
   await search.fill('no-such-preset')
   await expect(panel.locator('.presets button')).toHaveCount(0)
   await panel.getByRole('button', { name: '清除样板筛选' }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(42)
+  await expect(panel.locator('.presets button')).toHaveCount(50)
   for (const name of ['MySQL 排障', 'PostgreSQL 排障', 'Redis 缓存', '消息队列', 'Java / Tomcat', '搜索与分析', 'Kubernetes 工作台', 'DNS 与连通性', '存储与磁盘健康', 'GPU 工作台', '服务存活', '日志管道']) {
     await search.fill(name)
     await panel.locator('.presets button').filter({ has: page.getByText(name, { exact: true }) }).click()
@@ -174,7 +174,7 @@ test('platform dashboards match service instances and remain usable without coll
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await panel.getByRole('button', { name: '平台服务', exact: true }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(9)
+  await expect(panel.locator('.presets button')).toHaveCount(11)
   for (const [id, context] of cases) {
     const board = dashboards.find(b => b.id === id)!
     const charts = [
@@ -223,4 +223,36 @@ test('specialist dashboards isolate their primary service and expose runbooks', 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
   expect(errors).toEqual([])
+})
+
+
+test('OS and infrastructure additions select real collector contexts and explain their limits', async ({ page }) => {
+  const { dashboards, chartsForGroup } = await import('../src/dashboards')
+  const cases = [
+    ['windows', 'system.cpu_queue'], ['macos', 'macos.memory_pressure'],
+    ['android', 'android.app_cpu.sample'], ['mssql', 'mssql.blocked_processes'],
+    ['apache', 'apache.workers'], ['iis', 'netframework.clr_exceptions'],
+    ['dhcp', 'dnsmasq_dhcp.dhcp_ranges'], ['wireless', 'ap.issues'],
+  ]
+  await page.goto('/?token=browser-test-token')
+  await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
+  const panel = page.getByLabel('常用聚合看板', { exact: true })
+  await panel.getByRole('button', { name: '操作系统', exact: true }).click()
+  await expect(panel.locator('.presets button')).toHaveCount(3)
+  await panel.getByRole('button', { name: '全部', exact: true }).click()
+  for (const [id, context] of cases) {
+    const board = dashboards.find(b => b.id === id)!
+    const charts = [
+      { id: 'instance', context, priority: 1 },
+      { id: context, context: '', priority: 2 },
+      { id: 'unrelated', context: 'unrelated.' + context, priority: 0 },
+    ] as import('../src/api').Chart[]
+    expect(chartsForGroup(charts, board.groups[0]!).map(c => c.id)).toEqual(['instance', context])
+    await panel.getByRole('searchbox', { name: '搜索看板样板' }).fill(board.title)
+    await panel.locator('.presets button').filter({ has: page.getByText(board.title, { exact: true }) }).click()
+    await expect(panel.getByRole('heading', { name: board.title, exact: true, level: 2 })).toBeVisible()
+    await expect(panel.getByLabel(board.groups[0]!.title, { exact: true })).toContainText('尚未采集')
+    await expect(panel.getByLabel('建议排查顺序').locator('li')).toHaveCount(3)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
 })

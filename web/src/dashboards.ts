@@ -53,6 +53,15 @@ const httpCache = group('http-cache', 'HTTP 缓存代理', '观察 Varnish 命�
 const firewall = group('firewall', '规则计数与封禁', '观察 nftables 计数和 Fail2ban 封禁、失败；不能据此直接判定攻击。', /^fail2ban\./, /^netfilter\.nftables_(packets|bytes)(\.|$)/)
 const bmc = group('bmc', 'IPMI / Redfish 健康', '观察 IPMI 传感器与 Redfish 系统健康，确认被监控服务器归属。', /^(ipmi|redfish)\./)
 
+const windows = group('windows', 'Windows 调度与内核', '查看处理器队列、线程、句柄和内核内存池。', /^system\.(cpu_queue|threads|handles)$/, /^mem\.(system_pool_size|page_faults_breakdown|system_cache)$/)
+const macos = group('macos', 'macOS 内存与温控', '查看内存压力、交换、温控等级与电池采样。', /^macos\./)
+const android = group('android', 'Android 应用采样', '查看已接入应用使用样本中的 CPU 和流量；不代表全部应用。', /^android\./)
+const mssql = group('mssql', 'SQL Server 查询与连接', '查看连接、阻塞进程、批请求、编译和缓冲区命中。', /^mssql\./)
+const apache = group('apache', 'Apache 请求与 Worker', '查看忙闲 Worker、连接、请求和 scoreboard 状态。', /^apache\./)
+const iis = group('iis', 'IIS 与 .NET 运行时', '查看站点请求、应用池、ASP.NET 排队和 CLR 异常与锁争用。', /^(iis|aspnet|netframework)\./)
+const dhcp = group('dhcp', 'DHCP 范围与主机', '查看 dnsmasq DHCP 范围及主机计数，结合 DNS 和网络。', /^dnsmasq_dhcp\./)
+const wireless = group('wireless', '无线接入状态', '查看 AP 客户端、信号、速率、重试及无线丢弃。', /^(ap|wireless)\./)
+
 export const dashboards: Dashboard[] = [
   { id: 'developer', title: '研发总览', description: '日常巡检：从主机资源到接口和依赖，一屏串起常见排查路径。', category: '通用巡检', groups: [compute, memory, web, database, cache] },
   { id: 'services', title: '接口与网络', description: '接口变慢或访问失败时，对照网关、连接、网络与主机负载。', category: '通用巡检', groups: [web, network, compute] },
@@ -96,6 +105,14 @@ export const dashboards: Dashboard[] = [
   { id: 'http-cache', title: 'HTTP 缓存与回源', category: '应用与中间件', description: '观察 Varnish 命中与回源、Squid 请求和错误。', groups: [httpCache, proxies, network, memory], checklist: ["先看缓存命中和请求量是否同时变化。", "核对回源请求、连接失败和网络流量。", "结合缓存规则与源站日志核实原因，指标不代替配置检查。"] },
   { id: 'firewall', title: '防火墙与封禁观察', category: '基础设施', description: '观察 nftables 计数和 Fail2ban 封禁、失败；不能据此直接判定攻击。', groups: [firewall, connections, probes], checklist: ["先确认规则或 jail 对应的业务与目标。", "对照封禁、失败计数和 conntrack 状态。", "核对服务探测与日志，避免将正常流量误判为攻击。"] },
   { id: 'bmc', title: '服务器带外管理', category: '平台服务', description: '观察 IPMI 传感器与 Redfish 系统健康，确认被监控服务器归属。', groups: [bmc, hardware, storage], checklist: ["先核对服务器与传感器的健康状态。", "对照温度、电源和存储设备指标。", "确认指标来自同一服务器；采集机资源不等同于远程服务器资源。"] },
+  { id: 'windows', title: 'Windows 主机', category: '操作系统', description: '查看处理器队列、线程、句柄和内核内存池。', groups: [windows, compute, memory, disk], checklist: ["先看处理器队列与线程、句柄是否持续增长。", "对照内核内存池、分页和磁盘延迟。", "缺少 Perflib 指标时先确认采集权限与计数器，不能据空白判断正常。"] },
+  { id: 'macos', title: 'macOS 主机', category: '操作系统', description: '查看内存压力、交换、温控等级与电池采样。', groups: [macos, compute, memory, apps], checklist: ["先看内存压力和交换使用。", "对照温控等级与 CPU 负载，确认是否伴随资源压力。", "结合应用进程定位来源；台式机或权限不足时可能没有电池数据。"] },
+  { id: 'android', title: 'Android 应用资源', category: '操作系统', description: '查看已接入应用使用样本中的 CPU 和流量；不代表全部应用。', groups: [android, compute, memory, network], checklist: ["先确认应用使用样本覆盖哪些应用。", "对照应用 CPU 和流量变化与主机资源。", "没有应用样本时先核实采集输入，不能视为应用没有活动。"] },
+  { id: 'mssql', title: 'SQL Server 专项', category: '数据服务', description: '查看连接、阻塞进程、批请求、编译和缓冲区命中。', groups: [mssql, disk, memory, compute], checklist: ["先看阻塞进程和连接变化。", "对照批请求、编译与缓冲区命中。", "结合数据库执行计划和等待信息核实原因，当前不展示单条 SQL。"] },
+  { id: 'apache', title: 'Apache 工作线程', category: '应用与中间件', description: '查看忙闲 Worker、连接、请求和 scoreboard 状态。', groups: [apache, probes, compute, memory], checklist: ["先看忙闲 Worker 与连接状态。", "对照请求量、流量和 HTTP 探测。", "结合服务日志核实耗时来源，避免仅增加线程上限。"] },
+  { id: 'iis', title: 'IIS / .NET 应用', category: '应用与中间件', description: '查看站点请求、应用池、ASP.NET 排队和 CLR 异常与锁争用。', groups: [iis, probes, compute, memory], checklist: ["先按站点或应用池定位异常。", "对照 ASP.NET 队列、重启和 CLR 异常、锁等待。", "检查主机资源与应用日志，计数器缺失时先核实采集条件。"] },
+  { id: 'dhcp', title: 'DHCP 与地址分配', category: '平台服务', description: '查看 dnsmasq DHCP 范围及主机计数，结合 DNS 和网络。', groups: [dhcp, dns, network], checklist: ["先核对 DHCP 范围与主机计数是否变化。", "检查 DNS 和网络状态，确认影响范围。", "地址池剩余量和租约冲突需另行核实，当前计数不等于可用地址数。"] },
+  { id: 'wireless', title: '无线 AP 与客户端', category: '平台服务', description: '查看 AP 客户端、信号、速率、重试及无线丢弃。', groups: [wireless, network, probes], checklist: ["先定位受影响 AP 或无线接口。", "对照客户端数、信号、重试和吞吐。", "用端到端探测验证影响；平均信号不能代表每个客户端体验。"] },
 ]
 
 /** Match semantic contexts, falling back to IDs for collectors without a context. */
