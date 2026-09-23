@@ -16,7 +16,8 @@ const catalog = computed(() => {
     && `${b.title} ${b.description} ${b.groups.map(g => g.title).join(' ')}`.toLowerCase().includes(query))
 })
 const coverage = computed(() => {
-  const matched = new Map(dashboards.flatMap(b => b.groups).map(g => [g.id, chartsForGroup(props.charts, g).length]))
+  const uniqueGroups = new Map(dashboards.flatMap(b => b.groups).map(g => [g.id, g]))
+  const matched = new Map([...uniqueGroups.values()].map(g => [g.id, chartsForGroup(props.charts, g).length]))
   return Object.fromEntries(dashboards.map(b => [b.id, b.groups.filter(g => matched.get(g.id)).length]))
 })
 function resetCatalog() { search.value = ''; category.value = '全部' }
@@ -51,6 +52,10 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
     </div>
     <div class="board-heading"><h2>{{ board.title }}</h2><span>{{ available }}/{{ groups.length }} 类指标已采集 · {{ count }} 张图表</span></div>
     <p class="muted">{{ board.description }} 各图保留原始单位；不同指标不混算。</p>
+    <aside v-if="board.checklist" class="runbook" aria-label="建议排查顺序">
+      <b>建议排查顺序</b>
+      <ol><li v-for="step in board.checklist" :key="step">{{ step }}</li></ol>
+    </aside>
     <section v-for="group in groups" :key="group.id" class="board-group" :aria-label="group.title">
       <div class="group-heading"><h3>{{ group.title }}</h3><span>{{ group.filtered.length }} 张图表</span></div>
       <p class="muted">{{ group.hint }}</p>
@@ -84,6 +89,9 @@ button { cursor:pointer; font:inherit; color:#e2e8f0; border:1px solid #334155; 
 .presets button span { font-size:12px; color:#94a3b8; line-height:1.6; }
 .presets button[aria-pressed=true] { border-color:#2dd4bf; background:#102d32; }
 button:focus-visible { outline:2px solid #5eead4; outline-offset:3px; }
+.runbook { background:#0f172a; border-left:3px solid #2dd4bf; border-radius:6px; padding:14px 18px; font-size:13px; }
+.runbook ol { margin:8px 0 0; padding-left:20px; color:#cbd5e1; }
+.runbook li + li { margin-top:6px; }
 .board-group { margin:20px 0; padding-top:16px; border-top:1px solid #1e293b; }
 .board-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); gap:12px; }
 .missing { padding:18px; border:1px dashed #334155; border-radius:8px; color:#94a3b8; font-size:13px; }

@@ -7,7 +7,7 @@ test('built-in dashboards use real charts, filter, range and responsive layout',
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await expect(panel.getByRole('heading', { name: '研发总览', exact: true })).toBeVisible()
-  await expect(panel.locator('.presets button')).toHaveCount(18)
+  await expect(panel.locator('.presets button')).toHaveCount(26)
   await expect(panel.locator('.card .id')).toContainText(['system.cpu', 'system.load', 'system.ram'])
   await panel.locator('.card').first().scrollIntoViewIfNeeded()
   await expect(panel.locator('.card canvas').first()).toBeVisible()
@@ -104,7 +104,7 @@ test('catalog search and categories discover specialized dashboards without chan
   await search.fill('no-such-preset')
   await expect(panel.locator('.presets button')).toHaveCount(0)
   await panel.getByRole('button', { name: '清除样板筛选' }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(18)
+  await expect(panel.locator('.presets button')).toHaveCount(26)
   for (const name of ['MySQL 排障', 'PostgreSQL 排障', 'Redis 缓存', '消息队列', 'Java / Tomcat', '搜索与分析', 'Kubernetes 工作台', 'DNS 与连通性', '存储与磁盘健康', 'GPU 工作台', '服务存活', '日志管道']) {
     await search.fill(name)
     await panel.locator('.presets button').filter({ has: page.getByText(name, { exact: true }) }).click()
@@ -132,4 +132,31 @@ test('specialized groups recognize collector contexts without prefix collisions'
     expect(chartsForGroup(charts, group).map(c => c.id), id).toEqual(['instance-1'])
   }
   expect(new Set(dashboards.map(b => b.id)).size).toBe(dashboards.length)
+})
+
+
+test('operations catalog exposes focused runbooks and accurate collector matching', async ({ page }) => {
+  const { dashboards, chartsForGroup } = await import('../src/dashboards')
+  const cases = [
+    ['oncall', 'ping.loss'], ['saturation', 'system.memory_full_pressure'],
+    ['capacity', 'disk.inodes'], ['tcp', 'netfilter.conntrack_errors'],
+    ['tls', 'httpcheck.cert_expiry'], ['clock', 'system.clock_sync_state'],
+    ['hardware', 'upsd.ups_battery_charge'], ['files', 'filecheck.file_modification_time_ago'],
+  ]
+  await page.goto('/?token=browser-test-token')
+  await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
+  const panel = page.getByLabel('常用聚合看板', { exact: true })
+  await panel.getByRole('button', { name: '运维值班', exact: true }).click()
+  await expect(panel.locator('.presets button')).toHaveCount(8)
+  for (const [id, context] of cases) {
+    const board = dashboards.find(b => b.id === id)!
+    const charts = [{ id: 'instance', context, priority: 1 }, { id: 'other', context: 'unrelated.' + context, priority: 0 }] as import('../src/api').Chart[]
+    expect(chartsForGroup(charts, board.groups[0]!).map(c => c.id)).toEqual(['instance'])
+    await panel.locator('.presets button').filter({ has: page.getByText(board.title, { exact: true }) }).click()
+    await expect(panel.getByRole('heading', { name: board.title, level: 2, exact: true })).toBeVisible()
+    await expect(panel.getByLabel('建议排查顺序').locator('li')).toHaveCount(3)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  const tls = dashboards.find(b => b.id === 'tls')!.groups[0]!
+  expect(chartsForGroup([{ id: 'httpcheck.cert_expiry.production', context: '', priority: 1 }, { id: 'httpcheck.status.production', context: '', priority: 2 }] as import('../src/api').Chart[], tls)).toHaveLength(1)
 })
