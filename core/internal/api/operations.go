@@ -82,6 +82,11 @@ func metricFor(reg *registry.Registry, id, status string, now int64) resourceMet
 		return m
 	}
 	var value float64
+	for _, dimension := range c.Dims() {
+		if _, ok := values[dimension.ID]; !ok {
+			return m
+		}
+	}
 	if id == "system.cpu" {
 		if len(values) == 0 {
 			return m

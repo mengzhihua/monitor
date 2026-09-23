@@ -47,6 +47,15 @@ func TestOperationsMetricsAndCoverage(t *testing.T) {
 	if snap.Nodes[0].Memory.Value != nil {
 		t.Fatal("invalid metric displayed as real value")
 	}
+	reg.AddChart(&registry.Chart{ID: "system.cpu", Dimensions: []*registry.Dimension{{ID: "user"}, {ID: "idle"}}})
+	_ = reg.Collect("system.cpu", now, map[string]float64{"user": 25, "idle": 75})
+	if got := metricFor(reg, "system.cpu", "live", now.Unix()); got.Value == nil || *got.Value != 25 {
+		t.Fatal(got)
+	}
+	_ = reg.Collect("system.cpu", now.Add(time.Second), map[string]float64{"user": 40})
+	if got := metricFor(reg, "system.cpu", "live", now.Unix()+1); got.Value != nil {
+		t.Fatal("partial CPU snapshot reported a percentage")
+	}
 }
 
 func TestOperationsAcknowledgementLifecycleAndRBAC(t *testing.T) {

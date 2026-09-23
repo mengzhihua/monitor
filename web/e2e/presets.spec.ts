@@ -16,7 +16,11 @@ test('built-in dashboards use real charts, filter, range and responsive layout',
   await expect(panel.locator('.card')).toHaveCount(1)
   await Promise.all([
     page.waitForResponse(r => r.url().includes('/api/v1/data?') && r.url().includes('after=-900')),
-    page.locator('.controls select').selectOption('900'),
+    (async () => {
+      await page.locator('.controls select').selectOption('900')
+      // Narrow layouts place the selected chart below the controls; history is lazy.
+      await panel.locator('.card').scrollIntoViewIfNeeded()
+    })(),
   ])
   await page.getByPlaceholder('筛选图表…').fill('')
   const memory = panel.getByLabel('内存与交换', { exact: true })
@@ -67,7 +71,7 @@ test('node changes replace preset charts and scope history to the selected node'
     { id: 'remote-test', hostname: 'remote-test', local: false, status: 'live', alarms: {}, charts_count: 1 },
   ] } }))
   await page.route('**/api/v1/charts?node=remote-test', async route => {
-    const response = await route.fetch({ url: 'http://127.0.0.1:19997/api/v1/charts' })
+    const response = await route.fetch({ url: new URL('/api/v1/charts', route.request().url()).href })
     const body = await response.json()
     await route.fulfill({ json: { ...body, charts: { 'system.ram': body.charts['system.ram'] } } })
   })
