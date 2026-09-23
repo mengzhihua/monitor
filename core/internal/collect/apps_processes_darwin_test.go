@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/shirou/gopsutil/v4/process"
+	"golang.org/x/sys/unix"
 )
 
 func findAppProcess(entries []appProcess, pid int32) *appProcess {
@@ -75,6 +77,15 @@ func TestAppsDarwinSnapshotIdentityAndExit(t *testing.T) {
 	}
 	if _, err := sample.process.MemoryInfoWithContext(ctx); err != nil {
 		t.Fatal(err)
+	}
+	a := &appsCollector{userCache: map[string]string{}, groupCache: map[string]string{}}
+	var owners, portable, fallback pidState
+	sample.readOwners(ctx, a, &owners)
+	a.readPortableOwners(ctx, legacy, &portable)
+	(appProcess{process: legacy}).readOwners(ctx, a, &fallback)
+	if owners.ppid != int32(os.Getpid()) || owners.user == "" || owners.osGroup == "" ||
+		!reflect.DeepEqual(owners, portable) || !reflect.DeepEqual(owners, fallback) {
+		t.Fatal("snapshot parent/user/group differ from the live portable identity")
 	}
 	if err := child.Process.Kill(); err != nil {
 		t.Fatal(err)
@@ -263,6 +274,66 @@ func TestAppsDarwinSnapshotCancellation(t *testing.T) {
 	cancel()
 	if _, err := listAppProcesses(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled snapshot error = %v", err)
+	}
+}
+
+func TestAppsDarwinSnapshotOwners(t *testing.T) {
+	for _, uid := range []uint32{0, 501} {
+		entry := unix.KinfoProc{}
+		entry.Proc.P_pid = 2147483647 // no live PID query can supply this fixture
+		entry.Eproc.Ppid = 42
+		entry.Eproc.Ucred.Uid = uid
+		entry.Eproc.Pcred.P_ruid = 99
+		entry.Eproc.Pcred.P_rgid = 20
+		entry.Eproc.Ucred.Groups[0] = 80
+		p := appProcessFromKinfo(&entry)
+		a := &appsCollector{
+			userCache:  map[string]string{"0": "root_fixture", "501": "user_fixture"},
+			groupCache: map[string]string{"20": "real_group", "80": "effective_group"},
+		}
+		var st pidState
+		p.readOwners(context.Background(), a, &st)
+		want := "user_fixture"
+		if uid == 0 {
+			want = "root_fixture"
+		}
+		if st.ppid != 42 || st.user != want || st.osGroup != "real_group" {
+			t.Fatalf("wrong credential source for uid=%d: %+v", uid, st)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		st = pidState{}
+		p.readOwners(ctx, a, &st)
+		if !reflect.DeepEqual(st, pidState{}) {
+			t.Fatal("canceled read populated owners")
+		}
+	}
+}
+
+func BenchmarkAppsDarwinOwners(b *testing.B) {
+	entries, err := listAppProcesses(context.Background())
+	if err != nil {
+		b.Fatal(err)
+	}
+	p := findAppProcess(entries, int32(os.Getpid()))
+	if p == nil {
+		b.Fatal("own PID missing")
+	}
+	for _, mode := range []string{"legacy", "snapshot"} {
+		b.Run(mode, func(b *testing.B) {
+			a := &appsCollector{userCache: map[string]string{}, groupCache: map[string]string{}}
+			var st pidState
+			p.readOwners(context.Background(), a, &st) // warm shared UID/GID caches
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if mode == "legacy" {
+					a.readPortableOwners(context.Background(), p.process, &st)
+				} else {
+					p.readOwners(context.Background(), a, &st)
+				}
+			}
+		})
 	}
 }
 

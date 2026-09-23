@@ -229,6 +229,38 @@ go test ./internal/collect -run '^$' -bench '^BenchmarkAppsProcessSnapshot/snaps
 
 本轮 Web 类型检查/生产构建、完整 Go vet/race（`-p 1`）、8目标服务端交叉编译通过；补签名后的 Apps 专项 race 测试通过。真实服务最初一轮零失败，但后续加严累计失败断言的复测捕获到 `context deadline exceeded`，不能宣称启动阶段稳定无错误。最终脚本验收共7次采集，启动阶段1次超时、首次完整成功后0次失败，身份/历史/认证验证通过、服务正常退出。默认一秒采集上限下，繁忙主机的冷启动仍可能超时，本轮没有解决这一限制。名称边界、参数不可读、进程退出、取消、命令行分组和身份回退均有回归覆盖。macOS 运行验收在 Intel 上完成，其他系统仅验证编译及可运行的通用测试。本地原始基准保存在忽略目录 `reports/performance-20260923-identity/`。
 
+## 2026-09-23 macOS 冷启动归属查询
+
+延续上一轮进程快照优化，首次发现 PID 时，父 PID、有效 UID、实际 GID 直接从同一次 `kern.proc.all` 快照取得，减少三次逐 PID 查询。UID 使用 `Ucred.Uid`，GID 使用 `Pcred.P_rgid`，与原 gopsutil 路径一致；不能用补充组中的第一项替换实际 GID。成功解析的用户名按 UID 复用，解析失败仍返回不可用且允许后续新 PID 重试；Linux 原有数字 UID 回退和其他平台读取路径保留。新增字段让64位 macOS 的每个快照元素比上一轮再增加8字节。
+
+回归覆盖真实子进程的父 PID/用户/组与旧路径对照、UID 0、实际/有效身份不同、取消、不可用元数据回退及失败解析不污染缓存。`scripts/verify-apps-identity.py --require-clean-startup` 在原有运行检查之外要求启动失败数也为0，并报告从启动到首次观察到完整健康采集的时间；该时间包括 HTTP 轮询与进程发现，不能当作单次采集耗时。
+
+```sh
+make all
+python3 scripts/verify-apps-identity.py --require-clean-startup
+cd core
+go test ./internal/collect -run '^$' -bench '^BenchmarkAppsDarwinOwners$' -benchtime=500ms -benchmem -count=3
+go test ./internal/collect -run '^$' -bench '^BenchmarkAppsDarwinColdCollect$' -benchtime=1x -benchmem -count=3
+```
+
+`BenchmarkAppsDarwinOwners` 使用已解析的 UID/GID 缓存，比较原有逐 PID 路径和快照路径；`BenchmarkAppsDarwinColdCollect` 每次创建新采集器，计时首次全量采集，排除初始化且不设一秒超时，额外报告实际 PID 数。后者使用现场进程列表，同机活动和输入数量可能变化。
+
+Intel macOS，以 `c5f8e62` 为旧版、同一工具链，停止本任务构建后按旧/新交错测量三轮，首次采集每轮一次、列表枚举每项500ms。旧版纳入1108–1112个 PID，新版1109–1111个 PID；下表为三轮中位数：
+
+| 指标 | 旧版 | 新版 |
+| --- | ---: | ---: |
+| 首次全量 Apps 采集耗时 | 453.25 ms | 181.08 ms |
+| 首次采集累计分配字节 | 11,690,072 B | 8,227,664 B |
+| 首次采集分配次数 | 124,554 | 108,111 |
+| 仅枚举进程列表耗时 | 1.926 ms | 1.976 ms |
+| 仅枚举进程列表累计分配字节 | 1,168,410 B | 1,177,222 B |
+
+首次采集耗时约下降60.0%、累计分配字节约下降29.6%；三轮旧版428.91–503.90 ms、新版178.21–215.43 ms。列表额外保留归属 ID 的分配代价也计入结果。UID/GID 缓存已建立时，单进程归属读取局部基准中位数181.63 µs→0.180 µs、15→1次分配；这部分不含首次用户名解析，也不能外推为整个采集器的降幅。
+
+相同内嵌 Web 资源、相同 `-trimpath -s -w` 参数构建两版服务，使用独立临时状态按旧/新交错启动三轮。六轮均通过名称/命令行/父 PID/分组、历史数量2→1、未认证401和正常退出检查；新版三轮以 `--require-clean-startup` 运行，启动和稳定阶段失败数均0，旧版本次也均0。首次观察时的最近一次健康采集耗时旧343/605/283 ms、新109/78/96 ms；观察时间包含启动及HTTP轮询，不能确认该计数器一定来自第一轮。脚本另输出观察时已完成轮数，避免把后续采集误称为首轮。实际启动到观察的时间波动较大，本轮不宣称整体启动时间或常驻内存稳定下降，也不宣称已消除任意高负载下的超时。
+
+Web 类型检查/生产构建、完整 Go vet/race（`-p 1`）、8目标交叉编译均通过。原始基准、两版已测二进制及六轮 JSON（含运行前后核对的 SHA256）保存在本地忽略目录 `reports/performance-20260923-owners/`；运行证据仅覆盖 Intel macOS，其余目标为编译验证。
+
 ## 检查点设计及升级
 
 旧实现每次检查点分别同步每条序列和各层未闭合桶，2000条序列在本机需要249.66秒。新实现复制一致的内存状态后释放采样锁，将原始缓冲区、各层已闭合/未闭合桶合并成一个gzip编码、SHA-256校验的`checkpoint.v1`文件；同步文件、原子替换，再同步目录。磁盘I/O期间仍可采样和查询。写满的数据块保留原有归档格式。

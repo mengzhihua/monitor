@@ -20,6 +20,8 @@ import urllib.request
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path(__file__).resolve().parents[1] / "core/bin/monitord")
+    parser.add_argument("--require-clean-startup", action="store_true",
+                        help="also fail on any collector error before the first healthy collection")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("this check requires macOS; portable collector tests run with go test")
@@ -79,6 +81,7 @@ def main():
                     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(executable)],
                                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                     owned.append(subprocess.Popen([str(executable), "120"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                launched_at = time.monotonic()
                 daemon = subprocess.Popen([str(binary), "-config", str(config), "-data-dir", str(root / "data"),
                                            "-listen", f"127.0.0.1:{port}"], stdout=log, stderr=log)
 
@@ -138,6 +141,7 @@ def main():
 
                 eventually(initialized, "first healthy complete apps collection")
                 startup_failures = initial_status["failures"]
+                startup_elapsed_ms = round((time.monotonic() - launched_at) * 1000)
                 for _ in range(3):
                     current = rows()
                     for name, process in zip(names, owned):
@@ -167,12 +171,17 @@ def main():
                                  if any(kind in line for line in failure_lines)]
                 steady_failures = status["failures"] - startup_failures
                 assert steady_failures == 0, f"apps collector steady failures={steady_failures}; known causes={failure_kinds}"
+                if args.require_clean_startup:
+                    assert startup_failures == 0, f"apps collector startup failures={startup_failures}; known causes={failure_kinds}"
                 stop(daemon)
                 assert daemon.returncode == 0, "unclean daemon exit"
                 print(json.dumps({"identities_verified": len(names), "repeated_samples": 3,
                                   "exit_removal": True, "history_counts": [2, 1], "unauthenticated_status": 401,
                                   "collector_runs": status["runs"], "collector_failures": status["failures"],
                                   "startup_failures": startup_failures, "steady_failures": steady_failures,
+                                  "startup_observed_ms": startup_elapsed_ms,
+                                  "observed_healthy_run_ms": initial_status["last_run_ms"],
+                                  "runs_at_first_observation": initial_status["runs"],
                                   "known_failure_causes": failure_kinds,
                                   "clean_shutdown": True}))
             finally:

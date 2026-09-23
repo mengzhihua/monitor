@@ -5,6 +5,7 @@ package collect
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -12,8 +13,37 @@ import (
 )
 
 type appProcessMetadata struct {
+	ppid  int32
+	uid   uint32
+	gid   uint32
 	comm  [17]byte
 	valid bool
+}
+
+func (p appProcess) readOwners(ctx context.Context, a *appsCollector, st *pidState) {
+	if ctx.Err() != nil {
+		return
+	}
+	if !p.metadata.valid {
+		a.readPortableOwners(ctx, p.process, st)
+		return
+	}
+	st.ppid = p.metadata.ppid
+	st.user = a.lookupUserID(strconv.FormatUint(uint64(p.metadata.uid), 10), "")
+	st.osGroup = a.lookupOSGroup(p.metadata.gid)
+}
+
+func appProcessFromKinfo(entry *unix.KinfoProc) appProcess {
+	return appProcess{
+		metadata: appProcessMetadata{
+			comm: entry.Proc.P_comm, valid: true, ppid: entry.Eproc.Ppid,
+			// Match gopsutil: Username uses the effective UID, while the
+			// first Gids entry is the real GID, not Ucred.Groups[0].
+			uid: entry.Eproc.Ucred.Uid, gid: entry.Eproc.Pcred.P_rgid,
+		},
+		process:   &process.Process{Pid: entry.Proc.P_pid},
+		startedAt: entry.Proc.P_starttime.Sec*1e6 + int64(entry.Proc.P_starttime.Usec),
+	}
 }
 
 func (p appProcess) readIdentity(ctx context.Context) (name, cmdline string, err error) {
@@ -68,15 +98,11 @@ func listAppProcesses(ctx context.Context) ([]appProcess, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		entry := &entries[i].Proc
-		if entry.P_pid <= 0 {
+		entry := &entries[i]
+		if entry.Proc.P_pid <= 0 {
 			continue // gopsutil's existence check also excludes kernel PID 0
 		}
-		out = append(out, appProcess{
-			metadata:  appProcessMetadata{comm: entry.P_comm, valid: true},
-			process:   &process.Process{Pid: entry.P_pid},
-			startedAt: entry.P_starttime.Sec*1e6 + int64(entry.P_starttime.Usec),
-		})
+		out = append(out, appProcessFromKinfo(entry))
 	}
 	return out, nil
 }
