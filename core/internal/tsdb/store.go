@@ -86,6 +86,10 @@ type Store struct {
 	wg              sync.WaitGroup
 	closed          bool
 	wal             *walLog
+	// afterSnapshot runs after a raw block is copied and before that copy is
+	// removed from the active buffer. Tests use it to drop a prefix in that
+	// window. Production leaves it nil.
+	afterSnapshot func(*series)
 }
 
 func Open(opt Options) (*Store, error) {
@@ -495,16 +499,50 @@ func (s *Store) flushSeries(sr *series) error {
 	// Appends can extend the active buffer while this snapshot is being written.
 	ts, vals := append([]int64(nil), sr.ts...), append([]float64(nil), sr.vals...)
 	sr.mu.Unlock()
+	if s.afterSnapshot != nil {
+		s.afterSnapshot(sr)
+	}
 	meta, err := writeBlock(s.seriesDir(sr.id), sr.id, ts, vals)
 	if err != nil {
 		return err
 	}
 	sr.mu.Lock()
 	sr.blocks = append(sr.blocks, meta)
-	sr.ts, sr.vals = sr.ts[len(ts):], sr.vals[len(vals):]
+	// A retention pass can drop a prefix while this block is written. Cutting
+	// by snapshot length then deletes samples that arrived in that window, or
+	// panics when the buffer is shorter. Those samples already advanced
+	// sr.last, so later collections are rejected and last_entry stays put.
+	sr.ts, sr.vals = suffixNewerThan(sr.ts, sr.vals, ts[len(ts)-1])
 	sr.dirty = len(sr.ts) > 0
+	if vis := sr.visibleEndLocked(); sr.last > vis {
+		sr.last = vis
+	}
 	sr.mu.Unlock()
 	return nil
+}
+
+// suffixNewerThan keeps samples strictly after end. ts is ordered ascending.
+func suffixNewerThan(ts []int64, vals []float64, end int64) ([]int64, []float64) {
+	i := sort.Search(len(ts), func(j int) bool { return ts[j] > end })
+	if i > len(vals) {
+		i = len(vals)
+	}
+	return ts[i:], vals[i:]
+}
+
+// visibleEndLocked is the newest timestamp still stored in a block or the
+// active buffer. The caller holds sr.mu.
+func (sr *series) visibleEndLocked() int64 {
+	var end int64
+	for _, b := range sr.blocks {
+		if b.end > end {
+			end = b.end
+		}
+	}
+	if n := len(sr.ts); n > 0 && sr.ts[n-1] > end {
+		end = sr.ts[n-1]
+	}
+	return end
 }
 
 // Flush persists one consistent image of all unfinished raw and rollup blocks.
