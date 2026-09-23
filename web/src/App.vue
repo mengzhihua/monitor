@@ -12,6 +12,7 @@ import WeightsPanel from './components/WeightsPanel.vue'
 import HubPanel from './components/HubPanel.vue'
 import CloudPanel from './components/CloudPanel.vue'
 import ContextsPanel from './components/ContextsPanel.vue'
+import DashboardsPanel from './components/DashboardsPanel.vue'
 
 const info = ref<Info | null>(null)
 const charts = ref<Chart[]>([])
@@ -33,6 +34,7 @@ const showWeights = ref(false)
 const showHub = ref(false)
 const showCloud = ref(false)
 const showContexts = ref(false)
+const dashboardView = ref('all')
 const oidcAvailable = ref(false)
 const nodes = ref<NodeInfo[]>([])
 const selectedNode = ref('')
@@ -261,7 +263,7 @@ onBeforeUnmount(() => { live.stop() })
   </header>
 
   <div class="layout">
-    <nav>
+    <nav v-if="dashboardView === 'all'">
       <a v-for="s in sections" :key="s.name" :href="'#' + s.name" :class="{ active: activeSection === s.name }"
         @click="activeSection = s.name">{{ s.name }} <small>{{ s.charts.length }}</small></a>
       <div class="collectors" v-if="info && !currentNode">
@@ -294,10 +296,10 @@ onBeforeUnmount(() => { live.stop() })
       <AlarmsPanel v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" @close="showAlarms = false" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
-      <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { filter = id; showWeights = false }" />
-      <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { filter = id; showContexts = false }" />
+      <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { dashboardView = 'all'; filter = id; showWeights = false }" />
+      <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
-      <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { filter = id; showCloud = false }" />
+      <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { dashboardView = 'all'; filter = id; showCloud = false }" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>请输入登录密码或访问令牌。</p>
         <p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>
@@ -306,12 +308,19 @@ onBeforeUnmount(() => { live.stop() })
         <button type="submit">进入</button>
         <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
+      <div v-if="info && !needToken" class="view-switch" aria-label="看板视图">
+        <button :aria-pressed="dashboardView === 'all'" @click="dashboardView = 'all'">全部指标</button>
+        <button :aria-pressed="dashboardView === 'presets'" @click="dashboardView = 'presets'">常用聚合看板</button>
+      </div>
+      <DashboardsPanel v-if="info && !needToken && dashboardView === 'presets'" :charts="charts" :window="windowSec" :filter="filter" :node="selectedNode" />
+      <template v-if="dashboardView === 'all'">
       <section v-for="s in sections" :key="s.name" :id="s.name">
         <h2>{{ s.name }}</h2>
         <div class="grid">
           <MetricChart v-for="c in s.charts" :key="c.id" :chart="c" :window="windowSec" />
         </div>
       </section>
+      </template>
       <p v-if="!charts.length && !error && !needToken" class="empty">
         {{ currentNode && currentNode.status === 'offline' ? '节点离线，暂无数据。' : '等待数据…' }}
       </p>
@@ -320,6 +329,9 @@ onBeforeUnmount(() => { live.stop() })
 </template>
 
 <style scoped>
+.view-switch { display:flex; gap:8px; margin-bottom:18px; }
+.view-switch button { background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:8px 16px; cursor:pointer; }
+.view-switch button[aria-pressed=true] { background:#134e4a; border-color:#2dd4bf; color:#ccfbf1; }
 .node-overview { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
 .node-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px; background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:12px; cursor:pointer; }
 .node-card.stale, .node-card.offline { border-color:#f59e0b; }
