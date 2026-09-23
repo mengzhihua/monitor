@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -68,8 +69,20 @@ func TestMaintenancePlanBoundariesOverlapPersistenceAndCancel(t *testing.T) {
 	if reflect.DeepEqual(before, s.Snapshot(1111)) {
 		t.Fatal("snapshot alias")
 	}
-	if info, err := os.Stat(filepath.Join(dir, "maintenance-plans.json")); err != nil || info.Mode().Perm() != 0600 {
-		t.Fatal(info, err)
+	info, err := os.Stat(filepath.Join(dir, "maintenance-plans.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatal("maintenance plans must persist to a regular file", info.Mode())
+	}
+	// Windows does not expose Unix owner-only permission bits through FileMode.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		t.Fatal("maintenance plans must have owner-only permissions", info.Mode())
+	}
+	persisted, err := openMaintenancePlans(dir)
+	if err != nil || !reflect.DeepEqual(reopened.Snapshot(1112), persisted.Snapshot(1112)) {
+		t.Fatal("cancellation contents did not survive restart", err)
 	}
 }
 

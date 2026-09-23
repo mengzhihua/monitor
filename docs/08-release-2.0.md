@@ -1,6 +1,10 @@
-# Monitor 2.0.0 发布说明
+# Monitor 2.0.1 发布说明
 
-本次收口服务端 `monitord` 与内嵌 Web Dashboard 的 2.0.0 版本。Agent、Hub、TSDB 和既有查询接口继续使用；新运维界面位于 Web。Flutter 客户端保持已有功能和独立版本，不把服务端压缩包描述为五端原生客户端安装包。
+本次收口服务端 `monitord` 与内嵌 Web Dashboard 的 2.0.1 版本。Agent、Hub、TSDB 和既有查询接口继续使用；新运维界面位于 Web。Flutter 客户端保持已有功能和独立版本，不把服务端压缩包描述为五端原生客户端安装包。
+
+## 2.0.1 修订说明
+
+2.0.0 的云端 Windows Go 测试发现维护计划权限测试错误地要求 Unix `0600` 位；Windows 使用 ACL，Go 返回的权限位不具备相同含义。2.0.1 保留所有平台的文件存在、普通文件及重启内容校验，仅在支持 Unix 权限的平台断言 `0600`。运行时持久化逻辑不变，Windows 数据目录仍由部署者配置 ACL。旧标签不覆盖，修订版使用新的 `v2.0.1` 标签。
 
 ## 更新内容
 
@@ -57,7 +61,7 @@ make test
 make package-server
 ```
 
-输出位于 `dist/monitor-2.0.0-<提交短 SHA>/`，含 Linux amd64/arm64、macOS amd64/arm64、Windows amd64、FreeBSD amd64/arm64、Android arm64；在 macOS 上附加 Universal 包。`manifest.json` 记录目标及构建来源，`SHA256SUMS` 校验归档内容。只打包明确的二进制与文档白名单，不包含用户数据、真实配置、令牌或本机开发规则。
+输出位于 `dist/monitor-2.0.1-<提交短 SHA>/`，含 Linux amd64/arm64、macOS amd64/arm64、Windows amd64、FreeBSD amd64/arm64、Android arm64；在 macOS 上附加 Universal 包。`manifest.json` 记录目标及构建来源，`SHA256SUMS` 校验归档内容。只打包明确的二进制与文档白名单，不包含用户数据、真实配置、令牌或本机开发规则。
 
 ```sh
 # macOS，在发布目录执行；Linux 可使用 sha256sum -c SHA256SUMS
@@ -68,7 +72,7 @@ shasum -a 256 -c SHA256SUMS
 
 ## 最终组合验收
 
-2026-09-23，在合并主线看板与性能改进后的组合源码上，使用 Intel macOS、Go 1.27.1、Node 24.19.0 和 Flutter 3.35.4 完成：
+2026-09-23，2.0.0 组合源码在合并主线看板与性能改进后完成下列本地验收；2.0.1 再核对版本、维护测试、跨平台包及云端 CI。原始组合验收使用 Intel macOS、Go 1.27.1、Node 24.19.0 和 Flutter 3.35.4 完成：
 
 | 检查 | 结果 |
 | --- | --- |

@@ -1,4 +1,4 @@
-# Monitor 实时监控平台 · 2.0.0
+# Monitor 实时监控平台 · 2.0.1
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
@@ -29,7 +29,7 @@
 
 本轮 Web 看板收尾更新整合中文指标说明、收藏与分组导航、编辑草稿恢复、整个看板统一历史时间、图表放大与采样统计、相邻时段对比及 CSV 导出。个人看板导入先预览内容与当前节点覆盖情况，再勾选保存为副本；保留未采集的图表配置。使用方式及验收范围见 [Web 看板更新说明](docs/09-dashboard-final-update.md)。
 
-本轮交付 **2.0.0 服务端与 Web 正式版本**。运维工作台位于内嵌 Web，原有 Flutter 客户端保持已有功能和独立版本。新增能力、升级与回退步骤、发布包和验证边界见 [2.0.0 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。
+本轮交付 **2.0.1 服务端与 Web 正式版本**。运维工作台位于内嵌 Web，原有 Flutter 客户端保持已有功能和独立版本。新增能力、升级与回退步骤、发布包和验证边界见 [2.0.1 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。
 
 本轮性能与发布收尾将进程快照、历史查询优化与最新看板整合，并补齐跨平台打包依赖和验收入口，详见 [最终整合更新](docs/10-final-integration.md)。
 
@@ -46,7 +46,7 @@
 | [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 54 个常用聚合样板、个人看板配置、中文说明与历史对比 |
 | [docs/09-dashboard-final-update.md](docs/09-dashboard-final-update.md) | Web 看板收尾更新、导入预览与选择、功能范围及验证边界 |
 | [docs/10-final-integration.md](docs/10-final-integration.md) | 性能与发布收尾、升级说明及本轮验证范围 |
-| [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.0 版本说明、离线升级/回退、发布校验和验收边界 |
+| [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始
