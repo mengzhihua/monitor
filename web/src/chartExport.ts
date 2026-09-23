@@ -1,5 +1,5 @@
 import type { Chart } from './api'
-function textCell(value: string): string {
+export function textCell(value: string): string {
   // Spreadsheet programs must treat metric names/IDs as text, never formulas.
   const safe = /^[\s]*[=+@-]/.test(value) ? `'${value}` : value
   return `"${safe.replaceAll('"', '""')}"`

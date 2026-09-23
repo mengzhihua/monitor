@@ -10,6 +10,7 @@ import { metricHelp, dimensionHelp, unitHelp } from '../metricHelp'
 import { chartCSV } from '../chartExport'
 import { historyEnd, localDateTime, summarizeSeries } from '../chartInspection'
 import { activateChart, retainChart } from '../chart_cache'
+import ChartComparison from './ChartComparison.vue'
 
 const props = defineProps<{ chart: Chart; window: number; end?: number | null; detail?: boolean }>()
 
@@ -19,7 +20,10 @@ const zoomed = ref(false)
 const sampleCount = ref(0)
 const snapshotReady = ref(false)
 const loading = ref(false)
+const comparing = ref(false)
+const sampleStep = ref<number | null>(null)
 const anchor = ref<number | null>(props.end ?? null)
+watch(anchor, value => { if (value === null) comparing.value = false })
 const endInput = ref(localDateTime(props.end ?? Math.floor(Date.now()/1000)))
 watch(() => props.end, end => {
   anchor.value = end ?? null
@@ -47,6 +51,11 @@ function moveHistory(direction: number) {
 }
 function freezeTime() { endInput.value = localDateTime(Math.floor(Date.now()/1000)); setHistory() }
 function resumeTime() { anchor.value = null; rangeError.value = ''; endInput.value = localDateTime(Math.floor(Date.now()/1000)) }
+function toggleComparison() {
+  if (comparing.value) { comparing.value = false; return }
+  if (anchor.value === null) freezeTime()
+  if (anchor.value !== null) comparing.value = true
+}
 let dataNode = ''
 const plotHeight = () => props.detail ? Math.max(240, Math.min(560, window.innerHeight * 0.55)) : 180
 async function openDetail() {
@@ -225,6 +234,7 @@ async function load(first = false) {
     })
     sampleCount.value = times.length
     snapshotReady.value = true
+    sampleStep.value = Number.isFinite(d.view_update_every) && d.view_update_every > 0 ? d.view_update_every : null
     dataRevision.value++
   } catch (e) {
     if (disposed || current.signal.aborted || generation !== loadGeneration) return
@@ -316,6 +326,7 @@ function releasePlot() {
   plotDefinition = ''
   times = []; raw = []; dims = []; anomBits = []
   sampleCount.value = 0; snapshotReady.value = false
+  sampleStep.value = null
   dataRevision.value++
   anomaly.value = {}
 }
@@ -404,8 +415,10 @@ watch([() => props.window, defFingerprint, anchor], () => {
       <p v-if="anchor !== null" class="data-note">历史查看已停止自动刷新；当前异常标记不代表历史状态，此处不显示。</p>
       <div class="chart-actions"><button v-if="anchor === null" type="button" @click="freezeTime">固定当前时间</button><button v-else type="button" @click="resumeTime">返回实时</button><button type="button" @click="moveHistory(-1)">上一时段</button><button type="button" :disabled="anchor === null || anchor >= Math.floor(Date.now()/1000)" @click="moveHistory(1)">下一时段</button></div>
       <form @submit.prevent="setHistory"><label>结束时间（本地）<input v-model="endInput" type="datetime-local" step="1" required /></label><button type="submit">查看该时段</button></form>
+      <div class="chart-actions"><button type="button" :aria-pressed="comparing" title="开启对比会固定本次放大查看时间，不改变整个看板；前段为相邻的等长时段。" @click="toggleComparison">{{ comparing ? '关闭时段对比' : '对比上一时段' }}</button></div>
       <p v-if="rangeError" role="alert" class="err">{{ rangeError }}</p>
     </div>
+    <ChartComparison v-if="detail && comparing && anchor !== null && snapshotReady" :chart="chart" :node="dataNode" :end="anchor" :duration="window" :current="summaries" :current-step="sampleStep" />
     <details class="metric-help">
       <summary :title="help">中文指标说明</summary>
       <p>{{ help }}</p>
