@@ -8,7 +8,7 @@ import { changePersonalBoards, readPersonalBoards, readPreferences, preferencesK
 import { decodeDraft, encodeDraft, draftKey, type DashboardDraft } from '../dashboardDraft'
 import MetricChart from './MetricChart.vue'
 
-const props = defineProps<{ charts: Chart[]; window: number; filter: string; node: string }>()
+const props = defineProps<{ charts: Chart[]; window: number; end?: number | null; filter: string; node: string }>()
 const personal = ref<PersonalBoard[]>([])
 const error = ref('')
 const notice = ref('')
@@ -219,7 +219,7 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
       <div v-if="!group.matched.length" class="missing">当前节点尚未采集这类指标。已有采集数据接入后会自动展示，无需配置看板。</div>
       <div v-else-if="!group.filtered.length" class="missing">没有匹配当前筛选条件的图表，请清空或修改顶部筛选。</div>
       <div v-else class="board-grid" :class="settings?.columns ? `columns-${settings.columns}` : ''">
-        <MetricChart v-for="chart in group.visible" :key="node + ':' + chart.id" :chart="chart" :window="effectiveWindow" />
+        <MetricChart v-for="chart in group.visible" :key="node + ':' + chart.id" :chart="chart" :window="effectiveWindow" :end="end" />
       </div>
       <button v-if="group.filtered.length > limit" class="more" @click="expanded = expanded.includes(group.id) ? expanded.filter(id => id !== group.id) : [...expanded, group.id]">
         {{ expanded.includes(group.id) ? '收起' : `展开其余 ${group.filtered.length - limit} 张图表` }}

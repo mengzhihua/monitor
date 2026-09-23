@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from './api'
 import { ApiError, api, auth, selection } from './api'
 import { live } from './live'
@@ -14,10 +14,16 @@ import HubPanel from './components/HubPanel.vue'
 import CloudPanel from './components/CloudPanel.vue'
 import ContextsPanel from './components/ContextsPanel.vue'
 import DashboardsPanel from './components/DashboardsPanel.vue'
+import ChartTimeline from './components/ChartTimeline.vue'
+import { decodeTimeline, encodeTimeline, timelineKey, type ChartTimeline as TimelineState } from './chartTimeline'
 
 const workspace = ref(new URL(location.href).searchParams.get('view') === 'charts' ? 'charts' : 'operations')
 async function drill(node: string, chart: string) {
   await selectNode(node)
+  if (chartEnd.value !== null) {
+    chartEnd.value = null
+    timelineNotice.value = '已返回实时，以查看当前运维问题对应的指标。' + timelineNotice.value
+  }
   filter.value = chart
   workspace.value = 'charts'
   dashboardView.value = 'all'
@@ -29,7 +35,17 @@ const needToken = ref(false)
 const tokenInput = ref('')
 const loginError = ref('')
 const connected = ref(false)
-const windowSec = ref(300)
+let initialTimeline: TimelineState = { window: 300, end: null }
+let timelineReadError = ''
+try { const raw = sessionStorage.getItem(timelineKey); if (raw) initialTimeline = decodeTimeline(raw) }
+catch { timelineReadError = '无法恢复查看时间，已使用实时模式；原始配置未覆盖。' }
+const windowSec = ref(initialTimeline.window)
+const chartEnd = ref<number | null>(initialTimeline.end)
+const timelineNotice = ref(timelineReadError)
+watch([windowSec, chartEnd], () => {
+  try { sessionStorage.setItem(timelineKey, encodeTimeline({ window: windowSec.value, end: chartEnd.value })); timelineNotice.value = '' }
+  catch { timelineNotice.value = '查看时间暂存失败，本次仍可使用；刷新后可能无法恢复。' }
+}, { flush: 'sync' })
 const filter = ref('')
 const activeSection = ref('')
 const alarms = ref<Alarm[]>([])
@@ -347,16 +363,17 @@ onBeforeUnmount(() => {
       </form>
       <OperationsPanel v-if="info && !needToken && workspace === 'operations'" :role="info.user?.role || 'viewer'" @drill="drill" />
       <template v-if="workspace === 'charts'">
+      <ChartTimeline v-if="info && !needToken" :end="chartEnd" :window="windowSec" :notice="timelineNotice" @update:end="value => chartEnd = value" />
       <div v-if="info && !needToken" class="view-switch" aria-label="看板视图">
         <button :aria-pressed="dashboardView === 'all'" @click="dashboardView = 'all'">全部指标</button>
         <button :aria-pressed="dashboardView === 'presets'" @click="dashboardView = 'presets'">常用聚合看板</button>
       </div>
-      <DashboardsPanel v-if="info && !needToken && dashboardView === 'presets'" :charts="charts" :window="windowSec" :filter="filter" :node="selectedNode" />
+      <DashboardsPanel v-if="info && !needToken && dashboardView === 'presets'" :charts="charts" :window="windowSec" :end="chartEnd" :filter="filter" :node="selectedNode" />
       <template v-if="dashboardView === 'all'">
       <section v-for="s in sections" :key="s.name" :id="s.name">
         <h2>{{ s.name }}</h2>
         <div class="grid">
-          <MetricChart v-for="c in s.charts" :key="selectedNode + ':' + c.id" :chart="c" :window="windowSec" />
+          <MetricChart v-for="c in s.charts" :key="selectedNode + ':' + c.id" :chart="c" :window="windowSec" :end="chartEnd" />
         </div>
       </section>
       </template>

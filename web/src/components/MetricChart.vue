@@ -11,7 +11,7 @@ import { chartCSV } from '../chartExport'
 import { historyEnd, localDateTime, summarizeSeries } from '../chartInspection'
 import { activateChart, retainChart } from '../chart_cache'
 
-const props = defineProps<{ chart: Chart; window: number; detail?: boolean }>()
+const props = defineProps<{ chart: Chart; window: number; end?: number | null; detail?: boolean }>()
 
 const dialog = ref<HTMLDialogElement>()
 const zoomButton = ref<HTMLButtonElement>()
@@ -19,8 +19,13 @@ const zoomed = ref(false)
 const sampleCount = ref(0)
 const snapshotReady = ref(false)
 const loading = ref(false)
-const anchor = ref<number | null>(null)
-const endInput = ref(localDateTime(Math.floor(Date.now()/1000)))
+const anchor = ref<number | null>(props.end ?? null)
+const endInput = ref(localDateTime(props.end ?? Math.floor(Date.now()/1000)))
+watch(() => props.end, end => {
+  anchor.value = end ?? null
+  endInput.value = localDateTime(end ?? Math.floor(Date.now()/1000))
+  rangeError.value = ''
+})
 const rangeError = ref('')
 const dataRevision = ref(0)
 const summaries = computed(() => {
@@ -194,6 +199,7 @@ async function load(first = false) {
   const requestedNode = selection.node || 'local'
   const requestedDims = visibleDims()
   try {
+    if (anchor.value !== null && anchor.value-props.window < 1) throw new Error('此结束时间无法容纳当前看板时长，请选择更晚的结束时间。')
     // One bucket per collection period, otherwise slow charts come back as
     // mostly-null 1s rows and uPlot draws nothing between isolated samples.
     const d = await api.data(props.chart.id, anchor.value === null ? -props.window : anchor.value-props.window, anchor.value ?? 0, Math.min(1200, Math.ceil(props.window / step())), current.signal)
@@ -386,6 +392,7 @@ watch([() => props.window, defFingerprint, anchor], () => {
         <span v-if="anchor === null && (anomalous || chart.anomaly)" class="anom">ANOM</span>
       </div>
       <span v-if="stale && anchor === null" class="err" :title="lastSample ? new Date(lastSample * 1000).toLocaleString() : '尚无样本'">{{ lastSample ? '数据过期' : '暂无数据' }}</span>
+      <span v-if="!detail && anchor !== null" class="history-badge" :title="rangeLabel">历史快照</span>
       <span class="units" :title="unitHelp(chart.units)">{{ chart.units }}</span>
     </div>
     <div class="chart-actions">
@@ -414,13 +421,14 @@ watch([() => props.window, defFingerprint, anchor], () => {
     </div>
     <dialog v-if="!detail" ref="dialog" class="chart-dialog" :aria-label="`${chart.title} 放大图表`" @close="closeDetail">
       <div class="dialog-heading"><b>{{ chart.title }}</b><button type="button" autofocus @click="closeDetail">关闭放大图表</button></div>
-      <MetricChart v-if="zoomed" :chart="chart" :window="window" detail />
-      <p class="dialog-note">使用当前节点；历史时段仅作用于本次放大查看，关闭后返回看板。CSV 只包含已加载采样；空白表示缺失，不代表 0。</p>
+      <MetricChart v-if="zoomed" :chart="chart" :window="window" :end="anchor" detail />
+      <p class="dialog-note">使用当前节点；在此窗口调整时间只影响本次放大查看，关闭后恢复看板的查看时间。CSV 只包含已加载采样；空白表示缺失，不代表 0。</p>
     </dialog>
   </div>
 </template>
 
 <style scoped>
+.history-badge { color:#fcd34d; font-size:11px; border:1px solid #a17c26; border-radius:4px; padding:2px 5px; }
 .history-controls { padding:10px; margin:10px 0; background:#111e30; border-radius:8px; } .range-label, .data-note { font-size:12px; line-height:1.6; color:#94a3b8; overflow-wrap:anywhere; } .history-controls form { display:flex; flex-wrap:wrap; align-items:end; gap:8px; } .history-controls label { display:flex; flex-direction:column; gap:4px; font-size:12px; min-width:0; max-width:100%; } .history-controls input { min-width:0; max-width:100%; box-sizing:border-box; padding:5px; background:#0b1120; color:#e2e8f0; border:1px solid #475569; border-radius:4px; color-scheme:dark; } .history-controls form button, .err button { padding:6px 8px; cursor:pointer; }
 .table-scroll { overflow-x:auto; } .sample-summary table { width:100%; border-collapse:collapse; font-size:12px; } .sample-summary th, .sample-summary td { text-align:right; padding:8px; border-bottom:1px solid #334155; white-space:nowrap; } .sample-summary th:first-child { text-align:left; max-width:220px; overflow:hidden; text-overflow:ellipsis; } .table-scroll:focus-visible { outline:2px solid #5eead4; }
 .chart-actions { display:flex; gap:8px; margin:6px 0; } .chart-actions button, .dialog-heading button { cursor:pointer; color:#cbd5e1; background:#172337; border:1px solid #334155; border-radius:6px; padding:4px 8px; font:inherit; font-size:12px; } .chart-actions button:disabled { opacity:.4; cursor:default; }
