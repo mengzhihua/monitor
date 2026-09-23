@@ -206,6 +206,7 @@ exit 0
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); m.Run(ctx) }()
+	defer func() { cancel(); <-done }()
 
 	byName := func() map[string]Status {
 		out := map[string]Status{}
@@ -270,6 +271,7 @@ func TestManagerWatchdogKillsSilentPlugin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); m.Run(ctx) }()
+	defer func() { cancel(); <-done }()
 	waitFor(t, func() bool {
 		s := m.Status()[0]
 		return s.Restarts >= 1 // only the watchdog can end a 30s sleep this fast

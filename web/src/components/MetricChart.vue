@@ -5,12 +5,13 @@ import 'uplot/dist/uPlot.min.css'
 import type { Chart } from '../api'
 import { api } from '../api'
 import { live } from '../live'
+import { pageVisible } from '../visibility'
+import { activateChart, retainChart } from '../chart_cache'
 
 const props = defineProps<{ chart: Chart; window: number }>()
 
 const card = ref<HTMLDivElement>()
 const el = ref<HTMLDivElement>()
-const latest = ref<Record<string, number>>({})
 const error = ref('')
 const clock = ref(Date.now()/1000)
 const lastSample = ref(props.chart.last_entry || 0)
@@ -19,6 +20,8 @@ let loadGeneration = 0
 let disposed = false
 let refreshTimer: number | undefined
 let visible = false
+let inViewport = false
+let request: AbortController | undefined
 let io: IntersectionObserver | null = null
 const anomaly = ref<Record<string, number>>({})
 const anomalous = computed(() => Object.values(anomaly.value).some((v) => v >= 50))
@@ -123,15 +126,19 @@ function makeOpts(width: number): uPlot.Options {
   }
 }
 
-async function load() {
+async function load(first = false) {
+  if (!visible || disposed) return
+  clearTimeout(refreshTimer)
+  request?.abort()
+  const current = request = new AbortController()
   const generation = ++loadGeneration
   error.value = ''
   const requestedDims = visibleDims()
   try {
     // One bucket per collection period, otherwise slow charts come back as
     // mostly-null 1s rows and uPlot draws nothing between isolated samples.
-    const d = await api.data(props.chart.id, -props.window, 0, Math.min(1200, Math.ceil(props.window / step())))
-    if (disposed || generation !== loadGeneration) return
+    const d = await api.data(props.chart.id, -props.window, 0, Math.min(1200, Math.ceil(props.window / step())), current.signal)
+    if (disposed || current.signal.aborted || generation !== loadGeneration) return
     dims = requestedDims
     times = d.result.data.map((r) => r[0] as number)
     const idx = new Map(d.dimension_ids.map((id, i) => [id, i + 1]))
@@ -150,17 +157,13 @@ async function load() {
       const col = idx.get(id)
       return d.result.data.map((r) => (col == null ? null : (r[col] as number | null)))
     })
-    const last = d.result.data.at(-1)
-    if (last) {
-      const lv: Record<string, number> = {}
-      dims.forEach((id) => { const c = idx.get(id); if (c != null && last[c] != null) lv[id] = last[c] as number })
-      latest.value = lv
-    }
   } catch (e) {
-    if (disposed || generation !== loadGeneration) return
+    if (disposed || current.signal.aborted || generation !== loadGeneration) return
     error.value = String(e)
   }
+  request = undefined
   render()
+  scheduleRefresh(first)
 }
 
 function render() {
@@ -168,6 +171,9 @@ function render() {
   const width = el.value.clientWidth || 600
   const definition = [defFingerprint(), ...dims, ...anomBits].join('\u0001')
   if (plot && plotDefinition === definition) {
+    // A resize can happen while hidden, when ResizeObserver deliberately skips
+    // canvas work. Catch up before reusing a cached plot in the foreground.
+    if (plot.width !== width) plot.setSize({ width, height: 180 })
     plot.setData(buildData())
     return
   }
@@ -178,7 +184,6 @@ function render() {
 
 function onLive(t: number, v: Record<string, number>) {
   lastSample.value = Math.max(lastSample.value, t)
-  latest.value = v
   if (props.window > 1200) return // long windows refresh downsampled history; never grow per-second arrays
   if (times.length && t <= times[times.length - 1]!) return
   // a missed collection period becomes a single null so uPlot breaks the line
@@ -193,7 +198,6 @@ function onLive(t: number, v: Record<string, number>) {
     times.shift()
     raw.forEach((r) => r.shift())
   }
-  latest.value = v
   if (!pending) {
     pending = true
     renderFrame = requestAnimationFrame(() => {
@@ -215,52 +219,80 @@ function refreshOffset(id: string) {
 
 function scheduleRefresh(first: boolean) {
   clearTimeout(refreshTimer)
-  refreshTimer = window.setTimeout(async () => {
-    if (!visible || disposed) return
+  if (!visible || disposed) return
+  refreshTimer = window.setTimeout(() => {
     clock.value = Date.now() / 1000
-    await load()
-    if (visible && !disposed) scheduleRefresh(false)
+    void load()
   }, first ? refreshOffset(props.chart.id) : 30000)
+}
+
+function releasePlot() {
+  // Preserve the placeholder height, including the legend, when evicting.
+  if (plot && el.value) el.value.style.minHeight = `${el.value.clientHeight}px`
+  plot?.destroy()
+  plot = null
+  plotDefinition = ''
+  times = []; raw = []; dims = []; anomBits = []
+  anomaly.value = {}
+}
+
+function updateSubscription() {
+  unsub?.()
+  unsub = visible && props.window <= 1200
+    ? live.subscribe(props.chart.id, (m) => onLive(m.t, m.v)) : null
+}
+
+function updateVisibility() {
+  const active = inViewport && pageVisible.value
+  if (active === visible) return
+  visible = active
+  updateSubscription()
+  if (active) {
+    activateChart(releasePlot)
+    clock.value = Date.now() / 1000
+    void load(true)
+  } else {
+    ++loadGeneration
+    request?.abort()
+    request = undefined
+    clearTimeout(refreshTimer)
+    if (renderFrame !== undefined) cancelAnimationFrame(renderFrame)
+    renderFrame = undefined
+    pending = false
+    if (plot) retainChart(releasePlot)
+  }
 }
 
 onMounted(() => {
   io = new IntersectionObserver((entries) => {
-    const inView = entries.some((entry) => entry.isIntersecting)
-    if (inView === visible) return
-    visible = inView
-    if (inView) {
-      clock.value = Date.now() / 1000
-      void load()
-      unsub = live.subscribe(props.chart.id, (m) => onLive(m.t, m.v))
-      scheduleRefresh(true)
-    } else {
-      ++loadGeneration
-      clearTimeout(refreshTimer)
-      unsub?.()
-      unsub = null
-    }
+    inViewport = entries.some((entry) => entry.isIntersecting)
+    updateVisibility()
   }, { rootMargin: '300px 0px' })
   io.observe(card.value!)
-  ro = new ResizeObserver(() => { if (plot && el.value) plot.setSize({ width: el.value.clientWidth, height: 180 }) })
+  ro = new ResizeObserver(() => { if (visible && plot && el.value) plot.setSize({ width: el.value.clientWidth, height: 180 }) })
   ro.observe(el.value!)
 })
 onBeforeUnmount(() => {
   disposed = true
   ++loadGeneration
+  request?.abort()
   clearTimeout(refreshTimer)
   if (renderFrame !== undefined) cancelAnimationFrame(renderFrame)
   io?.disconnect()
   unsub?.()
   ro?.disconnect()
-  plot?.destroy()
-  plot = null
+  activateChart(releasePlot)
+  releasePlot()
 })
-watch(() => props.window, () => { if (visible) void load(); else ++loadGeneration })
+watch(pageVisible, updateVisibility)
 watch(() => props.chart.last_entry, (t) => { lastSample.value = Math.max(lastSample.value, t || 0) })
 /** Anything that feeds makeOpts/buildData/load: a changed definition needs a full reload. */
 const defFingerprint = () =>
   [props.chart.chart_type, props.chart.update_every, props.chart.anomaly ? 1 : 0, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}\u0000${d.anomaly ? 1 : 0}`)].join('\u0001')
-watch(defFingerprint, () => { if (visible) void load(); else ++loadGeneration })
+watch([() => props.window, defFingerprint], () => {
+  updateSubscription()
+  if (visible) void load(); else ++loadGeneration
+})
 </script>
 
 <template>

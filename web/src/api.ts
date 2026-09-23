@@ -127,10 +127,10 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`
-  const r = await fetch(base + path, { headers })
+  const r = await fetch(base + path, { headers, signal })
   if (!r.ok) throw new ApiError(r.status, `${path}: ${r.status} ${await r.text()}`)
   return r.json() as Promise<T>
 }
@@ -171,23 +171,23 @@ function q(params: Record<string, string | number>): string {
 }
 
 export const api = {
-  info: () => get<Info>('/api/v1/info'),
-  nodes: () => get<NodesResponse>('/api/v1/nodes'),
-  charts: () => get<ChartsResponse>(`/api/v1/charts${q({})}`),
-  alarms: () => get<AlarmsResponse>(`/api/v1/alarms${q({ all: 'true' })}`),
-  alarmLog: (after = 0) => get<AlarmLogEntry[]>(`/api/v1/alarm_log${q({ after })}`),
+  info: (signal?: AbortSignal) => get<Info>('/api/v1/info', signal),
+  nodes: (signal?: AbortSignal) => get<NodesResponse>('/api/v1/nodes', signal),
+  charts: (signal?: AbortSignal) => get<ChartsResponse>(`/api/v1/charts${q({})}`, signal),
+  alarms: (signal?: AbortSignal) => get<AlarmsResponse>(`/api/v1/alarms${q({ all: 'true' })}`, signal),
+  alarmLog: (after = 0, signal?: AbortSignal) => get<AlarmLogEntry[]>(`/api/v1/alarm_log${q({ after })}`, signal),
   silence: (body: { all?: boolean; alarm?: string; chart?: string; until?: number; clear?: boolean } = {}) =>
     post<SilenceState>('/api/v1/alarms/silence', body),
   silenceState: () => get<SilenceState>('/api/v1/alarms/silence'),
-  functions: () => get<FunctionInfo[]>(`/api/v1/functions${q({})}`),
-  function: (name: string, args: Record<string, string> = {}) =>
-    get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`),
+  functions: (signal?: AbortSignal) => get<FunctionInfo[]>(`/api/v1/functions${q({})}`, signal),
+  function: (name: string, args: Record<string, string> = {}, signal?: AbortSignal) =>
+    get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`, signal),
   weights: (method = 'anomaly-rate', extra: Record<string, string | number> = {}) =>
     get<WeightsResponse>(`/api/v1/weights${q({ method, ...extra })}`),
-  logs: (args: Record<string, string> = {}) =>
-    get<FunctionResponse>(`/api/v1/logs${q(args)}`),
-  data: (chart: string, after: number, before = 0, points = 0) =>
-    get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`),
+  logs: (args: Record<string, string> = {}, signal?: AbortSignal) =>
+    get<FunctionResponse>(`/api/v1/logs${q(args)}`, signal),
+  data: (chart: string, after: number, before = 0, points = 0, signal?: AbortSignal) =>
+    get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`, signal),
   contexts: () => get<{ contexts: Record<string, { family: string; title: string; units: string; charts: string[]; dimensions: string[]; priority: number }> }>(`/api/v1/contexts${q({})}`),
   alarmSummary: () => get<{ status: Record<string, number>; classes?: Record<string, number> }>(`/api/v1/alarm_summary${q({})}`),
   manageHealth: () => get<{ enabled: boolean; silent: boolean; maintenance: boolean; maint_until?: number }>('/api/v1/manage/health'),

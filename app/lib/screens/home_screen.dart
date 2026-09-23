@@ -15,8 +15,33 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
+  late bool _visible;
+
+  bool _isVisible(AppLifecycleState? state) =>
+      state == null ||
+      state == AppLifecycleState.resumed ||
+      state == AppLifecycleState.inactive;
+
+  @override
+  void initState() {
+    super.initState();
+    _visible = _isVisible(WidgetsBinding.instance.lifecycleState);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final visible = _isVisible(state);
+    if (_visible != visible) setState(() => _visible = visible);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   String? get _nodeParam {
     final st = widget.state;
@@ -35,17 +60,17 @@ class _HomeScreenState extends State<HomeScreen> {
           key: ValueKey('charts:${st.selectedNode}'),
           client: st.client!,
           node: _nodeParam,
-          active: _tab == 0),
+          active: _visible && _tab == 0),
       AlarmsView(
           key: ValueKey('alarms:${st.selectedNode}'),
           client: st.client!,
           node: _nodeParam,
-          active: _tab == 1),
+          active: _visible && _tab == 1),
       FunctionsView(
           key: ValueKey('functions:${st.selectedNode}'),
           client: st.client!,
           node: _nodeParam,
-          active: _tab == 2),
+          active: _visible && _tab == 2),
     ];
     return Scaffold(
       appBar: AppBar(

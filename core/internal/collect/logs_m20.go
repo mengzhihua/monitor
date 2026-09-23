@@ -275,12 +275,48 @@ func queryUnified(q LogQuery) []LogRow {
 	return rows
 }
 
+// Decode only the fields used by LogRow. Unified logging carries extensive
+// nested metadata; generic maps allocate and decode all of it on every sample.
+type unifiedLogRecord struct {
+	Timestamp         string          `json:"timestamp"`
+	EventMessage      string          `json:"eventMessage"`
+	Message           string          `json:"message"`
+	Subsystem         string          `json:"subsystem"`
+	ProcessImagePath  string          `json:"processImagePath"`
+	SenderImagePath   string          `json:"senderImagePath"`
+	ProcessID         json.RawMessage `json:"processID"`
+	ProcessIdentifier json.RawMessage `json:"processIdentifier"`
+	MessageType       string          `json:"messageType"`
+	Type              string          `json:"type"`
+}
+
+func unifiedPID(value json.RawMessage) string {
+	if len(value) == 0 || string(value) == "null" {
+		return ""
+	}
+	if value[0] == '"' {
+		var text string
+		_ = json.Unmarshal(value, &text)
+		return text
+	}
+	return string(value)
+}
+
+func firstNonempty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func parseLogShow(s string, q LogQuery) []LogRow {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil
 	}
-	var objs []map[string]any
+	var objs []unifiedLogRecord
 	if strings.HasPrefix(s, "[") {
 		if err := json.Unmarshal([]byte(s), &objs); err != nil {
 			return nil
@@ -294,7 +330,7 @@ func parseLogShow(s string, q LogQuery) []LogRow {
 				continue
 			}
 			line = strings.TrimSuffix(line, ",")
-			var m map[string]any
+			var m unifiedLogRecord
 			if err := json.Unmarshal([]byte(line), &m); err != nil {
 				continue
 			}
@@ -304,12 +340,12 @@ func parseLogShow(s string, q LogQuery) []LogRow {
 	var rows []LogRow
 	for _, m := range objs {
 		row := LogRow{
-			Message:  firstString(m, "eventMessage", "message"),
-			Unit:     firstString(m, "subsystem", "processImagePath", "senderImagePath"),
-			PID:      firstString(m, "processID", "processIdentifier"),
-			Priority: unifiedPri(firstString(m, "messageType", "type")),
+			Message:  firstNonempty(m.EventMessage, m.Message),
+			Unit:     firstNonempty(m.Subsystem, m.ProcessImagePath, m.SenderImagePath),
+			PID:      firstNonempty(unifiedPID(m.ProcessID), unifiedPID(m.ProcessIdentifier)),
+			Priority: unifiedPri(firstNonempty(m.MessageType, m.Type)),
 		}
-		if ts := firstString(m, "timestamp"); ts != "" {
+		if ts := m.Timestamp; ts != "" {
 			if t, err := time.Parse("2006-01-02 15:04:05.000000-0700", ts); err == nil {
 				row.Time = t.Unix()
 			} else if t, err := time.Parse(time.RFC3339, ts); err == nil {

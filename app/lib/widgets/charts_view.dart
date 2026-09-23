@@ -43,6 +43,10 @@ class _ChartsViewState extends State<ChartsView> {
   Timer? _subscriptionUpdate;
   int _loadGeneration = 0;
   int _sourceGeneration = 0;
+  Future<void>? _loadPending;
+  bool _cacheEvictionScheduled = false;
+  static const _inactiveChartLimit = 12;
+  static const _inactivePointLimit = 12000;
 
   @override
   void initState() {
@@ -61,6 +65,8 @@ class _ChartsViewState extends State<ChartsView> {
         if (widget.active) {
           _load();
         } else {
+          ++_loadGeneration;
+          _loadPending = null;
           _subscriptionUpdate?.cancel();
           _stopLive();
           for (final series in _series.values) {
@@ -72,6 +78,7 @@ class _ChartsViewState extends State<ChartsView> {
     }
     ++_sourceGeneration;
     ++_loadGeneration;
+    _loadPending = null;
     _subscriptionUpdate?.cancel();
     _stopLive();
     _activeCharts.clear();
@@ -100,7 +107,18 @@ class _ChartsViewState extends State<ChartsView> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load() {
+    if (!widget.active) return Future.value();
+    final pending = _loadPending;
+    if (pending != null) return pending;
+    final operation = _readCharts();
+    _loadPending = operation;
+    return operation.whenComplete(() {
+      if (identical(_loadPending, operation)) _loadPending = null;
+    });
+  }
+
+  Future<void> _readCharts() async {
     final generation = ++_loadGeneration;
     try {
       final list = await widget.client.charts(node: widget.node);
@@ -226,6 +244,35 @@ class _ChartsViewState extends State<ChartsView> {
       _series[chart.id]?.loaded = false;
     }
     _queueSubscriptionUpdate();
+    _queueCacheEviction();
+  }
+
+  void _queueCacheEviction() {
+    if (_cacheEvictionScheduled) return;
+    _cacheEvictionScheduled = true;
+    // A detached card removes its AnimatedBuilder listener during this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cacheEvictionScheduled = false;
+      if (!mounted) return;
+      final inactive = _series.keys
+          .where((id) => !_activeCharts.containsKey(id))
+          .toList();
+      var count = inactive.length;
+      var points = inactive.fold<int>(
+        0,
+        (total, id) => total + _series[id]!.retainedPointCount,
+      );
+      for (final id in inactive) {
+        if (count <= _inactiveChartLimit && points <= _inactivePointLimit) {
+          break;
+        }
+        final series = _series.remove(id)!;
+        _historyRequests.remove(id);
+        points -= series.retainedPointCount;
+        count--;
+        series.dispose();
+      }
+    });
   }
 
   void _refreshActiveHistory() {
@@ -235,10 +282,10 @@ class _ChartsViewState extends State<ChartsView> {
   }
 
   ChartSeries _seriesFor(Chart chart) {
-    final series = _series.putIfAbsent(
-      chart.id,
-      () => ChartSeries(chart, _windowSeconds),
-    );
+    // Map insertion order is the cache's least-recently-used order.
+    final series =
+        _series.remove(chart.id) ?? ChartSeries(chart, _windowSeconds);
+    _series[chart.id] = series;
     if (_definition(series.chart) != _definition(chart)) series.loaded = false;
     series.chart = chart;
     return series;
@@ -276,6 +323,7 @@ class _ChartsViewState extends State<ChartsView> {
       );
       if (!isCurrent()) return;
       series.reset(data, requestedWindow);
+      _queueCacheEviction();
     } catch (_) {
       // Preserve samples and retry on the next refresh or viewport entry.
       if (isCurrent()) series.markHistoryFailed();

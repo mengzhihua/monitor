@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -300,14 +301,16 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 		"NETDATA_UPDATE_EVERY="+strconv.Itoa(p.spec.UpdateEvery), // many existing plugins read this
 	)
 	cmd.Env = append(cmd.Env, p.spec.Env...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	// Let exec own the OS-pipe copying goroutines. StdoutPipe/StderrPipe
+	// cannot be read concurrently with Wait: Wait closes their read ends as
+	// soon as the process exits, potentially discarding buffered protocol data.
+	stdout, outWriter := io.Pipe()
+	stderr, errWriter := io.Pipe()
+	defer stdout.Close()
+	defer stderr.Close()
+	defer outWriter.Close()
+	defer errWriter.Close()
+	cmd.Stdout, cmd.Stderr = outWriter, errWriter
 	cmd.Stdin = nil
 	cmd.WaitDelay = 3 * time.Second // then force-close pipes held open by orphaned children
 	setProcAttr(cmd)
@@ -325,6 +328,7 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 
 	// stderr → log
 	go func() {
+		defer stderr.Close()
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 0, 4096), 64<<10)
 		for sc.Scan() {
@@ -354,13 +358,19 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 		}
 	}()
 
-	// Wait runs concurrently so WaitDelay can unblock the stdout reader when
-	// the process is gone but a child still holds the pipe.
+	// Wait drains the exec copying goroutines before we signal EOF to the
+	// parser. WaitDelay still bounds OS pipes held open by orphaned children.
 	waitc := make(chan error, 1)
-	go func() { waitc <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		_ = outWriter.Close()
+		_ = errWriter.Close()
+		waitc <- err
+	}()
 
 	p.parser.touch()
 	perr := p.parser.Run(stdout)
+	_ = stdout.Close() // DISABLE/EXIT must also unblock an active copying writer.
 	cancel()
 	<-wdDone
 	werr := <-waitc

@@ -1,19 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { Alarm, AlarmLogEntry, SilenceState } from '../api'
 import { api } from '../api'
+import { usePolling } from '../polling'
 
 const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[] }>()
 const emit = defineEmits<{ close: [] }>()
 const silence = ref<SilenceState>({ all: false, alarms: {} })
 const now = ref(Math.floor(Date.now() / 1000))
-let tick = 0
-
-onMounted(() => {
-  void refreshSilence()
-  tick = window.setInterval(() => { now.value = Math.floor(Date.now() / 1000) }, 1000)
-})
-onBeforeUnmount(() => clearInterval(tick))
+onMounted(() => { void refreshSilence() })
+usePolling(async () => { now.value = Math.floor(Date.now() / 1000) }, 1000)
 
 async function refreshSilence() {
   try { silence.value = await api.silenceState() } catch { /* token / role */ }

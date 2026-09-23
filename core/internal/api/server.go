@@ -420,8 +420,11 @@ func (s *Server) handleCharts(w http.ResponseWriter, r *http.Request) {
 	}
 	charts := v.reg.Charts()
 	out := make(map[string]any, len(charts))
+	// A snapshot scans all tracked dimensions. Share it across this response
+	// instead of repeating the scan for every chart.
+	anom, src := s.anomalies(), s.anomaly()
 	for _, c := range charts {
-		out[c.ID] = s.chartJSON(c, v.db)
+		out[c.ID] = chartJSON(c, v.db, anom, src)
 	}
 	writeJSON(w, map[string]any{"node": v.id, "hostname": v.hostname, "update_every": v.reg.Host.UpdateEvery, "charts_count": len(charts), "charts": out})
 }
@@ -434,28 +437,18 @@ func (s *Server) anomalies() map[string]bool {
 	return nil
 }
 
-func (s *Server) chartJSON(c *registry.Chart, db tsdb.Reader) map[string]any {
-	var first, last int64
+func chartJSON(c *registry.Chart, db tsdb.Reader, anom map[string]bool, src health.AnomalySource) map[string]any {
 	dims := c.Dims()
-	anom := s.anomalies()
+	first, last := chartBounds(c.ID, dims, db)
 	dimOut := make([]map[string]any, 0, len(dims))
 	anomalous := false
 	for _, d := range dims {
-		f, l, ok := db.Bounds(registry.SeriesID(c.ID, d.ID))
-		if ok {
-			if first == 0 || f < first {
-				first = f
-			}
-			if l > last {
-				last = l
-			}
-		}
 		m := map[string]any{"id": d.ID, "name": d.Name, "algorithm": d.Algorithm, "multiplier": d.Multiplier, "divisor": d.Divisor, "hidden": d.Hidden}
 		if anom[registry.SeriesID(c.ID, d.ID)] {
 			m["anomaly"] = true
 			anomalous = true
 		}
-		if src := s.anomaly(); src != nil {
+		if src != nil {
 			if r, ok := src.Rate(c.ID, d.ID); ok {
 				m["dimension_anomaly"] = r
 				if r >= 50 {
@@ -474,6 +467,22 @@ func (s *Server) chartJSON(c *registry.Chart, db tsdb.Reader) map[string]any {
 	}
 }
 
+func chartBounds(chart string, dims []*registry.Dimension, db tsdb.Reader) (first, last int64) {
+	for _, d := range dims {
+		f, l, ok := db.Bounds(registry.SeriesID(chart, d.ID))
+		if !ok {
+			continue
+		}
+		if first == 0 || f < first {
+			first = f
+		}
+		if l > last {
+			last = l
+		}
+	}
+	return first, last
+}
+
 func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.target(w, r)
 	if !ok {
@@ -484,7 +493,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chart not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, s.chartJSON(c, v.db))
+	writeJSON(w, chartJSON(c, v.db, s.anomalies(), s.anomaly()))
 }
 
 // parseTime accepts unix seconds or a relative offset (negative = seconds
@@ -602,6 +611,7 @@ type ctxInfo struct {
 
 func (s *Server) contextsPayload(v *view, api int) map[string]any {
 	out := map[string]*ctxInfo{}
+	seenDimensions := map[string]map[string]bool{}
 	for _, c := range v.reg.Charts() {
 		ctx := c.Context
 		if ctx == "" {
@@ -612,25 +622,27 @@ func (s *Server) contextsPayload(v *view, api int) map[string]any {
 			info = &ctxInfo{Family: c.Family, Title: c.Title, Units: c.Units, ChartType: string(c.Type),
 				Priority: c.Priority, Plugin: c.Plugin}
 			out[ctx] = info
+			seenDimensions[ctx] = map[string]bool{}
 		}
 		info.Charts = append(info.Charts, c.ID)
 		if c.Priority < info.Priority {
 			info.Priority = c.Priority
 		}
-		seen := map[string]bool{}
-		for _, d := range info.Dimensions {
-			seen[d] = true
-		}
-		for _, d := range c.Dims() {
+		seen := seenDimensions[ctx]
+		dims := c.Dims()
+		for _, d := range dims {
 			if !seen[d.ID] {
 				info.Dimensions = append(info.Dimensions, d.ID)
+				seen[d.ID] = true
 			}
 		}
-		meta := s.chartJSON(c, v.db)
-		if fe, _ := meta["first_entry"].(int64); fe > 0 && (info.FirstEntry == 0 || fe < info.FirstEntry) {
+		// Contexts only expose series bounds; avoid building per-dimension JSON
+		// and taking ML snapshots that would immediately be discarded.
+		fe, le := chartBounds(c.ID, dims, v.db)
+		if fe > 0 && (info.FirstEntry == 0 || fe < info.FirstEntry) {
 			info.FirstEntry = fe
 		}
-		if le, _ := meta["last_entry"].(int64); le > info.LastEntry {
+		if le > info.LastEntry {
 			info.LastEntry = le
 		}
 	}

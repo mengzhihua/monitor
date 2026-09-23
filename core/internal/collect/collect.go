@@ -256,8 +256,8 @@ func (s *Scheduler) SetEnabled(name string, on bool) bool {
 		r.opMu.Lock()
 		defer r.opMu.Unlock()
 		r.mu.Lock()
-		defer r.mu.Unlock()
 		if r.desired == on {
+			r.mu.Unlock()
 			return true
 		}
 		r.desired = on
@@ -266,11 +266,15 @@ func (s *Scheduler) SetEnabled(name string, on bool) bool {
 		r.retryAt = time.Time{}
 		r.backoff = 0
 		r.configFailed = false
-		if !on && r.initialized {
+		stop := !on && r.initialized
+		if stop {
+			r.initialized = false
+		}
+		r.mu.Unlock()
+		if stop {
 			if st, ok := r.c.(Stopper); ok {
 				st.Stop()
 			}
-			r.initialized = false
 		}
 		return true
 	}
@@ -281,27 +285,42 @@ func (s *Scheduler) SetEnabled(name string, on bool) bool {
 // The caller holds opMu; disabled modules are never probed automatically.
 func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if !r.desired || r.configFailed {
+		r.mu.Unlock()
 		return false
 	}
 	if r.initialized {
+		r.mu.Unlock()
 		return true
 	}
 	if now.Before(r.retryAt) {
+		r.mu.Unlock()
 		return false
 	}
-	r.c = r.factory()
-	r.functions = nil
-	err := configure(r.c, r.decode)
-	r.configFailed = err != nil
+	r.mu.Unlock()
+	// opMu keeps lifecycle changes serial while dependency probes run. Never
+	// hold the metadata mutex across network/command I/O: Status and Functions
+	// must remain readable even when a retry takes the full probe timeout.
+	c := r.factory()
+	err := configure(c, r.decode)
+	configFailed := err != nil
 	if err == nil {
-		err = r.c.Init(s.reg)
+		err = c.Init(s.reg)
 	}
+	var functions []Function
 	if err != nil {
-		if st, ok := r.c.(Stopper); ok {
+		if st, ok := c.(Stopper); ok {
 			st.Stop()
 		}
+	} else if fp, ok := c.(FunctionProvider); ok {
+		functions = fp.Functions()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.c = c
+	r.functions = functions
+	r.configFailed = configFailed
+	if err != nil {
 		r.status.Error = err.Error()
 		r.status.Enabled = false
 		if r.backoff == 0 {
@@ -317,9 +336,6 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	}
 	r.initialized = true
 	r.status.Enabled = true
-	if fp, ok := r.c.(FunctionProvider); ok {
-		r.functions = fp.Functions()
-	}
 	r.status.Error = ""
 	r.backoff = 0
 	return true

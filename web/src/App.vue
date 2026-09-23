@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from './api'
 import { ApiError, api, auth, selection } from './api'
 import { live } from './live'
+import { usePolling } from './polling'
 import MetricChart from './components/MetricChart.vue'
 import AlarmsPanel from './components/AlarmsPanel.vue'
 import FunctionsPanel from './components/FunctionsPanel.vue'
@@ -73,10 +74,12 @@ const sections = computed(() => {
     .sort((a, b) => a.charts[0]!.priority - b.charts[0]!.priority)
 })
 
-async function refreshNodes() {
+async function refreshNodes(signal: AbortSignal) {
   if (!isHub.value) return
   try {
-    nodes.value = (await api.nodes()).nodes
+    const result = await api.nodes(signal)
+    if (signal.aborted) return
+    nodes.value = result.nodes
     if (selectedNode.value && !nodes.value.some((n) => n.id === selectedNode.value)) await selectNode('')
   } catch { /* transient */ }
 }
@@ -97,13 +100,14 @@ async function selectNode(id: string) {
   if (!needToken.value) live.restart()
 }
 
-async function refresh() {
+async function load(signal: AbortSignal) {
   const node = selectedNode.value
   try {
-    const [i, c] = await Promise.all([api.info(), api.charts()])
+    const [i, c] = await Promise.all([api.info(signal), api.charts(signal)])
+    if (signal.aborted) return
     info.value = i
-    await refreshNodes()
-    if (selectedNode.value !== node) return // switched while in flight; a newer refresh owns the state
+    await refreshNodes(signal)
+    if (signal.aborted || selectedNode.value !== node) return // switched while in flight; a newer refresh owns the state
     const list = Object.values(c.charts)
     // keep object identity stable so chart components don't remount
     const byId = new Map(charts.value.map((x) => [x.id, x]))
@@ -114,8 +118,9 @@ async function refresh() {
     })
     error.value = ''
     needToken.value = false
-    await Promise.all([refreshAlarms(), refreshFunctions()])
+    await Promise.all([refreshAlarms(signal), refreshFunctions(signal)])
   } catch (e) {
+    if (signal.aborted) return
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
       live.stop()
@@ -139,22 +144,22 @@ async function refresh() {
   }
 }
 
-async function refreshAlarms() {
+async function refreshAlarms(signal?: AbortSignal) {
   if (!healthOn.value) return
   const node = selectedNode.value
   try {
-    const [a, l] = await Promise.all([api.alarms(), api.alarmLog()])
-    if (selectedNode.value !== node) return
+    const [a, l] = await Promise.all([api.alarms(signal), api.alarmLog(0, signal)])
+    if (signal?.aborted || selectedNode.value !== node) return
     alarms.value = Object.values(a.alarms)
     alarmLog.value = l
   } catch { /* transient; the next refresh retries */ }
 }
 
-async function refreshFunctions() {
+async function refreshFunctions(signal?: AbortSignal) {
   const node = selectedNode.value
   try {
-    const f = await api.functions()
-    if (selectedNode.value !== node) return
+    const f = await api.functions(signal)
+    if (signal?.aborted || selectedNode.value !== node) return
     functions.value = f
   } catch { /* transient */ }
 }
@@ -196,8 +201,7 @@ function fmtUptime(s: number) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`
 }
 
-let timer = 0
-onMounted(async () => {
+onMounted(() => {
   auth.fromURL()
   const saved = new URL(location.href).searchParams.get('node') ?? sessionStorage.getItem(NODE_KEY) ?? ''
   selectedNode.value = saved
@@ -205,11 +209,12 @@ onMounted(async () => {
   live.onState = (up) => (connected.value = up)
   live.onAlarm = onAlarmEvent
   fetch('/api/v1/auth/oidc/status').then((r) => r.json()).then((s) => { oidcAvailable.value = s.enabled === true }).catch(() => {})
-  await refresh()
-  if (!needToken.value) live.start()
-  timer = window.setInterval(refresh, 30000)
 })
-onBeforeUnmount(() => { clearInterval(timer); live.stop() })
+const refresh = usePolling(async (signal) => {
+  await load(signal)
+  if (!signal.aborted && !needToken.value) live.start()
+}, 30000)
+onBeforeUnmount(() => { live.stop() })
 </script>
 
 <template>

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:monitor_app/api/client.dart';
 import 'package:monitor_app/api/models.dart';
 import 'package:monitor_app/widgets/charts_view.dart';
+import 'package:monitor_app/state/chart_series.dart';
 
 class _HistoryRequest {
   _HistoryRequest(this.chart, this.node, this.window);
@@ -51,14 +52,18 @@ class _Client extends ApiClient {
     : super(const ServerConfig(baseUrl: 'http://test'));
   int count;
   bool deferHistory = false;
+  bool deferCharts = false;
+  int historyRows = 1;
+  int dimensions = 1;
   int chartCalls = 0;
+  final catalogs = <Completer<List<Chart>>>[];
   final requests = <_HistoryRequest>[];
   final sockets = <_Live>[];
 
   @override
   Future<List<Chart>> charts({String? node}) async {
     chartCalls++;
-    return [
+    final result = [
       for (var i = 0; i < count; i++)
         Chart.fromJson({
           'id': 'chart${i.toString().padLeft(3, '0')}',
@@ -66,10 +71,15 @@ class _Client extends ApiClient {
           'title': 'Chart $i',
           'priority': i,
           'dimensions': [
-            {'id': 'value', 'name': 'Value'},
+            for (var d = 0; d < dimensions; d++)
+              {'id': d == 0 ? 'value' : 'dim$d', 'name': 'Value $d'},
           ],
         }),
     ];
+    if (!deferCharts) return result;
+    final pending = Completer<List<Chart>>();
+    catalogs.add(pending);
+    return pending.future;
   }
 
   @override
@@ -81,7 +91,20 @@ class _Client extends ApiClient {
   }) {
     final request = _HistoryRequest(chart, node, afterSeconds);
     requests.add(request);
-    if (!deferHistory) request.complete();
+    if (!deferHistory) {
+      final now = DateTime.now().millisecondsSinceEpoch / 1000;
+      request.result.complete(
+        ChartData(
+          dimensionIds: [
+            for (var d = 0; d < dimensions; d++) d == 0 ? 'value' : 'dim$d',
+          ],
+          rows: [
+            for (var i = 0; i < historyRows; i++)
+              [now - historyRows + i + 1, ...List.filled(dimensions, 1.0)],
+          ],
+        ),
+      );
+    }
     return request.result.future;
   }
 
@@ -113,6 +136,124 @@ Set<String> _mountedCharts(WidgetTester tester) => tester
     .toSet();
 
 void main() {
+  testWidgets('late hidden catalog cannot replace the resumed catalog', (
+    tester,
+  ) async {
+    final client = _Client(count: 1)..deferCharts = true;
+    addTearDown(client.close);
+    await tester.pumpWidget(_view(client));
+    await tester.pumpWidget(_view(client, active: false));
+    await tester.pump(const Duration(seconds: 30));
+    expect(client.chartCalls, 1);
+    await tester.pumpWidget(_view(client));
+    expect(client.chartCalls, 2);
+    client.deferCharts = false;
+    final catalog = await client.charts();
+    client.catalogs.last.complete(catalog);
+    await _settleCharts(tester);
+    client.catalogs.first.complete([]);
+    await _settleCharts(tester);
+    expect(find.byType(ChartCard), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('evicted in-flight history cannot block or overwrite revisits', (
+    tester,
+  ) async {
+    final client = _Client(count: 20)..deferHistory = true;
+    addTearDown(client.close);
+    await tester.pumpWidget(_view(client));
+    await _settleCharts(tester);
+    final old = client.requests.firstWhere((r) => r.chart == 'chart000');
+    for (var i = 1; i < 20; i++) {
+      await tester.enterText(
+        find.byType(TextField),
+        'chart${i.toString().padLeft(3, '0')}',
+      );
+      await _settleCharts(tester);
+    }
+    await tester.enterText(find.byType(TextField), 'chart000');
+    await _settleCharts(tester);
+    final fresh = client.requests.last;
+    expect(fresh.chart, 'chart000');
+    expect(identical(fresh, old), isFalse);
+    old.complete(11);
+    await _settleCharts(tester);
+    final series = tester.widget<ChartCard>(find.byType(ChartCard)).series;
+    expect(series.loaded, isFalse);
+    fresh.complete(22);
+    await _settleCharts(tester);
+    expect(series.points['value']!.last.y, 22);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('slow chart catalogs are shared instead of overlapping', (
+    tester,
+  ) async {
+    final client = _Client(count: 1)..deferCharts = true;
+    addTearDown(client.close);
+    await tester.pumpWidget(_view(client));
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump(const Duration(seconds: 30));
+    expect(client.chartCalls, 1);
+    client.deferCharts = false;
+    final catalog = await client.charts();
+    client.catalogs.single.complete(catalog);
+    await _settleCharts(tester);
+    expect(find.byType(ChartCard), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+    await _settleCharts(tester);
+    expect(client.chartCalls, 3); // One manual fixture call and two UI calls.
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final dimensions in [1, 20]) {
+    testWidgets(
+      'browsing many charts bounds retained history ($dimensions dims)',
+      (tester) async {
+        final client = _Client(count: 60)
+          ..historyRows = 240
+          ..dimensions = dimensions;
+        addTearDown(client.close);
+        await tester.pumpWidget(_view(client));
+        await _settleCharts(tester);
+        final visited = <ChartSeries>{};
+        for (var i = 0; i < 60; i++) {
+          await tester.enterText(
+            find.byType(TextField),
+            'chart${i.toString().padLeft(3, '0')}',
+          );
+          await _settleCharts(tester);
+          visited.add(tester.widget<ChartCard>(find.byType(ChartCard)).series);
+        }
+        final retained = visited
+            .where((s) => s.retainedPointCount > 0)
+            .toList();
+        final points = retained.fold<int>(
+          0,
+          (n, s) => n + s.retainedPointCount,
+        );
+        expect(retained.length, lessThanOrEqualTo(13));
+        expect(points, lessThanOrEqualTo(12000 + 240 * dimensions));
+        expect(points, dimensions == 1 ? 3120 : 14400);
+        expect(visited.first.points, isEmpty);
+        final before = client.requests.length;
+        await tester.enterText(find.byType(TextField), 'chart000');
+        await _settleCharts(tester);
+        final revisited = tester
+            .widget<ChartCard>(find.byType(ChartCard))
+            .series;
+        expect(identical(revisited, visited.first), isFalse);
+        expect(revisited.loaded, isTrue);
+        expect(client.requests.length, before + 1);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   testWidgets(
     'failed initial history shows an error and a later refresh recovers',
     (tester) async {

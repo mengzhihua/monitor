@@ -15,6 +15,18 @@ class ChartSeries extends ChangeNotifier {
   final _times = <double>[];
   final _liveTail = <({int t, Map<String, double> values})>[];
 
+  int get retainedPointCount =>
+      points.values.fold(0, (count, dimension) => count + dimension.length);
+
+  @override
+  void dispose() {
+    // In-flight requests may temporarily retain the series after cache eviction.
+    points.clear();
+    _times.clear();
+    _liveTail.clear();
+    super.dispose();
+  }
+
   void reset(ChartData data, int window) {
     // Only live samples beyond the response's time range may survive a reload.
     // Old aggregated history must never be replayed as second-resolution data.

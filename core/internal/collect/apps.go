@@ -59,22 +59,23 @@ type appGroup struct {
 }
 
 type pidState struct {
-	name    string
-	cmdline string
-	group   *appGroup
-	user    string
-	osGroup string
-	cpuMs   float64 // user+system, ms
-	hasCPU  bool
-	readB   uint64
-	writeB  uint64
-	ioOK    bool
-	skipIO  bool // permission or missing io; don't reopen it every tick
-	seenAt  time.Time
-	rss     uint64
-	threads int32
-	ppid    int32
-	cpuPct  float64 // computed on the last tick
+	name      string
+	startedAt int64 // process birth identity; zero if unavailable
+	cmdline   string
+	group     *appGroup
+	user      string
+	osGroup   string
+	cpuMs     float64 // user+system, ms
+	hasCPU    bool
+	readB     uint64
+	writeB    uint64
+	ioOK      bool
+	skipIO    bool // permission or missing io; don't reopen it every tick
+	seenAt    time.Time
+	rss       uint64
+	threads   int32
+	ppid      int32
+	cpuPct    float64 // computed on the last tick
 }
 
 type appsCollector struct {
@@ -228,13 +229,30 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 	return a.other
 }
 
+// appProcess carries identity from the same process-list snapshot as the PID.
+// A fresh gopsutil handle reads live values without retaining cached metadata.
+type appProcess struct {
+	process   *process.Process
+	startedAt int64
+}
+
+func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
+	previous := a.pids[pid]
+	if previous != nil && startedAt != 0 && previous.startedAt != startedAt {
+		// The PID now belongs to a different process: reload identity and reset
+		// CPU/IO baselines so its counters cannot be attributed to the old owner.
+		return nil
+	}
+	return previous
+}
+
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	pids, native := listProcPIDs(a.pidBuf)
 	a.pidBuf = pids
-	var procs []*process.Process
+	var procs []appProcess
 	if !native {
 		var err error
-		procs, err = process.ProcessesWithContext(ctx)
+		procs, err = listAppProcesses(ctx)
 		if err != nil {
 			return err
 		}
@@ -259,14 +277,16 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			return ctx.Err()
 		}
 		var pid int32
+		var startedAt int64
 		var gp *process.Process
 		if native {
 			pid = pids[i]
 		} else {
-			gp = procs[i]
+			gp = procs[i].process
+			startedAt = procs[i].startedAt
 			pid = gp.Pid
 		}
-		st := a.pids[pid]
+		st := a.previousPID(pid, startedAt)
 		var sample procCounters
 		if native {
 			sample = readProcSample(pid, st != nil && st.skipIO, &a.scratch)
@@ -297,7 +317,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 				if runtime.GOOS == "windows" {
 					name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
 				}
-				st = &pidState{name: name}
+				st = &pidState{name: name, startedAt: startedAt}
 				st.cmdline, _ = gp.CmdlineWithContext(ctx)
 				st.ppid, _ = gp.PpidWithContext(ctx)
 				st.group = a.match(name, st.cmdline)
