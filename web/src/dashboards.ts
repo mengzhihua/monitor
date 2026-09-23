@@ -44,6 +44,15 @@ const discovery = group('discovery', '服务发现与协调', '观察 Consul 健
 const identity = group('identity', '目录与认证服务', '观察 OpenLDAP 操作和连接、FreeRADIUS 请求与响应；不展示用户凭据。', /^(openldap|freeradius)\./)
 const devices = group('devices', '网络设备接口', '观察 SNMP 接口状态、吞吐与设备运行时间，结合探测定位链路问题。', /^snmp\.(device_[a-z_]+|trap\.[a-z_]+)(\.|$)/)
 
+const mongodb = group('mongodb', 'MongoDB 操作与连接', '观察文档操作、连接余量、内存与网络。', /^(mongodb)\./)
+const cassandra = group('cassandra', 'Cassandra 请求与压缩', '观察读写请求、失败、丢弃消息和待压缩任务。', /^(cassandra)\./)
+const ceph = group('ceph', 'Ceph 集群状态', '观察集群状态、OSD、容量和客户端 I/O。', /^(ceph)\./)
+const zfs = group('zfs', 'ZFS 池与 ARC', '观察池健康、空间、碎片与已采集的 ARC 缓存。', /^(zfspool|zfs)\./)
+const workers = group('workers', 'Web 工作进程', '观察 PHP-FPM 队列与慢请求、uWSGI 异常和进程重启。', /^(phpfpm|phpdaemon|uwsgi)\./)
+const httpCache = group('http-cache', 'HTTP 缓存代理', '观察 Varnish 命中与回源、Squid 请求和错误。', /^(varnish|squid|squidlog)\./)
+const firewall = group('firewall', '规则计数与封禁', '观察 nftables 计数和 Fail2ban 封禁、失败；不能据此直接判定攻击。', /^fail2ban\./, /^netfilter\.nftables_(packets|bytes)(\.|$)/)
+const bmc = group('bmc', 'IPMI / Redfish 健康', '观察 IPMI 传感器与 Redfish 系统健康，确认被监控服务器归属。', /^(ipmi|redfish)\./)
+
 export const dashboards: Dashboard[] = [
   { id: 'developer', title: '研发总览', description: '日常巡检：从主机资源到接口和依赖，一屏串起常见排查路径。', category: '通用巡检', groups: [compute, memory, web, database, cache] },
   { id: 'services', title: '接口与网络', description: '接口变慢或访问失败时，对照网关、连接、网络与主机负载。', category: '通用巡检', groups: [web, network, compute] },
@@ -79,6 +88,14 @@ export const dashboards: Dashboard[] = [
   { id: 'discovery', title: '服务发现与协调', category: '平台服务', description: '服务注册或协调异常时，联查 Consul、ZooKeeper 与网络。', groups: [discovery, network, memory, probes], checklist: ["先看健康检查、成员与服务端状态变化。", "对照请求等待、耗时和连接数。", "检查底层网络和可用内存，并人工核对集群拓扑。"] },
   { id: 'identity', title: '目录与认证巡检', category: '平台服务', description: '登录或认证请求异常时，联查 LDAP、RADIUS、时间与网络。', groups: [identity, clock, network, probes], checklist: ["先确认 LDAP / RADIUS 连接和请求响应变化。", "核对时钟同步、网络与服务端口探测。", "结合服务日志和权限配置核实原因，指标不直接证明账户被攻击。"] },
   { id: 'devices', title: '网络设备巡检', category: '平台服务', description: '交换机或路由器链路异常时，联查 SNMP 接口状态、流量与探测。', groups: [devices, probes, network], checklist: ["先按设备和接口核对运行状态及设备重启迹象。", "对照接口流量、陷阱事件和端到端探测。", "确认所选节点网卡是否属于故障路径，避免混淆采集机与设备。"] },
+  { id: 'mongodb', title: 'MongoDB 专项', category: '数据服务', description: '观察文档操作、连接余量、内存与网络。', groups: [mongodb, memory, disk, network], checklist: ["先核对操作速率和连接余量变化。", "对照数据库内存与主机磁盘延迟。", "结合慢查询日志核实原因；这些指标不提供单条查询耗时。"] },
+  { id: 'cassandra', title: 'Cassandra 专项', category: '数据服务', description: '观察读写请求、失败、丢弃消息和待压缩任务。', groups: [cassandra, memory, disk, network], checklist: ["先看请求失败和消息丢弃是否增加。", "核对待压缩任务与磁盘空间和吞吐。", "结合 JVM 内存与网络确定排查方向。"] },
+  { id: 'ceph', title: 'Ceph 集群存储', category: '基础设施', description: '观察集群状态、OSD、容量和客户端 I/O。', groups: [ceph, disk, network], checklist: ["先看集群状态与 OSD 的 up / down、in / out。", "核对集群容量和客户端吞吐变化。", "确认本机是否是相关存储节点，再联查磁盘与网络。"] },
+  { id: 'zfs', title: 'ZFS 存储池', category: '基础设施', description: '观察池健康、空间、碎片与已采集的 ARC 缓存。', groups: [zfs, memory, disk], checklist: ["先看存储池是否降级或不可用。", "核对池空间与碎片，再看 ARC 和内存。", "结合磁盘状态排查；健康状态不替代数据校验。"] },
+  { id: 'workers', title: 'PHP / uWSGI 工作进程', category: '应用与中间件', description: '观察 PHP-FPM 队列与慢请求、uWSGI 异常和进程重启。', groups: [workers, proxies, compute, memory], checklist: ["先看请求排队、慢请求与异常变化。", "对照进程重启、CPU 与内存压力。", "核对反向代理与应用日志，避免仅靠增加进程数处理。"] },
+  { id: 'http-cache', title: 'HTTP 缓存与回源', category: '应用与中间件', description: '观察 Varnish 命中与回源、Squid 请求和错误。', groups: [httpCache, proxies, network, memory], checklist: ["先看缓存命中和请求量是否同时变化。", "核对回源请求、连接失败和网络流量。", "结合缓存规则与源站日志核实原因，指标不代替配置检查。"] },
+  { id: 'firewall', title: '防火墙与封禁观察', category: '基础设施', description: '观察 nftables 计数和 Fail2ban 封禁、失败；不能据此直接判定攻击。', groups: [firewall, connections, probes], checklist: ["先确认规则或 jail 对应的业务与目标。", "对照封禁、失败计数和 conntrack 状态。", "核对服务探测与日志，避免将正常流量误判为攻击。"] },
+  { id: 'bmc', title: '服务器带外管理', category: '平台服务', description: '观察 IPMI 传感器与 Redfish 系统健康，确认被监控服务器归属。', groups: [bmc, hardware, storage], checklist: ["先核对服务器与传感器的健康状态。", "对照温度、电源和存储设备指标。", "确认指标来自同一服务器；采集机资源不等同于远程服务器资源。"] },
 ]
 
 /** Match semantic contexts, falling back to IDs for collectors without a context. */
