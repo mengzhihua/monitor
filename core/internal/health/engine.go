@@ -181,12 +181,13 @@ type Engine struct {
 	nextLog uint64
 	logFile *os.File
 
-	notifyCh   chan LogEntry
-	notified   atomic.Int64
-	dispatchWG sync.WaitGroup
-	startOnce  sync.Once
-	closeOnce  sync.Once
-	closed     bool // notifyCh closed; guarded by mu
+	notifyCh    chan LogEntry
+	notified    atomic.Int64
+	dispatchWG  sync.WaitGroup
+	startOnce   sync.Once
+	closeOnce   sync.Once
+	closed      bool                 // notifyCh closed; guarded by mu
+	diagnostics NotificationSnapshot // guarded by mu; current process only
 
 	// runtime silence (health.silent seeds silenceAll). until=0 means forever.
 	silenceAll   bool
@@ -221,6 +222,7 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256),
 		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows,
 		anomaly: opt.Anomaly}
+	e.initNotificationDiagnostics()
 	if opt.Enabled != nil {
 		e.enabled = *opt.Enabled
 	}
@@ -683,17 +685,32 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 // notify queues an entry for delivery. Delivery state (Notified, NotifiedAt,
 // Alarm.LastNotified) is only recorded once a notifier actually succeeds.
 func (e *Engine) notify(entry LogEntry) {
-	if e.IsSilenced(entry.Chart, entry.Name) || len(e.notifiersFor(entry.Recipient)) == 0 {
-		return
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
 		return
 	}
+	if reason := e.suppressionReasonLocked(entry.Chart, entry.Name); reason != "" {
+		e.diagnostics.Suppressed++
+		e.addNotificationResultLocked(entry, "", "suppressed", reason, 0, 0)
+		return
+	}
+	if strings.TrimSpace(entry.Recipient) == "silent" {
+		e.diagnostics.Suppressed++
+		e.addNotificationResultLocked(entry, "", "suppressed", "silent_recipient", 0, 0)
+		return
+	}
+	if len(e.notifiersFor(entry.Recipient)) == 0 {
+		e.diagnostics.Unrouted++
+		e.addNotificationResultLocked(entry, "", "unrouted", "no_channel", 0, 0)
+		return
+	}
 	select {
 	case e.notifyCh <- entry:
+		e.diagnostics.Enqueued++
 	default:
+		e.diagnostics.Dropped++
+		e.addNotificationResultLocked(entry, "", "dropped", "queue_full", 0, 0)
 		e.log.Warn("notification queue full, dropping", "alarm", entry.Name)
 	}
 }
@@ -701,11 +718,17 @@ func (e *Engine) notify(entry LogEntry) {
 func (e *Engine) dispatch() {
 	for entry := range e.notifyCh {
 		for _, n := range e.notifiersFor(entry.Recipient) {
+			channel := diagnosticChannel(n.Name())
+			e.beginNotification(entry, channel)
+			started := time.Now()
 			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := n.Notify(cctx, entry)
 			cancel()
+			code, httpStatus := notificationError(err)
+			e.finishNotification(entry, channel, code, httpStatus, time.Since(started).Milliseconds())
 			if err != nil {
-				e.log.Error("notify failed", "via", n.Name(), "alarm", entry.Name, "err", err)
+				// Provider errors may contain webhook credentials or response bodies.
+				e.log.Error("notify failed", "via", channel, "alarm", entry.Name, "reason", code, "http_status", httpStatus)
 				continue
 			}
 			e.markNotified(entry)
@@ -1017,25 +1040,29 @@ func (e *Engine) Summary() Summary {
 func (e *Engine) IsSilenced(chart, name string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.suppressionReasonLocked(chart, name) != ""
+}
+
+func (e *Engine) suppressionReasonLocked(chart, name string) string {
 	now := e.now().Unix()
 	if e.inMaintenanceLocked(e.now()) {
-		return true
+		return "maintenance"
 	}
 	if e.silenceAll {
 		if e.silenceUntil == 0 || now < e.silenceUntil {
-			return true
+			return "global_silence"
 		}
 		e.silenceAll, e.silenceUntil = false, 0
 	}
 	for _, key := range []string{chart + "." + name, name} {
 		if until, ok := e.silenced[key]; ok {
 			if until == 0 || now < until {
-				return true
+				return "alarm_silence"
 			}
 			delete(e.silenced, key)
 		}
 	}
-	return false
+	return ""
 }
 
 // ApplySilence updates runtime silence. until<0 is seconds from now; 0 = forever.

@@ -59,8 +59,8 @@ func (n *APNsNotifier) Notify(ctx context.Context, e LogEntry) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("apns: %s %s", resp.Status, bytes.TrimSpace(b))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		return &notificationHTTPError{status: resp.StatusCode}
 	}
 	return nil
 }
@@ -265,8 +265,8 @@ func doNotify(ctx context.Context, c *http.Client, req *http.Request) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("notify: %s %s", resp.Status, bytes.TrimSpace(b))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512))
+		return &notificationHTTPError{status: resp.StatusCode}
 	}
 	return nil
 }

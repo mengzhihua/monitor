@@ -132,8 +132,8 @@ func postJSON(ctx context.Context, c *http.Client, url string, body []byte, head
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s: HTTP %d", url, resp.StatusCode)
+	if resp.StatusCode/100 != 2 {
+		return &notificationHTTPError{status: resp.StatusCode}
 	}
 	return nil
 }

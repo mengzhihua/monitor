@@ -136,18 +136,44 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 - `GET /api/v1/operations/views`：当前账号的 `revision`、`views`、`enabled`、`persistent`、`limit` 和不含凭据的 `user`；忽略图表 `node` 选择，响应 `Cache-Control: no-store`。
 - `POST /api/v1/operations/views`：`{"revision":0,"views":[{"name":"我的队列","query":"","severity":"WARNING","nodeStatus":"all","pendingOnly":true,"ownerFilter":"mine","progressFilter":"watching"}]}`。`views: []` 删除当前集合内容，版本继续增长；拒绝未知字段和客户端身份字段。错误为 `400` 格式、`401` 未登录、`403` 非账号模式、`409` 版本冲突、`422` 容量已满、`503` 保存失败。
 
+## 通知诊断
+
+运维总览的「通知诊断」展示**当前服务实例本机**的健康引擎；切换图表节点或问题筛选不改变诊断范围。在 Hub 上查看不会自动汇总各 Agent 的发送情况，实例名称显示在面板中。
+
+- 展示等待发送的事件数、256 个事件的队列容量、当前正在调用的通道和开始时间；按通道类型显示配置数量、尝试/接受/失败次数及最近接受/失败时间。同类型多个配置合并统计。
+- 最近 500 条**已完成结果**支持告警/图表关键词、通道和结果筛选。区分通道接受、发送失败、静默或维护抑制、无匹配通道、队列满丢弃；一次告警事件可能对应多个通道结果，使用告警事件 ID 关联。
+- 统计起点为本次进程启动，不写入持久文件。超过 500 条时裁剪最旧结果，但累计数不减少；重启后清空。已有 `alarm-log.jsonl` 的 `notified` 仍表示至少一个通道成功，不能用于恢复每个通道的完整发送历史。
+- 只记录进入分发流程的事件。尚未到期的延迟通知、被防抖消除的变化、初始正常/无数据状态不在结果列表中；队列中和正在调用的事件尚无完成结果。静默/维护在入队时检查，已经排队的通知仍按原有机制发送。
+- 「通道接受」表示通知方法返回成功；HTTP 通道仅确认 2xx，未校验响应中的业务码，未验证第三方最终投递或用户收件。失败不自动重试，仍遵循已有规则的重复提醒设置。
+- 错误仅返回 HTTP 状态、超时、取消、网络或一般通道错误分类。接口及分发失败日志不记录通知 URL、收件地址、令牌或响应正文，也不附带可能含敏感内容的告警说明。此处不提供发送测试消息或重发操作。
+- 已登录只读账号可查看。每 15 秒前台刷新；网络失败保留上次结果并明确标记，认证失效清空已读诊断。健康引擎不可用、没有配置通道、尚无结果分别显示，不作为发送成功。
+
+`GET /api/v1/operations/notifications` 返回 `Cache-Control: no-store`，忽略图表 `node` 参数，不支持修改。主要字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `available / scope / hostname / since / now / enabled / closed` | 引擎是否存在、本机范围、实例、启动/读取时间（Unix 秒）、求值开关与关闭状态 |
+| `queue_size / queue_limit / in_flight` | 等待事件数量、容量、当前调用（没有时为 null） |
+| `enqueued / suppressed / unrouted / dropped` | 事件级累计入队、抑制、未路由及队列满丢弃数量 |
+| `accepted / failed` | 通道调用级累计成功/失败次数 |
+| `channels` | 按内置类型合并的通道配置数、调用数及时间；未知自定义类型统一显示 custom |
+| `recent / retention / total` | 最新结果优先的列表、保留上限、当前进程累计完成结果数 |
+
+结果包含 `id`、`event_id`、`at`、`name`、`chart`、`severity`、`repeat`、`channel`、`outcome`、`reason`、可选 `http_status` 及 `duration_ms`（仅通道调用耗时，不包含排队等待）。`id` 只在当前进程内递增；`in_flight` 还没有结果 ID。HTTP 错误为 `http_status`，其他错误为 `timeout / canceled / network / provider_error`；抑制原因为 `maintenance / global_silence / alarm_silence / silent_recipient`。健康引擎不存在时 `available=false` 且列表为空，不从零计数推断健康状态。
+
 ## 构建与验证
 
 ```bash
 make all VERSION=2.0.0-dev
 python3 scripts/verify-operations.py
+python3 scripts/verify-notifications.py
 cd core
 go test -race ./internal/operations ./internal/api
 cd ../web
 MONITOR_E2E_PORT=20097 npm run test:e2e
 ```
 
-`MONITOR_E2E_PORT` 只控制隔离浏览器测试进程的监听端口，默认仍为 19997。测试使用独立临时数据目录、专用管理员/只读测试凭据和一条静默内存规则；不会改动已有部署配置或向真实通知通道发消息。浏览器测试覆盖桌面与窄屏、真实资源数据、确认/重载、只读权限、图表跳转、保存视图、导出和刷新失败。Go 测试覆盖状态持久化、磁盘失败、并发冲突、严重级别变化/恢复/重触发、Hub 离线告警与缺失/过期指标。
+`MONITOR_E2E_PORT` 只控制隔离浏览器测试进程的监听端口，默认仍为 19997。测试使用独立临时数据目录、专用管理员/只读/排障测试凭据和两条内存规则；通知只发往绑定本机随机端口的测试接收器（204 与 503），不会改动已有部署配置或向真实通知通道发消息。浏览器测试覆盖桌面与窄屏、真实资源数据、确认/重载、只读权限、图表跳转、保存视图、导出、通知诊断和刷新失败。Go 测试覆盖状态持久化、磁盘失败、并发冲突、严重级别变化/恢复/重触发、Hub 离线告警、缺失/过期指标、队列积压及通知结果保留边界。
 
 正式 `v2.0.0` 标签、生产部署、各平台安装包、原生客户端界面及长时间大规模负载验收不由本轮开发版构建自动完成。正式发布时再同步版本号、发布说明及跨平台验收结果。
 
@@ -206,3 +232,13 @@ MONITOR_E2E_PORT=20097 npm run test:e2e
 - 本轮复用原有版本 2 处置文件，不增加格式迁移。浏览器测试新增的 `browser_ram_secondary` 仅为临时测试规则，与生产告警无关。
 - `GOMAXPROCS=2 make cross`：Linux amd64/arm64、macOS amd64/arm64、Windows amd64、FreeBSD amd64/arm64、Android arm64 共 8 个目标构建通过；macOS Intel 实际运行，其余为编译验证。
 - macOS Universal 包的本地临时签名检查通过，直接运行包内二进制再次完成批量持久化、冲突拒绝和重启验收；未做 Apple 公证。
+
+## 通知诊断扩展验收
+
+- `make all`（含 Vue TypeScript）、`go vet ./...`、`go test -race -p 1 ./...`：通过。
+- 新增健康引擎测试覆盖同一事件部分通道成功/部分失败、HTTP 状态分类、错误正文与 URL 隐藏、全局/单条/维护/规则静默、路由未匹配、256 个等待事件及队列满丢弃、进行中调用、同类配置合并、并发快照读取和最近 500 条裁剪后累计计数不丢失。API 测试覆盖认证、只读访问、禁用状态、不可写、禁止缓存与固定本机范围。
+- `python3 scripts/verify-notifications.py`：真实内存采样触发测试告警，本机 HTTP 接收器实际收到 2 次调用（204 与 503），结果、静默与未路由原因正确；接口和服务日志不含测试凭据及响应正文。使用同一数据目录重启后，通道调用计数归零，新结果仅含本次启动的静默事件。
+- 全套浏览器回归 **56/56 通过**，桌面/手机各 28 项。新增真实 HTTP 结果和筛选、网络失败保留旧结果、认证失效清空诊断、未启用/未配置/空结果说明；后两类 UI 异常状态使用显式接口测试响应。两种宽度均无横向溢出，通知面板截图已检查。
+- `python3 scripts/verify-operations.py`：原有真实采样、处置记录/个人视图持久化、单条和批量冲突拒绝、历史导出及同目录重启验收通过。
+- `GOMAXPROCS=2 make cross`：8 个服务端目标构建通过。macOS Universal 包含 x86_64/arm64，本地临时签名检查通过；直接运行包内程序再次通过通知诊断和处置重启验收。实际运行平台为 macOS Intel，其余目标属于编译验证，未做 Apple 公证。
+- 新诊断不更改持久化文件格式，不代表完整投递审计或跨 Agent 通知汇总；未触发真实第三方通知，未改动 Flutter 客户端。

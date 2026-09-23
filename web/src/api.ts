@@ -68,6 +68,17 @@ export interface OperationsSnapshot {
   activity: HandlingRecord[]
   now: number; nodes: OperationsNode[]; problems: Problem[]; summary: Record<string, number>; persistent: boolean
 }
+export interface NotificationResult {
+  id: number; event_id: number; at: number; name: string; chart: string; severity: string; repeat: boolean
+  channel: string; outcome: string; reason: string; http_status?: number; duration_ms: number
+}
+export interface NotificationSnapshot {
+  available: boolean; scope: 'local'; hostname: string; since: number; now: number; enabled: boolean; closed: boolean
+  queue_size: number; queue_limit: number; retention: number; enqueued: number; suppressed: number; unrouted: number
+  dropped: number; accepted: number; failed: number; total: number; in_flight: NotificationResult | null
+  channels: { name: string; configured_count: number; attempts: number; accepted: number; failed: number; last_attempt: number; last_accepted: number; last_failed: number }[]
+  recent: NotificationResult[]
+}
 export interface OperationsView {
   name: string; query: string; severity: string; nodeStatus: string; pendingOnly: boolean; ownerFilter: string; progressFilter: string
 }
@@ -217,6 +228,7 @@ export const api = {
   operationsViews: (signal?: AbortSignal) => get<OperationsViews>('/api/v1/operations/views', signal),
   saveOperationsViews: (revision: number, views: OperationsView[]) => post<OperationsViews>('/api/v1/operations/views', { revision, views }),
   operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
+  notifications: (signal?: AbortSignal) => get<NotificationSnapshot>('/api/v1/operations/notifications', signal),
   handlingHistory: (params: Record<string, string>, signal?: AbortSignal) =>
     get<HandlingHistoryPage>('/api/v1/operations/history?' + new URLSearchParams(params), signal),
   exportHandlingHistory: async (params: Record<string, string>, signal?: AbortSignal) => {
