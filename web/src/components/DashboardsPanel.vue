@@ -7,6 +7,19 @@ import MetricChart from './MetricChart.vue'
 const props = defineProps<{ charts: Chart[]; window: number; filter: string; node: string }>()
 const selected = ref('developer')
 const expanded = ref<string[]>([])
+const search = ref('')
+const category = ref('全部')
+const categories = ['全部', ...new Set(dashboards.map(b => b.category))]
+const catalog = computed(() => {
+  const query = search.value.trim().toLowerCase()
+  return dashboards.filter(b => (category.value === '全部' || category.value === b.category)
+    && `${b.title} ${b.description} ${b.groups.map(g => g.title).join(' ')}`.toLowerCase().includes(query))
+})
+const coverage = computed(() => {
+  const matched = new Map(dashboards.flatMap(b => b.groups).map(g => [g.id, chartsForGroup(props.charts, g).length]))
+  return Object.fromEntries(dashboards.map(b => [b.id, b.groups.filter(g => matched.get(g.id)).length]))
+})
+function resetCatalog() { search.value = ''; category.value = '全部' }
 const board = computed(() => dashboards.find(b => b.id === selected.value)!)
 const groups = computed(() => board.value.groups.map(group => {
   const matched = chartsForGroup(props.charts, group)
@@ -21,11 +34,19 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
 
 <template>
   <div class="dashboards" aria-label="常用聚合看板">
-    <div class="intro"><div><span class="eyebrow">开箱即用 · 自动匹配当前节点</span><h1>常用聚合看板</h1></div><span class="badge">6 个内置样板</span></div>
+    <div class="intro"><div><span class="eyebrow">开箱即用 · 自动匹配当前节点</span><h1>常用聚合看板</h1></div><span class="badge">{{ dashboards.length }} 个内置样板</span></div>
     <p class="muted">无需选指标或编写查询。样板直接使用当前节点已有采集数据，切换节点后自动更新。</p>
+    <div class="catalog-tools">
+      <input v-model="search" type="search" aria-label="搜索看板样板" placeholder="搜索样板，例如 Redis、Java、DNS…" />
+      <div class="categories" aria-label="看板分类">
+        <button v-for="item in categories" :key="item" :aria-pressed="category === item" @click="category = item">{{ item }}</button>
+      </div>
+      <span class="muted">{{ catalog.length }} 个匹配样板 · 当前查看：{{ board.title }}</span>
+    </div>
+    <div v-if="!catalog.length" class="missing">没有匹配的样板。<button class="reset" @click="resetCatalog">清除样板筛选</button></div>
     <div class="presets" aria-label="选择看板">
-      <button v-for="item in dashboards" :key="item.id" :aria-pressed="selected === item.id" @click="selected = item.id">
-        <b>{{ item.title }}</b><span>{{ item.description }}</span>
+      <button v-for="item in catalog" :key="item.id" :aria-pressed="selected === item.id" @click="selected = item.id">
+        <b>{{ item.title }}</b><span>{{ item.description }}</span><small>{{ item.category }} · {{ coverage[item.id] }}/{{ item.groups.length }} 类指标已采集</small>
       </button>
     </div>
     <div class="board-heading"><h2>{{ board.title }}</h2><span>{{ available }}/{{ groups.length }} 类指标已采集 · {{ count }} 张图表</span></div>
@@ -51,7 +72,13 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
 h1 { font-size:24px; margin:6px 0; } h2 { font-size:20px; margin:0; } h3 { font-size:16px; margin:0; }
 .eyebrow { color:#5eead4; font-size:12px; } .badge { background:#134e4a; color:#99f6e4; border-radius:20px; padding:5px 12px; }
 .muted, .board-heading span, .group-heading span { color:#94a3b8; font-size:13px; }
-.presets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:20px 0 28px; }
+.presets { max-height:420px; overflow:auto; padding:4px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:20px 0 28px; }
+.catalog-tools { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:18px; }
+.catalog-tools input { width:100%; max-width:380px; min-width:0; background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:10px; font:inherit; }
+.categories { display:flex; flex-wrap:wrap; gap:6px; }
+.categories button, .reset { padding:7px 10px; }
+.categories button[aria-pressed=true] { color:#99f6e4; border-color:#2dd4bf; }
+.presets small { color:#5eead4; font-size:11px; }
 button { cursor:pointer; font:inherit; color:#e2e8f0; border:1px solid #334155; background:#0f172a; border-radius:10px; }
 .presets button { text-align:left; padding:16px; display:flex; flex-direction:column; gap:8px; }
 .presets button span { font-size:12px; color:#94a3b8; line-height:1.6; }
