@@ -5,12 +5,17 @@ import { dashboards, chartsForGroup } from '../dashboards'
 import DashboardEditor from './DashboardEditor.vue'
 import { asDashboard, decodeBoards, encodeBoards, newBoard, storageKey, validateBoards, type PersonalBoard } from '../dashboardConfig'
 import { changePersonalBoards, readPersonalBoards, readPreferences, preferencesKey, type DashboardPreferences } from '../dashboardStorage'
+import { decodeDraft, encodeDraft, draftKey, type DashboardDraft } from '../dashboardDraft'
 import MetricChart from './MetricChart.vue'
 
 const props = defineProps<{ charts: Chart[]; window: number; filter: string; node: string }>()
 const personal = ref<PersonalBoard[]>([])
 const error = ref('')
 const notice = ref('')
+const savedDraft = ref<DashboardDraft | null>(null)
+const draftStatus = ref('')
+try { const raw = sessionStorage.getItem(draftKey); if (raw) savedDraft.value = decodeDraft(raw) }
+catch { draftStatus.value = '已有草稿无法读取，未自动恢复。' }
 try { personal.value = readPersonalBoards(localStorage) }
 catch { error.value = '无法读取个人看板配置。内置样板仍可使用；原始配置已保留，不会自动覆盖。' }
 const preferences = ref<DashboardPreferences>({ selected: 'developer', favorites: [], collapsed: false })
@@ -43,22 +48,40 @@ function toggleFavorite() {
   catch { error.value = '收藏保存失败，浏览器存储不可用。' }
 }
 function startEditor(copy = false) {
-  if (editing.value) return
+  if (editing.value || savedDraft.value) return
   editingBase = null
   const fresh = newBoard()
   editing.value = copy ? { ...fresh, ...(settings.value || { title: board.value.title, description: board.value.description, groupIds: board.value.groups.map(g => g.id) }), id: fresh.id, title: `${board.value.title} 副本`.slice(0,100) } : fresh
-  deleting.value = false; notice.value = ''
+  deleting.value = false; notice.value = ''; cacheDraft(editing.value)
 }
 function editCurrent() {
-  if (!settings.value || editing.value) return
+  if (!settings.value || editing.value || savedDraft.value) return
   editingBase = JSON.parse(JSON.stringify(settings.value))
-  editing.value = { ...settings.value }; notice.value = ''; deleting.value = false
+  editing.value = { ...settings.value }; notice.value = ''; deleting.value = false; cacheDraft(editing.value)
 }
+function cacheDraft(value: PersonalBoard) {
+  try {
+    const raw = encodeDraft({ version: 1, board: value, expected: editingBase })
+    sessionStorage.setItem(draftKey, raw)
+    savedDraft.value = decodeDraft(raw); draftStatus.value = '草稿已暂存在当前标签页，刷新后可恢复。'
+  } catch { draftStatus.value = '草稿暂存失败，请及时保存看板；离开页面可能丢失未保存内容。' }
+}
+function clearDraft() {
+  try { sessionStorage.removeItem(draftKey); savedDraft.value = null; draftStatus.value = '' }
+  catch { draftStatus.value = '无法清除标签页草稿，请检查浏览器存储。' }
+}
+function resumeDraft() {
+  if (!savedDraft.value) return
+  editingBase = savedDraft.value.expected
+  editing.value = savedDraft.value.board
+  draftStatus.value = '已恢复草稿；保存时仍会检查原看板是否被其他标签页修改。'
+}
+function cancelEditor() { editing.value = null; clearDraft() }
 function saveBoard(value: PersonalBoard, copy = false) {
   try {
     const [clean] = validateBoards([{ ...value, ...(copy ? { id: newBoard().id } : {}) }])
     if (apply({ type: 'save', board: clean!, expected: copy ? null : editingBase })) {
-      selected.value = clean!.id; editing.value = null; category.value = '我的看板'; search.value = ''; onlyAvailable.value = false; notice.value = '已保存到当前浏览器。'
+      selected.value = clean!.id; editing.value = null; clearDraft(); category.value = '我的看板'; search.value = ''; onlyAvailable.value = false; notice.value = '已保存到当前浏览器。'
     }
   } catch (e) { error.value = e instanceof Error ? e.message : '配置无效。' }
 }
@@ -145,14 +168,20 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
     <div class="intro"><div><span class="eyebrow">开箱即用 · 自动匹配当前节点</span><h1>常用聚合看板</h1></div><span class="badge">{{ dashboards.length }} 个内置样板</span></div>
     <p class="muted">无需选指标或编写查询。样板直接使用当前节点已有采集数据，切换节点后自动更新。</p>
     <div class="toolbar">
-      <button :disabled="!!editing" @click="startEditor()">新建看板</button><button :disabled="!!editing" @click="startEditor(true)">复制为个人看板</button>
+      <button :disabled="!!editing || !!savedDraft" @click="startEditor()">新建看板</button><button :disabled="!!editing || !!savedDraft" @click="startEditor(true)">复制为个人看板</button>
       <button :disabled="!personal.length" @click="exportBoards">导出个人看板</button>
       <label class="import">导入为副本<input :disabled="!!editing" type="file" accept=".json,application/json" aria-label="导入看板配置" @change="importBoards" /></label>
       <button :aria-expanded="!collapsed" @click="collapsed = !collapsed">{{ collapsed ? '展开样板目录' : '收起样板目录' }}</button>
     </div>
     <p class="muted">个人配置仅保存在当前浏览器；可导出 JSON 备份或迁移，不包含监控数据与认证令牌。</p>
     <p v-if="error && !editing" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-    <DashboardEditor v-if="editing" :key="editing.id" :initial="editing" :charts="charts" :error="error" @save="saveBoard" @save-copy="value => saveBoard(value, true)" @cancel="editing = null" />
+    <aside v-if="savedDraft && !editing" class="draft-recovery" aria-label="未保存的看板草稿">
+      <b>发现未保存草稿：{{ savedDraft.board.title || '未命名看板' }}</b>
+      <p>草稿只属于当前标签页，恢复后仍需保存才能加入个人看板。</p>
+      <button @click="resumeDraft">恢复草稿</button><button @click="clearDraft">丢弃草稿</button>
+    </aside>
+    <p v-if="draftStatus && !editing && !savedDraft" class="muted">{{ draftStatus }}</p>
+    <DashboardEditor v-if="editing" :key="editing.id" :initial="editing" :charts="charts" :error="error" :draft-status="draftStatus" @change="cacheDraft" @save="saveBoard" @save-copy="value => saveBoard(value, true)" @cancel="cancelEditor" />
     <div v-show="!collapsed" class="catalog-tools">
       <input v-model="search" type="search" aria-label="搜索看板样板" placeholder="搜索样板，例如 Redis、Java、DNS…" />
       <div class="categories" aria-label="看板分类">
@@ -170,7 +199,7 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
     <div class="board-heading"><h2>{{ board.title }}</h2><span>{{ available }}/{{ groups.length }} 类指标已采集 · {{ count }} 张图表</span></div>
     <div class="toolbar"><button :aria-pressed="preferences.favorites.includes(selected)" @click="toggleFavorite">{{ preferences.favorites.includes(selected) ? '取消收藏' : '收藏当前看板' }}</button></div>
     <div v-if="settings" class="toolbar">
-      <button :disabled="!!editing" @click="editCurrent">编辑个人看板</button><button :disabled="!!editing" @click="requestDelete">删除个人看板</button>
+      <button :disabled="!!editing || !!savedDraft" @click="editCurrent">编辑个人看板</button><button :disabled="!!editing" @click="requestDelete">删除个人看板</button>
       <span class="muted">{{ settings.windowSec ? `独立时间范围：${settings.windowSec / 60} 分钟` : '跟随顶部时间范围' }} · {{ settings.columns || '自适应' }} 列 · 每组 {{ limit }} 张</span>
       <span v-if="deleting">确认删除“{{ board.title }}”？<button @click="removeBoard">确认删除</button><button @click="deleting = false">取消删除</button></span>
     </div>
@@ -201,6 +230,7 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
 </template>
 
 <style scoped>
+.draft-recovery { border:1px solid #0d9488; background:#102d30; padding:16px; border-radius:10px; margin:16px 0; } .draft-recovery p { font-size:13px; color:#cbd5e1; } .draft-recovery button { padding:8px 12px; margin-right:10px; }
 .availability-filter { display:flex; align-items:center; gap:6px; font-size:13px; color:#cbd5e1; } .catalog-tools .availability-filter input { width:auto; }
 .group-navigation { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; } .group-navigation button, .fold { padding:6px 10px; font-size:12px; } .board-group { scroll-margin-top:130px; }
 .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:14px 0; }

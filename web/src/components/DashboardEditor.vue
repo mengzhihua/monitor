@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Chart } from '../api'
 import { groupOptions, type PersonalBoard } from '../dashboardConfig'
-const props = defineProps<{ initial: PersonalBoard; charts: Chart[]; error?: string }>()
-const emit = defineEmits<{ save: [board: PersonalBoard]; cancel: []; 'save-copy': [board: PersonalBoard] }>()
+const props = defineProps<{ initial: PersonalBoard; charts: Chart[]; error?: string; draftStatus?: string }>()
+const emit = defineEmits<{ save: [board: PersonalBoard]; cancel: []; 'save-copy': [board: PersonalBoard]; change: [board: PersonalBoard] }>()
 const draft = ref<PersonalBoard>(JSON.parse(JSON.stringify(props.initial)))
+watch(draft, value => emit('change', value), { deep: true, flush: 'sync' })
 const groupSearch = ref('')
 const chartSearch = ref('')
 const matchingGroups = computed(() => groupOptions.filter(g => `${g.title} ${g.id}`.toLowerCase().includes(groupSearch.value.toLowerCase())))
@@ -17,7 +18,7 @@ function move(list: string[], index: number, delta: number) {
 <template>
   <form class="editor" aria-label="个人看板编辑器" @submit.prevent="emit('save', draft)">
     <h2>配置个人看板</h2>
-    <p>保存在当前浏览器，仅包含看板配置。最多 20 个看板、每个 30 个分组及 100 张指定图表。</p>
+    <p>正式配置保存在当前浏览器；编辑草稿暂存在当前标签页，取消编辑会删除草稿。最多 20 个看板、每个 30 个分组及 100 张指定图表。</p>
     <label>看板名称<input v-model="draft.title" required maxlength="100" /></label>
     <label>看板说明<textarea v-model="draft.description" maxlength="500" /></label>
     <div class="settings">
@@ -37,6 +38,7 @@ function move(list: string[], index: number, delta: number) {
       <div class="choices"><label v-for="c in matchingCharts.slice(0,50)" :key="c.id" class="check"><input v-model="draft.chartIds" type="checkbox" :value="c.id" />{{ c.id }} · {{ c.title }}</label></div>
       <ol aria-label="已选图表顺序"><li v-for="(id,i) in draft.chartIds" :key="id"><span>{{ id }}{{ charts.some(c => c.id === id) ? '' : '（当前节点未采集）' }}</span><button type="button" :disabled="i === 0" :aria-label="`上移图表 ${id}`" @click="move(draft.chartIds, i, -1)">↑</button><button type="button" :disabled="i === draft.chartIds.length-1" :aria-label="`下移图表 ${id}`" @click="move(draft.chartIds, i, 1)">↓</button><button type="button" :aria-label="`移除图表 ${id}`" @click="draft.chartIds.splice(i,1)">移除</button></li></ol>
     </fieldset>
+    <p v-if="draftStatus" aria-live="polite">{{ draftStatus }}</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <div class="actions"><button type="submit">保存看板</button><button type="button" @click="emit('save-copy', draft)">另存为新看板</button><button type="button" @click="emit('cancel')">取消编辑</button></div>
   </form>

@@ -356,7 +356,7 @@ onBeforeUnmount(() => {
       <section v-for="s in sections" :key="s.name" :id="s.name">
         <h2>{{ s.name }}</h2>
         <div class="grid">
-          <MetricChart v-for="c in s.charts" :key="c.id" :chart="c" :window="windowSec" />
+          <MetricChart v-for="c in s.charts" :key="selectedNode + ':' + c.id" :chart="c" :window="windowSec" />
         </div>
       </section>
       </template>

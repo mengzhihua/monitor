@@ -1,16 +1,45 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { Chart } from '../api'
-import { api } from '../api'
+import { api, selection } from '../api'
 import { live } from '../live'
 import { pageVisible } from '../visibility'
 import { metricHelp, dimensionHelp, unitHelp } from '../metricHelp'
+import { chartCSV } from '../chartExport'
 import { activateChart, retainChart } from '../chart_cache'
 
-const props = defineProps<{ chart: Chart; window: number }>()
+const props = defineProps<{ chart: Chart; window: number; detail?: boolean }>()
 
+const dialog = ref<HTMLDialogElement>()
+const zoomButton = ref<HTMLButtonElement>()
+const zoomed = ref(false)
+const sampleCount = ref(0)
+const snapshotReady = ref(false)
+let dataNode = ''
+const plotHeight = () => props.detail ? Math.max(240, Math.min(560, window.innerHeight * 0.55)) : 180
+async function openDetail() {
+  zoomed.value = true
+  updateVisibility()
+  await nextTick()
+  dialog.value?.showModal()
+}
+function closeDetail() {
+  if (disposed) return
+  dialog.value?.close()
+  zoomed.value = false
+  updateVisibility()
+  zoomButton.value?.focus()
+}
+function exportCSV() {
+  if (!snapshotReady.value || !times.length) return
+  const csv = chartCSV(props.chart, dataNode, times, dims, raw)
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url; link.download = `${props.chart.id.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0,100)}.csv`; link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 const help = computed(() => metricHelp(props.chart))
 const card = ref<HTMLDivElement>()
 const el = ref<HTMLDivElement>()
@@ -110,13 +139,13 @@ function makeOpts(width: number): uPlot.Options {
   }
   return {
     width,
-    height: 180,
+    height: plotHeight(),
     series,
     legend: { show: true, live: true },
     cursor: { drag: { x: false, y: false }, y: false },
     scales: { x: { time: true }, y: { range: (_u, min, max) => [Math.min(0, min), max <= 0 ? 1 : max * 1.05] } },
     axes: [
-      { stroke: '#94a3b8', grid: { stroke: '#1e293b' }, ticks: { stroke: '#1e293b' } },
+      { stroke: '#94a3b8', space: 110, grid: { stroke: '#1e293b' }, ticks: { stroke: '#1e293b' } },
       {
         stroke: '#94a3b8',
         grid: { stroke: '#1e293b' },
@@ -135,6 +164,8 @@ async function load(first = false) {
   const current = request = new AbortController()
   const generation = ++loadGeneration
   error.value = ''
+  snapshotReady.value = false
+  const requestedNode = selection.node || 'local'
   const requestedDims = visibleDims()
   try {
     // One bucket per collection period, otherwise slow charts come back as
@@ -155,10 +186,13 @@ async function load(first = false) {
       if (col >= 0 && ((d.dimension_anomaly && d.dimension_anomaly[col] >= 50) || (d.anomaly && d.anomaly[col]))) return 1
       return props.chart.dimensions.find((x) => x.id === id)?.anomaly ? 1 : 0
     })
+    dataNode = requestedNode
     raw = dims.map((id) => {
       const col = idx.get(id)
       return d.result.data.map((r) => (col == null ? null : (r[col] as number | null)))
     })
+    sampleCount.value = times.length
+    snapshotReady.value = true
   } catch (e) {
     if (disposed || current.signal.aborted || generation !== loadGeneration) return
     error.value = String(e)
@@ -175,7 +209,7 @@ function render() {
   if (plot && plotDefinition === definition) {
     // A resize can happen while hidden, when ResizeObserver deliberately skips
     // canvas work. Catch up before reusing a cached plot in the foreground.
-    if (plot.width !== width) plot.setSize({ width, height: 180 })
+    if (plot.width !== width || plot.height !== plotHeight()) plot.setSize({ width, height: plotHeight() })
     plot.setData(buildData())
     return
   }
@@ -203,6 +237,7 @@ function onLive(t: number, v: Record<string, number>) {
   }
   times.push(t)
   dims.forEach((id, i) => raw[i]!.push(id in v ? v[id]! : null))
+  sampleCount.value = times.length
   const cutoff = t - props.window
   while (times.length && (times[0]! < cutoff || times.length > 1200)) {
     times.shift()
@@ -243,6 +278,7 @@ function releasePlot() {
   plot = null
   plotDefinition = ''
   times = []; raw = []; dims = []; anomBits = []
+  sampleCount.value = 0; snapshotReady.value = false
   anomaly.value = {}
 }
 
@@ -253,7 +289,7 @@ function updateSubscription() {
 }
 
 function updateVisibility() {
-  const active = inViewport && pageVisible.value
+  const active = inViewport && pageVisible.value && !zoomed.value
   if (active === visible) return
   visible = active
   updateSubscription()
@@ -279,11 +315,12 @@ onMounted(() => {
     updateVisibility()
   }, { rootMargin: '300px 0px' })
   io.observe(card.value!)
-  ro = new ResizeObserver(() => { if (visible && plot && el.value) plot.setSize({ width: el.value.clientWidth, height: 180 }) })
+  ro = new ResizeObserver(() => { if (visible && plot && el.value) plot.setSize({ width: el.value.clientWidth, height: plotHeight() }) })
   ro.observe(el.value!)
 })
 onBeforeUnmount(() => {
   disposed = true
+  dialog.value?.close()
   ++loadGeneration
   request?.abort()
   clearTimeout(refreshTimer)
@@ -300,6 +337,7 @@ watch(() => props.chart.last_entry, (t) => { lastSample.value = Math.max(lastSam
 const defFingerprint = () =>
   [props.chart.id, props.chart.context, props.chart.title, props.chart.units, props.chart.chart_type, props.chart.update_every, props.chart.anomaly ? 1 : 0, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}\u0000${d.anomaly ? 1 : 0}`)].join('\u0001')
 watch([() => props.window, defFingerprint], () => {
+  snapshotReady.value = false
   updateSubscription()
   if (visible) void load(); else ++loadGeneration
 })
@@ -316,6 +354,10 @@ watch([() => props.window, defFingerprint], () => {
       <span v-if="stale" class="err" :title="lastSample ? new Date(lastSample * 1000).toLocaleString() : '尚无样本'">{{ lastSample ? '数据过期' : '暂无数据' }}</span>
       <span class="units" :title="unitHelp(chart.units)">{{ chart.units }}</span>
     </div>
+    <div class="chart-actions">
+      <button v-if="!detail" ref="zoomButton" type="button" @click="openDetail">放大图表</button>
+      <button type="button" :disabled="!snapshotReady || !sampleCount" title="导出当前已加载数据，空白单元格表示缺失；长时间范围可能为聚合采样。" @click="exportCSV">导出 CSV</button>
+    </div>
     <details class="metric-help">
       <summary :title="help">中文指标说明</summary>
       <p>{{ help }}</p>
@@ -323,10 +365,18 @@ watch([() => props.window, defFingerprint], () => {
     </details>
     <div ref="el" class="plot"></div>
     <div v-if="error" class="err">{{ error }}</div>
+    <dialog v-if="!detail" ref="dialog" class="chart-dialog" :aria-label="`${chart.title} 放大图表`" @close="closeDetail">
+      <div class="dialog-heading"><b>{{ chart.title }}</b><button type="button" autofocus @click="closeDetail">关闭放大图表</button></div>
+      <MetricChart v-if="zoomed" :chart="chart" :window="window" detail />
+      <p class="dialog-note">仍使用当前节点和时间范围。CSV 只包含已加载采样；空白表示缺失，不代表 0。</p>
+    </dialog>
   </div>
 </template>
 
 <style scoped>
+.chart-actions { display:flex; gap:8px; margin:6px 0; } .chart-actions button, .dialog-heading button { cursor:pointer; color:#cbd5e1; background:#172337; border:1px solid #334155; border-radius:6px; padding:4px 8px; font:inherit; font-size:12px; } .chart-actions button:disabled { opacity:.4; cursor:default; }
+.chart-dialog { width:min(1100px,calc(100vw - 40px)); max-height:calc(100dvh - 40px); box-sizing:border-box; padding:14px; background:#0b1120; color:#e2e8f0; border:1px solid #475569; border-radius:12px; } .chart-dialog::backdrop { background:#000a; }
+.dialog-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; overflow-wrap:anywhere; } .dialog-note { color:#94a3b8; font-size:12px; } button:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
 .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 12px; min-width: 0; }
 .card.anom { border-color: #7f1d1d; box-shadow: inset 0 0 0 1px #7f1d1d; }
 .badge { margin-left: 8px; font-size: 10px; color: #fecaca; background: #7f1d1d; border-radius: 8px; padding: 0 6px; }
