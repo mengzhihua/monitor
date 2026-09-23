@@ -781,43 +781,36 @@ func readHeader(path string) (string, blockMeta, error) {
 }
 
 func parseHeader(r io.Reader) (string, blockMeta, uint32, error) {
-	var magic [5]byte
-	if _, err := io.ReadFull(r, magic[:]); err != nil {
+	// Batch the fixed prefix and variable-length remainder into two reads.
+	// binary.Read per field otherwise performs a syscall for each small field
+	// when the reader is a block file.
+	var prefix [7]byte
+	if _, err := io.ReadFull(r, prefix[:]); err != nil {
 		return "", blockMeta{}, 0, err
 	}
-	if string(magic[:4]) != blockMagic {
+	if string(prefix[:4]) != blockMagic {
 		return "", blockMeta{}, 0, errors.New("bad magic")
 	}
-	if magic[4] != blockVersion {
-		return "", blockMeta{}, 0, fmt.Errorf("unsupported block version %d", magic[4])
+	if prefix[4] != blockVersion {
+		return "", blockMeta{}, 0, fmt.Errorf("unsupported block version %d", prefix[4])
 	}
-	var idLen uint16
-	if err := binary.Read(r, binary.LittleEndian, &idLen); err != nil {
+	idLen := int(binary.LittleEndian.Uint16(prefix[5:]))
+	header := make([]byte, idLen+24)
+	if _, err := io.ReadFull(r, header); err != nil {
 		return "", blockMeta{}, 0, err
 	}
-	idb := make([]byte, idLen)
-	if _, err := io.ReadFull(r, idb); err != nil {
-		return "", blockMeta{}, 0, err
+	fields := header[idLen:]
+	m := blockMeta{
+		start: int64(binary.LittleEndian.Uint64(fields)),
+		end:   int64(binary.LittleEndian.Uint64(fields[8:])),
 	}
-	var m blockMeta
-	var count, dataLen uint32
-	if err := binary.Read(r, binary.LittleEndian, &m.start); err != nil {
-		return "", blockMeta{}, 0, err
-	}
-	if err := binary.Read(r, binary.LittleEndian, &m.end); err != nil {
-		return "", blockMeta{}, 0, err
-	}
-	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
-		return "", blockMeta{}, 0, err
-	}
-	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
-		return "", blockMeta{}, 0, err
-	}
+	count := binary.LittleEndian.Uint32(fields[16:])
+	dataLen := binary.LittleEndian.Uint32(fields[20:])
 	if count == 0 || count > maxBlockSamples || dataLen > maxBlockBytes || m.end < m.start {
 		return "", blockMeta{}, 0, fmt.Errorf("implausible header: count=%d bytes=%d range=[%d,%d]", count, dataLen, m.start, m.end)
 	}
 	m.count = int(count)
-	return string(idb), m, dataLen, nil
+	return string(header[:idLen]), m, dataLen, nil
 }
 
 func readBlock(path string) ([]int64, []float64, error) {

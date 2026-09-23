@@ -22,6 +22,8 @@
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
 | `soak.py` | 指定时长的持续采集和查询测量 | `python3 scripts/soak.py --seconds 120` |
+| `benchmark-runtime.py` | macOS/Linux 默认采集器下的固定12请求/秒负载、接口延迟及主进程 CPU/RSS | `python3 scripts/benchmark-runtime.py --output reports/runtime.json` |
+| `benchmark-browser.mjs` | 遍历100张模拟图表后的画布、DOM、事件监听器和 GC 后 JS 堆 | `node scripts/benchmark-browser.mjs --output reports/browser.json` |
 | `e2e-server.mjs` | 为 Playwright 启动临时服务 | 由 `web/playwright.config.ts` 调用，无需手动启动 |
 
 运行验收前先 `make all`。`make acceptance` 串联 Go/Web、默认认证、恢复、Hub 负载、持续采集、浏览器、Flutter 和跨平台编译，所需环境见 [验收记录](../docs/05-acceptance.md)。
@@ -37,3 +39,7 @@ python3 scripts/soak.py --seconds 120 --output reports/agent-soak.json
 ```
 
 浏览器截图和 trace 保留 Playwright 的原生位置 `web/test-results/`；Flutter、Gradle 产物保留各工程自己的 `build/`。不要把产物移进源码目录，也不要提交真实配置、密码、备份或日志。
+
+两个 `benchmark-*` 脚本都支持 `--binary` 和 `--label`，可对不同版本构建重复同一场景。运行对比时避免同时编译或运行其它压测；运行基准默认先预热15秒再采样60秒，CPU百分比以单个逻辑核为100%，只计 `monitord` 主进程，不含外部采集命令或浏览器。浏览器基准需要先在 `web/` 安装依赖，默认使用 Chrome；`--channel chromium` 使用已安装的 Playwright Chromium。模拟历史数据只有3行，测量的是保留资源，不代表生产查询吞吐或系统总内存。两者均使用自建临时服务并在结束后删除临时凭据和数据，JSON旁保留测试服务日志。
+
+运行基准可加 `--include-children --child-sample-interval 0.2`，补充外部采集命令的开销：`process_tree_lifetime` 使用 `wait4` 统计本次启动的服务及已回收后代的 CPU，包含启动、预热、测量和退出全程，不能当作60秒稳定区间的 CPU。`child_process_sampling` 按进程表快照统计服务及直接子进程的 RSS，可能重复计算共享页；短命令和瞬时峰值可能漏采，因此子进程 CPU、启动数量和最大 RSS 只是观测下限，平均值/p95 是采样统计。对比两版时保持相同采样间隔；采样工具本身的开销不计入服务 CPU。

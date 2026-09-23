@@ -1,3 +1,5 @@
+import { watch } from 'vue'
+import { pageVisible } from './visibility'
 import type { AlarmLogEntry, LiveAlarmMsg, LiveMsg } from './api'
 import { api, selection } from './api'
 
@@ -18,6 +20,10 @@ class Live {
   onAlarm: ((e: AlarmLogEntry) => void) | null = null
 
   constructor() {
+    watch(pageVisible, (visible) => {
+      if (!visible) this.dropSocket()
+      else if (this.enabled) this.start()
+    })
     window.addEventListener('offline', () => this.dropSocket())
     window.addEventListener('online', () => { if (this.enabled) this.start() })
   }
@@ -28,7 +34,7 @@ class Live {
 
   start() {
     this.enabled = true
-    if (this.ws || !navigator.onLine) return
+    if (this.ws || !navigator.onLine || !pageVisible.value) return
     clearTimeout(this.retryTimer)
     const ws = new WebSocket(api.liveURL(this.subscriptions()), api.liveProtocols())
     this.ws = ws
@@ -47,7 +53,7 @@ class Live {
     ws.onclose = () => {
       if (this.ws !== ws) return
       this.ws = null; this.connected = false; this.onState?.(false)
-      if (this.enabled && navigator.onLine) {
+      if (this.enabled && navigator.onLine && pageVisible.value) {
         this.retryTimer = window.setTimeout(() => this.start(), this.retry)
         this.retry = Math.min(this.retry * 2, 15000)
       }

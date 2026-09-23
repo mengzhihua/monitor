@@ -1,27 +1,29 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { ref, shallowRef } from 'vue'
+import { usePolling } from '../polling'
 import type { FunctionTable, LogRow } from '../api'
 import { api } from '../api'
 
 const emit = defineEmits<{ close: [] }>()
 const query = ref('')
 const source = ref('')
-const table = ref<FunctionTable | null>(null)
+const table = shallowRef<FunctionTable | null>(null)
 const error = ref('')
 const updated = ref(0)
-let timer: ReturnType<typeof setInterval> | undefined
 
-async function load() {
+async function load(signal: AbortSignal) {
   try {
     const args: Record<string, string> = { limit: '200' }
     if (query.value.trim()) args.query = query.value.trim()
     if (source.value) args.source = source.value
-    const r = await api.logs(args)
+    const r = await api.logs(args, signal)
+    if (signal.aborted) return
     const res = r.result as FunctionTable
     if (res && Array.isArray(res.rows)) table.value = res
     updated.value = r.time
     error.value = ''
   } catch (e) {
+    if (signal.aborted) return
     error.value = (e as Error).message
   }
 }
@@ -37,11 +39,7 @@ function priClass(p: string) {
   return ''
 }
 
-onMounted(() => {
-  load()
-  timer = setInterval(load, 4000)
-})
-onBeforeUnmount(() => clearInterval(timer))
+const refresh = usePolling(load, 4000)
 </script>
 
 <template>
@@ -52,13 +50,13 @@ onBeforeUnmount(() => clearInterval(timer))
         <small v-if="table">{{ table.total }}</small>
         <small v-if="updated"> · {{ new Date(updated * 1000).toLocaleTimeString() }}</small>
       </h3>
-      <select v-model="source" @change="load">
+      <select v-model="source" @change="refresh">
         <option value="">自动</option>
         <option value="journal">journald</option>
         <option value="file">文件</option>
         <option value="eventlog">Event Log</option>
       </select>
-      <input v-model="query" placeholder="筛选…" @keyup.enter="load" />
+      <input v-model="query" placeholder="筛选…" @keyup.enter="refresh" />
       <button class="x" @click="emit('close')" title="关闭">×</button>
     </div>
     <div v-if="error" class="err">{{ error }}</div>

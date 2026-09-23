@@ -59,22 +59,23 @@ type appGroup struct {
 }
 
 type pidState struct {
-	name    string
-	cmdline string
-	group   *appGroup
-	user    string
-	osGroup string
-	cpuMs   float64 // user+system, ms
-	hasCPU  bool
-	readB   uint64
-	writeB  uint64
-	ioOK    bool
-	skipIO  bool // permission or missing io; don't reopen it every tick
-	seenAt  time.Time
-	rss     uint64
-	threads int32
-	ppid    int32
-	cpuPct  float64 // computed on the last tick
+	name      string
+	startedAt int64 // process birth identity; zero if unavailable
+	cmdline   string
+	group     *appGroup
+	user      string
+	osGroup   string
+	cpuMs     float64 // user+system, ms
+	hasCPU    bool
+	readB     uint64
+	writeB    uint64
+	ioOK      bool
+	skipIO    bool // permission or missing io; don't reopen it every tick
+	seenAt    time.Time
+	rss       uint64
+	threads   int32
+	ppid      int32
+	cpuPct    float64 // computed on the last tick
 }
 
 type appsCollector struct {
@@ -103,7 +104,7 @@ type appsCollector struct {
 // comes from stat every tick; io charts are incremental, so a gap keeps the rate.
 const appsIOEvery = 5 * time.Second
 
-// procCounters is one /proc/<pid> sample. ok is false when stat could not be read.
+// procCounters is one process sample. ok is false when CPU counters could not be read.
 type procCounters struct {
 	name            string
 	ppid            int32
@@ -234,6 +235,23 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 	return a.other
 }
 
+// appProcess carries identity from the same process-list snapshot as the PID.
+// A fresh gopsutil handle reads live values without retaining cached metadata.
+type appProcess struct {
+	process   *process.Process
+	startedAt int64
+}
+
+func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
+	previous := a.pids[pid]
+	if previous != nil && startedAt != 0 && previous.startedAt != startedAt {
+		// The PID now belongs to a different process: reload identity and reset
+		// CPU/IO baselines so its counters cannot be attributed to the old owner.
+		return nil
+	}
+	return previous
+}
+
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	pids, native := listProcPIDs(a.pidBuf, &a.dirBuf)
 	a.pidBuf = pids
@@ -241,10 +259,10 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	if a.hasIO {
 		ioNow = sampleDue(&a.ioAt, now, appsIOEvery)
 	}
-	var procs []*process.Process
+	var procs []appProcess
 	if !native {
 		var err error
-		procs, err = process.ProcessesWithContext(ctx)
+		procs, err = listAppProcesses(ctx)
 		if err != nil {
 			return err
 		}
@@ -269,14 +287,16 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			return ctx.Err()
 		}
 		var pid int32
+		var startedAt int64
 		var gp *process.Process
 		if native {
 			pid = pids[i]
 		} else {
-			gp = procs[i]
+			gp = procs[i].process
+			startedAt = procs[i].startedAt
 			pid = gp.Pid
 		}
-		st := a.pids[pid]
+		st := a.previousPID(pid, startedAt)
 		var sample procCounters
 		if native {
 			sample = readProcSample(pid, !ioNow || (st != nil && st.skipIO), &a.scratch)
@@ -307,7 +327,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 				if runtime.GOOS == "windows" {
 					name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
 				}
-				st = &pidState{name: name}
+				st = &pidState{name: name, startedAt: startedAt}
 				st.cmdline, _ = gp.CmdlineWithContext(ctx)
 				st.ppid, _ = gp.PpidWithContext(ctx)
 				st.group = a.match(name, st.cmdline)
@@ -336,24 +356,18 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			}
 			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
 			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
-		} else if t, err := gp.TimesWithContext(ctx); err == nil {
-			cpuSec = t.User + t.System
-			ok = true
-			if m, err := gp.MemoryInfoWithContext(ctx); err == nil && m != nil {
-				rss = m.RSS
-			}
-			if n, err := gp.NumThreadsWithContext(ctx); err == nil {
-				threads = n
-			}
-			if a.hasIO && ioNow {
-				if io, err := gp.IOCountersWithContext(ctx); err == nil && io != nil {
-					readB, writeB, hasIO = io.ReadBytes, io.WriteBytes, true
-				}
-			}
+		} else {
+			// withIO follows the same cadence as the native /proc reader. The
+			// extracted sampler still owns CPU, RSS, and thread counters.
+			sample = readAppProcessSample(ctx, gp, a.hasIO && ioNow)
+			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
+			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
 		}
+		// A failed read retains its cumulative baseline, but cannot reuse the
+		// previous interval's rate when aggregating CPU by user and OS group.
+		st.cpuPct = 0
 		if ok {
 			ms := cpuSec * 1000
-			st.cpuPct = 0
 			if st.hasCPU {
 				if d := ms - st.cpuMs; d > 0 {
 					a.cpuMs[g] += d
