@@ -22,9 +22,10 @@ type profileConfig struct {
 }
 
 type profileCollector struct {
-	cfg  profileConfig
-	proc *process.Process
-	mem  []metrics.Sample
+	cfg     profileConfig
+	proc    *process.Process
+	mem     []metrics.Sample
+	scratch []byte
 }
 
 func init() {
@@ -68,8 +69,8 @@ func (p *profileCollector) Init(reg *registry.Registry) error {
 }
 
 func (p *profileCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	user, sys := 0.0, 0.0
-	if p.proc != nil {
+	user, sys, ok := p.agentCPU()
+	if !ok && p.proc != nil {
 		if t, err := p.proc.TimesWithContext(ctx); err == nil {
 			user, sys = t.User, t.System
 		}

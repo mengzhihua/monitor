@@ -24,6 +24,7 @@ type ebpfCollector struct {
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 	haveTool                                                                          bool
+	toolAt                                                                            time.Time
 	vmstat, dentry, filenr, inodes, diskstats, mounts, kprobes, shm, stat, interrupts string
 	haveCache, haveDC, haveFD, haveVFS, haveOOM, haveProc                             bool
 	haveSHM, haveSwap, haveDisk, haveMount, haveIRQ, haveSync, haveMD, haveKprobe     bool
@@ -87,7 +88,7 @@ func (e *ebpfCollector) Init(reg *registry.Registry) error {
 }
 
 func (e *ebpfCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	if e.haveTool {
+	if e.haveTool && sampleDue(&e.toolAt, now, 10*time.Second) {
 		progs, err := e.programs(ctx)
 		if err != nil {
 			return err

@@ -86,6 +86,10 @@ type Store struct {
 	wg              sync.WaitGroup
 	closed          bool
 	wal             *walLog
+	// afterSnapshot runs after a raw block is copied and before that copy is
+	// removed from the active buffer. Tests use it to drop a prefix in that
+	// window. Production leaves it nil.
+	afterSnapshot func(*series)
 }
 
 func Open(opt Options) (*Store, error) {
@@ -197,38 +201,38 @@ func (s *Store) getOrCreate(id string) *series {
 	return sr
 }
 
-// Append implements registry.Sink.
-func (s *Store) Append(id string, ts int64, v float64) {
-	s.checkpointMu.RLock()
-	sr := s.getOrCreate(id)
+// tierFlush is a rollup buffer that filled while accepting one point.
+// Nil on the common path so a quiet sample does not allocate it.
+type tierFlush struct {
+	t  *tier
+	sr *tierSeries
+}
+
+// accept records one point. The caller holds checkpointMu for reading and
+// does not hold wal.mu. A rejected timestamp returns ok false.
+func (s *Store) accept(id string, ts int64, v float64) (sr *series, full bool, flushes []tierFlush, ok bool) {
+	sr = s.getOrCreate(id)
 	sr.mu.Lock()
 	if ts <= sr.last {
 		sr.mu.Unlock()
-		s.checkpointMu.RUnlock()
-		return
+		return nil, false, nil, false
 	}
 	sr.last = ts
 	sr.ts = append(sr.ts, ts)
 	sr.vals = append(sr.vals, v)
 	sr.dirty = true
-	full := len(sr.ts) >= s.opt.BlockSize
-	// Keep one series ordered across all tiers, even with concurrent producers.
-	type pendingTier struct {
-		t  *tier
-		sr *tierSeries
-	}
-	var pendingBuf [4]pendingTier
-	pending := pendingBuf[:0]
+	full = len(sr.ts) >= s.opt.BlockSize
 	for _, t := range s.tiers {
 		tsr := t.getOrCreate(id)
 		if t.append(tsr, ts, v) {
-			pending = append(pending, pendingTier{t, tsr})
+			flushes = append(flushes, tierFlush{t, tsr})
 		}
 	}
 	sr.mu.Unlock()
-	s.revision.Add(1)
-	s.walWrite(id, ts, v)
-	s.checkpointMu.RUnlock()
+	return sr, full, flushes, true
+}
+
+func (s *Store) finishAppend(id string, sr *series, full bool, flushes []tierFlush) {
 	// Archiving does not change logical data. A concurrent checkpoint can capture
 	// either side; recovery deduplicates buffers against completed block files.
 	if full {
@@ -236,10 +240,71 @@ func (s *Store) Append(id string, ts int64, v float64) {
 			s.log.Error("tsdb: flush failed", "series", id, "err", err)
 		}
 	}
-	for _, p := range pending {
+	for _, p := range flushes {
 		if err := p.t.flush(p.sr); err != nil {
 			s.log.Error("tsdb: tier flush failed", "tier", p.t.idx, "series", id, "err", err)
 		}
+	}
+}
+
+// Append implements registry.Sink.
+func (s *Store) Append(id string, ts int64, v float64) {
+	s.checkpointMu.RLock()
+	sr, full, flushes, ok := s.accept(id, ts, v)
+	if !ok {
+		s.checkpointMu.RUnlock()
+		return
+	}
+	s.revision.Add(1)
+	s.walWrite(id, ts, v)
+	s.checkpointMu.RUnlock()
+	s.finishAppend(id, sr, full, flushes)
+}
+
+// AppendMany writes one timestamp across several series under a single WAL
+// lock. ids and vals are paired by index; a shorter slice ends the batch.
+// A timestamp that is not newer than the series is skipped, matching Append.
+func (s *Store) AppendMany(ts int64, ids []string, vals []float64) {
+	n := len(ids)
+	if len(vals) < n {
+		n = len(vals)
+	}
+	if n == 0 {
+		return
+	}
+	type accepted struct {
+		id      string
+		v       float64
+		sr      *series
+		full    bool
+		flushes []tierFlush
+	}
+	s.checkpointMu.RLock()
+	batch := make([]accepted, 0, n)
+	for i := 0; i < n; i++ {
+		sr, full, flushes, ok := s.accept(ids[i], ts, vals[i])
+		if !ok {
+			continue
+		}
+		batch = append(batch, accepted{ids[i], vals[i], sr, full, flushes})
+	}
+	if len(batch) == 0 {
+		s.checkpointMu.RUnlock()
+		return
+	}
+	s.revision.Add(uint64(len(batch)))
+	if s.wal != nil {
+		s.wal.mu.Lock()
+		for _, p := range batch {
+			if err := s.wal.appendLocked(p.id, ts, p.v); err != nil {
+				s.log.Warn("tsdb: wal append failed", "series", p.id, "err", err)
+			}
+		}
+		s.wal.mu.Unlock()
+	}
+	s.checkpointMu.RUnlock()
+	for _, p := range batch {
+		s.finishAppend(p.id, p.sr, p.full, p.flushes)
 	}
 }
 
@@ -434,16 +499,50 @@ func (s *Store) flushSeries(sr *series) error {
 	// Appends can extend the active buffer while this snapshot is being written.
 	ts, vals := append([]int64(nil), sr.ts...), append([]float64(nil), sr.vals...)
 	sr.mu.Unlock()
+	if s.afterSnapshot != nil {
+		s.afterSnapshot(sr)
+	}
 	meta, err := writeBlock(s.seriesDir(sr.id), sr.id, ts, vals)
 	if err != nil {
 		return err
 	}
 	sr.mu.Lock()
 	sr.blocks = append(sr.blocks, meta)
-	sr.ts, sr.vals = sr.ts[len(ts):], sr.vals[len(vals):]
+	// A retention pass can drop a prefix while this block is written. Cutting
+	// by snapshot length then deletes samples that arrived in that window, or
+	// panics when the buffer is shorter. Those samples already advanced
+	// sr.last, so later collections are rejected and last_entry stays put.
+	sr.ts, sr.vals = suffixNewerThan(sr.ts, sr.vals, ts[len(ts)-1])
 	sr.dirty = len(sr.ts) > 0
+	if vis := sr.visibleEndLocked(); sr.last > vis {
+		sr.last = vis
+	}
 	sr.mu.Unlock()
 	return nil
+}
+
+// suffixNewerThan keeps samples strictly after end. ts is ordered ascending.
+func suffixNewerThan(ts []int64, vals []float64, end int64) ([]int64, []float64) {
+	i := sort.Search(len(ts), func(j int) bool { return ts[j] > end })
+	if i > len(vals) {
+		i = len(vals)
+	}
+	return ts[i:], vals[i:]
+}
+
+// visibleEndLocked is the newest timestamp still stored in a block or the
+// active buffer. The caller holds sr.mu.
+func (sr *series) visibleEndLocked() int64 {
+	var end int64
+	for _, b := range sr.blocks {
+		if b.end > end {
+			end = b.end
+		}
+	}
+	if n := len(sr.ts); n > 0 && sr.ts[n-1] > end {
+		end = sr.ts[n-1]
+	}
+	return end
 }
 
 // Flush persists one consistent image of all unfinished raw and rollup blocks.

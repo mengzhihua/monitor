@@ -30,7 +30,11 @@ func init() {
 
 // ---- cpu ----
 
-type cpuCollector struct{ ncpu int }
+type cpuCollector struct {
+	ncpu    int
+	scratch []byte
+	times   []cpu.TimesStat
+}
 
 func (c *cpuCollector) Name() string { return "cpu" }
 
@@ -98,7 +102,11 @@ func sumCPUTimes(per []cpu.TimesStat) cpu.TimesStat {
 func (c *cpuCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	// One per-CPU read covers the aggregate. A second total-only read parses
 	// the same /proc/stat (or the same host call) again.
-	per, err := cpu.TimesWithContext(ctx, true)
+	per, ok := c.linuxTimes()
+	var err error
+	if !ok {
+		per, err = cpu.TimesWithContext(ctx, true)
+	}
 	if err != nil || len(per) == 0 {
 		total, err2 := cpu.TimesWithContext(ctx, false)
 		if err2 != nil || len(total) == 0 {
@@ -402,7 +410,13 @@ func ratePerOp(curAmt, prevAmt, curOps, prevOps uint64) float64 {
 
 // ---- disk space ----
 
-type diskSpaceCollector struct{ mounts map[string]string }
+type diskSpaceCollector struct {
+	mounts map[string]string
+	last   time.Time
+}
+
+// diskSpaceEvery is how often statfs runs. Capacity moves slowly.
+const diskSpaceEvery = 15 * time.Second
 
 func (c *diskSpaceCollector) Name() string { return "diskspace" }
 
@@ -460,6 +474,9 @@ func (c *diskSpaceCollector) ensure(reg *registry.Registry, mp string, inodes bo
 }
 
 func (c *diskSpaceCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&c.last, now, diskSpaceEvery) {
+		return nil
+	}
 	for mp, id := range c.mounts {
 		u, err := disk.UsageWithContext(ctx, mp)
 		if err != nil {

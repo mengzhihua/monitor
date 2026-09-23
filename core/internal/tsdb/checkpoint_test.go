@@ -160,6 +160,137 @@ func stopWithoutCheckpoint(s *Store) {
 	}
 }
 
+// A checkpoint Last past every retained sample used to be restored as the
+// accept watermark. Collections after a restart were then dropped until wall
+// clock caught up, so last_entry stayed on the last visible sample.
+func TestCheckpointLastAheadOfSamplesDoesNotFreezeWrites(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(1_700_000_000)
+	for i := int64(0); i < 5; i++ {
+		s.Append("system.load|load1", start+i, float64(i))
+	}
+	sr := s.series["system.load|load1"]
+	sr.mu.Lock()
+	sr.last = start + 600
+	sr.mu.Unlock()
+	if err = s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.Append("system.load|load1", start+5, 9)
+	_, last, ok := s.Bounds("system.load|load1")
+	if !ok || last != start+5 {
+		t.Fatalf("last_entry frozen at %d ok=%v, want %d", last, ok, start+5)
+	}
+	pts, err := s.Query("system.load|load1", start, start+5)
+	if err != nil || len(pts) != 6 || pts[5].Value != 9 {
+		t.Fatalf("sample after restart missing: %v %v", pts, err)
+	}
+}
+
+// Retention can remove a buffer prefix while a full block is being written.
+// Trimming by the snapshot length then drops newer samples or panics, and the
+// watermark stays ahead of whatever remains.
+func TestFlushKeepsSamplesArrivingDuringWrite(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), BlockSize: 4, Tiers: []TierSpec{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := int64(1_700_000_000)
+	s.afterSnapshot = func(sr *series) {
+		s.afterSnapshot = nil
+		sr.mu.Lock()
+		sr.ts = sr.ts[1:]
+		sr.vals = sr.vals[1:]
+		sr.ts = append(sr.ts, start+10)
+		sr.vals = append(sr.vals, 99)
+		sr.last = start + 10
+		sr.mu.Unlock()
+	}
+	for i := int64(0); i < 4; i++ {
+		s.Append("x", start+i, float64(i))
+	}
+	s.Append("x", start+11, 1)
+	_, last, ok := s.Bounds("x")
+	if !ok || last != start+11 {
+		t.Fatalf("last_entry=%d ok=%v, want %d", last, ok, start+11)
+	}
+	pts, err := s.Query("x", start+10, start+11)
+	if err != nil || len(pts) != 2 || pts[0].Value != 99 || pts[1].Value != 1 {
+		t.Fatalf("samples accepted during flush disappeared: %v %v", pts, err)
+	}
+}
+
+func TestFlushPrefixDropDoesNotPanic(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), BlockSize: 4, Tiers: []TierSpec{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := int64(1_700_000_000)
+	s.afterSnapshot = func(sr *series) {
+		s.afterSnapshot = nil
+		sr.mu.Lock()
+		sr.ts = sr.ts[:len(sr.ts)-1]
+		sr.vals = sr.vals[:len(sr.vals)-1]
+		sr.mu.Unlock()
+	}
+	for i := int64(0); i < 4; i++ {
+		s.Append("x", start+i, float64(i))
+	}
+	s.Append("x", start+4, 4)
+	_, last, ok := s.Bounds("x")
+	if !ok || last != start+4 {
+		t.Fatalf("last_entry=%d ok=%v, want %d", last, ok, start+4)
+	}
+}
+
+func TestTierFlushKeepsBucketsAppendedDuringWrite(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tier := s.tiers[0]
+	tier.afterSnapshot = func(sr *tierSeries) {
+		tier.afterSnapshot = nil
+		sr.mu.Lock()
+		sr.done = sr.done[1:]
+		sr.done = append(sr.done, Bucket{TS: 300, Min: 7, Max: 7, Sum: 7, Last: 7, Count: 1})
+		sr.mu.Unlock()
+	}
+	// ts 0 is not newer than the zero watermark, so the first real bucket is 60.
+	for _, ts := range []int64{60, 120, 180} {
+		s.Append("x", ts, 1)
+	}
+	buckets, err := s.QueryTier("x", 1, 0, 360)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saw bool
+	for _, b := range buckets {
+		if b.TS == 300 && b.Count == 1 {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatalf("bucket appended during tier flush disappeared: %+v", buckets)
+	}
+}
+
 func TestCheckpointRawRetentionIncludesMemory(t *testing.T) {
 	s, err := Open(Options{Dir: t.TempDir(), Retention: time.Minute})
 	if err != nil {

@@ -24,7 +24,19 @@ type View struct {
 }
 
 func (v *View) Append(id string, ts int64, val float64) { v.s.Append(v.prefix+id, ts, val) }
-func (v *View) Bounds(id string) (int64, int64, bool)   { return v.s.Bounds(v.prefix + id) }
+
+func (v *View) AppendMany(ts int64, ids []string, vals []float64) {
+	if v.prefix == "" {
+		v.s.AppendMany(ts, ids, vals)
+		return
+	}
+	prefixed := make([]string, len(ids))
+	for i, id := range ids {
+		prefixed[i] = v.prefix + id
+	}
+	v.s.AppendMany(ts, prefixed, vals)
+}
+func (v *View) Bounds(id string) (int64, int64, bool) { return v.s.Bounds(v.prefix + id) }
 func (v *View) QueryTier(id string, tier int, after, before int64) ([]Bucket, error) {
 	return v.s.QueryTier(v.prefix+id, tier, after, before)
 }

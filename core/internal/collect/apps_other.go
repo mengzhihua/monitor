@@ -2,7 +2,7 @@
 
 package collect
 
-func listProcPIDs(dst []int32) ([]int32, bool) { return dst[:0], false }
+func listProcPIDs(dst []int32, _ *[]byte) ([]int32, bool) { return dst[:0], false }
 
 func readProcSample(int32, bool, *[]byte) procCounters { return procCounters{} }
 

@@ -25,6 +25,7 @@ type procM17 struct {
 	irqSeen, softSeen                                   map[string]bool
 	tcAt                                                time.Time
 	pageAt                                              time.Time
+	irqAt, softAt                                       time.Time
 	pageZones                                           map[string]map[string]float64
 }
 
@@ -207,13 +208,15 @@ func (p *procCollector) collectM17(reg *registry.Registry, now time.Time) {
 			p.collectPageType(reg, now, m.pageZones)
 		}
 	}
-	if m.haveIRQ {
+	if m.haveIRQ && (m.irqAt.IsZero() || now.Sub(m.irqAt) >= slowSampleEvery) {
 		if raw, err := readTrim(m.interrupts); err == nil {
+			m.irqAt = now
 			p.collectInterrupts(reg, now, parseInterrupts(raw))
 		}
 	}
-	if m.haveSoftirq {
+	if m.haveSoftirq && (m.softAt.IsZero() || now.Sub(m.softAt) >= slowSampleEvery) {
 		if raw, err := readTrim(m.softirqs); err == nil {
+			m.softAt = now
 			p.collectSoftirqs(reg, now, parseSoftirqs(raw))
 		}
 	}

@@ -94,9 +94,15 @@ type appsCollector struct {
 	groupCache          map[string]string
 	userCache           map[string]string
 	pidBuf              []int32
+	dirBuf              []byte
 	scratch             []byte
 	last                time.Time
+	ioAt                time.Time
 }
+
+// appsIOEvery is how often per-process disk counters are opened. CPU still
+// comes from stat every tick; io charts are incremental, so a gap keeps the rate.
+const appsIOEvery = 5 * time.Second
 
 // procCounters is one process sample. ok is false when CPU counters could not be read.
 type procCounters struct {
@@ -247,8 +253,12 @@ func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
 }
 
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	pids, native := listProcPIDs(a.pidBuf)
+	pids, native := listProcPIDs(a.pidBuf, &a.dirBuf)
 	a.pidBuf = pids
+	ioNow := false
+	if a.hasIO {
+		ioNow = sampleDue(&a.ioAt, now, appsIOEvery)
+	}
 	var procs []appProcess
 	if !native {
 		var err error
@@ -289,7 +299,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		st := a.previousPID(pid, startedAt)
 		var sample procCounters
 		if native {
-			sample = readProcSample(pid, st != nil && st.skipIO, &a.scratch)
+			sample = readProcSample(pid, !ioNow || (st != nil && st.skipIO), &a.scratch)
 		}
 		if st == nil {
 			if native {
@@ -347,7 +357,9 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
 			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
 		} else {
-			sample = readAppProcessSample(ctx, gp, a.hasIO)
+			// withIO follows the same cadence as the native /proc reader. The
+			// extracted sampler still owns CPU, RSS, and thread counters.
+			sample = readAppProcessSample(ctx, gp, a.hasIO && ioNow)
 			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
 			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
 		}
@@ -398,7 +410,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	_ = reg.Collect("apps.mem", now, mem)
 	_ = reg.Collect("apps.processes", now, nproc)
 	_ = reg.Collect("apps.threads", now, nthr)
-	if a.hasIO {
+	if a.hasIO && ioNow {
 		rd, wr := make(map[string]float64, len(all)), make(map[string]float64, len(all))
 		for _, g := range all {
 			rd[g.name], wr[g.name] = a.readB[g.name], a.writeB[g.name]

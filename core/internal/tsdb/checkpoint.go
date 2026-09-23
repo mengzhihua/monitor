@@ -186,13 +186,20 @@ func (s *Store) loadCheckpoint() error {
 		}
 		sr := s.getOrCreate(row.ID)
 		persistedLast := sr.last
+		visible := persistedLast
 		for i, ts := range row.TS {
 			if ts > persistedLast {
 				sr.ts = append(sr.ts, ts)
 				sr.vals = append(sr.vals, row.Values[i])
+				if ts > visible {
+					visible = ts
+				}
 			}
 		}
-		sr.last = max(sr.last, row.Last)
+		// A Last past every retained sample becomes the accept watermark.
+		// Collections after restart are then dropped until wall clock catches
+		// up, and last_entry stays on the sample written at process start.
+		sr.last = visible
 		sr.dirty = len(sr.ts) > 0
 		// A full raw block may have reached disk after the last checkpoint. Replay
 		// only that newer suffix into the restored rollups; persisted closed buckets
