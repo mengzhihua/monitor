@@ -259,12 +259,24 @@ func TestFreeBSDCrossCompile(t *testing.T) {
 	if runtime.GOOS == "freebsd" {
 		t.Skip("already freebsd")
 	}
+	crossCompile(t, "freebsd", "amd64")
+}
+
+func TestAndroidCrossCompile(t *testing.T) {
+	if runtime.GOOS == "android" {
+		t.Skip("already android")
+	}
+	crossCompile(t, "android", "arm64")
+}
+
+func crossCompile(t *testing.T, goos, goarch string) {
+	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "collect.test")
 	cmd := exec.Command("go", "test", "-c", "-o", out, ".")
-	cmd.Env = append(os.Environ(), "GOOS=freebsd", "GOARCH=amd64", "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("freebsd cross-compile: %v\n%s", err, b)
+		t.Fatalf("%s cross-compile: %v\n%s", goos, err, b)
 	}
 }
