@@ -17,6 +17,47 @@ paths:
           description: Snapshot with now, nodes, problems, summary, activity (latest 100 handled episodes), persistent, current_user and assignees (eligible configured operators plus the current eligible identity; no credentials). Summary includes unassigned, open, investigating and watching counts across current problems.
         "401":
           description: Authentication required
+  /api/v1/operations/handling/batch:
+    post:
+      summary: Atomically apply one handling action to explicitly selected problem episodes
+      description: Admin and troubleshooter only. Actor and alarm context come from the server. Ignores chart node selection; never expands a filter into extra targets. Every episode must still be active and each handling revision must match. One store lock and one file replacement publish all records; conflict, capacity or disk errors publish none. Health evaluation continues independently and new episode IDs never inherit handling. Request limit 16384 bytes; response Cache-Control no-store. Lost network responses require checking current records before retrying.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action, items]
+              properties:
+                action: {type: string, enum: [acknowledge, unacknowledge, comment, assign, unassign, progress]}
+                note: {type: string, description: At most 2048 UTF-8 bytes after trimming; required and nonempty for comment.}
+                assignee: {type: string, description: Required only for assign; must name an eligible operator.}
+                status: {type: string, enum: [open, investigating, watching], description: Required only for progress.}
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [id, revision]
+                    properties:
+                      id: {type: string, pattern: '^[0-9a-f]{64}$', description: Unique active problem episode ID.}
+                      revision: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: count and records in requested order; each record contains its new revision, context, handling state and separate actor/action history.
+        "400":
+          description: Invalid change, count, duplicate ID, unknown fields or missing revision
+        "401":
+          description: Authentication required
+        "403":
+          description: Read-only role
+        "409":
+          description: One or more episodes or revisions changed; no batch changes saved
+        "503":
+          description: Storage capacity or write failure; no batch changes saved
   /api/v1/operations/views:
     get:
       summary: Read the current account's personal operations views

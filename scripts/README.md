@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | `smoke.sh` | Agent / Hub API、默认密码、claim 和 ring | `bash scripts/smoke.sh` |
 | `verify-default-auth.py` | 默认认证、错误密码、WebSocket 拒绝、重启和重置 | `python3 scripts/verify-default-auth.py` |
-| `verify-operations.py` | 2.0 真实采样、处置/个人视图持久化、服务重启、版本冲突及历史查询导出 | `python3 scripts/verify-operations.py` |
+| `verify-operations.py` | 2.0 真实采样、处置/个人视图持久化、服务重启、单条/批量版本冲突及历史查询导出 | `python3 scripts/verify-operations.py` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
 | `soak.py` | 指定时长的持续采集和查询测量 | `python3 scripts/soak.py --seconds 120` |

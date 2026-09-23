@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api, ApiError } from '../api'
 import type { HandlingAction, HandlingChange, HandlingStatus, OperationsSnapshot, OperationsView, Problem, ResourceMetric } from '../api'
 import { usePolling } from '../polling'
 import OperationsHistory from './OperationsHistory.vue'
 import OperationsViews from './OperationsViews.vue'
+import OperationsBatch from './OperationsBatch.vue'
 
 const props = defineProps<{ role: string }>()
 const emit = defineEmits<{ drill: [node: string, chart: string] }>()
@@ -25,6 +26,16 @@ const owners = ref<Record<string, string>>({})
 const progress = ref<Record<string, HandlingStatus>>({})
 const draftRevisions = ref<Record<string, number>>({})
 const visibleCount = ref(50)
+const selectedProblems = ref<Problem[]>([])
+const batchError = ref('')
+const batchMessage = ref('')
+const batchCompleted = ref(0)
+watch([query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter], () => {
+  if (selectedProblems.value.length) {
+    selectedProblems.value = []
+    batchMessage.value = '筛选条件已改变，已清空原选择，请重新选择问题。'
+  }
+})
 let disposed = false
 onBeforeUnmount(() => { disposed = true })
 const canHandle = computed(() => ['admin', 'troubleshooter'].includes(props.role))
@@ -38,7 +49,7 @@ const refresh = usePolling(async signal => {
     error.value = ''
   } catch (e) {
     if (signal.aborted) return
-    if (e instanceof ApiError && [401, 403].includes(e.status)) snapshot.value = null
+    if (e instanceof ApiError && [401, 403].includes(e.status)) { snapshot.value = null; selectedProblems.value = [] }
     error.value = e instanceof ApiError && e.status === 401 ? '登录已失效，请重新登录。' : '刷新失败，正在展示上次成功的数据；请检查连接并重试。'
   } finally { if (!signal.aborted) loading.value = false }
 }, 15000)
@@ -118,6 +129,43 @@ async function update(p: Problem, change: HandlingChange) {
     } else actionError.value = e instanceof ApiError && e.status === 403 ? '当前账号没有问题处理权限。' : `保存失败：${String(e)}`
   } finally { if (!disposed) busy.value = '' }
 }
+function toggleProblem(p: Problem, checked: boolean) {
+  if (busy.value) return
+  if (!checked) selectedProblems.value = selectedProblems.value.filter(x => x.id !== p.id)
+  else if (selectedProblems.value.length < 50 && !selectedProblems.value.some(x => x.id === p.id)) selectedProblems.value.push(p)
+  batchError.value = ''; batchMessage.value = ''
+}
+async function updateBatch(change: HandlingChange & { note: string }) {
+  if (busy.value || !canHandle.value || !selectedProblems.value.length || error.value) return
+  const items = selectedProblems.value.map(p => ({ id: p.id, revision: p.handling.revision }))
+  busy.value = 'batch'; batchError.value = ''; batchMessage.value = ''
+  try {
+    const result = await api.handleProblems({ ...change, items })
+    if (disposed) return
+    selectedProblems.value = []
+    batchCompleted.value++
+    historyRefreshKey.value++
+    batchMessage.value = `已对 ${result.count} 个问题完成${actionName[change.action] || change.action}。`
+    await refresh()
+  } catch (e) {
+    if (disposed) return
+    if (e instanceof ApiError && e.status === 409) {
+      await refresh()
+      if (disposed) return
+      batchError.value = error.value
+        ? '所选问题或处理记录已变化，整批未提交；刷新也未成功。请恢复连接、刷新总览并重新选择，统一备注已保留。'
+        : '所选问题或处理记录已变化，整批未提交。已读取最新状态，请重新选择后再执行；统一备注已保留。'
+    } else if (e instanceof ApiError && e.status === 403) batchError.value = '当前账号没有批量处置权限。'
+    else if (e instanceof ApiError && e.status === 401) { selectedProblems.value = []; batchError.value = '登录已失效，请重新登录。' }
+    else if (e instanceof ApiError && e.status === 503) batchError.value = '服务端保存失败，整批未提交，选择与统一备注已保留。'
+    else if (e instanceof ApiError && e.status === 400) batchError.value = '批量请求无效，请检查责任人、备注或选择数量。'
+    else {
+      await refresh()
+      if (disposed) return
+      batchError.value = '请求中断，结果暂不确定。请核对最新处理记录后重新选择；统一备注已保留。'
+    }
+  } finally { if (!disposed) busy.value = '' }
+}
 function assign(p: Problem) {
   const assignee = owners.value[p.id] ?? p.handling.assignee
   void update(p, assignee ? { action: 'assign', assignee } : { action: 'unassign' })
@@ -186,8 +234,13 @@ function exportSnapshot() {
       <div class="families"><span v-for="[family, count] in families" :key="family">{{ family }} <b>{{ count }}</b></span></div>
       <p v-if="actionError" class="notice error" role="alert">{{ actionError }}</p>
       <p v-if="!canHandle" class="muted">当前账号只读；管理员和排障人员可以确认问题、指派责任人、更新进度及添加备注。</p>
+      <OperationsBatch v-if="canHandle" v-model:selected="selectedProblems" :current="snapshot.problems" :visible="problemsVisible" :assignees="snapshot.assignees"
+        :busy="!!busy" :stale="!!error" :error="batchError" :message="batchMessage" :completed="batchCompleted" @submit="updateBatch" />
       <p v-if="!problems.length" class="empty">当前筛选范围内没有待展示的问题。</p>
       <article v-for="p in problemsVisible" :key="p.id" class="problem" :class="p.severity.toLowerCase()" :data-problem-id="p.id">
+        <label v-if="canHandle" class="problem-select"><input type="checkbox" :checked="selectedProblems.some(x => x.id === p.id)"
+          :disabled="!!busy || !!error || (selectedProblems.length >= 50 && !selectedProblems.some(x => x.id === p.id))"
+          :aria-label="'选择问题 ' + p.hostname + ' · ' + p.name" @change="toggleProblem(p, ($event.target as HTMLInputElement).checked)" />选择此问题</label>
         <div class="row"><div class="problem-title"><span class="badge" :class="p.severity.toLowerCase()">{{ p.severity === 'CRITICAL' ? '严重' : '警告' }}</span><h3>{{ p.name }}</h3><span class="ack" v-if="p.handling.acknowledged">已确认</span><span class="muted" v-else>待确认</span></div><span class="muted">{{ age(p.since) }}</span></div>
         <p>{{ p.info || '暂无规则说明' }}</p>
         <p class="muted">{{ p.hostname }} · {{ p.chart }} · {{ p.value === null ? '暂无数值' : p.value.toFixed(2) + ' ' + p.units }}</p>
@@ -221,6 +274,7 @@ function exportSnapshot() {
 </template>
 
 <style scoped>
+.problem-select { display:flex; align-items:center; gap:6px; color:#94a3b8; font-size:12px; margin-bottom:10px; }
 .operations { max-width: 1600px; margin: 0 auto; color: #e2e8f0; }
 .workflow-overview,.workflow-state,.workflow-actions,.workflow-actions>div { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
 .workflow-overview { padding:10px 0; font-size:12px; color:#94a3b8; }.workflow-overview b { color:#e2e8f0; margin-left:4px; }

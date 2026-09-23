@@ -40,6 +40,11 @@ health:
       calc: '$used'
       every: 1s
       warn: '$this > 0'
+    - name: restart_memory_secondary
+      on: system.ram
+      calc: '$used'
+      every: 1s
+      warn: '$this > 0'
 ''')
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
@@ -62,7 +67,7 @@ health:
                     raise RuntimeError('isolated test daemon exited before readiness')
                 try:
                     data = request()
-                    if data['problems'] and data['nodes'][0]['memory']['value'] is not None:
+                    if len(data['problems']) == 2 and data['nodes'][0]['memory']['value'] is not None:
                         return data
                 except (urllib.error.URLError, TimeoutError):
                     pass
@@ -97,15 +102,28 @@ health:
                 if os.name != 'nt':
                     assert view_file.stat().st_mode & 0o777 == 0o600
                 old = before['problems'][0]
-                request('/acknowledgements', {'id': old['id'], 'action': 'acknowledge',
-                        'revision': 0, 'note': 'Restart acceptance: record must survive.'})
-                request('/handling', {'id': old['id'], 'action': 'assign', 'assignee': 'admin', 'revision': 1})
-                request('/handling', {'id': old['id'], 'action': 'progress', 'status': 'investigating',
-                        'revision': 2, 'note': 'Restart acceptance: owner and progress must survive.'})
-                assert request()['problems'][0]['handling']['acknowledged']
+                for change in [
+                    {'action': 'acknowledge', 'note': 'Restart acceptance: batch confirmation.'},
+                    {'action': 'assign', 'assignee': 'admin'},
+                    {'action': 'progress', 'status': 'investigating', 'note': 'Restart acceptance: batch owner and progress must survive.'},
+                ]:
+                    current = request()['problems']
+                    items = [{'id': p['id'], 'revision': p['handling']['revision']} for p in current]
+                    batch = request('/handling/batch', {**change, 'items': items})
+                    assert batch['count'] == 2 and len(batch['records']) == 2
+                assert all(p['handling']['acknowledged'] for p in request()['problems'])
+                current = request()['problems']
+                items = [{'id': p['id'], 'revision': p['handling']['revision']} for p in current]
+                items[-1]['revision'] = 0
+                try:
+                    request('/handling/batch', {'action': 'unassign', 'items': items})
+                    raise AssertionError('batch containing a stale revision was accepted')
+                except urllib.error.HTTPError as error:
+                    assert error.code == 409
+                assert [p['handling'] for p in request()['problems']] == [p['handling'] for p in current]
                 history_query = urllib.parse.urlencode({'q': 'Restart acceptance', 'assignee': 'admin', 'status': 'investigating'})
                 history_before = request('/history?' + history_query)
-                assert history_before['total'] == 1
+                assert history_before['total'] == 2
                 store = root / 'data/operations/acknowledgements.json'
                 assert store.is_file()
                 if os.name != 'nt':
@@ -131,7 +149,11 @@ health:
                 assert after['problems'][0]['handling']['assignee'] == ''
                 assert after['problems'][0]['handling']['status'] == 'open'
                 history_after = request('/history?' + history_query)
-                assert history_after['total'] == 1 and history_after['records'][0]['id'] == old['id']
+                assert history_after['total'] == 2 and any(r['id'] == old['id'] for r in history_after['records'])
+                for previous in current:
+                    saved = next(r for r in history_after['records'] if r['id'] == previous['id'])
+                    assert saved['history'] == previous['handling']['history']
+                    assert saved['revision'] == 3 and saved['assignee'] == 'admin'
                 exported = request('/history/export?' + history_query + '&format=json&snapshot=' + history_after['snapshot'])
                 assert exported['records'] == history_after['records'] and exported['next_cursor'] == ''
                 try:
@@ -139,7 +161,7 @@ health:
                     raise AssertionError('snapshot from before restart was accepted')
                 except urllib.error.HTTPError as error:
                     assert error.code == 409
-                print('PASS: real samples, durable workflow, restart, history search/export, expired snapshot rejection, personal views persistence and conflict rejection')
+                print('PASS: real samples, durable workflow, restart, history search/export, expired snapshot rejection, personal views persistence, atomic batch handling and conflict rejection')
             finally:
                 stop()
 

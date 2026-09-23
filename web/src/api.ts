@@ -228,6 +228,7 @@ export const api = {
   },
   acknowledge: (body: { id: string; action: string; note: string; revision: number }) =>
     post<HandlingRecord>('/api/v1/operations/acknowledgements', body),
+  handleProblems: (body: HandlingChange & { note: string; items: { id: string; revision: number }[] }) => post<{ count: number; records: HandlingRecord[] }>('/api/v1/operations/handling/batch', body),
   handleProblem: (body: HandlingChange & { id: string; note: string; revision: number }) =>
     post<HandlingRecord>('/api/v1/operations/handling', body),
   info: (signal?: AbortSignal) => get<Info>('/api/v1/info', signal),
