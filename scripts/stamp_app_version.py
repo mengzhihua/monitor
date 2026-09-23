@@ -15,6 +15,31 @@ import re
 import sys
 
 
+def find_macos_version_json_targets(root: pathlib.Path) -> list[pathlib.Path]:
+    """Locate (or invent) version.json paths under a Flutter macOS Release dir."""
+    apps = sorted(root.glob("*.app"))
+    if not apps:
+        raise FileNotFoundError(f"no .app under {root}")
+    out: list[pathlib.Path] = []
+    for app in apps:
+        dirs = [p for p in app.rglob("flutter_assets") if p.is_dir()]
+        if not dirs:
+            # Prefer the standard App.framework location when the tree is empty
+            # in tests; live CI fails earlier if flutter_assets is missing.
+            dirs = [app / "Contents/Frameworks/App.framework/Resources/flutter_assets"]
+        for d in dirs:
+            out.append(d / "version.json")
+    # stable unique
+    seen: set[pathlib.Path] = set()
+    uniq: list[pathlib.Path] = []
+    for p in out:
+        if p in seen:
+            continue
+        seen.add(p)
+        uniq.append(p)
+    return uniq
+
+
 def stamp_pubspec(text: str, version: str, build: str) -> str:
     new, n = re.subn(r"(?m)^version:\s*.*$", f"version: {version}+{build}", text, count=1)
     if n != 1:

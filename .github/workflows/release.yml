@@ -301,20 +301,34 @@ jobs:
       - run: flutter build macos --release --build-name "${{ needs.meta.outputs.version }}" --build-number "${{ needs.meta.outputs.build_number }}" --dart-define=APP_VERSION=${{ needs.meta.outputs.version }}
         working-directory: app
       - name: stamp embedded version.json
+        env:
+          APP_VERSION: ${{ needs.meta.outputs.version }}
+          APP_BUILD: ${{ needs.meta.outputs.build_number }}
         run: |
           python3 - <<'PY'
-          import pathlib, subprocess, sys
+          import os, pathlib, subprocess, sys
+          sys.path.insert(0, "scripts")
+          from stamp_app_version import find_macos_version_json_targets
           root = pathlib.Path("app/build/macos/Build/Products/Release")
-          files = list(root.rglob("version.json"))
-          if not files:
-              sys.exit("no version.json under %s" % root)
-          for f in files:
+          try:
+              targets = find_macos_version_json_targets(root)
+          except FileNotFoundError as e:
+              sys.exit(str(e))
+          # Require a real flutter_assets dir from the build (do not invent an empty tree).
+          real = [t for t in targets if t.parent.is_dir()]
+          if not real:
+              apps = sorted(root.glob("*.app"))
+              sample = []
+              if apps:
+                  sample = sorted(str(p.relative_to(apps[0])) for p in apps[0].rglob("*") if p.is_file())[:40]
+              sys.exit("no flutter_assets under %s; sample=%s" % (root, sample))
+          for target in real:
               subprocess.check_call([
                   "python3", "scripts/stamp_app_version.py",
-                  "${{ needs.meta.outputs.version }}",
-                  "${{ needs.meta.outputs.build_number }}",
-                  "--json", str(f),
+                  os.environ["APP_VERSION"], os.environ["APP_BUILD"],
+                  "--json", str(target),
               ])
+          print("stamped", len(real), "macos flutter_assets version.json")
           PY
       - name: package arm64 (Apple Silicon) and amd64 (Intel)
         run: ./scripts/package-macos-app.sh app/build/macos/Build/Products/Release/*.app dist "monitor-app-${{ needs.meta.outputs.tag }}"

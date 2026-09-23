@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from stamp_app_version import stamp_pubspec, stamp_version_json
+from stamp_app_version import find_macos_version_json_targets, stamp_pubspec, stamp_version_json
 
 
 class StampTests(unittest.TestCase):
@@ -20,6 +20,29 @@ class StampTests(unittest.TestCase):
         self.assertIn('"version": "0.1.20"', out)
         self.assertIn('"build_number": "10020"', out)
         self.assertIn('"app_name": "monitor_app"', out)
+
+    def test_find_macos_version_json_existing_assets(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            assets = root / "Monitor.app/Contents/Frameworks/App.framework/Resources/flutter_assets"
+            assets.mkdir(parents=True)
+            (assets / "AssetManifest.bin").write_bytes(b"")
+            got = find_macos_version_json_targets(root)
+            self.assertEqual(got, [assets / "version.json"])
+
+    def test_find_macos_version_json_fallback(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            (root / "Monitor.app/Contents/MacOS").mkdir(parents=True)
+            got = find_macos_version_json_targets(root)
+            self.assertEqual(
+                got,
+                [root / "Monitor.app/Contents/Frameworks/App.framework/Resources/flutter_assets/version.json"],
+            )
 
 
 if __name__ == "__main__":
