@@ -148,11 +148,13 @@ class ApiClient {
   LiveSubscription live({required List<String> charts, String? node}) {
     final ch = WebSocketChannel.connect(
       config.wsUri('/api/v1/live', {
+        // An omitted/empty filter means all charts on the server. A blank ID
+        // explicitly selects none until the caller has visible charts.
+        'charts': charts.isEmpty ? ' ' : charts.join(','),
         if (node != null && node.isNotEmpty) 'node': node,
       }),
       protocols: config.liveProtocols,
     );
-    ch.sink.add(jsonEncode({'charts': charts}));
     return LiveSubscription._(ch);
   }
 
@@ -193,8 +195,11 @@ class LiveSubscription {
       .where((s) => s != null)
       .cast<LiveSample>();
 
-  void setCharts(List<String> charts) =>
-      _ch.sink.add(jsonEncode({'charts': charts}));
+  void setCharts(List<String> charts) => _ch.sink.add(
+    jsonEncode({
+      'charts': charts.isEmpty ? [' '] : charts,
+    }),
+  );
 
   Future<void> close() => _ch.sink.close();
 }

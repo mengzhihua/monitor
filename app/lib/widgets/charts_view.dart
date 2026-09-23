@@ -9,10 +9,16 @@ import '../api/models.dart';
 /// Chart list grouped by family, with history from `/api/v1/data` and live
 /// updates from the WebSocket for the charts currently on screen.
 class ChartsView extends StatefulWidget {
-  const ChartsView({super.key, required this.client, this.node});
+  const ChartsView({
+    super.key,
+    required this.client,
+    this.node,
+    this.active = true,
+  });
 
   final ApiClient client;
   final String? node;
+  final bool active;
 
   @override
   State<ChartsView> createState() => _ChartsViewState();
@@ -25,27 +31,68 @@ class _ChartsViewState extends State<ChartsView> {
   String _filter = '';
   int _windowSeconds = 300;
   final _series = <String, ChartSeries>{};
+  final _activeCharts = <String, Chart>{};
+  final _activeOwners = <String, Object>{};
+  final _historyRequests = <String, Object>{};
   LiveSubscription? _live;
   StreamSubscription<LiveSample>? _liveSub;
+  Set<String> _subscribed = {};
   Timer? _reconnect;
   Timer? _refresh;
+  Timer? _subscriptionUpdate;
   int _loadGeneration = 0;
-  final _historyRequests = <String>{};
+  int _sourceGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
-    _refresh = Timer.periodic(const Duration(seconds: 30), (_) => _load());
+    if (widget.active) _load();
+    _refresh = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (widget.active) _load();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant ChartsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.client == widget.client && oldWidget.node == widget.node) {
+      if (oldWidget.active != widget.active) {
+        if (widget.active) {
+          _load();
+        } else {
+          _subscriptionUpdate?.cancel();
+          _stopLive();
+          for (final series in _series.values) {
+            series.loaded = false;
+          }
+        }
+      }
+      return;
+    }
+    ++_sourceGeneration;
+    ++_loadGeneration;
+    _subscriptionUpdate?.cancel();
+    _stopLive();
+    _activeCharts.clear();
+    _activeOwners.clear();
+    _historyRequests.clear();
+    for (final series in _series.values) {
+      series.dispose();
+    }
+    _series.clear();
+    _charts = const [];
+    _error = null;
+    _loading = true;
+    if (widget.active) _load();
   }
 
   @override
   void dispose() {
     ++_loadGeneration;
+    ++_sourceGeneration;
     _refresh?.cancel();
-    _reconnect?.cancel();
-    _liveSub?.cancel();
-    _live?.close();
+    _subscriptionUpdate?.cancel();
+    _stopLive();
     for (final series in _series.values) {
       series.dispose();
     }
@@ -57,21 +104,33 @@ class _ChartsViewState extends State<ChartsView> {
     try {
       final list = await widget.client.charts(node: widget.node);
       if (!mounted || generation != _loadGeneration) return;
-      for (final series in _series.values) {
-        series.loaded = false;
+      final byId = {for (final chart in list) chart.id: chart};
+      _activeCharts.removeWhere((id, _) => !byId.containsKey(id));
+      _activeOwners.removeWhere((id, _) => !byId.containsKey(id));
+      for (final id in _activeCharts.keys.toList()) {
+        _activeCharts[id] = byId[id]!;
       }
       setState(() {
         _charts = list;
         _error = null;
         _loading = false;
       });
-      _openLive();
+      _refreshActiveHistory();
+      _queueSubscriptionUpdate();
+      // Cards detach their listeners during the next frame before eviction.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || generation != _loadGeneration) return;
+        for (final id in _series.keys.toList()) {
+          if (!byId.containsKey(id)) _series.remove(id)?.dispose();
+        }
+      });
     } catch (e) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = e.toString();
         _loading = false;
       });
+      _refreshActiveHistory();
     }
   }
 
@@ -86,58 +145,150 @@ class _ChartsViewState extends State<ChartsView> {
     );
   }
 
-  void _openLive() {
+  void _stopLive() {
     _reconnect?.cancel();
-    _liveSub?.cancel();
-    _live?.close();
-    final ids = _visible.map((c) => c.id).toList();
-    if (ids.isEmpty) return;
-    final live = widget.client.live(charts: ids, node: widget.node);
+    _reconnect = null;
+    final subscription = _liveSub;
+    final live = _live;
+    _liveSub = null;
+    _live = null;
+    _subscribed = {};
+    unawaited(subscription?.cancel());
+    unawaited(live?.close());
+  }
+
+  void _syncLive() {
+    if (!mounted) return;
+    final ids = widget.active && _windowSeconds <= 1200
+        ? _activeCharts.keys.toSet()
+        : <String>{};
+    if (ids.isEmpty) {
+      _stopLive();
+      return;
+    }
+    if (_reconnect?.isActive ?? false) return;
+    if (_live != null) {
+      if (ids.length != _subscribed.length || !ids.containsAll(_subscribed)) {
+        _live!.setCharts(ids.toList());
+        _subscribed = ids;
+      }
+      return;
+    }
+    final live = widget.client.live(charts: ids.toList(), node: widget.node);
     _live = live;
+    _subscribed = ids;
     _liveSub = live.samples.listen(
-      (s) {
-        final sr = _series[s.chart];
-        if (sr != null && _windowSeconds <= 1200) {
-          sr.add(s.t, s.values);
-          sr.notify();
+      (sample) {
+        if (_live != live || !_activeCharts.containsKey(sample.chart)) return;
+        final series = _series[sample.chart];
+        if (series != null &&
+            series.window == _windowSeconds &&
+            series.loaded) {
+          series.add(sample.t, sample.values);
+          series.notify();
         }
       },
-      onError: (_) => _scheduleReconnect(),
-      onDone: _scheduleReconnect,
+      onError: (_) => _scheduleReconnect(live),
+      onDone: () => _scheduleReconnect(live),
     );
   }
 
-  void _scheduleReconnect() {
-    if (!mounted) return;
-    _reconnect?.cancel();
-    _reconnect = Timer(const Duration(seconds: 3), _openLive);
+  void _scheduleReconnect(LiveSubscription live) {
+    if (!mounted || _live != live) return;
+    _stopLive();
+    _reconnect = Timer(const Duration(seconds: 3), () {
+      _reconnect = null;
+      _syncLive();
+      _refreshActiveHistory();
+    });
   }
 
-  ChartSeries _seriesFor(Chart c) =>
-      _series.putIfAbsent(c.id, () => ChartSeries(c, _windowSeconds));
+  void _queueSubscriptionUpdate() {
+    _subscriptionUpdate?.cancel();
+    if (!widget.active) return;
+    _subscriptionUpdate = Timer(const Duration(milliseconds: 50), () {
+      if (!mounted) return;
+      for (final chart in _activeCharts.values) {
+        unawaited(_fetchHistory(chart));
+      }
+      _syncLive();
+    });
+  }
 
-  Future<void> _fetchHistory(Chart c) async {
-    final sr = _seriesFor(c);
-    if ((sr.loaded && sr.window == _windowSeconds) ||
-        !_historyRequests.add(c.id)) {
+  void _setChartActive(Chart chart, bool active, Object owner) {
+    if (active) {
+      _activeCharts[chart.id] = chart;
+      _activeOwners[chart.id] = owner;
+    } else if (identical(_activeOwners[chart.id], owner)) {
+      _activeCharts.remove(chart.id);
+      _activeOwners.remove(chart.id);
+      // Returning to the viewport should fill the time spent unsubscribed.
+      _series[chart.id]?.loaded = false;
+    }
+    _queueSubscriptionUpdate();
+  }
+
+  void _refreshActiveHistory() {
+    for (final chart in _activeCharts.values) {
+      unawaited(_fetchHistory(chart, refresh: true));
+    }
+  }
+
+  ChartSeries _seriesFor(Chart chart) {
+    final series = _series.putIfAbsent(
+      chart.id,
+      () => ChartSeries(chart, _windowSeconds),
+    );
+    if (_definition(series.chart) != _definition(chart)) series.loaded = false;
+    series.chart = chart;
+    return series;
+  }
+
+  String _definition(Chart chart) =>
+      '${chart.type}|${chart.updateEvery}|${chart.dimensions.map((d) => '${d.id}:${d.hidden}').join(',')}';
+
+  Future<void> _fetchHistory(Chart chart, {bool refresh = false}) async {
+    if (!widget.active) return;
+    final series = _seriesFor(chart);
+    if ((!refresh && series.loaded && series.window == _windowSeconds) ||
+        _historyRequests.containsKey(chart.id)) {
       return;
     }
+    final request = Object();
+    _historyRequests[chart.id] = request;
     final requestedWindow = _windowSeconds;
+    final source = _sourceGeneration;
+    final definition = _definition(chart);
     try {
-      final d = await widget.client.data(
-        c.id,
+      final data = await widget.client.data(
+        chart.id,
         node: widget.node,
         afterSeconds: requestedWindow,
         points: 240,
       );
-      if (!mounted || requestedWindow != _windowSeconds) return;
-      sr.reset(d, requestedWindow);
+      if (!mounted ||
+          !widget.active ||
+          source != _sourceGeneration ||
+          requestedWindow != _windowSeconds ||
+          !identical(_series[chart.id], series) ||
+          !_activeCharts.containsKey(chart.id) ||
+          definition != _definition(_activeCharts[chart.id]!)) {
+        return;
+      }
+      series.reset(data, requestedWindow);
     } catch (_) {
-      // Keep existing samples; the next refresh retries the missing history.
+      // Preserve samples and retry on the next refresh or viewport entry.
     } finally {
-      _historyRequests.remove(c.id);
-      if (mounted && requestedWindow != _windowSeconds) {
-        unawaited(_fetchHistory(c));
+      if (identical(_historyRequests[chart.id], request)) {
+        _historyRequests.remove(chart.id);
+        final current = _activeCharts[chart.id];
+        if (mounted &&
+            source == _sourceGeneration &&
+            current != null &&
+            (requestedWindow != _windowSeconds ||
+                definition != _definition(current))) {
+          unawaited(_fetchHistory(current));
+        }
       }
     }
   }
@@ -149,12 +300,13 @@ class _ChartsViewState extends State<ChartsView> {
       return _ErrorRetry(message: _error!, onRetry: _load);
     }
     final families = <String, List<Chart>>{};
-    for (final c in _visible) {
+    for (final chart in _visible) {
       families
-          .putIfAbsent(c.family.isEmpty ? 'other' : c.family, () => [])
-          .add(c);
+          .putIfAbsent(chart.family.isEmpty ? 'other' : chart.family, () => [])
+          .add(chart);
     }
     final keys = families.keys.toList()..sort();
+    final source = _sourceGeneration;
     return Column(
       children: [
         Padding(
@@ -169,10 +321,7 @@ class _ChartsViewState extends State<ChartsView> {
                     isDense: true,
                     border: OutlineInputBorder(),
                   ),
-                  onChanged: (v) => setState(() {
-                    _filter = v;
-                    _openLive();
-                  }),
+                  onChanged: (value) => setState(() => _filter = value),
                 ),
               ),
               const SizedBox(width: 8),
@@ -186,14 +335,11 @@ class _ChartsViewState extends State<ChartsView> {
                   DropdownMenuItem(value: 6 * 3600, child: Text('6h')),
                   DropdownMenuItem(value: 24 * 3600, child: Text('24h')),
                 ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() {
-                    _windowSeconds = v;
-                    for (final s in _series.values) {
-                      s.loaded = false;
-                    }
-                  });
+                onChanged: (value) {
+                  if (value == null || value == _windowSeconds) return;
+                  setState(() => _windowSeconds = value);
+                  _refreshActiveHistory();
+                  _queueSubscriptionUpdate();
                 },
               ),
             ],
@@ -208,22 +354,76 @@ class _ChartsViewState extends State<ChartsView> {
             ),
           ),
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: _load,
-            child: ListView.builder(
-              itemCount: keys.length,
-              itemBuilder: (context, i) {
-                final fam = keys[i];
-                final list = families[fam]!
-                  ..sort((a, b) => a.priority.compareTo(b.priority));
-                return _FamilySection(
-                  family: fam,
-                  charts: list,
-                  seriesFor: _seriesFor,
-                  onVisible: _fetchHistory,
-                );
-              },
-            ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 900
+                  ? (constraints.maxWidth / 480).ceil()
+                  : 1;
+              final entries = <_ChartListEntry>[];
+              for (final family in keys) {
+                entries.add(_ChartListEntry(family, const []));
+                final charts = families[family]!
+                  ..sort((a, b) {
+                    final priority = a.priority.compareTo(b.priority);
+                    return priority == 0 ? a.id.compareTo(b.id) : priority;
+                  });
+                for (var start = 0; start < charts.length; start += columns) {
+                  entries.add(
+                    _ChartListEntry(
+                      family,
+                      charts.sublist(
+                        start,
+                        (start + columns).clamp(0, charts.length),
+                      ),
+                    ),
+                  );
+                }
+              }
+              return RefreshIndicator(
+                onRefresh: _load,
+                child: ListView.builder(
+                  key: ValueKey(source),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  itemCount: entries.length,
+                  itemBuilder: (context, index) {
+                    final entry = entries[index];
+                    if (entry.charts.isEmpty) {
+                      return Padding(
+                        key: ValueKey('family:${entry.family}'),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                        child: Text(
+                          entry.family.toUpperCase(),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.labelLarge?.copyWith(letterSpacing: 1.2),
+                        ),
+                      );
+                    }
+                    return Row(
+                      key: ValueKey('row:${entry.charts.first.id}'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final chart in entry.charts)
+                          Expanded(
+                            child: ChartCard(
+                              key: ValueKey(chart.id),
+                              chart: chart,
+                              series: _seriesFor(chart),
+                              onVisibilityChanged: (chart, active, owner) {
+                                if (mounted && source == _sourceGeneration) {
+                                  _setChartActive(chart, active, owner);
+                                }
+                              },
+                            ),
+                          ),
+                        for (var i = entry.charts.length; i < columns; i++)
+                          const Spacer(),
+                      ],
+                    );
+                  },
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -231,63 +431,17 @@ class _ChartsViewState extends State<ChartsView> {
   }
 }
 
-class _FamilySection extends StatelessWidget {
-  const _FamilySection({
-    required this.family,
-    required this.charts,
-    required this.seriesFor,
-    required this.onVisible,
-  });
-
+class _ChartListEntry {
+  const _ChartListEntry(this.family, this.charts);
   final String family;
   final List<Chart> charts;
-  final ChartSeries Function(Chart) seriesFor;
-  final Future<void> Function(Chart) onVisible;
-
-  @override
-  Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 900;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text(
-            family.toUpperCase(),
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(letterSpacing: 1.2),
-          ),
-        ),
-        if (wide)
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 480,
-              mainAxisExtent: 220,
-            ),
-            itemCount: charts.length,
-            itemBuilder: (context, i) => ChartCard(
-              chart: charts[i],
-              series: seriesFor(charts[i]),
-              onVisible: onVisible,
-            ),
-          )
-        else
-          for (final c in charts)
-            ChartCard(chart: c, series: seriesFor(c), onVisible: onVisible),
-      ],
-    );
-  }
 }
 
 /// Rolling window of points per dimension for one chart.
 class ChartSeries extends ChangeNotifier {
   ChartSeries(this.chart, this.window);
 
-  final Chart chart;
+  Chart chart;
   int window;
   bool loaded = false;
   final Map<String, List<FlSpot>> points = {};
@@ -332,12 +486,12 @@ class ChartCard extends StatefulWidget {
     super.key,
     required this.chart,
     required this.series,
-    required this.onVisible,
+    required this.onVisibilityChanged,
   });
 
   final Chart chart;
   final ChartSeries series;
-  final Future<void> Function(Chart) onVisible;
+  final void Function(Chart, bool, Object) onVisibilityChanged;
 
   @override
   State<ChartCard> createState() => _ChartCardState();
@@ -358,13 +512,22 @@ class _ChartCardState extends State<ChartCard> {
   @override
   void initState() {
     super.initState();
-    widget.onVisible(widget.chart);
+    widget.onVisibilityChanged(widget.chart, true, this);
   }
 
   @override
   void didUpdateWidget(covariant ChartCard old) {
     super.didUpdateWidget(old);
-    widget.onVisible(widget.chart);
+    if (old.chart.id != widget.chart.id) {
+      old.onVisibilityChanged(old.chart, false, this);
+    }
+    widget.onVisibilityChanged(widget.chart, true, this);
+  }
+
+  @override
+  void dispose() {
+    widget.onVisibilityChanged(widget.chart, false, this);
+    super.dispose();
   }
 
   @override

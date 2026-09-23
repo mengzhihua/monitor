@@ -381,7 +381,7 @@ cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 
 ### 客户端（Flutter，M3 起步）
 
-`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址（可选 Bearer token）即可连接，Hub 模式下可切换节点；图表页按 family 分组，历史数据走 `/api/v1/data`，实时点走 `/api/v1/live` WebSocket（断线 3s 自动重连）；告警页显示当前告警与最近状态变化；Functions 页调用 `/api/v1/function`（进程/连接/服务/日志等表）。
+`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址和登录密码 / API token 即可连接，Hub 模式下可切换节点；图表页按 family 分组，仅为屏幕附近的图表加载历史和订阅实时数据，滚动或筛选复用已有 WebSocket（断线 3s 自动重连并补读历史）。切到其他页签时暂停图表轮询和实时连接；1 小时及更长窗口每 30 秒读取聚合历史，不接收逐秒实时点。告警页显示当前告警与最近状态变化；Functions 页调用 `/api/v1/function`（进程/连接/服务/日志等表）。
 
 ```bash
 cd app && flutter pub get
