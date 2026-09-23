@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test('built-in dashboards use real charts, filter, range and responsive layout', async ({ page }, info) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await expect(panel.getByRole('heading', { name: '研发总览', exact: true })).toBeVisible()
@@ -74,7 +74,7 @@ test('node changes replace preset charts and scope history to the selected node'
     const body = await response.json()
     await route.fulfill({ json: { ...body, charts: { 'system.ram': body.charts['system.ram'] } } })
   })
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   await expect(page.locator('.dashboards .card .id').first()).toHaveText('system.cpu')
   const history = page.waitForRequest(r => r.url().includes('/api/v1/data?') && new URL(r.url()).searchParams.get('node') === 'remote-test')
@@ -88,7 +88,7 @@ test('node changes replace preset charts and scope history to the selected node'
 
 
 test('catalog search and categories discover specialized dashboards without changing chart filters', async ({ page }) => {
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   const search = panel.getByRole('searchbox', { name: '搜索看板样板' })
@@ -143,7 +143,7 @@ test('operations catalog exposes focused runbooks and accurate collector matchin
     ['tls', 'httpcheck.cert_expiry'], ['clock', 'system.clock_sync_state'],
     ['hardware', 'upsd.ups_battery_charge'], ['files', 'filecheck.file_modification_time_ago'],
   ]
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await panel.getByRole('button', { name: '运维值班', exact: true }).click()
@@ -170,7 +170,7 @@ test('platform dashboards match service instances and remain usable without coll
     ['mail', 'postfix.qemails'], ['discovery', 'consul.health_checks'],
     ['identity', 'openldap.connections'], ['devices', 'snmp.device_net_operstatus'],
   ]
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await panel.getByRole('button', { name: '平台服务', exact: true }).click()
@@ -202,7 +202,7 @@ test('specialist dashboards isolate their primary service and expose runbooks', 
     ['workers', 'phpfpm.queue'], ['http-cache', 'varnish.cache_hit_ratio_total'],
     ['firewall', 'fail2ban.jail_banned_ips'], ['firewall', 'netfilter.nftables_packets'], ['bmc', 'redfish.system_health_state'],
   ]
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   const errors: string[] = []
@@ -234,7 +234,7 @@ test('OS and infrastructure additions select real collector contexts and explain
     ['apache', 'apache.workers'], ['iis', 'netframework.clr_exceptions'],
     ['dhcp', 'dnsmasq_dhcp.dhcp_ranges'], ['wireless', 'ap.issues'],
   ]
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await panel.getByRole('button', { name: '操作系统', exact: true }).click()

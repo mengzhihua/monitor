@@ -518,7 +518,14 @@ func (nd *Node) AlarmLog(after uint64) []health.LogEntry {
 
 func (nd *Node) recordAlarm(e health.LogEntry) {
 	nd.mu.Lock()
-	nd.alarms[e.Chart+"."+e.Name] = e
+	key := e.Chart + "." + e.Name
+	current := e
+	if old, ok := nd.alarms[key]; ok && e.Repeat && old.AlarmID == e.AlarmID && old.Status == e.Status {
+		// A reminder updates observation time but does not create a new episode.
+		current.When = old.When
+		current.Updated = max(e.Updated, e.When)
+	}
+	nd.alarms[key] = current
 	nd.alog = append(nd.alog, e)
 	if len(nd.alog) > alarmLogKeep {
 		nd.alog = nd.alog[len(nd.alog)-alarmLogKeep:]

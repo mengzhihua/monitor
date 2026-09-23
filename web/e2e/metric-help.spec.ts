@@ -20,7 +20,7 @@ test('Chinese explanations preserve contexts, units and unknown metric boundarie
 })
 
 test('all-metrics, preset and personal dashboards expose Chinese hover help and touch details', async ({ page }, info) => {
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByPlaceholder('筛选图表…').fill('system.cpu')
   const card = page.locator('.card').filter({ has: page.locator('.id', { hasText: /^system.cpu$/ }) }).first()
   await expect(card.locator('.title')).toHaveAttribute('title', /CPU 时间在/)

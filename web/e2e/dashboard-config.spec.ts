@@ -3,7 +3,7 @@ import { decodeBoards, encodeBoards, newBoard, storageKey } from '../src/dashboa
 import { dashboards, chartsForGroup } from '../src/dashboards'
 
 async function open(page: import('@playwright/test').Page) {
-  await page.goto('/?token=browser-test-token')
+  await page.goto('/?view=charts&token=browser-test-token')
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   return page.getByLabel('常用聚合看板', { exact: true })
 }
