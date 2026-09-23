@@ -1,7 +1,12 @@
 package collect
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -45,5 +50,42 @@ func TestCupsCollectorFixture(t *testing.T) {
 		t.Fatal("missing dest state")
 	} else if ch.Context != "cups.dest_state" {
 		t.Fatalf("context %q", ch.Context)
+	}
+}
+
+func TestIPPPrinters(t *testing.T) {
+	var body bytes.Buffer
+	body.Write([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01})
+	body.WriteByte(0x04)
+	writeIPPString(&body, 0x42, "printer-name", "HP")
+	writeIPPEnum(&body, "printer-state", 4)
+	body.WriteByte(0x03)
+	dests := parseIPPPrinters(body.Bytes())
+	if len(dests) != 1 || dests[0].Name != "HP" || dests[0].State != "printing" {
+		t.Fatalf("%+v", dests)
+	}
+	var jobs bytes.Buffer
+	jobs.Write([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03})
+	if parseIPPJobCount(jobs.Bytes()) != 1 {
+		t.Fatal("job count")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req, _ := io.ReadAll(r.Body)
+		op := uint16(0)
+		if len(req) >= 4 {
+			op = binary.BigEndian.Uint16(req[2:4])
+		}
+		if op == 0x000a {
+			_, _ = w.Write(jobs.Bytes())
+			return
+		}
+		_, _ = w.Write(body.Bytes())
+	}))
+	defer srv.Close()
+	addr := srv.Listener.Addr().String()
+	got, n, err := readIPP(addr, time.Second)
+	if err != nil || len(got) != 1 || got[0].Name != "HP" || n != 1 {
+		t.Fatalf("%v %d %v", got, n, err)
 	}
 }

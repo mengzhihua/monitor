@@ -311,7 +311,7 @@ Hub 通过 `monitor.yaml` 中的 `mode: hub` 启用（程序没有 `--mode` 参�
 | 客户端服务 | 用户登录、Dashboard 布局保存、收藏、分享只读链接、移动端设备注册（推送 token）。 |
 | API | `/api/v1/hub/{spaces,rooms,nodes,users,roles,tokens,notifications,devices,dashboards}` |
 
-当前 Android 服务端由 Kotlin 前台服务启动静态 `monitord` 子进程，数据落到应用私有目录；设置页提供 Agent 上报 Hub 的配置，尚无切换 Hub 模式的界面。
+当前 Android 服务端由 Kotlin 前台服务启动静态 `monitord` 子进程，数据落到应用私有目录。设置页可以切到 Hub 模式、打开 UsageStats，并用 WorkManager 做启动拉活。进程内 gomobile 嵌入仍未做。
 
 ---
 

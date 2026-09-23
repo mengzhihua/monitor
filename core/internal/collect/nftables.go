@@ -17,9 +17,10 @@ type nftablesConfig struct {
 }
 
 type nftablesCollector struct {
-	cfg  nftablesConfig
-	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
-	seen map[string]bool
+	cfg     nftablesConfig
+	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
+	seen    map[string]bool
+	netlink bool
 }
 
 func init() {
@@ -48,6 +49,11 @@ func (n *nftablesCollector) Init(reg *registry.Registry) error {
 		}
 	}
 	if n.run == nil {
+		if objs, ok := readNftCountersNetlink(); ok && len(objs) > 0 {
+			n.netlink = true
+			n.seen = map[string]bool{}
+			return nil
+		}
 		n.run = execRun(n.cfg.Timeout)
 	}
 	raw, err := n.run(context.Background(), n.cfg.Command, "list", "counters")
@@ -62,11 +68,20 @@ func (n *nftablesCollector) Init(reg *registry.Registry) error {
 }
 
 func (n *nftablesCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	raw, err := n.run(ctx, n.cfg.Command, "list", "counters")
-	if err != nil {
-		return err
+	var counters []nftCounter
+	if n.netlink {
+		if got, ok := readNftCountersNetlink(); ok {
+			counters = got
+		}
 	}
-	for _, c := range parseNftCounters(string(raw)) {
+	if counters == nil {
+		raw, err := n.run(ctx, n.cfg.Command, "list", "counters")
+		if err != nil {
+			return err
+		}
+		counters = parseNftCounters(string(raw))
+	}
+	for _, c := range counters {
 		id := sanitizeID(c.Table + "_" + c.Name)
 		pkts := "netfilter.nftables_packets." + id
 		bytes := "netfilter.nftables_bytes." + id

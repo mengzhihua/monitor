@@ -65,6 +65,7 @@ type Status struct {
 	Error       string             `json:"error,omitempty"`
 	Stats       Stats              `json:"stats"`
 	Variables   map[string]float64 `json:"variables,omitempty"`
+	Functions   []string           `json:"functions,omitempty"`
 }
 
 type plugin struct {
@@ -204,6 +205,9 @@ func (m *Manager) Status() []Status {
 		st.Stats = p.parser.Stats()
 		if v := p.parser.Variables(); len(v) > 0 {
 			st.Variables = v
+		}
+		if fn := p.parser.Functions(); len(fn) > 0 {
+			st.Functions = fn
 		}
 		out = append(out, st)
 	}

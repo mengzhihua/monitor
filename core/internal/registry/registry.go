@@ -73,6 +73,21 @@ type Chart struct {
 	lastT int64
 }
 
+// MergeLabels copies keys onto the chart. Later values replace earlier ones.
+func (c *Chart) MergeLabels(labels map[string]string) {
+	if c == nil || len(labels) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Labels == nil {
+		c.Labels = map[string]string{}
+	}
+	for k, v := range labels {
+		c.Labels[k] = v
+	}
+}
+
 func (c *Chart) Dimension(id string) *Dimension {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -126,6 +141,19 @@ type Registry struct {
 
 func New(host *Host, sink Sink) *Registry {
 	return &Registry{Host: host, charts: map[string]*Chart{}, sink: sink}
+}
+
+// SetHostLabel records a host label published by a plugin (HOST_LABEL).
+func (r *Registry) SetHostLabel(key, value string) {
+	if r == nil || r.Host == nil || key == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Host.Labels == nil {
+		r.Host.Labels = map[string]string{}
+	}
+	r.Host.Labels[key] = value
 }
 
 // Subscribe registers a callback that is invoked for every completed chart

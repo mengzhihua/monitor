@@ -18,9 +18,10 @@ type xenstatConfig struct {
 }
 
 type xenstatCollector struct {
-	cfg  xenstatConfig
-	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
-	seen map[string]bool
+	cfg      xenstatConfig
+	run      func(ctx context.Context, name string, args ...string) ([]byte, error)
+	seen     map[string]bool
+	xenstore bool
 }
 
 func init() {
@@ -49,6 +50,14 @@ func (x *xenstatCollector) Init(reg *registry.Registry) error {
 		}
 	}
 	if x.run == nil {
+		if doms, ok := readXenDomains(); ok && len(doms) > 0 {
+			x.xenstore = true
+			x.seen = map[string]bool{}
+			ch := sysChart("xen.domains", "xen", "Xen domains", "domains", 37000, &registry.Dimension{ID: "running"})
+			ch.Plugin, ch.Module, ch.Family = "xenstat", "xenstat", "xen"
+			reg.AddChart(ch)
+			return nil
+		}
 		x.run = execRun(x.cfg.Timeout)
 	}
 	raw, err := x.run(context.Background(), x.cfg.Command, "list")
@@ -66,11 +75,19 @@ func (x *xenstatCollector) Init(reg *registry.Registry) error {
 }
 
 func (x *xenstatCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	raw, err := x.run(ctx, x.cfg.Command, "list")
-	if err != nil {
-		return err
+	var doms []xlDomain
+	if x.xenstore {
+		if got, ok := readXenDomains(); ok {
+			doms = got
+		}
 	}
-	doms := parseXLList(string(raw))
+	if doms == nil {
+		raw, err := x.run(ctx, x.cfg.Command, "list")
+		if err != nil {
+			return err
+		}
+		doms = parseXLList(string(raw))
+	}
 	_ = reg.Collect("xen.domains", now, map[string]float64{"running": float64(len(doms))})
 	for _, d := range doms {
 		id := sanitizeID(d.Name)

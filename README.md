@@ -292,7 +292,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 模块 | 说明 |
 | --- | --- |
 | Linux proc | EDAC ECC、SLAB、zswap、RAPL powercap、DRM GPU busy/freq、bcache、adjtimex 时钟同步状态 |
-| 采集器 | `cups`（lpstat）、`xenstat`（xl list）、`ioping`、`nftables`（nft counters）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmitool sdr） |
+| 采集器 | `cups`（IPP，失败再 lpstat）、`xenstat`（xenstore，失败再 xl）、`ioping`（直接读，失败再 ioping）、`nftables`（netlink，失败再 nft）、`podman`（REST + Function `podman-containers`）、`ipmi`（ipmi-sensors，失败再 ipmitool） |
 | API / 导出 | `/api/v2/q`、`/api/v2/alert_transitions`；Kafka REST JSON records |
 
 ### 已实现能力（M19：内核深度）

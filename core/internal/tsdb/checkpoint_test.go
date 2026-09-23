@@ -92,8 +92,9 @@ func TestCheckpointReplaysLaterFullBlocksWithoutDoubleCounting(t *testing.T) {
 		s.Append("new", start+i, 2)
 	}
 	// Simulate process loss: stop the loop without saving the newer image.
-	close(s.stop)
-	s.wg.Wait()
+	// Close the WAL handle too. The bytes stay on disk for replay, and Windows
+	// cannot delete a file another handle in this process still has open.
+	stopWithoutCheckpoint(s)
 	recovered, err := Open(Options{Dir: dir, BlockSize: 3, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})
 	if err != nil {
 		t.Fatal(err)
@@ -127,8 +128,7 @@ func TestCheckpointRetainsLegacyBlocksAndOpenBuckets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	close(s.stop)
-	s.wg.Wait() // old writer had no checkpoint file
+	stopWithoutCheckpoint(s) // old writer had no checkpoint file
 	next, err := Open(Options{Dir: dir, Tiers: []TierSpec{{Every: 60, BlockSize: 1440}}})
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +149,14 @@ func TestCheckpointRetainsLegacyBlocksAndOpenBuckets(t *testing.T) {
 	points, err := final.Query("legacy", 1200, 1202)
 	if err != nil || len(points) != 3 {
 		t.Fatalf("legacy data lost: %v %v", points, err)
+	}
+}
+
+func stopWithoutCheckpoint(s *Store) {
+	close(s.stop)
+	s.wg.Wait()
+	if s.wal != nil {
+		_ = s.wal.close()
 	}
 }
 

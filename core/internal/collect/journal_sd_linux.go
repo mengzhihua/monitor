@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && !android
 
 package collect
 
@@ -24,7 +24,7 @@ func startSDJournal(l *logsCollector) bool {
 		sdClose   func(j uintptr)
 		sdSeek    func(j uintptr) int32
 		sdNext    func(j uintptr) int32
-		sdGetData func(j uintptr, field string, data *uintptr, length *uintptr) int32
+		sdGetData func(j uintptr, field string, data **byte, length *uintptr) int32
 		sdWait    func(j uintptr, timeout uint64) int32
 	)
 	defer func() { _ = recover() }()
@@ -45,11 +45,12 @@ func startSDJournal(l *logsCollector) bool {
 	}
 	_ = sdNext(j) // step onto the last record, then follow new ones
 	field := func(name string) string {
-		var data, n uintptr
-		if sdGetData(j, name, &data, &n) < 0 || data == 0 || n == 0 {
+		var data *byte
+		var n uintptr
+		if sdGetData(j, name, &data, &n) < 0 || data == nil || n == 0 {
 			return ""
 		}
-		b := unsafe.Slice((*byte)(unsafe.Pointer(data)), int(n))
+		b := unsafe.Slice(data, int(n))
 		s := string(b)
 		if i := strings.IndexByte(s, '='); i >= 0 {
 			s = s[i+1:]

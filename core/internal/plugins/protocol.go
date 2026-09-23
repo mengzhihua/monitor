@@ -59,6 +59,8 @@ type Parser struct {
 	draft     *registry.Chart   // last CHART, registered once its DIMENSION/CLABEL lines are done
 	pending   map[string]string // CLABELs awaiting CLABEL_COMMIT
 	variables map[string]float64
+	functions []string
+	replace   bool
 
 	cur     *registry.Chart // inside BEGIN..END
 	curVals map[string]float64
@@ -96,6 +98,14 @@ func (p *Parser) Variables() map[string]float64 {
 		out[k] = v
 	}
 	return out
+}
+
+// Functions returns names declared with FUNCTION. The agent does not attach
+// the plugin stdin, so these names are reported but not invoked.
+func (p *Parser) Functions() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.functions...)
 }
 
 // Run consumes r until EOF, DISABLE or EXIT. Protocol errors are counted and
@@ -144,11 +154,15 @@ func (p *Parser) Line(line string) error {
 		return nil
 	}
 	cmd := strings.ToUpper(f[0])
-	if cmd != "DIMENSION" && cmd != "CLABEL" && cmd != "CLABEL_COMMIT" {
+	if cmd != "DIMENSION" && cmd != "CLABEL" && cmd != "CLABEL_COMMIT" && cmd != "LABEL" {
 		p.commitDraft()
 	}
 	switch cmd {
 	case "CHART":
+		p.replace = false
+		return p.chart(f[1:])
+	case "OVERWRITE":
+		p.replace = true
 		return p.chart(f[1:])
 	case "DIMENSION":
 		return p.dimension(f[1:])
@@ -176,6 +190,32 @@ func (p *Parser) Line(line string) error {
 			}
 		}
 		p.pending = nil
+	case "LABEL":
+		if len(f) < 3 {
+			return fmt.Errorf("LABEL: need name and value")
+		}
+		if p.draft == nil {
+			return fmt.Errorf("LABEL before CHART")
+		}
+		if p.draft.Labels == nil {
+			p.draft.Labels = map[string]string{}
+		}
+		p.draft.Labels[f[1]] = f[2]
+	case "HOST_LABEL":
+		if len(f) < 3 {
+			return fmt.Errorf("HOST_LABEL: need name and value")
+		}
+		p.Reg.SetHostLabel(f[1], f[2])
+	case "FUNCTION":
+		if len(f) < 2 || f[1] == "" {
+			return fmt.Errorf("FUNCTION: missing name")
+		}
+		for _, name := range p.functions {
+			if name == f[1] {
+				return nil
+			}
+		}
+		p.functions = append(p.functions, f[1])
 	case "BEGIN":
 		if len(f) < 2 {
 			return fmt.Errorf("BEGIN: missing chart id")
@@ -240,8 +280,8 @@ func (p *Parser) Line(line string) error {
 		return ErrDisabled
 	case "EXIT":
 		return ErrExit
-	case "HOST_DEFINE", "HOST_LABEL", "HOST_DEFINE_END", "HOST", "FUNCTION", "OVERWRITE", "LABEL", "REPORT_JOB_STATUS":
-		// accepted for Netdata compatibility, not implemented
+	case "HOST_DEFINE", "HOST_DEFINE_END", "HOST", "REPORT_JOB_STATUS":
+		// accepted for Netdata compatibility; these do not create charts
 	default:
 		return fmt.Errorf("unknown command %q", f[0])
 	}
@@ -321,12 +361,19 @@ func (p *Parser) commitDraft() {
 	if c == nil {
 		return
 	}
-	p.draft, p.pending = nil, nil
+	replace := p.replace
+	p.draft, p.pending, p.replace = nil, nil, false
 	dims := c.Dimensions
-	stored := p.Reg.AddChart(c)
-	if stored != c {
-		for _, d := range dims {
-			stored.AddDimension(d)
+	var stored *registry.Chart
+	if replace {
+		stored = p.Reg.ReplaceChart(c)
+	} else {
+		stored = p.Reg.AddChart(c)
+		if stored != c {
+			for _, d := range dims {
+				stored.AddDimension(d)
+			}
+			stored.MergeLabels(c.Labels)
 		}
 	}
 	p.charts[c.ID] = stored

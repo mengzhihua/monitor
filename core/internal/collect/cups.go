@@ -10,9 +10,11 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-// cupsConfig is collectors.modules.cups (Netdata cups.plugin via lpstat).
+// cupsConfig is collectors.modules.cups. command "auto" (default) speaks IPP to
+// address, then falls back to lpstat. "ipp" and "lpstat" force one path.
 type cupsConfig struct {
 	Command string        `yaml:"command"`
+	Address string        `yaml:"address"`
 	Timeout time.Duration `yaml:"timeout"`
 }
 
@@ -20,6 +22,7 @@ type cupsCollector struct {
 	cfg  cupsConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen map[string]bool
+	ipp  bool
 }
 
 func init() {
@@ -33,7 +36,10 @@ func (c *cupsCollector) Configure(decode func(v any) error) error {
 		return err
 	}
 	if c.cfg.Command == "" {
-		c.cfg.Command = "lpstat"
+		c.cfg.Command = "auto"
+	}
+	if c.cfg.Address == "" {
+		c.cfg.Address = "127.0.0.1:631"
 	}
 	if c.cfg.Timeout <= 0 {
 		c.cfg.Timeout = 5 * time.Second
@@ -47,13 +53,29 @@ func (c *cupsCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
+	if c.run == nil && c.cfg.Command != "lpstat" {
+		if dests, _, err := readIPP(c.cfg.Address, c.cfg.Timeout); err == nil && len(dests) > 0 {
+			c.ipp = true
+			c.seen = map[string]bool{}
+			c.addSummary(reg)
+			return nil
+		}
+		if c.cfg.Command == "ipp" {
+			return fmt.Errorf("cups: ipp unavailable at %s", c.cfg.Address)
+		}
+	}
 	if c.run == nil {
 		c.run = execRun(c.cfg.Timeout)
 	}
-	if _, err := c.run(context.Background(), c.cfg.Command, "-p"); err != nil {
+	if _, err := c.run(context.Background(), "lpstat", "-p"); err != nil {
 		return fmt.Errorf("cups: lpstat unavailable: %w", err)
 	}
 	c.seen = map[string]bool{}
+	c.addSummary(reg)
+	return nil
+}
+
+func (c *cupsCollector) addSummary(reg *registry.Registry) {
 	ch := sysChart("cups.dests", "cups", "CUPS destinations", "dests", 36000,
 		&registry.Dimension{ID: "idle"}, &registry.Dimension{ID: "printing"}, &registry.Dimension{ID: "stopped"})
 	ch.Plugin, ch.Module, ch.Family = "cups", "cups", "cups"
@@ -61,15 +83,27 @@ func (c *cupsCollector) Init(reg *registry.Registry) error {
 	jobs := sysChart("cups.jobs", "cups", "CUPS jobs", "jobs", 36001, &registry.Dimension{ID: "pending"})
 	jobs.Plugin, jobs.Module, jobs.Family = "cups", "cups", "cups"
 	reg.AddChart(jobs)
-	return nil
 }
 
 func (c *cupsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	raw, err := c.run(ctx, c.cfg.Command, "-p")
-	if err != nil {
-		return err
+	var dests []cupsDest
+	var jobs int
+	if c.ipp {
+		var err error
+		dests, jobs, err = readIPP(c.cfg.Address, c.cfg.Timeout)
+		if err != nil {
+			return err
+		}
+	} else {
+		raw, err := c.run(ctx, "lpstat", "-p")
+		if err != nil {
+			return err
+		}
+		dests = parseLpstatPrinters(string(raw))
+		if jobRaw, err := c.run(ctx, "lpstat", "-o"); err == nil {
+			jobs = parseLpstatJobs(string(jobRaw))
+		}
 	}
-	dests := parseLpstatPrinters(string(raw))
 	idle, printing, stopped := 0.0, 0.0, 0.0
 	for _, d := range dests {
 		switch d.State {
@@ -100,12 +134,7 @@ func (c *cupsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		_ = reg.Collect(id, now, vals)
 	}
 	_ = reg.Collect("cups.dests", now, map[string]float64{"idle": idle, "printing": printing, "stopped": stopped})
-	jobRaw, err := c.run(ctx, c.cfg.Command, "-o")
-	n := 0.0
-	if err == nil {
-		n = float64(parseLpstatJobs(string(jobRaw)))
-	}
-	_ = reg.Collect("cups.jobs", now, map[string]float64{"pending": n})
+	_ = reg.Collect("cups.jobs", now, map[string]float64{"pending": float64(jobs)})
 	return nil
 }
 
