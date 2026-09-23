@@ -152,6 +152,8 @@ func (s *Server) PublishNodeAlarm(nodeID string, e health.LogEntry) {
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/operations", s.handleOperations)
+	m.HandleFunc("GET /api/v1/operations/history", s.handleOperationsHistory)
+	m.HandleFunc("GET /api/v1/operations/history/export", s.handleOperationsHistoryExport)
 	m.HandleFunc("POST /api/v1/operations/acknowledgements", s.handleAcknowledgement)
 	m.HandleFunc("POST /api/v1/operations/handling", s.handleHandling)
 	m.HandleFunc("GET /api/v1/info", s.handleInfo)

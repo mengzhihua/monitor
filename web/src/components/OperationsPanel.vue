@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { api, ApiError } from '../api'
 import type { HandlingAction, HandlingChange, HandlingStatus, OperationsSnapshot, Problem, ResourceMetric } from '../api'
 import { usePolling } from '../polling'
+import OperationsHistory from './OperationsHistory.vue'
 
 const props = defineProps<{ role: string }>()
 const emit = defineEmits<{ drill: [node: string, chart: string] }>()
@@ -11,6 +12,7 @@ const error = ref('')
 const actionError = ref('')
 const busy = ref('')
 const loading = ref(true)
+const historyRefreshKey = ref(0)
 const query = ref('')
 const severity = ref('all')
 const nodeStatus = ref('all')
@@ -108,6 +110,7 @@ async function update(p: Problem, change: HandlingChange) {
   try {
     await api.handleProblem({ id: p.id, ...change, note: notes.value[p.id] || '', revision: draftRevisions.value[p.id] ?? p.handling.revision })
     if (disposed) return
+    historyRefreshKey.value++
     delete notes.value[p.id]
     delete draftRevisions.value[p.id]
     if (change.action === 'assign' || change.action === 'unassign') delete owners.value[p.id]
@@ -240,14 +243,7 @@ function exportSnapshot() {
         <details v-if="p.handling.history.length"><summary>处理记录 · 最近 {{ p.handling.history.length }} 条</summary><ol><li v-for="(h,i) in [...p.handling.history].reverse()" :key="i"><span>{{ formatTime(h.at) }} · {{ h.actor }} · {{ describeAction(h) }}</span><p v-if="h.note">{{ h.note }}</p></li></ol></details>
       </article>
       <button v-if="filteredNodes.length > visibleCount || problems.length > visibleCount" @click="visibleCount += 50">再显示 50 条</button>
-      <h2>最近处理记录 <small>服务端最近 100 个已处理的问题阶段，可按搜索词筛选</small></h2>
-      <p v-if="!activity.length" class="muted">还没有匹配的处理记录。</p>
-      <details v-for="record in activity" :key="record.id" class="activity">
-        <summary>{{ record.problem.hostname }} · {{ record.problem.name }} · {{ activeIDs.has(record.id) ? '当前告警阶段' : '不在当前告警快照' }}</summary>
-        <p class="muted">{{ record.problem.chart }} · {{ record.problem.severity }} · 起始 {{ formatTime(record.problem.since) }}</p>
-        <p>责任人：{{ record.assignee || '未分配' }} · 处理进度：{{ progressName[record.status] }}</p>
-        <ol><li v-for="(h,i) in [...record.history].reverse()" :key="i">{{ formatTime(h.at) }} · {{ h.actor }} · {{ describeAction(h) }}<p v-if="h.note">{{ h.note }}</p></li></ol>
-      </details>
+      <OperationsHistory :active-ids="activeIDs" :refresh-key="historyRefreshKey" />
       <p class="footnote">确认、指派和处理进度不改变告警求值或通知；「观察中」仍可能是严重告警。严重级别变化或恢复后再次触发，需要重新确认和分配。责任人列表包括本机配置的管理员、排障人员及当前有权限的登录者；不向外部值班系统发送通知。</p>
     </template>
   </div>

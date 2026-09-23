@@ -100,9 +100,10 @@ type state struct {
 }
 
 type Store struct {
-	mu    sync.Mutex
-	path  string
-	state state
+	mu             sync.Mutex
+	path           string
+	state          state
+	historyVersion string
 }
 
 // Open fails closed on corrupt state; it never silently discards operator notes.
@@ -235,6 +236,7 @@ func (s *Store) Apply(id, actor string, change Change, revision uint64, target T
 		}
 	}
 	s.state = next
+	s.historyVersion = ""
 	r.History = append([]Action{}, r.History...)
 	return r, nil
 }

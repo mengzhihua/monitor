@@ -17,6 +17,56 @@ paths:
           description: Snapshot with now, nodes, problems, summary, activity (latest 100 handled episodes), persistent, current_user and assignees (eligible configured operators plus the current eligible identity; no credentials). Summary includes unassigned, open, investigating and watching counts across current problems.
         "401":
           description: Authentication required
+  /api/v1/operations/history:
+    get:
+      summary: Search all retained handling episodes with consistent pagination
+      description: Authenticated readers, including viewers. Sorted by latest retained action time descending, then episode ID. Actor search covers retained actions only. A successful handling write or service restart invalidates old cursors; resume with a fresh query after 409. This endpoint does not infer alarm recovery.
+      parameters:
+        - &historySearch {in: query, name: q, schema: {type: string}, description: Case-insensitive search of host/node/chart/alarm/owner and retained operator notes; maximum 256 UTF-8 bytes.}
+        - &historyNode {in: query, name: node, schema: {type: string}, description: Exact node ID; maximum 256 UTF-8 bytes.}
+        - &historyAssignee {in: query, name: assignee, schema: {type: string}, description: Exact stored owner name; maximum 128 UTF-8 bytes.}
+        - &historyActor {in: query, name: actor, schema: {type: string}, description: Exact actor name in retained actions; maximum 128 UTF-8 bytes.}
+        - &historyStatus {in: query, name: status, schema: {type: string, enum: [open, investigating, watching]}}
+        - &historySeverity {in: query, name: severity, schema: {type: string, enum: [WARNING, CRITICAL]}}
+        - &historyAcknowledged {in: query, name: acknowledged, schema: {type: string, enum: ["true", "false"]}}
+        - &historyFrom {in: query, name: from, schema: {type: integer, format: int64, minimum: 0}, description: Inclusive last-handled Unix timestamp lower bound.}
+        - &historyUntil {in: query, name: until, schema: {type: integer, format: int64, minimum: 0}, description: Inclusive upper bound; 0 means unbounded.}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {in: query, name: cursor, schema: {type: string, maxLength: 1024}, description: Opaque next_cursor from a previous response with identical filters.}
+      responses:
+        "200":
+          description: records, total matching episodes, stored count, capacity, actions_per_record, snapshot, next_cursor and normalized filter. Records include updated_at and history_truncated. Empty results return an empty records array.
+        "400":
+          description: Invalid filter, range, page size or cursor, or filters differ from the cursor's query
+        "401":
+          description: Authentication required
+        "409":
+          description: History changed or service restarted; restart query
+  /api/v1/operations/history/export:
+    get:
+      summary: Download all matching retained handling records as JSON or CSV
+      description: Same read permissions and filters as history search. Requires the snapshot returned by a successful list query. No cursor; exports every matching episode, bounded by storage capacity (5000 episodes and 20 retained actions each). JSON preserves text; CSV contains one row per retained action, UTF-8 BOM, and formula protection on hazardous text. An export is a consistent copy at request time, not a restorable deployment backup.
+      parameters:
+        - *historySearch
+        - *historyNode
+        - *historyAssignee
+        - *historyActor
+        - *historyStatus
+        - *historySeverity
+        - *historyAcknowledged
+        - *historyFrom
+        - *historyUntil
+        - {in: query, name: snapshot, required: true, schema: {type: string, minLength: 64, maxLength: 64}}
+        - {in: query, name: format, required: true, schema: {type: string, enum: [json, csv]}}
+      responses:
+        "200":
+          description: Download attachment; JSON uses the history response shape with all matching records and empty next_cursor. CSV includes problem context, current handling state, truncation flag and action details. Cache-Control no-store.
+        "400":
+          description: Invalid filter, format, cursor or missing snapshot
+        "401":
+          description: Authentication required
+        "409":
+          description: History changed or service restarted since the query; query again before exporting
   /api/v1/operations/acknowledgements:
     post:
       summary: Acknowledge, unacknowledge or comment on the current alarm episode

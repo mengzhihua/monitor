@@ -68,6 +68,13 @@ export interface OperationsSnapshot {
   activity: HandlingRecord[]
   now: number; nodes: OperationsNode[]; problems: Problem[]; summary: Record<string, number>; persistent: boolean
 }
+export interface HandlingHistoryRecord extends HandlingRecord {
+  updated_at: number; history_truncated: boolean
+}
+export interface HandlingHistoryPage {
+  records: HandlingHistoryRecord[]; total: number; stored: number; capacity: number; actions_per_record: number
+  snapshot: string; next_cursor: string; filter: Record<string, string | number>
+}
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
   dimension_ids: string[]; dimension_names: string[]
@@ -201,6 +208,15 @@ function q(params: Record<string, string | number>): string {
 
 export const api = {
   operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
+  handlingHistory: (params: Record<string, string>, signal?: AbortSignal) =>
+    get<HandlingHistoryPage>('/api/v1/operations/history?' + new URLSearchParams(params), signal),
+  exportHandlingHistory: async (params: Record<string, string>, signal?: AbortSignal) => {
+    const headers: Record<string, string> = {}
+    if (auth.token) headers.Authorization = `Bearer ${auth.token}`
+    const r = await fetch(base + '/api/v1/operations/history/export?' + new URLSearchParams(params), { headers, signal })
+    if (!r.ok) throw new ApiError(r.status, `${r.status} ${await r.text()}`)
+    return r.blob()
+  },
   acknowledge: (body: { id: string; action: string; note: string; revision: number }) =>
     post<HandlingRecord>('/api/v1/operations/acknowledgements', body),
   handleProblem: (body: HandlingChange & { id: string; note: string; revision: number }) =>

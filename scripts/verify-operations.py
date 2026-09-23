@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -92,6 +93,9 @@ health:
                 request('/handling', {'id': old['id'], 'action': 'progress', 'status': 'investigating',
                         'revision': 2, 'note': 'Restart acceptance: owner and progress must survive.'})
                 assert request()['problems'][0]['handling']['acknowledged']
+                history_query = urllib.parse.urlencode({'q': 'Restart acceptance', 'assignee': 'admin', 'status': 'investigating'})
+                history_before = request('/history?' + history_query)
+                assert history_before['total'] == 1
                 store = root / 'data/operations/acknowledgements.json'
                 assert store.is_file()
                 if os.name != 'nt':
@@ -109,7 +113,16 @@ health:
                 assert not after['problems'][0]['handling']['acknowledged']
                 assert after['problems'][0]['handling']['assignee'] == ''
                 assert after['problems'][0]['handling']['status'] == 'open'
-                print('PASS: real samples, durable owner/progress/history, clean restart, new episode unassigned and unconfirmed')
+                history_after = request('/history?' + history_query)
+                assert history_after['total'] == 1 and history_after['records'][0]['id'] == old['id']
+                exported = request('/history/export?' + history_query + '&format=json&snapshot=' + history_after['snapshot'])
+                assert exported['records'] == history_after['records'] and exported['next_cursor'] == ''
+                try:
+                    request('/history/export?format=json&snapshot=' + history_before['snapshot'])
+                    raise AssertionError('snapshot from before restart was accepted')
+                except urllib.error.HTTPError as error:
+                    assert error.code == 409
+                print('PASS: real samples, durable workflow, restart, history search/export, expired snapshot rejection')
             finally:
                 stop()
 
