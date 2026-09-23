@@ -16,7 +16,7 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | --- | --- | --- |
 | go.d 应用采集器 | **完成** | 除 `testrandom`；约 154 个原生模块 |
 | Linux proc / debugfs 常规图 | **完成** | 含 InfiniBand、tc、EDAC、SLAB、zswap、RAPL、DRM、bcache、timex |
-| 原生 C 插件便携近似 | **M20 日志/查看器** | journald 跟随、wevtutil XPath/游标、`log show`、network-viewer inode/cmdline、systemd 单位状态；cups / xenstat / ioping / nftables / ipmi / ebpf 仍是 CLI 近似 |
+| 原生 C 插件便携近似 | **M20 日志/查看器** | journald 跟随、wevtutil XPath/游标、`log show`、network-viewer inode/cmdline、systemd 单位状态；cups 走 IPP（失败再 lpstat）、ioping 直接读、nftables 走 netlink、xenstat 走 xenstore；ipmi / ebpf 仍可回退 CLI |
 | Windows.plugin | **M21** | 进程/线程/句柄 + Perflib 全家桶（IIS/ASP.NET/.NET/Hyper-V/SMB/NUMA/thermal/AD/Exchange/services 出图）；无角色则跳过 |
 | freebsd.plugin | **完成（M22）** | sysctl 全家桶 + ZFS ARC/trim + ipfw + gstat/df/netstat 近似；非 FreeBSD 自动禁用 |
 | Hub / Cloud | **产品面（M25）** | claim/Space/Room/OIDC/环复制/LDAP/share + ACLK MQTT-over-WSS + Cloud 控制台 + 图上异常高亮 + Correlations UI |
@@ -276,7 +276,7 @@ TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意�
 ## 7. 阶段3：持久化、备份和历史复制
 
 - TSDB 检查点默认 30s；块内容同步后原子替换，Unix 同步所在目录；Windows 目录同步由系统管理。
-- `/api/v1/info` 的 `db.persistence` 报告最后成功检查点的开始/完成时间及错误。**30s 是调度间隔，不是硬性丢失上限**：异常退出可能丢失上次成功检查点之后的数据；尚未实现逐样本 WAL 或跨层事务。
+- `/api/v1/info` 的 `db.persistence` 报告最后成功检查点的开始/完成时间及错误。**30s 是调度间隔，不是硬性丢失上限**。检查点之外有 `wal.v1`，约每秒 fsync，崩溃后重放；保证停在最后一次成功的 WAL sync 或检查点，不是每个样本都 fsync，也不是跨层事务。
 - 检查点最多8个并发写任务，不阻塞正常采样；写块期间保留可查询的缓冲区，避免瞬时数据空洞。未结束的 rollup bucket 也进入检查点。
 - `monitord -config monitor.yaml -data-dir ./data -backup-dir /path/new-backup`：停服备份，SHA-256 清单，拒绝正在使用的数据目录。
 - `monitord -config monitor.yaml -data-dir /path/new-data -restore-from /path/new-backup`：校验后恢复，只允许新目录；失败留下的目录不应启动使用，应检查原因并换一个新目录重试。备份包含监控数据和可能的 Hub 凭证，应限制访问。
@@ -288,7 +288,7 @@ TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意�
 
 - Dashboard：6小时/24小时/7天窗口，每图最多1200历史点；长窗口每30秒重新降采样，不累积逐秒数组；异步查询过期响应丢弃，卸载后不再更新图表。
 - 节点健康卡片显示在线/过期/离线、最后数据和严重告警；图表区分暂无数据与过期；采集器悬停显示失败原因；存储落盘失败直接显示。
-- Flutter：移除旧版 SharedPreferences 中的明文 token，凭证仅保留本次运行，连接表单明确提示重启后重新输入；WebSocket 使用编码子协议，URL 不再携带 token。平台安全存储和推送仍待后续真实设备验收。
+- Flutter：移除旧版 SharedPreferences 中的明文 token；勾选记住时凭证写入 `flutter_secure_storage`，并和 URL 绑在一起。WebSocket 使用编码子协议，URL 不再携带 token。推送通道在 agent 侧已接线，真机投递仍待验收。
 - Android：子进程崩溃 1s→60s 重启退避，稳定运行一分钟后重置；手动停止取消重试；Android 15 dataSync 超时主动停止，启动限制不再冒充永久保活。
 - Android 15+ 不从 BOOT_COMPLETED 启动 dataSync：需要打开应用启动。依据：https://developer.android.com/about/versions/15/behavior-changes-15 。仍需真机验证后台耗电和系统回收行为。
 - 验证：Vue生产构建通过，Flutter analyze与6项单测通过。浏览器控制工具超时，UI目视验收未完成；Android服务端调试APK构建通过；Flutter macOS完整打包因缺少CocoaPods未通过，不能将代码检查等同于真机通过。

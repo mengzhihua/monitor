@@ -103,6 +103,37 @@ BOGUS command
 	}
 }
 
+func TestParserLabelOverwriteAndFunction(t *testing.T) {
+	reg := newReg(&memSink{})
+	p := &Parser{Plugin: "x", Reg: reg}
+	script := `
+CHART x.c '' Old title value
+DIMENSION a
+LABEL kept yes
+HOST_LABEL room lab
+FUNCTION processes 10 "process table"
+OVERWRITE x.c '' "New title" milliseconds
+DIMENSION b
+LABEL site edge
+`
+	if err := p.Run(strings.NewReader(script)); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := reg.Chart("x.c")
+	if !ok || c.Title != "New title" || c.Units != "milliseconds" || c.Dimension("a") != nil || c.Dimension("b") == nil {
+		t.Fatalf("overwrite = %+v", c)
+	}
+	if c.Labels["site"] != "edge" {
+		t.Fatalf("labels = %v", c.Labels)
+	}
+	if reg.Host.Labels["room"] != "lab" {
+		t.Fatalf("host labels = %v", reg.Host.Labels)
+	}
+	if fn := p.Functions(); len(fn) != 1 || fn[0] != "processes" {
+		t.Fatalf("functions = %v", fn)
+	}
+}
+
 func TestParserRedeclareKeepsChart(t *testing.T) {
 	reg := newReg(&memSink{})
 	p := &Parser{Plugin: "x", Reg: reg}

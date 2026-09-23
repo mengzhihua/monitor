@@ -39,3 +39,15 @@ func TestXenstatCollectorFixture(t *testing.T) {
 		t.Fatalf("%v", vals)
 	}
 }
+
+func TestXenDomainsFromStore(t *testing.T) {
+	doms := xenDomainsFrom([]string{"0", "1"}, map[string]string{
+		"/local/domain/0/name":          "Domain-0",
+		"/local/domain/0/memory/target": "1048576",
+		"/local/domain/1/name":          "guest",
+		"/local/domain/1/memory/target": "524288",
+	})
+	if len(doms) != 2 || doms[0].Name != "Domain-0" || doms[0].Mem != 1024 || doms[1].Name != "guest" || doms[1].Mem != 512 || doms[1].State != "r" {
+		t.Fatalf("%+v", doms)
+	}
+}

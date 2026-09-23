@@ -55,7 +55,7 @@ DISABLE                                     # 让 agent 永久停用本插件
 EXIT                                        # 正常退出（agent 会按退避策略重启）
 ```
 
-`HOST_DEFINE` / `HOST_LABEL` / `FUNCTION` / `OVERWRITE` / `LABEL` 等 Netdata 命令被接受但忽略；其他未知命令、`BEGIN` 未定义的图表、`SET` 未定义的维度、`SET/END` 不在 `BEGIN` 内等都会计入 `stats.errors` 并跳过该行，**不会**中断插件。单行上限 64 KiB。
+`LABEL` 立刻写入当前图表标签（不必再 `CLABEL_COMMIT`）。`HOST_LABEL` 写入主机标签。`OVERWRITE` 与 `CHART` 参数相同，但替换已有图表的标题、单位和维度。`FUNCTION` 只登记名称，出现在采集器状态里；agent 不把 stdin 交给插件，因此不会真正调用。`HOST_DEFINE` / `HOST_DEFINE_END` / `REPORT_JOB_STATUS` 仍被接受并忽略。其他未知命令、`BEGIN` 未定义的图表、`SET` 未定义的维度、`SET/END` 不在 `BEGIN` 内等都会计入 `stats.errors` 并跳过该行，**不会**中断插件。单行上限 64 KiB。
 
 ## 3. 最小示例（shell）
 

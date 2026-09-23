@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -38,5 +39,37 @@ func TestIopingCollectorFixture(t *testing.T) {
 	}
 	if err := (&iopingCollector{}).Init(reg); err == nil {
 		t.Fatal("expected disable without device")
+	}
+}
+
+func TestIopingNativeRead(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "iop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("0123456789abcdef")); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	i := &iopingCollector{}
+	i.cfg.Command = "native"
+	i.cfg.Device = f.Name()
+	reg := registry.New(&registry.Host{Hostname: "t", UpdateEvery: 1}, nil)
+	if err := i.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	if !i.native {
+		t.Fatal("expected a direct read")
+	}
+	if err := i.Collect(context.Background(), reg, time.Unix(1_700_000_000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	ch, ok := reg.Chart("ioping.latency")
+	if !ok {
+		t.Fatal("missing latency")
+	}
+	_, vals := ch.LastValues()
+	if vals["avg"] < 1 {
+		t.Fatalf("%v", vals)
 	}
 }
