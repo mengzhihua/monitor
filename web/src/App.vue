@@ -37,6 +37,18 @@ const oidcAvailable = ref(false)
 const nodes = ref<NodeInfo[]>([])
 const selectedNode = ref('')
 const NODE_KEY = 'monitor.node'
+// Node dropdown: the native <select> popup caps visible rows at the browser's
+// discretion (observed 5); a custom menu keeps ~12 rows visible and scrolls.
+const nodeMenuOpen = ref(false)
+function nodeMark(n: NodeInfo): string {
+  return n.local ? '◆ ' : n.status === 'live' ? '● ' : n.status === 'stale' ? '◐ ' : '○ '
+}
+function nodeName(n: NodeInfo): string {
+  return n.hostname + (n.local ? ' (hub)' : n.replica ? ' (replica)' : n.peer ? ' (peer)' : '')
+}
+function toggleNodeMenu() { nodeMenuOpen.value = !nodeMenuOpen.value }
+function closeNodeMenu() { nodeMenuOpen.value = false }
+function pickNode(id: string) { closeNodeMenu(); void selectNode(id) }
 const isHub = computed(() => info.value?.mode === 'hub')
 const currentNode = computed(() => nodes.value.find((n) => n.id === selectedNode.value) ?? null)
 /** Remote nodes have no local health engine; their alarms are mirrored from the agent. */
@@ -208,13 +220,20 @@ onMounted(() => {
   selection.node = saved
   live.onState = (up) => (connected.value = up)
   live.onAlarm = onAlarmEvent
+  document.addEventListener('click', closeNodeMenu)
+  document.addEventListener('keydown', onDocKeydown)
   fetch('/api/v1/auth/oidc/status').then((r) => r.json()).then((s) => { oidcAvailable.value = s.enabled === true }).catch(() => {})
 })
 const refresh = usePolling(async (signal) => {
   await load(signal)
   if (!signal.aborted && !needToken.value) live.start()
 }, 30000)
-onBeforeUnmount(() => { live.stop() })
+function onDocKeydown(e: KeyboardEvent) { if (e.key === 'Escape') closeNodeMenu() }
+onBeforeUnmount(() => {
+  live.stop()
+  document.removeEventListener('click', closeNodeMenu)
+  document.removeEventListener('keydown', onDocKeydown)
+})
 </script>
 
 <template>
@@ -226,12 +245,18 @@ onBeforeUnmount(() => { live.stop() })
         <i :class="['node-status', currentNode.status]">{{ currentNode.status }}</i></span>
     </div>
     <div class="meta" v-if="info">
-      <select v-if="isHub" class="node-select" :value="selectedNode" @change="selectNode(($event.target as HTMLSelectElement).value)"
-        title="节点">
-        <option v-for="n in nodes" :key="n.id" :value="n.id">
-          {{ n.local ? '◆ ' : n.status === 'live' ? '● ' : n.status === 'stale' ? '◐ ' : '○ ' }}{{ n.hostname }}{{ n.local ? ' (hub)' : n.replica ? ' (replica)' : n.peer ? ' (peer)' : '' }}
-        </option>
-      </select>
+      <div v-if="isHub" class="node-select" @click.stop>
+        <button type="button" class="node-select-btn" title="节点" @click="toggleNodeMenu">
+          {{ currentNode ? nodeMark(currentNode) + nodeName(currentNode) : (info?.host.hostname ?? '节点') }} ▾
+        </button>
+        <div v-if="nodeMenuOpen" class="node-menu" role="listbox" aria-label="节点">
+          <button v-for="n in nodes" :key="n.id" type="button" role="option" class="node-item"
+            :class="{ sel: n.id === selectedNode, live: n.status === 'live', stale: n.status === 'stale', offline: n.status === 'offline' }"
+            @click="pickNode(n.id)">
+            {{ nodeMark(n) }}{{ nodeName(n) }}
+          </button>
+        </div>
+      </div>
       <span v-if="isHub" class="nodes-count" title="在线节点 / 全部节点">{{ nodes.filter((n) => n.status === 'live').length }}/{{ nodes.length }} nodes</span>
       <span v-if="info.stream" :class="['dot', info.stream.connected ? 'on' : 'off']"
         :title="info.stream.connected ? '已上报到 ' + info.stream.destination : ('未连接 Hub' + (info.stream.last_error ? ': ' + info.stream.last_error : ''))">⇡</span>
@@ -329,7 +354,12 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; pa
 .host { color: #94a3b8; font-weight: 400; font-size: 13px; margin-left: 10px; }
 .meta { display: flex; gap: 14px; color: #94a3b8; font-size: 12px; flex: 1; }
 .dot.on { color: #22c55e; } .dot.off { color: #ef4444; }
-.node-select { max-width: 220px; }
+.node-select { position: relative; }
+.node-select-btn { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 13px; cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; background: #0f172a; border: 1px solid #334155; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-height: 340px; overflow-y: auto; min-width: 220px; }
+.node-item { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 5px 10px; font-size: 13px; color: #cbd5e1; cursor: pointer; white-space: nowrap; }
+.node-item:hover { background: #1e293b; }
+.node-item.sel { background: #1e293b; color: #e2e8f0; }
 .nodes-count { color: #cbd5e1; }
 .node-status { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #1e293b; }
 .node-status.live { color: #22c55e; } .node-status.stale { color: #fbbf24; } .node-status.offline { color: #ef4444; }
