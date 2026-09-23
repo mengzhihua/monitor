@@ -14,7 +14,7 @@ async function fixtures(page: Page) {
   await page.route('**/api/v1/data?*', route => {
     const url = new URL(route.request().url()); calls.push(url)
     const end = Number(url.searchParams.get('before')) || Math.floor(Date.now()/1000)
-    return route.fulfill({ json: { dimension_ids: ['value'], result: { data: [[end-1,1],[end,2]] } } })
+    return route.fulfill({ json: { units: '%', dimension_ids: ['value'], result: { data: [[end-1,1],[end,2]] } } })
   })
   return calls
 }

@@ -15,7 +15,9 @@
 
 新增责任人指派、分配给我和「待处理 / 排查中 / 观察中」进度，可筛选个人队列、未分配问题和处理阶段，并保存为浏览器视图。多人同时修改会提示冲突并保留草稿；责任人变更与进度流转写入历史，观察中不代表告警恢复。旧版处置记录自动兼容读取，首次保存升级存储格式，降级前需恢复升级前备份。
 
-「指标图表 → 常用聚合看板」内置 18 组可搜索、按场景分类的视图，覆盖研发总览、接口与网络、数据库与缓存、容器、Kubernetes、JVM、主机压力、GPU 等，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。详见[聚合看板说明](docs/07-preset-dashboards.md)。
+「指标图表 → 常用聚合看板」内置 54 个可搜索、按场景分类的样板，覆盖研发总览、数据库与缓存、容器、Kubernetes、入口与证书、容量、硬件、云平台及操作系统等场景，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。可以复制为个人看板，配置分组、具体图表、顺序、时间范围与列数，并通过 JSON 备份和选择性导入。详见[聚合看板说明](docs/07-preset-dashboards.md)。
+
+本轮 Web 看板收尾更新整合中文指标说明、收藏与分组导航、编辑草稿恢复、整个看板统一历史时间、图表放大与采样统计、相邻时段对比及 CSV 导出。个人看板导入先预览内容与当前节点覆盖情况，再勾选保存为副本；保留未采集的图表配置。使用方式及验收范围见 [Web 看板更新说明](docs/09-dashboard-final-update.md)。
 
 本轮是 **2.0 开发版**，新增工作台目前位于 Web，原有 Flutter 客户端继续可用。对标 Netdata、Grafana、Zabbix、Datadog 的具体范围、API、持久化限制与后续计划见 [2.0 说明](docs/06-monitor-2.0.md)。构建使用 `make all VERSION=2.0.0-dev`，尚未发布正式 `v2.0.0` 标签。
 
@@ -29,7 +31,8 @@
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
 | [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
-| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 18 组常用聚合看板、分类搜索与指标匹配规则 |
+| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 54 个常用聚合样板、个人看板配置、中文说明与历史对比 |
+| [docs/09-dashboard-final-update.md](docs/09-dashboard-final-update.md) | Web 看板收尾更新、导入预览与选择、功能范围及验证边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始

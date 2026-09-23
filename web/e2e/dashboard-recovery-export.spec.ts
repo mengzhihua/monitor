@@ -65,7 +65,7 @@ test('resuming a draft preserves the original conflict baseline', async ({ page 
 test('zoom dialog resizes the chart, exports raw stacked values and restores keyboard focus', async ({ page }, info) => {
   const now = Math.floor(Date.now()/1000)
   await page.route('**/api/v1/charts*', route => route.fulfill({ json: { charts: { [sample.id]: sample } } }))
-  await page.route('**/api/v1/data?*', route => route.fulfill({ json: { dimension_ids: ['read','write'], result: { data: [[now-20,1.25,3],[now-10,null,4],[now,-2,null]] } } }))
+  await page.route('**/api/v1/data?*', route => route.fulfill({ json: { units: sample.units, dimension_ids: ['read','write'], result: { data: [[now-20,1.25,3],[now-10,null,4],[now,-2,null]] } } }))
   await page.goto('/?view=charts&token=browser-test-token')
   const source = page.locator('.card').first()
   await expect(source.locator('canvas')).toBeVisible()
@@ -98,7 +98,7 @@ test('node switch rebuilds same-ID charts and labels CSV with the actual queried
     { id: 'remote-export', hostname: 'Remote export', local: false, status: 'live', alarms: {}, charts_count: 1 },
   ] } }))
   await page.route('**/api/v1/charts*', route => route.fulfill({ json: { charts: { [sample.id]: sample } } }))
-  await page.route('**/api/v1/data?*', route => route.fulfill({ json: { dimension_ids: ['read','write'], result: { data: [[Math.floor(Date.now()/1000), new URL(route.request().url()).searchParams.get('node') ? 99 : 1, 0]] } } }))
+  await page.route('**/api/v1/data?*', route => route.fulfill({ json: { units: sample.units, dimension_ids: ['read','write'], result: { data: [[Math.floor(Date.now()/1000), new URL(route.request().url()).searchParams.get('node') ? 99 : 1, 0]] } } }))
   await page.goto('/?view=charts&token=browser-test-token')
   await expect(page.getByRole('button', { name: '导出 CSV', exact: true })).toBeEnabled()
   await page.locator('.node-select-btn').click()

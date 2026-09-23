@@ -65,6 +65,7 @@ test('copy and import are independent; invalid imports and storage failures pres
   await expect(panel.getByRole('alert')).toContainText('导入失败')
   expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBe(before)
   await panel.getByLabel('导入看板配置').setInputFiles({ name: 'good.json', mimeType: 'application/json', buffer: Buffer.from(before!) })
+  await panel.getByRole('button', { name: '确认导入所选看板', exact: true }).click()
   await expect(panel.getByRole('status')).toContainText('已导入 1 个副本')
   const boards = decodeBoards((await page.evaluate(key => localStorage.getItem(key), storageKey))!)
   expect(boards).toHaveLength(2)

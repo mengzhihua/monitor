@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Chart } from '../api'
 import { dashboards, chartsForGroup } from '../dashboards'
 import DashboardEditor from './DashboardEditor.vue'
+import DashboardImport from './DashboardImport.vue'
 import { asDashboard, decodeBoards, encodeBoards, newBoard, storageKey, validateBoards, type PersonalBoard } from '../dashboardConfig'
 import { changePersonalBoards, readPersonalBoards, readPreferences, preferencesKey, type DashboardPreferences } from '../dashboardStorage'
 import { decodeDraft, encodeDraft, draftKey, type DashboardDraft } from '../dashboardDraft'
@@ -12,6 +13,10 @@ const props = defineProps<{ charts: Chart[]; window: number; end?: number | null
 const personal = ref<PersonalBoard[]>([])
 const error = ref('')
 const notice = ref('')
+const importPreview = ref<PersonalBoard[] | null>(null)
+const importFileName = ref('')
+const importLoading = ref(false)
+let importGeneration = 0
 const savedDraft = ref<DashboardDraft | null>(null)
 const draftStatus = ref('')
 try { const raw = sessionStorage.getItem(draftKey); if (raw) savedDraft.value = decodeDraft(raw) }
@@ -101,7 +106,7 @@ function syncStorage(event: StorageEvent) {
   } catch (e) { error.value = e instanceof Error ? e.message : '读取配置失败。' }
 }
 onMounted(() => window.addEventListener('storage', syncStorage))
-onBeforeUnmount(() => window.removeEventListener('storage', syncStorage))
+onBeforeUnmount(() => { window.removeEventListener('storage', syncStorage); ++importGeneration })
 function jumpToGroup(id: string) {
   folded.value = folded.value.filter(item => item !== id)
   // Wait for the collapsed section to mount before moving keyboard focus.
@@ -119,13 +124,24 @@ async function importBoards(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  const generation = ++importGeneration
+  importPreview.value = null; importLoading.value = true; error.value = ''; notice.value = ''
   try {
     if (file.size > 500_000) throw new Error('配置文件不能超过 500 KB。')
-    const imported = decodeBoards(await file.text()).map(b => ({ ...b, id: newBoard().id }))
+    const text = await file.text()
+    if (generation !== importGeneration) return
+    const imported = decodeBoards(text)
     if (!imported.length) throw new Error('配置文件中没有看板。')
-    if (apply({ type: 'import', boards: imported })) { onlyAvailable.value = false; category.value = '我的看板'; search.value = ''; selected.value = imported[0]!.id; notice.value = `已导入 ${imported.length} 个副本。` }
-  } catch (e) { error.value = `导入失败：${e instanceof Error ? e.message : '配置无效'}` }
-  input.value = ''
+    importFileName.value = file.name; importPreview.value = imported
+  } catch (e) { if (generation === importGeneration) error.value = `导入失败：${e instanceof Error ? e.message : '配置无效'}` }
+  finally { if (generation === importGeneration) { importLoading.value = false; input.value = '' } }
+}
+function confirmImport(boards: PersonalBoard[]) {
+  if (!boards.length) return
+  const imported = boards.map(b => ({ ...b, id: newBoard().id }))
+  if (apply({ type: 'import', boards: imported })) {
+    importPreview.value = null; onlyAvailable.value = false; category.value = '我的看板'; search.value = ''; selected.value = imported[0]!.id; notice.value = `已导入 ${imported.length} 个副本。`
+  }
 }
 const expanded = ref<string[]>([])
 const search = ref('')
@@ -168,17 +184,19 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
     <div class="intro"><div><span class="eyebrow">开箱即用 · 自动匹配当前节点</span><h1>常用聚合看板</h1></div><span class="badge">{{ dashboards.length }} 个内置样板</span></div>
     <p class="muted">无需选指标或编写查询。样板直接使用当前节点已有采集数据，切换节点后自动更新。</p>
     <div class="toolbar">
-      <button :disabled="!!editing || !!savedDraft" @click="startEditor()">新建看板</button><button :disabled="!!editing || !!savedDraft" @click="startEditor(true)">复制为个人看板</button>
+      <button :disabled="!!editing || !!savedDraft || !!importPreview || importLoading" @click="startEditor()">新建看板</button><button :disabled="!!editing || !!savedDraft || !!importPreview || importLoading" @click="startEditor(true)">复制为个人看板</button>
       <button :disabled="!personal.length" @click="exportBoards">导出个人看板</button>
       <label class="import">导入为副本<input :disabled="!!editing" type="file" accept=".json,application/json" aria-label="导入看板配置" @change="importBoards" /></label>
       <button :aria-expanded="!collapsed" @click="collapsed = !collapsed">{{ collapsed ? '展开样板目录' : '收起样板目录' }}</button>
     </div>
     <p class="muted">个人配置仅保存在当前浏览器；可导出 JSON 备份或迁移，不包含监控数据与认证令牌。</p>
     <p v-if="error && !editing" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
+    <p v-if="importLoading" role="status">正在读取看板配置…</p>
+    <DashboardImport v-if="importPreview" :key="importGeneration" :boards="importPreview" :file-name="importFileName" :existing="personal" :charts="charts" @confirm="confirmImport" @cancel="importPreview = null; error = ''" />
     <aside v-if="savedDraft && !editing" class="draft-recovery" aria-label="未保存的看板草稿">
       <b>发现未保存草稿：{{ savedDraft.board.title || '未命名看板' }}</b>
       <p>草稿只属于当前标签页，恢复后仍需保存才能加入个人看板。</p>
-      <button @click="resumeDraft">恢复草稿</button><button @click="clearDraft">丢弃草稿</button>
+      <button :disabled="!!importPreview || importLoading" @click="resumeDraft">恢复草稿</button><button @click="clearDraft">丢弃草稿</button>
     </aside>
     <p v-if="draftStatus && !editing && !savedDraft" class="muted">{{ draftStatus }}</p>
     <DashboardEditor v-if="editing" :key="editing.id" :initial="editing" :charts="charts" :error="error" :draft-status="draftStatus" @change="cacheDraft" @save="saveBoard" @save-copy="value => saveBoard(value, true)" @cancel="cancelEditor" />
@@ -199,7 +217,7 @@ watch([selected, () => props.node, () => props.filter], () => { expanded.value =
     <div class="board-heading"><h2>{{ board.title }}</h2><span>{{ available }}/{{ groups.length }} 类指标已采集 · {{ count }} 张图表</span></div>
     <div class="toolbar"><button :aria-pressed="preferences.favorites.includes(selected)" @click="toggleFavorite">{{ preferences.favorites.includes(selected) ? '取消收藏' : '收藏当前看板' }}</button></div>
     <div v-if="settings" class="toolbar">
-      <button :disabled="!!editing || !!savedDraft" @click="editCurrent">编辑个人看板</button><button :disabled="!!editing" @click="requestDelete">删除个人看板</button>
+      <button :disabled="!!editing || !!savedDraft || !!importPreview || importLoading" @click="editCurrent">编辑个人看板</button><button :disabled="!!editing" @click="requestDelete">删除个人看板</button>
       <span class="muted">{{ settings.windowSec ? `独立时间范围：${settings.windowSec / 60} 分钟` : '跟随顶部时间范围' }} · {{ settings.columns || '自适应' }} 列 · 每组 {{ limit }} 张</span>
       <span v-if="deleting">确认删除“{{ board.title }}”？<button @click="removeBoard">确认删除</button><button @click="deleting = false">取消删除</button></span>
     </div>

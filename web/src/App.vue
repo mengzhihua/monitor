@@ -62,6 +62,7 @@ const dashboardView = ref('all')
 const oidcAvailable = ref(false)
 const nodes = ref<NodeInfo[]>([])
 const selectedNode = ref('')
+const nodeNotice = ref('')
 const NODE_KEY = 'monitor.node'
 // Node dropdown: the native <select> popup caps visible rows at the browser's
 // discretion (observed 5); a custom menu keeps ~12 rows visible and scrolls.
@@ -127,8 +128,11 @@ async function selectNode(id: string) {
   if (id === selectedNode.value) return
   selectedNode.value = id
   selection.node = id
-  if (id) sessionStorage.setItem(NODE_KEY, id)
-  else sessionStorage.removeItem(NODE_KEY)
+  try {
+    if (id) sessionStorage.setItem(NODE_KEY, id)
+    else sessionStorage.removeItem(NODE_KEY)
+    nodeNotice.value = ''
+  } catch { nodeNotice.value = '浏览器无法记住所选节点，本次切换仍然生效；刷新后可能恢复到先前节点。' }
   charts.value = []
   alarms.value = []
   alarmLog.value = []
@@ -346,6 +350,7 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
+      <p v-if="nodeNotice" class="node-notice" role="status">{{ nodeNotice }}</p>
       <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :can-manage="info?.user?.role === 'admin' && !selectedNode" @close="showAlarms = false" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
@@ -408,6 +413,7 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; pa
 .node-item:hover { background: #1e293b; }
 .node-item.sel { background: #1e293b; color: #e2e8f0; }
 .nodes-count { color: #cbd5e1; }
+.node-notice { color: #fcd34d; font-size: 13px; overflow-wrap: anywhere; }
 .node-status { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #1e293b; }
 .node-status.live { color: #22c55e; } .node-status.stale { color: #fbbf24; } .node-status.offline { color: #ef4444; }
 .alarms-btn { background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 12px; padding: 1px 8px; font-size: 12px; cursor: pointer; }

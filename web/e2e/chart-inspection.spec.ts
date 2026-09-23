@@ -12,7 +12,7 @@ async function detail(page: Page) {
   return page.getByRole('dialog')
 }
 function payload(before: number) {
-  return { dimension_ids: ['a','b'], dimension_anomaly: [100,0], result: { data: [[before-2,2,10],[before-1,null,20],[before,-4,null]] } }
+  return { units: chart.units, dimension_ids: ['a','b'], dimension_anomaly: [100,0], result: { data: [[before-2,2,10],[before-1,null,20],[before,-4,null]] } }
 }
 
 test('fixed history uses absolute bounds, stops polling, paginates and resumes live', async ({ page }) => {
@@ -65,7 +65,7 @@ test('invalid time preserves the query; failed and empty history cannot export o
   await page.route('**/api/v1/data?*', route => {
     count++
     if (fail) return route.fulfill({ status: 503, body: '测试采样暂不可用' })
-    return route.fulfill({ json: empty ? { dimension_ids: ['a','b'], result: { data: [] } } : payload(Math.floor(Date.now()/1000)) })
+    return route.fulfill({ json: empty ? { units: chart.units, dimension_ids: ['a','b'], result: { data: [] } } : payload(Math.floor(Date.now()/1000)) })
   })
   const dialog = await detail(page)
   await expect(dialog.getByRole('table', { name: '各维度采样统计' })).toBeVisible()

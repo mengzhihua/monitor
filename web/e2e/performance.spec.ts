@@ -17,7 +17,7 @@ test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async (
   }))
   await page.route('**/api/v1/charts*', route => route.fulfill({ json: { charts } }))
   await page.route('**/api/v1/data?*', route => route.fulfill({ json: {
-    dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
+    units: 'value', dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
   } }))
   await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')

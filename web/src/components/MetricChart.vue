@@ -213,6 +213,7 @@ async function load(first = false) {
     // mostly-null 1s rows and uPlot draws nothing between isolated samples.
     const d = await api.data(props.chart.id, anchor.value === null ? -props.window : anchor.value-props.window, anchor.value ?? 0, Math.min(1200, Math.ceil(props.window / step())), current.signal)
     if (disposed || current.signal.aborted || generation !== loadGeneration) return
+    if (d.units !== props.chart.units) throw new Error('采样单位与图表定义不一致，请稍后重试或刷新图表。')
     dims = requestedDims
     times = d.result.data.map((r) => r[0] as number)
     const idx = new Map(d.dimension_ids.map((id, i) => [id, i + 1]))

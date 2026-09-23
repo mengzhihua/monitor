@@ -9,7 +9,7 @@
 | [Netdata 节点状态](https://learn.netdata.cloud/docs/netdata-cloud/node-states-and-transitions) | 集中观察主机在线、过期、离线及数据可用性 | 单机/Hub 总览、节点资源卡片、采样时间、缺失值和过期提示、跨节点问题列表 | 更大规模节点的服务端分页、跨 Hub 告警联合查询 |
 | [Grafana 告警分组](https://grafana.com/docs/grafana/latest/alerting/monitor-status/view-active-notifications/) | 按条件筛选与聚合问题，降低处置负担 | 严重级别、连接状态、待确认筛选；按 family 统计；保存浏览器视图 | 通知抑制依赖、分组通知策略、通知送达追踪 |
 | [Zabbix 问题确认](https://www.zabbix.com/documentation/7.4/en/manual/acknowledgment) | 确认、备注与处理历史 | 多用户确认/撤销/备注、责任人指派、处理进度、操作者记录、并发冲突检测、重启读取持久记录 | 升级值班表、工单系统集成 |
-| [Datadog Dashboard](https://docs.datadoghq.com/dashboards/) | 汇总关键指标、筛选并进入细节 | CPU/内存资源视图、节点/图表跳转、JSON 快照导出 | 可编辑面板布局、SLO/错误预算、分布式追踪与服务依赖图 |
+| [Datadog Dashboard](https://docs.datadoghq.com/dashboards/) | 汇总关键指标、筛选并进入细节 | CPU/内存资源视图、节点/图表跳转、JSON 快照导出、个人看板分组/顺序/列数配置、历史时段对比 | 自由拖拽布局、SLO/错误预算、分布式追踪与服务依赖图 |
 
 这里对比具体工作流，不把本轮描述为上述平台的完整替代。2.0 工作台本轮集成在内嵌 Web Dashboard；Flutter 客户端仍使用已有功能和接口，没有宣称新增的处置界面已在五端原生客户端全部落地。
 
@@ -17,7 +17,7 @@
 
 登录后默认进入「运维总览」，顶部可切换「指标图表」。`/?view=charts` 可直接进入原有图表工作区。
 
-「指标图表 → 常用聚合看板」已整合 18 组预设，支持按场景分类、搜索及已采集覆盖数量提示，详见[聚合看板说明](07-preset-dashboards.md)。这与问题中心的浏览器保存视图相互独立。
+「指标图表 → 常用聚合看板」已整合 54 个样板，支持按场景分类、搜索、收藏及已采集覆盖数量提示。可复制和配置个人看板，恢复编辑草稿，预览并选择导入配置，查看统一历史时段及相邻时段对比，详见[聚合看板说明](07-preset-dashboards.md)与 [Web 看板更新说明](09-dashboard-final-update.md)。个人看板保存在当前浏览器，与问题中心的浏览器保存视图相互独立。
 
 - 总计包括本机及当前 Hub 已知的节点。远端 Hub 只有元数据而没有本地告警快照时，显示覆盖范围未知。
 - CPU、内存卡片读取已有采集器的最近样本，不新增系统采样任务，也不读取整段历史。CPU 为非 idle 维度之和；内存为 used / (used + free + cached + buffers)。缺少必要维度、非有限值、尚无样本都显示「暂无数据」。
@@ -84,11 +84,13 @@ MONITOR_E2E_PORT=20097 npm run test:e2e
 
 ## 2026-09-23 首批工作台验收结果
 
+以下记录对应首批工作台交付时的功能和测试数量；后续 Web 看板收尾更新的结果见 [Web 看板更新说明](09-dashboard-final-update.md)。
+
 - `make all`：通过。版本来自根目录 `VERSION`，服务端与 Dashboard 构建为 `2.0.0-dev`；Vue TypeScript 检查通过。
 - `go vet ./...`、`go test -race -p 1 ./...`：全量通过。首次并行执行测试与跨平台编译时，已有插件退出排空测试超时；停止编译并串行重验通过，未放宽测试断言。
 - `python3 scripts/verify-operations.py`：真实 CPU/内存采集、确认记录写盘、0600 权限、SIGINT 退出、同数据目录重启、旧操作历史可读及新问题重新确认通过。
 - `bash scripts/smoke.sh`：Agent / Hub / 认证 / v1-v3 API / 流相关冒烟通过。
-- `MONITOR_E2E_PORT=20097 npm run test:e2e`：最终组合版本 **30/30 通过**，桌面和手机宽度各 15 项，包含新总览、处置、只读权限、导出、刷新失败、18 组预设、节点切换、实时连接及图表资源回收。
+- `MONITOR_E2E_PORT=20097 npm run test:e2e`：首批组合版本 **30/30 通过**，桌面和手机宽度各 15 项，包含新总览、处置、只读权限、导出、刷新失败、当时的 18 组预设、节点切换、实时连接及图表资源回收。
 - `make cross`：Linux amd64/arm64、macOS amd64/arm64、Windows amd64、FreeBSD amd64/arm64、Android arm64 共 8 个服务端目标构建通过。macOS amd64 实际运行验证；其余平台属于构建证据。
 - 集成已验证的图表元数据/Hub info 性能实现与聚合看板提交。性能基准及其适用边界保留在[验收记录](05-acceptance.md)，不从本轮构建期间的本机 CPU 百分比推导总体节省比例。
 
