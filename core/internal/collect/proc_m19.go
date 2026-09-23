@@ -31,7 +31,7 @@ func (p *procCollector) initM19(reg *registry.Registry) {
 	m.extfrag = firstNonEmpty(m.extfrag, "/sys/kernel/debug/extfrag/extfrag_index")
 	m.extSeen = map[string]bool{}
 	if m.audit == nil {
-		m.audit = readAuditctl
+		m.audit = readAuditStatus
 	}
 	if raw, err := readTrim(m.extfrag); err == nil && strings.Contains(raw, "Node") {
 		m.haveExtfrag = true
@@ -187,6 +187,13 @@ func parseAuditctl(s string) (auditStatus, bool) {
 		}
 	}
 	return st, ok
+}
+
+func readAuditStatus() (auditStatus, bool) {
+	if st, ok := readAuditNetlink(); ok {
+		return st, true
+	}
+	return readAuditctl()
 }
 
 func readAuditctl() (auditStatus, bool) {

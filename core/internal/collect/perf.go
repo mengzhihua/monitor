@@ -20,6 +20,7 @@ type perfCollector struct {
 	cfg    perfConfig
 	run    func(ctx context.Context, name string, args ...string) ([]byte, error)
 	sample func(ctx context.Context) (map[string]float64, error)
+	native *perfHardware
 }
 
 func init() {
@@ -54,7 +55,12 @@ func (p *perfCollector) Init(reg *registry.Registry) error {
 		p.run = execRun(p.cfg.Timeout)
 	}
 	if p.sample == nil {
-		p.sample = p.perfStat
+		if native, err := openPerfHardware(); err == nil {
+			p.native = native
+			p.sample = native.sample
+		} else {
+			p.sample = p.perfStat
+		}
 	}
 	if _, err := p.sample(context.Background()); err != nil {
 		return fmt.Errorf("perf: unavailable: %w", err)
@@ -71,6 +77,12 @@ func (p *perfCollector) Init(reg *registry.Registry) error {
 	miss.Plugin, miss.Module, miss.Family = "perf", "perf", "perf"
 	reg.AddChart(miss)
 	return nil
+}
+
+func (p *perfCollector) Stop() {
+	if p.native != nil {
+		p.native.close()
+	}
 }
 
 func (p *perfCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {

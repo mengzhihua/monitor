@@ -33,7 +33,7 @@ func (i *ipmiCollector) Configure(decode func(v any) error) error {
 		return err
 	}
 	if i.cfg.Command == "" {
-		i.cfg.Command = "ipmitool"
+		i.cfg.Command = "auto"
 	}
 	if i.cfg.Timeout <= 0 {
 		i.cfg.Timeout = 8 * time.Second
@@ -50,9 +50,9 @@ func (i *ipmiCollector) Init(reg *registry.Registry) error {
 	if i.run == nil {
 		i.run = execRun(i.cfg.Timeout)
 	}
-	raw, err := i.run(context.Background(), i.cfg.Command, "sdr")
+	raw, err := i.readSensors(context.Background())
 	if err != nil {
-		return fmt.Errorf("ipmi: ipmitool unavailable: %w", err)
+		return fmt.Errorf("ipmi: sensors unavailable: %w", err)
 	}
 	if len(parseIPMISDR(string(raw))) == 0 {
 		return fmt.Errorf("ipmi: no SDR sensors")
@@ -67,7 +67,7 @@ func (i *ipmiCollector) Init(reg *registry.Registry) error {
 }
 
 func (i *ipmiCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	raw, err := i.run(ctx, i.cfg.Command, "sdr")
+	raw, err := i.readSensors(ctx)
 	if err != nil {
 		return err
 	}
@@ -104,15 +104,44 @@ type ipmiSensor struct {
 	Value                    float64
 }
 
+func (i *ipmiCollector) readSensors(ctx context.Context) ([]byte, error) {
+	if i.cfg.Command != "" && i.cfg.Command != "auto" {
+		return i.run(ctx, i.cfg.Command, ipmiArgs(i.cfg.Command)...)
+	}
+	if b, err := i.run(ctx, "ipmi-sensors", "--comma-separated", "--no-header-output"); err == nil && len(parseIPMISDR(string(b))) > 0 {
+		return b, nil
+	}
+	return i.run(ctx, "ipmitool", "sdr")
+}
+
+func ipmiArgs(cmd string) []string {
+	base := cmd
+	if i := strings.LastIndexAny(cmd, `/\`); i >= 0 {
+		base = cmd[i+1:]
+	}
+	if base == "ipmi-sensors" || base == "ipmimonitoring" {
+		return []string{"--comma-separated", "--no-header-output"}
+	}
+	return []string{"sdr"}
+}
+
 func parseIPMISDR(s string) []ipmiSensor {
 	var out []ipmiSensor
 	sc := bufio.NewScanner(strings.NewReader(s))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || !strings.Contains(line, "|") {
+		if line == "" || strings.HasPrefix(strings.ToLower(line), "id |") || strings.HasPrefix(strings.ToLower(line), "id,") {
 			continue
 		}
-		parts := strings.Split(line, "|")
+		var parts []string
+		switch {
+		case strings.Contains(line, "|"):
+			parts = strings.Split(line, "|")
+		case strings.Count(line, ",") >= 4:
+			parts = strings.Split(line, ",")
+		default:
+			continue
+		}
 		if len(parts) < 3 {
 			continue
 		}
@@ -120,7 +149,22 @@ func parseIPMISDR(s string) []ipmiSensor {
 		reading := strings.TrimSpace(parts[1])
 		state := strings.ToLower(strings.TrimSpace(parts[2]))
 		kind, units := "", ""
-		low := strings.ToLower(reading)
+		if len(parts) >= 6 {
+			name = strings.TrimSpace(parts[1])
+			kind = ipmiKind(parts[2])
+			state = strings.ToLower(strings.Trim(strings.TrimSpace(parts[3]), "'"))
+			reading = strings.TrimSpace(parts[4])
+			units = strings.TrimSpace(parts[5])
+		}
+		switch state {
+		case "nominal", "ok":
+			state = "ok"
+		case "warning", "non-critical", "nc":
+			state = "nc"
+		case "critical", "non-recoverable", "nr", "cr":
+			state = "cr"
+		}
+		low := strings.ToLower(reading + " " + units)
 		switch {
 		case strings.Contains(low, "degrees") || strings.Contains(low, "degree"):
 			kind, units = "temperatures", "Celsius"
@@ -131,7 +175,26 @@ func parseIPMISDR(s string) []ipmiSensor {
 		case strings.Contains(low, "watt"):
 			kind, units = "power", "Watts"
 		}
+		if kind == "" {
+			kind = ipmiKind(low)
+		}
 		out = append(out, ipmiSensor{Name: name, State: state, Kind: kind, Units: units, Value: firstFloat(reading)})
 	}
 	return out
+}
+
+func ipmiKind(s string) string {
+	low := strings.ToLower(s)
+	switch {
+	case strings.Contains(low, "temp") || strings.Contains(low, "degree") || strings.Contains(low, "celsius"):
+		return "temperatures"
+	case strings.Contains(low, "fan") || strings.Contains(low, "rpm"):
+		return "fans"
+	case strings.Contains(low, "volt"):
+		return "voltage"
+	case strings.Contains(low, "watt") || strings.Contains(low, "power"):
+		return "power"
+	default:
+		return ""
+	}
 }

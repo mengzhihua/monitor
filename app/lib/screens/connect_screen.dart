@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../discover/mdns.dart';
 import '../state/app_state.dart';
 import '../version.dart';
 
@@ -116,6 +117,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         ),
                       ),
                     ),
+                  OutlinedButton(
+                    onPressed: st.loading
+                        ? null
+                        : () async {
+                            final found = await discoverMonitor();
+                            if (found != null && mounted) {
+                              setState(() => _url.text = found);
+                            }
+                          },
+                    child: const Text('Find on network'),
+                  ),
+                  const SizedBox(height: 8),
                   FilledButton(
                     onPressed: st.loading ? null : _submit,
                     child: st.loading

@@ -47,6 +47,9 @@ func (l *logsCollector) startFollow() {
 	if !l.followEnabled() {
 		return
 	}
+	if startSDJournal(l) {
+		return
+	}
 	if _, err := exec.LookPath("journalctl"); err != nil {
 		return
 	}

@@ -190,6 +190,36 @@ type Notify struct {
 		URL     string            `yaml:"url"`
 		Headers map[string]string `yaml:"headers"`
 	} `yaml:"push"`
+	APNs struct {
+		Key         string `yaml:"key"`
+		KeyID       string `yaml:"key_id"`
+		TeamID      string `yaml:"team_id"`
+		Topic       string `yaml:"topic"`
+		DeviceToken string `yaml:"device_token"`
+	} `yaml:"apns"`
+	FCM struct {
+		ServerKey string `yaml:"server_key"`
+		Token     string `yaml:"token"`
+	} `yaml:"fcm"`
+	Huawei struct {
+		AppID string `yaml:"app_id"`
+		Token string `yaml:"token"`
+		RegID string `yaml:"reg_id"`
+	} `yaml:"huawei"`
+	Xiaomi struct {
+		AppSecret string `yaml:"app_secret"`
+		Package   string `yaml:"package"`
+		RegID     string `yaml:"reg_id"`
+	} `yaml:"xiaomi"`
+	SMS struct {
+		Provider  string `yaml:"provider"`
+		AccessKey string `yaml:"access_key"`
+		Secret    string `yaml:"secret"`
+		SignName  string `yaml:"sign_name"`
+		Template  string `yaml:"template"`
+		Phone     string `yaml:"phone"`
+		URL       string `yaml:"url"`
+	} `yaml:"sms"`
 }
 
 // Export pushes latest samples to Graphite / Influx / JSON HTTP.

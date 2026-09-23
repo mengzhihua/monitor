@@ -26,6 +26,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/backup"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
+	"github.com/mengzhihua/monitor/core/internal/discover"
 	"github.com/mengzhihua/monitor/core/internal/export"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
@@ -350,6 +351,10 @@ func run() error {
 		wg.Wait()
 	}()
 
+	if port := discover.Port(cfg.Web.Listen); port > 0 {
+		go discover.Announce(ctx, reg.Host.Hostname, port)
+	}
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("web server listening", "addr", cfg.Web.Listen)
@@ -513,6 +518,21 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	}
 	if n.Push.URL != "" {
 		notifiers = append(notifiers, &health.PushNotifier{URL: n.Push.URL, Headers: n.Push.Headers})
+	}
+	if n.APNs.Key != "" && n.APNs.DeviceToken != "" {
+		notifiers = append(notifiers, &health.APNsNotifier{KeyPEM: n.APNs.Key, KeyID: n.APNs.KeyID, TeamID: n.APNs.TeamID, Topic: n.APNs.Topic, DeviceToken: n.APNs.DeviceToken})
+	}
+	if n.FCM.ServerKey != "" && n.FCM.Token != "" {
+		notifiers = append(notifiers, &health.FCMNotifier{ServerKey: n.FCM.ServerKey, Token: n.FCM.Token})
+	}
+	if n.Huawei.AppID != "" && n.Huawei.Token != "" && n.Huawei.RegID != "" {
+		notifiers = append(notifiers, &health.HuaweiNotifier{AppID: n.Huawei.AppID, Token: n.Huawei.Token, RegID: n.Huawei.RegID})
+	}
+	if n.Xiaomi.AppSecret != "" && n.Xiaomi.RegID != "" {
+		notifiers = append(notifiers, &health.XiaomiNotifier{AppSecret: n.Xiaomi.AppSecret, Package: n.Xiaomi.Package, RegID: n.Xiaomi.RegID})
+	}
+	if n.SMS.Phone != "" && (n.SMS.URL != "" || n.SMS.AccessKey != "") {
+		notifiers = append(notifiers, &health.SMSNotifier{Provider: n.SMS.Provider, AccessKey: n.SMS.AccessKey, Secret: n.SMS.Secret, SignName: n.SMS.SignName, Template: n.SMS.Template, Phone: n.SMS.Phone, URL: n.SMS.URL})
 	}
 
 	vars := map[string]float64{"cpus": float64(runtime.NumCPU())}

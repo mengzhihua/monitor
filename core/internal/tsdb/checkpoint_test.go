@@ -33,7 +33,9 @@ func TestCheckpointFailedWriteKeepsPreviousImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	points, err := recovered.Query("x", 0, 2000)
-	if err != nil || len(points) != 1 || points[0].Value != 1 {
+	// The failed checkpoint must not replace the previous image. The sample
+	// taken after that image is still in the WAL, so recovery keeps both.
+	if err != nil || len(points) != 2 || points[0].Value != 1 || points[1].Value != 2 {
 		t.Fatalf("previous checkpoint lost: %v %v", points, err)
 	}
 	recovered.Close()

@@ -49,18 +49,28 @@ class MainActivity : AppCompatActivity() {
         val hubUrl = findViewById<EditText>(R.id.hubUrl)
         val apiKey = findViewById<EditText>(R.id.apiKey)
         val boot = findViewById<CheckBox>(R.id.boot)
+        val hubMode = findViewById<CheckBox>(R.id.hubMode)
+        val usageStats = findViewById<CheckBox>(R.id.usageStats)
 
         port.setText(settings.port.toString())
         hubUrl.setText(settings.hubUrl)
         apiKey.setText(settings.apiKey)
         boot.isChecked = settings.startOnBoot
+        hubMode.isChecked = settings.hubMode
+        usageStats.isChecked = settings.usageStats
 
         findViewById<Button>(R.id.save).setOnClickListener {
             settings.port = port.text.toString().toIntOrNull()?.coerceIn(1024, 65535) ?: 19999
             settings.hubUrl = hubUrl.text.toString()
             settings.apiKey = apiKey.text.toString()
             settings.startOnBoot = boot.isChecked
+            settings.hubMode = hubMode.isChecked
+            settings.usageStats = usageStats.isChecked
             port.setText(settings.port.toString())
+            if (settings.startOnBoot) ReviveWorker.schedule(this)
+            if (settings.usageStats) {
+                startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            }
         }
         toggle.setOnClickListener {
             if (MonitordService.running) MonitordService.stop(this) else startService()
