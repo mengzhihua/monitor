@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -216,6 +217,52 @@ func overcommitMemoryMode() int {
 	return n
 }
 
+// readMeminfoKB returns /proc/meminfo counters in kibibytes.
+func readMeminfoKB() map[string]uint64 {
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	out := map[string]uint64{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fs := strings.Fields(sc.Text())
+		if len(fs) < 2 {
+			continue
+		}
+		n, err := strconv.ParseUint(fs[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		out[strings.TrimSuffix(fs[0], ":")] = n
+	}
+	return out
+}
+
+// linuxRAMSamples matches Netdata's system.ram split. meminfo Cached includes
+// Shmem, which is shared memory rather than reclaimable file cache, so it
+// belongs in used. gopsutil has already added SReclaimable to Cached.
+// extraReclaim is KReclaimable beyond that slab set, in bytes.
+func linuxRAMSamples(vm *mem.VirtualMemoryStat, extraReclaim uint64) (free, used, cached, buffers float64) {
+	cachedB := vm.Cached + extraReclaim
+	// Shmem is inside Cached. Subtract it even when it is the whole cache,
+	// and clamp so a momentary counter mismatch cannot go negative.
+	if vm.Shared >= cachedB {
+		cachedB = 0
+	} else {
+		cachedB -= vm.Shared
+	}
+	free = float64(vm.Free)
+	buffers = float64(vm.Buffers)
+	cached = float64(cachedB)
+	used = float64(vm.Total) - free - cached - buffers
+	if used < 0 {
+		used = 0
+	}
+	return free, used, cached, buffers
+}
+
 func (c *memCollector) Name() string { return "mem" }
 
 func (c *memCollector) Init(reg *registry.Registry) error {
@@ -230,11 +277,23 @@ func (c *memCollector) Init(reg *registry.Registry) error {
 	reg.AddChart(&registry.Chart{ID: "mem.available", Family: "ram", Title: "Available RAM for applications", Units: "MiB", Type: registry.Area,
 		Priority: 301, Plugin: "system", Module: "mem",
 		Dimensions: []*registry.Dimension{{ID: "avail", Divisor: 1024 * 1024}}})
+	// Slab already includes SReclaimable and SUnreclaim. Stacking SUnreclaim
+	// on top of it counted that memory twice. KReclaimable also overlaps
+	// SReclaimable, so this stack keeps Slab once and adds the other kernel
+	// counters that do not sit inside it.
+	kernelDims := []*registry.Dimension{
+		{ID: "slab", Divisor: 1024 * 1024},
+		{ID: "page_tables", Divisor: 1024 * 1024},
+		{ID: "vmalloc_used", Divisor: 1024 * 1024},
+	}
+	if runtime.GOOS == "linux" {
+		kernelDims = append(kernelDims,
+			&registry.Dimension{ID: "kernelstack", Name: "kernel_stack", Divisor: 1024 * 1024},
+			&registry.Dimension{ID: "percpu", Divisor: 1024 * 1024},
+		)
+	}
 	reg.AddChart(&registry.Chart{ID: "mem.kernel", Family: "ram", Title: "Memory used by the kernel", Units: "MiB", Type: registry.Stacked,
-		Priority: 302, Plugin: "system", Module: "mem",
-		Dimensions: []*registry.Dimension{
-			{ID: "slab", Divisor: 1024 * 1024}, {ID: "sunreclaim", Name: "unreclaimable", Divisor: 1024 * 1024},
-			{ID: "page_tables", Divisor: 1024 * 1024}, {ID: "vmalloc_used", Divisor: 1024 * 1024}}})
+		Priority: 302, Plugin: "system", Module: "mem", Dimensions: kernelDims})
 	reg.AddChart(&registry.Chart{ID: "mem.writeback", Family: "ram", Title: "Writeback memory", Units: "MiB",
 		Priority: 303, Plugin: "system", Module: "mem",
 		Dimensions: []*registry.Dimension{{ID: "dirty", Divisor: 1024 * 1024}, {ID: "writeback", Divisor: 1024 * 1024}}})
@@ -276,15 +335,32 @@ func (c *memCollector) Collect(ctx context.Context, reg *registry.Registry, now 
 	if err != nil {
 		return err
 	}
-	used := vm.Total - vm.Free - vm.Cached - vm.Buffers
-	if vm.Cached == 0 && vm.Buffers == 0 { // darwin/windows: no split available
-		used = vm.Used
+	free, used, cached, buffers := float64(vm.Free), float64(vm.Total-vm.Free-vm.Cached-vm.Buffers), float64(vm.Cached), float64(vm.Buffers)
+	var memKB map[string]uint64
+	if runtime.GOOS == "linux" {
+		memKB = readMeminfoKB()
+		var extra uint64
+		if memKB != nil {
+			sreclaimKB := vm.Sreclaimable / 1024
+			if memKB["KReclaimable"] > sreclaimKB {
+				extra = (memKB["KReclaimable"] - sreclaimKB) * 1024
+			}
+		}
+		free, used, cached, buffers = linuxRAMSamples(vm, extra)
+	} else if vm.Cached == 0 && vm.Buffers == 0 { // darwin/windows: no split available
+		used = float64(vm.Used)
 	}
 	_ = reg.Collect("system.ram", now, map[string]float64{
-		"free": float64(vm.Free), "used": float64(used), "cached": float64(vm.Cached), "buffers": float64(vm.Buffers)})
+		"free": free, "used": used, "cached": cached, "buffers": buffers})
 	_ = reg.Collect("mem.available", now, map[string]float64{"avail": float64(vm.Available)})
-	_ = reg.Collect("mem.kernel", now, map[string]float64{
-		"slab": float64(vm.Slab), "sunreclaim": float64(vm.Sunreclaim), "page_tables": float64(vm.PageTables), "vmalloc_used": float64(vm.VmallocUsed)})
+	kernelVals := map[string]float64{
+		"slab": float64(vm.Slab), "page_tables": float64(vm.PageTables), "vmalloc_used": float64(vm.VmallocUsed),
+	}
+	if memKB != nil {
+		kernelVals["kernelstack"] = float64(memKB["KernelStack"]) * 1024
+		kernelVals["percpu"] = float64(memKB["Percpu"]) * 1024
+	}
+	_ = reg.Collect("mem.kernel", now, kernelVals)
 	_ = reg.Collect("mem.writeback", now, map[string]float64{"dirty": float64(vm.Dirty), "writeback": float64(vm.WriteBack)})
 	committedVals := map[string]float64{"committed": float64(vm.CommittedAS)}
 	if c.limitEnforced || runtime.GOOS != "linux" {
