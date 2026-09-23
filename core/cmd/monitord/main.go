@@ -36,7 +36,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
-var version = "dev" // set via -ldflags "-X main.version=..."
+var version = "2.0.0-dev" // release builds override via -ldflags "-X main.version=..."
 
 func main() {
 	if err := run(); err != nil {
@@ -212,16 +212,17 @@ func run() error {
 	}
 
 	apiOpt := api.Options{
-		Version:   version,
-		Mode:      cfg.Mode,
-		StartedAt: time.Now(),
-		AllowFrom: cfg.Web.AllowFrom,
-		Token:     cfg.Web.Token,
-		Users:     users,
-		Health:    eng,
-		Plugins:   pm,
-		Stream:    sc,
-		Logger:    log.With("component", "api"),
+		OperationsDir: filepath.Join(cfg.Global.DataDir, "operations"),
+		Version:       version,
+		Mode:          cfg.Mode,
+		StartedAt:     time.Now(),
+		AllowFrom:     cfg.Web.AllowFrom,
+		Token:         cfg.Web.Token,
+		Users:         users,
+		Health:        eng,
+		Plugins:       pm,
+		Stream:        sc,
+		Logger:        log.With("component", "api"),
 	}
 	var nodes *hub.Nodes
 	var cluster *hub.Cluster

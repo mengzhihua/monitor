@@ -7,7 +7,7 @@ test('visible charts load on demand and reuse their canvas after scrolling', asy
   page.on('request', request => {
     if (request.url().includes('/api/v1/data?')) historyRequests++
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
   await expect(cards.first().locator('canvas').first()).toBeVisible()
   const total = await cards.count()
@@ -26,7 +26,7 @@ test('login, real chart, long history, layout and logout', async ({page, request
   const errors: string[]=[]
   page.on('pageerror',error=>errors.push(error.message))
   expect((await request.get('/api/v1/info')).status()).toBe(401)
-  await page.goto('/')
+  await page.goto('/?view=charts')
   await expect(page.getByPlaceholder('登录密码或访问令牌',{exact:true})).toBeVisible()
   await page.getByPlaceholder('登录密码或访问令牌',{exact:true}).fill('wrong-password')
   await page.getByRole('button',{name:'进入',exact:true}).click()
@@ -63,7 +63,7 @@ test('login, real chart, long history, layout and logout', async ({page, request
 })
 
 test('token URL is removed, live frames are numeric, reload and reconnect work', async ({page,context})=>{
-  await page.goto('/?token='+token)
+  await page.goto('/?view=charts&token='+token)
   await expect(page.locator('[title="live"]')).toBeVisible()
   expect(new URL(page.url()).searchParams.has('token')).toBe(false)
   const frame = await page.evaluate(async (token) => {

@@ -24,6 +24,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/ingest"
+	"github.com/mengzhihua/monitor/core/internal/operations"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
@@ -34,10 +35,11 @@ import (
 var uiFS embed.FS
 
 type Options struct {
-	Version   string
-	Mode      string // agent | hub (informational)
-	StartedAt time.Time
-	AllowFrom []string
+	OperationsDir string // persistent acknowledgements; empty only for ephemeral tests
+	Version       string
+	Mode          string // agent | hub (informational)
+	StartedAt     time.Time
+	AllowFrom     []string
 	// Token is the legacy single admin credential; Users adds named
 	// credentials with roles. With neither set the API is anonymous (admin).
 	Token  string
@@ -67,19 +69,20 @@ type Options struct {
 }
 
 type Server struct {
-	reg    *registry.Registry
-	db     *tsdb.Store
-	sched  *collect.Scheduler
-	opt    Options
-	log    *slog.Logger
-	live   *liveHub
-	nets   []*net.IPNet
-	mux    *http.ServeMux
-	ingest *ingest.Mapper
-	otlp   *ingest.Mapper
-	oidc   *oidcState
-	ldap   *LDAPConfig
-	shares *shareStore
+	operations *operations.Store
+	reg        *registry.Registry
+	db         *tsdb.Store
+	sched      *collect.Scheduler
+	opt        Options
+	log        *slog.Logger
+	live       *liveHub
+	nets       []*net.IPNet
+	mux        *http.ServeMux
+	ingest     *ingest.Mapper
+	otlp       *ingest.Mapper
+	oidc       *oidcState
+	ldap       *LDAPConfig
+	shares     *shareStore
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -127,6 +130,11 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		}
 	}
 	s.shares = newShareStore()
+	var err error
+	s.operations, err = operations.Open(opt.OperationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("open operations store: %w", err)
+	}
 	s.routes()
 	return s, nil
 }
@@ -143,6 +151,8 @@ func (s *Server) PublishNodeAlarm(nodeID string, e health.LogEntry) {
 
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("GET /api/v1/operations", s.handleOperations)
+	m.HandleFunc("POST /api/v1/operations/acknowledgements", s.handleAcknowledgement)
 	m.HandleFunc("GET /api/v1/info", s.handleInfo)
 	m.HandleFunc("GET /api/v1/charts", s.handleCharts)
 	m.HandleFunc("GET /api/v1/chart", s.handleChart)

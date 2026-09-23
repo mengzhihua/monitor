@@ -1,4 +1,4 @@
-# Monitor 实时监控平台
+# Monitor 实时监控平台 · 2.0 开发版
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
@@ -6,6 +6,14 @@
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
 代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。开发分支采用[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
+
+## 2.0 运维工作台
+
+内嵌 Web Dashboard 新增「运维总览」：集中查看本机及 Hub 节点的 CPU、内存、在线状态、数据新鲜度和严重问题；可按主机、级别、状态和待确认条件筛选，并直接跳转到对应图表。缺失或过期指标明确标注，不显示为正常数值。
+
+「问题中心」支持管理员/排障人员确认、撤销确认和添加备注，保存操作者及处理记录，重启可读取；严重级别变化或恢复后再次触发需要重新确认。确认不会停止通知或改变告警状态。支持保存浏览器视图、导出当前 JSON 快照，刷新失败时显示上次成功时间。
+
+本轮是 **2.0 开发版**，新增工作台目前位于 Web，原有 Flutter 客户端继续可用。对标 Netdata、Grafana、Zabbix、Datadog 的具体范围、API、持久化限制与后续计划见 [2.0 说明](docs/06-monitor-2.0.md)。构建使用 `make all VERSION=2.0.0-dev`，尚未发布正式 `v2.0.0` 标签。
 
 ## 文档
 
@@ -16,6 +24,7 @@
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
+| [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始

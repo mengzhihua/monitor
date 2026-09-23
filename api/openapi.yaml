@@ -1,13 +1,54 @@
 openapi: 3.0.3
 info:
   title: Monitor API
-  version: "1"
+  version: "2.0.0-dev"
   description: |
     Agent and Hub HTTP API. The hand-written Flutter client in app/lib/api
     follows this contract. Authenticated routes take Authorization: Bearer.
 servers:
   - url: http://127.0.0.1:19999
 paths:
+  /api/v1/operations:
+    get:
+      summary: Global fleet resources, active problems and recent handling history
+      description: Ignores chart node selection. Metrics are nullable and carry sample freshness. Includes local and Hub-owned alarms; peer-only alarm coverage is unknown.
+      responses:
+        "200":
+          description: Snapshot with now, nodes, problems, summary, activity (latest 100 handled episodes) and persistent.
+        "401":
+          description: Authentication required
+  /api/v1/operations/acknowledgements:
+    post:
+      summary: Acknowledge, unacknowledge or comment on the current alarm episode
+      description: Admin and troubleshooter only. Actor is taken from authenticated identity. Confirmation does not silence or resolve alarms. Each episode retains the latest 20 actions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, action, revision]
+              properties:
+                id: {type: string, minLength: 64, maxLength: 64}
+                action: {type: string, enum: [acknowledge, unacknowledge, comment]}
+                revision: {type: integer, minimum: 0}
+                note:
+                  type: string
+                  description: Maximum 2048 UTF-8 bytes; non-empty for comment.
+      responses:
+        "200":
+          description: Saved record with problem context, acknowledged, revision and history.
+        "400":
+          description: Invalid action, note or JSON body
+        "401":
+          description: Authentication required
+        "403":
+          description: Read-only role
+        "409":
+          description: Episode recovered or changed, or record revision changed
+        "503":
+          description: Record could not be persisted
   /healthz:
     get:
       summary: Liveness

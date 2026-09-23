@@ -19,7 +19,7 @@ test('scrolling 100 charts retains only a bounded number of canvases', async ({ 
   await page.route('**/api/v1/data?*', route => route.fulfill({ json: {
     dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
   } }))
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
   await expect(cards).toHaveCount(100)
   for (let i = 0; i < 100; i += 4) {
@@ -47,7 +47,7 @@ test('long history unsubscribes metrics and a hidden dashboard stops requests an
       if (message.charts) subscriptions.push(message.charts)
     })
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   await expect(page.locator('[title="live"]')).toBeVisible()
   await page.getByPlaceholder('筛选图表…').fill('system.ram')
   await expect.poll(() => subscriptions.at(-1)).toEqual(['system.ram'])
@@ -80,7 +80,7 @@ test('slow function requests never overlap and background panels stop polling', 
     await gate
     await route.fulfill({ json: { time: 1, result: { columns: ['pid', 'cpu'], rows: [{ pid: 123, cpu: 2 }], total: 1 } } })
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   await page.getByTitle('Functions（实时进程表等）', { exact: true }).click()
   await expect.poll(() => calls).toBe(1)
   await page.clock.fastForward(12000)
@@ -109,7 +109,7 @@ test('superseded history fetches are aborted when changing the time range', asyn
       await route.abort().catch(() => {})
     } else await route.continue()
   })
-  await page.goto('/?token=' + token)
+  await page.goto('/?view=charts&token=' + token)
   await page.getByPlaceholder('筛选图表…').fill('system.ram')
   await expect(page.locator('.card canvas')).toBeVisible()
   await page.locator('.controls select').selectOption('86400')

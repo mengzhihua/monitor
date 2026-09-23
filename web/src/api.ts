@@ -39,6 +39,24 @@ export interface Room { id: string; name: string; space_id: string; nodes?: stri
 export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
+export interface ResourceMetric { value: number | null; at: number; state: 'fresh' | 'stale' | 'unavailable' }
+export interface OperationsNode extends NodeInfo {
+  cpu: ResourceMetric; memory: ResourceMetric; alarm_coverage: 'local' | 'mirrored' | 'disabled' | 'unknown' | 'empty'
+}
+export interface HandlingRecord {
+  problem: { node: string; hostname: string; chart: string; name: string; severity: string; since: number }
+  id: string; acknowledged: boolean; revision: number
+  history: { at: number; actor: string; action: string; note: string }[]
+}
+export interface Problem {
+  id: string; node: string; hostname: string; node_status: string; chart: string; name: string
+  severity: 'WARNING' | 'CRITICAL'; family: string; info: string; value: number | null; units: string
+  since: number; updated: number; stale: boolean; handling: HandlingRecord
+}
+export interface OperationsSnapshot {
+  activity: HandlingRecord[]
+  now: number; nodes: OperationsNode[]; problems: Problem[]; summary: Record<string, number>; persistent: boolean
+}
 export interface DataResponse {
   id: string; units: string; after: number; before: number; view_update_every: number
   dimension_ids: string[]; dimension_names: string[]
@@ -171,6 +189,9 @@ function q(params: Record<string, string | number>): string {
 }
 
 export const api = {
+  operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
+  acknowledge: (body: { id: string; action: string; note: string; revision: number }) =>
+    post<HandlingRecord>('/api/v1/operations/acknowledgements', body),
   info: (signal?: AbortSignal) => get<Info>('/api/v1/info', signal),
   nodes: (signal?: AbortSignal) => get<NodesResponse>('/api/v1/nodes', signal),
   charts: (signal?: AbortSignal) => get<ChartsResponse>(`/api/v1/charts${q({})}`, signal),

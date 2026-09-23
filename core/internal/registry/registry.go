@@ -45,9 +45,10 @@ type Dimension struct {
 	Divisor    int64     `json:"divisor"`
 	Hidden     bool      `json:"hidden,omitempty"`
 
-	lastRaw float64
-	lastTS  int64
-	hasLast bool
+	lastRaw  float64
+	lastTS   int64
+	hasLast  bool
+	sampleTS int64 // most recent finite, post-algorithm sample
 }
 
 // SeriesID is the TSDB key of a dimension: "<chart id>|<dimension id>".
@@ -207,6 +208,7 @@ func (r *Registry) ReplaceChart(c *Chart) *Chart {
 		return r.AddChart(c)
 	}
 	lastT, last := old.LastValues()
+	latestT, latest := old.LatestValues()
 	if c.Type == "" {
 		c.Type = Line
 	}
@@ -228,6 +230,9 @@ func (r *Registry) ReplaceChart(c *Chart) *Chart {
 		c.AddDimension(d)
 		if v, ok := last[d.ID]; ok {
 			c.last[d.ID] = v
+		}
+		if _, ok := latest[d.ID]; ok && latestT == lastT {
+			d.sampleTS = latestT
 		}
 	}
 	r.mu.Lock()
@@ -283,6 +288,20 @@ func (c *Chart) LastValues() (int64, map[string]float64) {
 	return c.lastT, out
 }
 
+// LatestValues excludes dimensions missing from the most recent collection.
+// Unlike LastValues it never combines fresh dimensions with cached old ones.
+func (c *Chart) LatestValues() (int64, map[string]float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]float64, len(c.last))
+	for id, v := range c.last {
+		if c.dimIx[id].sampleTS == c.lastT {
+			out[id] = v
+		}
+	}
+	return c.lastT, out
+}
+
 // Ingest stores already-computed (post-algorithm) values for a chart, as
 // received from a remote agent, without applying dimension algorithms.
 func (r *Registry) Ingest(chartID string, sec int64, values map[string]float64) error {
@@ -297,7 +316,10 @@ func (r *Registry) Ingest(chartID string, sec int64, values map[string]float64) 
 			continue
 		}
 		vals[id] = v
-		c.last[id] = v
+		if sec >= c.dimIx[id].sampleTS {
+			c.last[id] = v
+			c.dimIx[id].sampleTS = sec
+		}
 	}
 	if sec >= c.lastT {
 		c.lastT = sec
@@ -376,6 +398,7 @@ func (r *Registry) Collect(chartID string, ts time.Time, raw map[string]float64)
 			continue
 		}
 		c.last[id] = v
+		c.dimIx[id].sampleTS = sec
 	}
 	c.lastT = sec
 	c.mu.Unlock()
