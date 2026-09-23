@@ -262,7 +262,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | --- | --- |
 | 查询 | `/api/v1/data?context=` 同名维度跨图求和；`format=csv\|ssv\|jsonp`；`GET /api/v1/alarm_count`；`GET /api/v1/badge.svg` |
 | `/api/v2` | `contexts` / `nodes` / `data` / `badge.svg`（`api: 2` 包装） |
-| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
+| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed（仅 `vm.overcommit_memory=2`）、writeback、TIME_WAIT、Docker exited |
 
 ### 已实现能力（M14：Hub Cloud）
 

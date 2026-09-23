@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 
@@ -35,6 +36,48 @@ func TestCPURawGuest(t *testing.T) {
 	}
 	if raw["user"] != wantUser || raw["nice"] != wantNice {
 		t.Fatalf("user/nice = %v/%v, want %v/%v", raw["user"], raw["nice"], wantUser, wantNice)
+	}
+}
+
+func TestLinuxCommitLimitEnforcedOnlyInStrictMode(t *testing.T) {
+	if linuxCommitLimitEnforced(0) || linuxCommitLimitEnforced(1) || !linuxCommitLimitEnforced(2) {
+		t.Fatal("only overcommit mode 2 enforces CommitLimit")
+	}
+}
+
+func TestMemCommittedSkipsDecorativeLimit(t *testing.T) {
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	c := &memCollector{}
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	chart, ok := reg.Chart("mem.committed")
+	if !ok {
+		t.Fatal("missing mem.committed")
+	}
+	if runtime.GOOS == "linux" && overcommitMemoryMode() != 2 {
+		if chart.Dimension("limit") != nil {
+			t.Fatal("heuristic overcommit must not publish CommitLimit")
+		}
+		if chart.Labels["commit_limit"] != "" {
+			t.Fatal("heuristic overcommit must not arm committed_memory")
+		}
+	}
+	if linuxCommitLimitEnforced(overcommitMemoryMode()) && runtime.GOOS == "linux" {
+		if chart.Dimension("limit") == nil || chart.Labels["commit_limit"] != "enforced" {
+			t.Fatalf("strict overcommit chart = dims limit:%v labels:%v", chart.Dimension("limit") != nil, chart.Labels)
+		}
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := c.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	_, last := chart.LastValues()
+	if _, ok := last["committed"]; !ok || last["committed"] < 0 {
+		t.Fatalf("committed sample = %v", last)
+	}
+	if _, ok := last["limit"]; ok != (chart.Dimension("limit") != nil) {
+		t.Fatalf("limit sample present=%v dimension=%v", ok, chart.Dimension("limit") != nil)
 	}
 }
 

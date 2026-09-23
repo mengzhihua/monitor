@@ -4,7 +4,7 @@ export interface BoardGroup { id: string; title: string; hint: string; patterns:
 export interface Dashboard { id: string; title: string; description: string; category: string; checklist?: string[]; groups: BoardGroup[] }
 const group = (id: string, title: string, hint: string, ...patterns: RegExp[]): BoardGroup => ({ id, title, hint, patterns })
 const compute = group('compute', 'CPU 与负载', '结合 CPU、负载与进程数，观察计算压力。', /^system\.(cpu|load|processes|ctxt)$/)
-const memory = group('memory', '内存与交换', '观察可用内存、换页和交换活动，定位内存压力。', /^system\.ram$/, /^mem\.(available|swap|swapio|pgfaults|writeback)$/)
+const memory = group('memory', '内存与交换', '观察可用内存、换页和交换活动，定位内存压力。', /^system\.ram$/, /^mem\.(available|committed|swap|swapio|pgfaults|writeback)$/)
 const disk = group('disk', '磁盘与存储', '结合 I/O 延迟、吞吐和空间占用，判断存储瓶颈。', /^disk\.(io|ops|util|await|space|inodes)$/)
 const network = group('network', '网络与连接', '对照流量、丢包与 TCP 连接，排查网络异常。', /^net\.(net|errors|drops)$/, /^ipv4\.(tcp|tcp.*|sock.*)$/, /^tcp\./)
 const web = group('web', '接口与网关', '观察已采集的 HTTP 探测、网关请求和响应指标。', /^(httpcheck|http_check|portcheck|nginx|apache|haproxy|traefik|envoy)\./)
@@ -28,7 +28,7 @@ const logs = group('logs', '日志传输管道', '对照 Fluentd 缓冲、重试
 
 const probes = group('probes', '可用性探测', '先看 HTTP / TCP 探测状态，再对照 Ping 延迟和丢包；探测结果不等同于业务 SLA。', /^(httpcheck|portcheck)\.(status|responsetime|latency|status_code)(\.|$)/, /^ping\./)
 const pressure = group('pressure', '资源等待与饱和', '对照 Linux PSI 的部分等待和全体等待，确认 CPU、内存或 I/O 是否出现争用。', /^system\.(cpu|memory|io|irq)_(some|full)_pressure(?:_stall_time)?$/)
-const capacity = group('capacity', '容量与句柄余量', '观察可用内存、磁盘空间、inode 和文件句柄；曲线用于观察趋势，不预测耗尽时间。', /^disk\.(space|inodes)$/, /^mem\.(available|committed|swap)$/, /^system\.file_nr$/)
+const capacity = group('capacity', '容量与句柄余量', '观察可用内存、磁盘空间、inode 和文件句柄；曲线用于观察趋势，不预测耗尽时间。', /^disk\.(space|inodes)$/, /^mem\.(available|swap)$/, /^system\.file_nr$/)
 const connections = group('connections', 'TCP 与连接跟踪', '对照连接数、握手错误、重传与 conntrack 丢弃，排查连接耗尽。', /^ipv4\.tcp/, /^ipv[46]\.sockstat/, /^netfilter\.conntrack_/)
 const certificates = group('certificates', 'TLS 证书剩余天数', '优先检查即将过期的 HTTPS 证书，再看 HTTP 状态；缺少证书曲线不表示证书有效。', /^httpcheck\.cert_expiry(\.|$)/)
 const clock = group('clock', '时钟同步', '对照系统同步状态、Chrony / NTP 偏移和上游延迟。', /^system\.clock_/, /^(chrony|ntpd)\./)

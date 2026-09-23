@@ -187,11 +187,25 @@ alarms:
     info: major page faults per second over the last minute
     to: sysadmin
 
-  # committed_memory removed: misleading on swapless hosts (Committed_AS
-  # counts virtual address reservations, not actual usage). The kernel only
-  # enforces CommitLimit with strict accounting + non-zero swap; cloud hosts
-  # use heuristic overcommit with no swap, so the limit is decorative. Real
-  # pressure is captured by MemAvailable-based rules.
+  # Binds only to charts labeled commit_limit=enforced (Linux
+  # vm.overcommit_memory=2). Heuristic overcommit does not honor CommitLimit,
+  # so Committed_AS above that number is not memory exhaustion.
+  - name: committed_memory
+    on: mem.committed
+    chart_labels:
+      commit_limit: enforced
+    class: Utilization
+    type: System
+    component: Memory
+    lookup: average -1m unaligned of committed
+    calc: '$this * 100 / $limit'
+    units: '%'
+    every: 10s
+    warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+    crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+    delay: down 15m multiplier 1.5 max 1h
+    info: committed address space as a percentage of the enforced commit limit
+    to: sysadmin
   - name: 1m_writeback
     on: mem.writeback
     class: Latency
