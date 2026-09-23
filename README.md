@@ -13,7 +13,7 @@
 
 「问题中心」支持管理员/排障人员确认、撤销确认和添加备注，保存操作者及处理记录，重启可读取；严重级别变化或恢复后再次触发需要重新确认。确认不会停止通知或改变告警状态。支持保存浏览器视图、导出当前 JSON 快照，刷新失败时显示上次成功时间。
 
-「指标图表 → 常用聚合看板」内置研发总览、接口与网络、数据库与缓存、容器工作台、资源瓶颈和发布观察六组视图，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。详见[聚合看板说明](docs/07-preset-dashboards.md)。
+「指标图表 → 常用聚合看板」内置 18 组可搜索、按场景分类的视图，覆盖研发总览、接口与网络、数据库与缓存、容器、Kubernetes、JVM、主机压力、GPU 等，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。详见[聚合看板说明](docs/07-preset-dashboards.md)。
 
 本轮是 **2.0 开发版**，新增工作台目前位于 Web，原有 Flutter 客户端继续可用。对标 Netdata、Grafana、Zabbix、Datadog 的具体范围、API、持久化限制与后续计划见 [2.0 说明](docs/06-monitor-2.0.md)。构建使用 `make all VERSION=2.0.0-dev`，尚未发布正式 `v2.0.0` 标签。
 
@@ -27,7 +27,7 @@
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
 | [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
-| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 六组常用聚合看板与指标匹配规则 |
+| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 18 组常用聚合看板、分类搜索与指标匹配规则 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始
