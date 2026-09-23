@@ -7,7 +7,7 @@ test('built-in dashboards use real charts, filter, range and responsive layout',
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await expect(panel.getByRole('heading', { name: '研发总览', exact: true })).toBeVisible()
-  await expect(panel.locator('.presets button')).toHaveCount(50)
+  await expect(panel.locator('.presets button')).toHaveCount(54)
   await expect(panel.locator('.card .id')).toContainText(['system.cpu', 'system.load', 'system.ram'])
   await panel.locator('.card').first().scrollIntoViewIfNeeded()
   await expect(panel.locator('.card canvas').first()).toBeVisible()
@@ -93,7 +93,7 @@ test('catalog search and categories discover specialized dashboards without chan
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   const search = panel.getByRole('searchbox', { name: '搜索看板样板' })
   await panel.getByRole('button', { name: '数据服务', exact: true }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(7)
+  await expect(panel.locator('.presets button')).toHaveCount(8)
   await search.fill('redis')
   await expect(panel.locator('.presets button')).toHaveCount(1)
   await panel.locator('.presets button').click()
@@ -104,7 +104,7 @@ test('catalog search and categories discover specialized dashboards without chan
   await search.fill('no-such-preset')
   await expect(panel.locator('.presets button')).toHaveCount(0)
   await panel.getByRole('button', { name: '清除样板筛选' }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(50)
+  await expect(panel.locator('.presets button')).toHaveCount(54)
   for (const name of ['MySQL 排障', 'PostgreSQL 排障', 'Redis 缓存', '消息队列', 'Java / Tomcat', '搜索与分析', 'Kubernetes 工作台', 'DNS 与连通性', '存储与磁盘健康', 'GPU 工作台', '服务存活', '日志管道']) {
     await search.fill(name)
     await panel.locator('.presets button').filter({ has: page.getByText(name, { exact: true }) }).click()
@@ -174,7 +174,7 @@ test('platform dashboards match service instances and remain usable without coll
   await page.getByRole('button', { name: '常用聚合看板', exact: true }).click()
   const panel = page.getByLabel('常用聚合看板', { exact: true })
   await panel.getByRole('button', { name: '平台服务', exact: true }).click()
-  await expect(panel.locator('.presets button')).toHaveCount(11)
+  await expect(panel.locator('.presets button')).toHaveCount(13)
   for (const [id, context] of cases) {
     const board = dashboards.find(b => b.id === id)!
     const charts = [

@@ -1,6 +1,6 @@
 import type { Chart } from './api'
 
-export interface BoardGroup { id: string; title: string; hint: string; patterns: RegExp[] }
+export interface BoardGroup { id: string; title: string; hint: string; patterns: RegExp[]; chartIds?: string[] }
 export interface Dashboard { id: string; title: string; description: string; category: string; checklist?: string[]; groups: BoardGroup[] }
 const group = (id: string, title: string, hint: string, ...patterns: RegExp[]): BoardGroup => ({ id, title, hint, patterns })
 const compute = group('compute', 'CPU 与负载', '结合 CPU、负载与进程数，观察计算压力。', /^system\.(cpu|load|processes|ctxt)$/)
@@ -62,6 +62,11 @@ const iis = group('iis', 'IIS 与 .NET 运行时', '查看站点请求、应用�
 const dhcp = group('dhcp', 'DHCP 范围与主机', '查看 dnsmasq DHCP 范围及主机计数，结合 DNS 和网络。', /^dnsmasq_dhcp\./)
 const wireless = group('wireless', '无线接入状态', '查看 AP 客户端、信号、速率、重试及无线丢弃。', /^(ap|wireless)\./)
 
+const cloudMetrics = group('cloud-metrics', '云平台指标', '展示 CloudWatch / Azure Monitor 已接入指标；value 单位需结合采集配置核对，不推算费用。', /^(cloudwatch|azure_monitor)\./)
+const documents = group('documents', 'CouchDB / Couchbase', '观察文档数据库请求、任务、桶容量和内存。', /^(couchdb|couchbase)\./)
+const printing = group('printing', 'CUPS 打印队列', '观察打印机状态和待处理任务，不能据队列为空证明已打印成功。', /^cups\./)
+const sessions = group('sessions', '登录会话状态', '观察 logind 会话类型、状态与用户状态计数，不展示个人登录记录。', /^logind\./)
+
 export const dashboards: Dashboard[] = [
   { id: 'developer', title: '研发总览', description: '日常巡检：从主机资源到接口和依赖，一屏串起常见排查路径。', category: '通用巡检', groups: [compute, memory, web, database, cache] },
   { id: 'services', title: '接口与网络', description: '接口变慢或访问失败时，对照网关、连接、网络与主机负载。', category: '通用巡检', groups: [web, network, compute] },
@@ -113,10 +118,18 @@ export const dashboards: Dashboard[] = [
   { id: 'iis', title: 'IIS / .NET 应用', category: '应用与中间件', description: '查看站点请求、应用池、ASP.NET 排队和 CLR 异常与锁争用。', groups: [iis, probes, compute, memory], checklist: ["先按站点或应用池定位异常。", "对照 ASP.NET 队列、重启和 CLR 异常、锁等待。", "检查主机资源与应用日志，计数器缺失时先核实采集条件。"] },
   { id: 'dhcp', title: 'DHCP 与地址分配', category: '平台服务', description: '查看 dnsmasq DHCP 范围及主机计数，结合 DNS 和网络。', groups: [dhcp, dns, network], checklist: ["先核对 DHCP 范围与主机计数是否变化。", "检查 DNS 和网络状态，确认影响范围。", "地址池剩余量和租约冲突需另行核实，当前计数不等于可用地址数。"] },
   { id: 'wireless', title: '无线 AP 与客户端', category: '平台服务', description: '查看 AP 客户端、信号、速率、重试及无线丢弃。', groups: [wireless, network, probes], checklist: ["先定位受影响 AP 或无线接口。", "对照客户端数、信号、重试和吞吐。", "用端到端探测验证影响；平均信号不能代表每个客户端体验。"] },
+  { id: 'cloud-metrics', title: '云平台指标汇总', category: '基础设施', description: '集中查看已接入的 AWS / Azure 指标与采集调用。', groups: [cloudMetrics], checklist: ['先核对云资源与指标标签。', '结合采集配置确认单位和聚合周期。', '缺少指标时检查采集权限与配置，不代表云资源正常。'] },
+  { id: 'documents', title: 'CouchDB / Couchbase 文档库', category: '数据服务', description: '联查文档请求、桶空间、内存与磁盘。', groups: [documents, memory, disk], checklist: ['先核对请求和任务变化。', '对照桶空间与内存使用。', '结合数据库日志确认失败原因。'] },
+  { id: 'printing', title: '打印服务巡检', category: '平台服务', description: '联查打印状态、任务积压与服务探测。', groups: [printing, probes], checklist: ['先看停止的打印机和待处理任务。', '检查服务连通性与设备状态。', '人工核实实际出纸结果，任务消失不等于打印成功。'] },
+  { id: 'sessions', title: '登录会话巡检', category: '平台服务', description: '联查会话状态与主机资源变化。', groups: [sessions, compute, memory], checklist: ['先看会话类型和状态数量变化。', '对照 CPU 与内存压力。', '需要审计时另行核对授权日志，计数不提供用户行为证据。'] },
 ]
 
 /** Match semantic contexts, falling back to IDs for collectors without a context. */
 export function chartsForGroup(charts: Chart[], group: BoardGroup): Chart[] {
+  if (group.chartIds) {
+    const indexed = new Map(charts.map(c => [c.id, c]))
+    return group.chartIds.flatMap(id => indexed.has(id) ? [indexed.get(id)!] : [])
+  }
   return charts.filter(c => group.patterns.some(pattern => pattern.test(c.context || c.id)))
     .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
 }
