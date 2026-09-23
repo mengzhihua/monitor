@@ -358,6 +358,12 @@ func run() error {
 
 	errc := make(chan error, 1)
 	go func() {
+		// An explicit -listen flag overrides web.enabled=false; otherwise a
+		// headless agent can drop the HTTP listener entirely.
+		if !cfg.WebEnabled() && *listen == "" {
+			log.Info("web server disabled (web.enabled=false)")
+			return
+		}
 		log.Info("web server listening", "addr", cfg.Web.Listen)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
