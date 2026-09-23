@@ -51,7 +51,7 @@ func (e *Engine) inMaintenanceLocked(now time.Time) bool {
 			return true
 		}
 	}
-	return false
+	return e.plans.Matches("", "", now.Unix()) // global plans only
 }
 
 func (w MaintenanceWindow) covers(now time.Time) bool {

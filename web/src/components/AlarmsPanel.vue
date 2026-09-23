@@ -6,6 +6,7 @@ import { usePolling } from '../polling'
 
 const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[]; canManage: boolean }>()
 const actionError = ref('')
+const actionBusy = ref(false)
 const emit = defineEmits<{ close: [] }>()
 const silence = ref<SilenceState>({ all: false, alarms: {} })
 const now = ref(Math.floor(Date.now() / 1000))
@@ -22,7 +23,7 @@ const sorted = computed(() =>
   [...props.alarms].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.chart.localeCompare(b.chart) || a.name.localeCompare(b.name)),
 )
 const recent = computed(() => [...props.log].sort((a, b) => b.unique_id - a.unique_id).slice(0, 50))
-const allSilenced = computed(() => silence.value.all || (props.alarms.length > 0 && props.alarms.every((a) => a.silenced)))
+const allSilenced = computed(() => silence.value.all && (!silence.value.until || silence.value.until > now.value))
 
 function remain(until?: number) {
   if (!until) return '持续'
@@ -35,26 +36,46 @@ function remain(until?: number) {
 function alarmUntil(a: Alarm) {
   return silence.value.alarms[`${a.chart}.${a.name}`] ?? silence.value.alarms[a.name]
 }
+function manuallySilenced(a: Alarm) {
+  const until = alarmUntil(a)
+  return until !== undefined && (until === 0 || until > now.value)
+}
+async function reloadAlarmSilence(addressed: Alarm[]) {
+  if (props.alarms !== addressed || !props.canManage) return
+  const latest = await api.alarms()
+  if (props.alarms !== addressed || !props.canManage) return
+  const states = Object.values(latest.alarms)
+  for (const a of addressed) a.silenced = states.find(n => n.chart === a.chart && n.name === a.name)?.silenced
+}
 
 async function silenceAll(on: boolean) {
-  if (!props.canManage) return
+  if (!props.canManage || actionBusy.value) return
   actionError.value = ''
+  actionBusy.value = true
+  let saved = false
   const addressedAlarms = props.alarms
   try {
     const result = await api.silence(on ? { all: true, until: -3600 } : { all: false, clear: true })
+    saved = true
     if (props.alarms !== addressedAlarms || !props.canManage) return
     silence.value = result
-    for (const a of addressedAlarms) a.silenced = on
-  } catch (e) { actionError.value = `静默操作失败：${String(e)}` }
+    await reloadAlarmSilence(addressedAlarms)
+  } catch (e) { actionError.value = saved ? '静默设置已保存，状态刷新失败，请重新打开告警面板核对。' : `静默操作失败：${String(e)}` }
+  finally { actionBusy.value = false }
 }
 
 async function silenceOne(a: Alarm, on: boolean) {
-  if (!props.canManage) return
+  if (!props.canManage || actionBusy.value) return
   actionError.value = ''
+  actionBusy.value = true
+  let saved = false
+  const addressed = props.alarms
   try {
     silence.value = await api.silence({ chart: a.chart, alarm: a.name, clear: !on, until: on ? -3600 : 0 })
-    a.silenced = on
-  } catch (e) { actionError.value = `静默操作失败：${String(e)}` }
+    saved = true
+    await reloadAlarmSilence(addressed)
+  } catch (e) { actionError.value = saved ? '静默设置已保存，状态刷新失败，请重新打开告警面板核对。' : `静默操作失败：${String(e)}` }
+  finally { actionBusy.value = false }
 }
 
 function fmt(v: number | null) {
@@ -75,8 +96,8 @@ function ago(t: number) {
     <div class="head">
       <h3>告警 <small>{{ alarms.length }} 条规则</small></h3>
       <div class="actions">
-        <button v-if="canManage" class="mute" @click="silenceAll(!allSilenced)" :title="allSilenced ? '解除全部静默' : '静默全部通知'">
-          {{ allSilenced ? '解除静默' : '全部静默' }}
+        <button v-if="canManage" class="mute" :disabled="actionBusy" @click="silenceAll(!allSilenced)" :title="allSilenced ? '只解除全局手动静默，单条静默与维护仍可能生效' : '静默全部通知'">
+          {{ allSilenced ? '解除全局静默' : '全部静默' }}
         </button>
         <span v-if="silence.all" class="dim">{{ remain(silence.until) }}</span>
         <span v-if="silence.maintenance" class="dim">维护中</span>
@@ -85,6 +106,7 @@ function ago(t: number) {
     </div>
     <p v-if="actionError" role="alert">{{ actionError }}</p>
     <p v-if="!canManage" class="dim">通知静默仅允许管理员在本机执行；跨节点问题请在运维总览中确认和记录。</p>
+    <p class="dim">这里仅修改临时手动静默。维护计划请到运维总览查看或取消，解除手动静默不会清除维护抑制。</p>
     <table>
       <thead>
         <tr><th>状态</th><th>告警</th><th>图表</th><th class="num">当前值</th><th>持续</th><th></th></tr>
@@ -96,8 +118,9 @@ function ago(t: number) {
           <td class="dim">{{ a.chart }}</td>
           <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
           <td class="dim">{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</td>
-          <td><button v-if="canManage" class="mute tiny" @click="silenceOne(a, !a.silenced)">{{ a.silenced ? '响铃' : '静默' }}</button>
-            <span v-if="a.silenced || alarmUntil(a)" class="dim"> {{ remain(alarmUntil(a) || silence.until) }}</span>
+          <td><button v-if="canManage" class="mute tiny" :disabled="actionBusy" @click="silenceOne(a, !manuallySilenced(a))">{{ manuallySilenced(a) ? '解除手动静默' : '静默' }}</button>
+            <span v-if="manuallySilenced(a) || allSilenced" class="dim"> {{ remain(manuallySilenced(a) ? alarmUntil(a) : silence.until) }}</span>
+            <span v-else-if="a.silenced" class="dim">维护或其他抑制</span>
           </td>
         </tr>
         <tr v-if="!alarms.length"><td colspan="6" class="dim">暂无告警规则</td></tr>

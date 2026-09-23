@@ -98,13 +98,14 @@ type Alarm struct {
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
 	LastNotified int64 `json:"last_notified,omitempty"`
 
-	rule        *Rule
-	chart       *registry.Chart
-	nextRun     time.Time
-	pending     *LogEntry // transition waiting for its delay to expire
-	notifiedSt  Status    // status last reported to notifiers (or silently settled)
-	delayMult   float64
-	lastDelayAt time.Time
+	rule              *Rule
+	chart             *registry.Chart
+	nextRun           time.Time
+	pending           *LogEntry // transition waiting for its delay to expire
+	notifiedSt        Status    // status last reported to notifiers (or silently settled)
+	delayMult         float64
+	lastDelayAt       time.Time
+	lastNotifyAttempt int64 // scheduler time, independent of successful delivery
 }
 
 // LogEntry records a status transition (or a repeat notification).
@@ -188,6 +189,7 @@ type Engine struct {
 	closeOnce   sync.Once
 	closed      bool                 // notifyCh closed; guarded by mu
 	diagnostics NotificationSnapshot // guarded by mu; current process only
+	plans       *MaintenancePlanStore
 
 	// runtime silence (health.silent seeds silenceAll). until=0 means forever.
 	silenceAll   bool
@@ -223,6 +225,11 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows,
 		anomaly: opt.Anomaly}
 	e.initNotificationDiagnostics()
+	var err error
+	e.plans, err = openMaintenancePlans(opt.LogDir)
+	if err != nil {
+		return nil, fmt.Errorf("open maintenance plans: %w", err)
+	}
 	if opt.Enabled != nil {
 		e.enabled = *opt.Enabled
 	}
@@ -528,7 +535,7 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		return
 	}
 	// repeat notifications while raised
-	if rep := e.repeatAfter(a); rep > 0 && a.LastNotified > 0 && now.Unix()-a.LastNotified >= int64(rep/time.Second) {
+	if rep := e.repeatAfter(a); rep > 0 && a.pending == nil && a.Status == a.notifiedSt && a.lastNotifyAttempt > 0 && now.Sub(time.Unix(a.lastNotifyAttempt, 0)) >= rep {
 		entry := e.newEntry(a, old, oldValue, now)
 		entry.Repeat = true
 		e.mu.Unlock()
@@ -620,7 +627,7 @@ func (e *Engine) transition(a *Alarm, entry LogEntry, now time.Time) {
 		e.mu.Unlock()
 		saved := e.record(entry, false)
 		saved.OldStatus = from // notifiers see the change since the last report
-		e.notify(saved)
+		e.notifyAt(saved, now.Unix())
 		return
 	}
 	e.mu.Unlock()
@@ -652,7 +659,7 @@ func (e *Engine) flushPending(now time.Time) {
 	}
 	e.mu.Unlock()
 	for _, p := range ready {
-		e.notify(p)
+		e.notifyAt(p, now.Unix())
 	}
 }
 
@@ -677,7 +684,7 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 		e.opt.OnEvent(entry)
 	}
 	if notify {
-		e.notify(entry)
+		e.notifyAt(entry, entry.When)
 	}
 	return entry
 }
@@ -685,10 +692,19 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 // notify queues an entry for delivery. Delivery state (Notified, NotifiedAt,
 // Alarm.LastNotified) is only recorded once a notifier actually succeeds.
 func (e *Engine) notify(entry LogEntry) {
+	e.notifyAt(entry, e.now().Unix())
+}
+
+func (e *Engine) notifyAt(entry LogEntry, at int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
 		return
+	}
+	// Repeat cadence is about scheduled attempts. Suppression, failed delivery
+	// and a full queue must neither stop all future repeats nor retry every tick.
+	if a := e.alarms[entry.Name+"|"+entry.Chart]; a != nil && a.ID == entry.AlarmID && at > a.lastNotifyAttempt {
+		a.lastNotifyAttempt = at
 	}
 	if reason := e.suppressionReasonLocked(entry.Chart, entry.Name); reason != "" {
 		e.diagnostics.Suppressed++
@@ -968,10 +984,10 @@ func (e *Engine) Alarms() []Alarm {
 	e.mu.RLock()
 	out := make([]Alarm, 0, len(e.alarms))
 	now := e.now().Unix()
-	allSilent := e.silenceAll && (e.silenceUntil == 0 || now < e.silenceUntil)
+	allSilent := (e.silenceAll && (e.silenceUntil == 0 || now < e.silenceUntil)) || e.inMaintenanceLocked(e.now())
 	for _, a := range e.alarms {
 		cp := *a
-		if allSilent {
+		if allSilent || e.plans.Matches(a.Chart, a.Name, now) {
 			cp.Silenced = true
 		} else {
 			for _, key := range []string{a.Chart + "." + a.Name, a.Name} {
@@ -1045,6 +1061,9 @@ func (e *Engine) IsSilenced(chart, name string) bool {
 
 func (e *Engine) suppressionReasonLocked(chart, name string) string {
 	now := e.now().Unix()
+	if e.plans.Matches(chart, name, now) {
+		return "planned_maintenance"
+	}
 	if e.inMaintenanceLocked(e.now()) {
 		return "maintenance"
 	}

@@ -79,6 +79,20 @@ export interface NotificationSnapshot {
   channels: { name: string; configured_count: number; attempts: number; accepted: number; failed: number; last_attempt: number; last_accepted: number; last_failed: number }[]
   recent: NotificationResult[]
 }
+export interface MaintenanceSpec {
+  title: string; reason: string; scope: 'all' | 'alarm'; chart: string; alarm: string; starts_at: number; duration_seconds: number
+}
+export interface MaintenancePlan extends MaintenanceSpec {
+  id: string; ends_at: number; created_at: number; created_by: string
+  canceled_at?: number; canceled_by?: string; cancel_reason?: string; state: 'active' | 'scheduled' | 'ended' | 'canceled'
+}
+export interface MaintenanceSnapshot {
+  revision: number; plans: MaintenancePlan[]; available: boolean; can_manage: boolean; persistent: boolean
+  scope: 'local'; hostname: string; now: number; pending_limit: number; history_limit: number
+  targets: { chart: string; alarm: string }[]
+}
+export type MaintenanceChange = { action: 'create'; revision: number; plan: MaintenanceSpec }
+  | { action: 'cancel'; revision: number; id: string; reason: string }
 export interface OperationsView {
   name: string; query: string; severity: string; nodeStatus: string; pendingOnly: boolean; ownerFilter: string; progressFilter: string
 }
@@ -229,6 +243,8 @@ export const api = {
   saveOperationsViews: (revision: number, views: OperationsView[]) => post<OperationsViews>('/api/v1/operations/views', { revision, views }),
   operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
   notifications: (signal?: AbortSignal) => get<NotificationSnapshot>('/api/v1/operations/notifications', signal),
+  maintenance: (signal?: AbortSignal) => get<MaintenanceSnapshot>('/api/v1/operations/maintenance', signal),
+  changeMaintenance: (body: MaintenanceChange) => post<MaintenanceSnapshot>('/api/v1/operations/maintenance', body),
   handlingHistory: (params: Record<string, string>, signal?: AbortSignal) =>
     get<HandlingHistoryPage>('/api/v1/operations/history?' + new URLSearchParams(params), signal),
   exportHandlingHistory: async (params: Record<string, string>, signal?: AbortSignal) => {

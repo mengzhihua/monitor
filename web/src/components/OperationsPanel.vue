@@ -7,6 +7,7 @@ import OperationsHistory from './OperationsHistory.vue'
 import OperationsViews from './OperationsViews.vue'
 import OperationsBatch from './OperationsBatch.vue'
 import NotificationDiagnostics from './NotificationDiagnostics.vue'
+import MaintenancePlans from './MaintenancePlans.vue'
 
 const props = defineProps<{ role: string }>()
 const emit = defineEmits<{ drill: [node: string, chart: string] }>()
@@ -268,6 +269,7 @@ function exportSnapshot() {
         <details v-if="p.handling.history.length"><summary>处理记录 · 最近 {{ p.handling.history.length }} 条</summary><ol><li v-for="(h,i) in [...p.handling.history].reverse()" :key="i"><span>{{ formatTime(h.at) }} · {{ h.actor }} · {{ describeAction(h) }}</span><p v-if="h.note">{{ h.note }}</p></li></ol></details>
       </article>
       <button v-if="filteredNodes.length > visibleCount || problems.length > visibleCount" @click="visibleCount += 50">再显示 50 条</button>
+      <MaintenancePlans />
       <NotificationDiagnostics />
       <OperationsHistory :active-ids="activeIDs" :refresh-key="historyRefreshKey" />
       <p class="footnote">确认、指派和处理进度不改变告警求值或通知；「观察中」仍可能是严重告警。严重级别变化或恢复后再次触发，需要重新确认和分配。责任人列表包括本机配置的管理员、排障人员及当前有权限的登录者；不向外部值班系统发送通知。</p>
