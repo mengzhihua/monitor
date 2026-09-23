@@ -232,8 +232,23 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 // appProcess carries identity from the same process-list snapshot as the PID.
 // A fresh gopsutil handle reads live values without retaining cached metadata.
 type appProcess struct {
+	metadata  appProcessMetadata
 	process   *process.Process
 	startedAt int64
+}
+
+// Platforms without a process-table identity snapshot retain the gopsutil
+// path. Command-line access is optional once a readable name is available.
+func readPortableAppIdentity(ctx context.Context, p *process.Process) (name, cmdline string, err error) {
+	if err = ctx.Err(); err != nil {
+		return "", "", err
+	}
+	name, err = p.NameWithContext(ctx)
+	if err != nil || name == "" {
+		return name, "", err
+	}
+	cmdline, _ = p.CmdlineWithContext(ctx)
+	return name, cmdline, ctx.Err()
 }
 
 func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
@@ -310,15 +325,14 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 				}
 				st.group = a.match(st.name, st.cmdline)
 			} else {
-				name, err := gp.NameWithContext(ctx)
+				name, cmdline, err := procs[i].readIdentity(ctx)
 				if err != nil || name == "" {
 					continue // gone or not readable
 				}
 				if runtime.GOOS == "windows" {
 					name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
 				}
-				st = &pidState{name: name, startedAt: startedAt}
-				st.cmdline, _ = gp.CmdlineWithContext(ctx)
+				st = &pidState{name: name, cmdline: cmdline, startedAt: startedAt}
 				st.ppid, _ = gp.PpidWithContext(ctx)
 				st.group = a.match(name, st.cmdline)
 				if uname, err := gp.UsernameWithContext(ctx); err == nil {
