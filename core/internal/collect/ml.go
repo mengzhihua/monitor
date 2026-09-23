@@ -41,7 +41,9 @@ type anomBit struct {
 
 type dimML struct {
 	values    []float64 // ring of last Window values
-	diffs     []float64 // first-diff ring (max MaxTrain)
+	diffRing  []float64 // fixed first-diff ring (len == MaxTrain)
+	diffI     int
+	diffN     int
 	i, n      int
 	prev      float64
 	hasPrev   bool
@@ -50,14 +52,18 @@ type dimML struct {
 	anom      bool
 	votes     float64 // 0..1 fraction of models calling anomalous
 	chart     string
-	bits      []anomBit // recent 0/100 flags (capped at Window)
+	bits      []anomBit // fixed ring of recent 0/100 flags
+	bitI      int
+	bitN      int
 }
 
 type mlCollector struct {
-	cfg   mlConfig
-	mu    sync.Mutex
-	dims  map[string]*dimML // series id
-	unsub func()
+	cfg         mlConfig
+	mu          sync.Mutex
+	dims        map[string]*dimML // series id
+	unsub       func()
+	trainSecond int64 // collection timestamp that owns trainLeft
+	trainLeft   int   // k-means jobs still allowed in trainSecond
 }
 
 func init() {
@@ -124,8 +130,13 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 	if strings.HasPrefix(chartID, "anomaly_detection.") {
 		return
 	}
+	var trainSt *dimML
+	var trainDiffs []float64
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if m.trainSecond != ts {
+		m.trainSecond = ts
+		m.trainLeft = 1 // one k-means fit per collection second, not one per series
+	}
 	for dim, v := range values {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			continue
@@ -142,42 +153,124 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 			st.n++
 		}
 		if st.hasPrev {
-			st.diffs = append(st.diffs, v-st.prev)
-			if len(st.diffs) > m.cfg.MaxTrain {
-				st.diffs = st.diffs[len(st.diffs)-m.cfg.MaxTrain:]
-			}
+			st.pushDiff(v-st.prev, m.cfg.MaxTrain)
 		}
 		st.prev, st.hasPrev = v, true
-		m.maybeTrain(st, ts)
+		if trainSt == nil && m.trainLeft > 0 && m.due(st, ts) {
+			m.trainLeft--
+			st.lastTrain = ts
+			trainDiffs = st.copyDiffs()
+			trainSt = st
+		}
 		st.anom, st.votes = m.detect(st)
 		rate := 0.0
 		if st.anom {
 			rate = 100
 		}
-		st.bits = append(st.bits, anomBit{ts: ts, rate: rate})
-		if cap := m.cfg.Window; cap > 0 && len(st.bits) > cap {
-			st.bits = st.bits[len(st.bits)-cap:]
-		}
+		st.pushBit(anomBit{ts: ts, rate: rate}, m.cfg.Window)
+	}
+	m.mu.Unlock()
+	if trainSt == nil {
+		return
+	}
+	models := trainModels(trainDiffs, m.cfg.Lag, m.cfg.Models, m.cfg.Threshold)
+	m.mu.Lock()
+	trainSt.models = models
+	m.mu.Unlock()
+}
+
+func (st *dimML) pushDiff(d float64, cap int) {
+	if cap < 1 {
+		cap = 1
+	}
+	if len(st.diffRing) != cap {
+		st.diffRing = make([]float64, cap)
+		st.diffI, st.diffN = 0, 0
+	}
+	st.diffRing[st.diffI] = d
+	st.diffI++
+	if st.diffI == len(st.diffRing) {
+		st.diffI = 0
+	}
+	if st.diffN < len(st.diffRing) {
+		st.diffN++
 	}
 }
 
-func (m *mlCollector) maybeTrain(st *dimML, ts int64) {
-	if len(st.diffs) < m.cfg.MinTrain || len(st.diffs) < m.cfg.Lag+8 {
+func (st *dimML) pushBit(b anomBit, cap int) {
+	if cap < 1 {
 		return
+	}
+	if len(st.bits) != cap {
+		st.bits = make([]anomBit, cap)
+		st.bitI, st.bitN = 0, 0
+	}
+	st.bits[st.bitI] = b
+	st.bitI++
+	if st.bitI == len(st.bits) {
+		st.bitI = 0
+	}
+	if st.bitN < len(st.bits) {
+		st.bitN++
+	}
+}
+
+func (st *dimML) copyDiffs() []float64 {
+	if st.diffN == 0 || len(st.diffRing) == 0 {
+		return nil
+	}
+	out := make([]float64, st.diffN)
+	start := st.diffI - st.diffN
+	if start < 0 {
+		start += len(st.diffRing)
+	}
+	for i := 0; i < st.diffN; i++ {
+		out[i] = st.diffRing[(start+i)%len(st.diffRing)]
+	}
+	return out
+}
+
+func (st *dimML) lastDiffs(dst []float64) int {
+	n := len(dst)
+	if n > st.diffN || len(st.diffRing) == 0 {
+		n = st.diffN
+	}
+	if n == 0 {
+		return 0
+	}
+	start := st.diffI - n
+	if start < 0 {
+		start += len(st.diffRing)
+	}
+	for i := 0; i < n; i++ {
+		dst[i] = st.diffRing[(start+i)%len(st.diffRing)]
+	}
+	return n
+}
+
+func (m *mlCollector) due(st *dimML, ts int64) bool {
+	if st.diffN < m.cfg.MinTrain || st.diffN < m.cfg.Lag+8 {
+		return false
 	}
 	every := int64(m.cfg.TrainEvery.Seconds())
 	if every < 1 {
 		every = 1
 	}
-	if st.lastTrain != 0 && ts-st.lastTrain < every {
-		return
-	}
-	st.models = trainModels(st.diffs, m.cfg.Lag, m.cfg.Models, m.cfg.Threshold)
-	st.lastTrain = ts
+	return st.lastTrain == 0 || ts-st.lastTrain >= every
 }
 
 func (m *mlCollector) detect(st *dimML) (bool, float64) {
-	feat := lastFeature(st.diffs, m.cfg.Lag)
+	var buf [8]float64
+	feat := buf[:m.cfg.Lag]
+	if m.cfg.Lag > len(buf) {
+		feat = make([]float64, m.cfg.Lag)
+	}
+	if st.lastDiffs(feat) < m.cfg.Lag {
+		if len(st.models) > 0 {
+			return false, 0
+		}
+		return m.sigmaAnomalous(st), 0
+	}
 	var trained, votes int
 	for _, md := range st.models {
 		if !md.ok {
@@ -196,34 +289,46 @@ func (m *mlCollector) detect(st *dimML) (bool, float64) {
 }
 
 func (m *mlCollector) sigmaAnomalous(st *dimML) bool {
-	if st.n < 30 {
+	if st.n < 30 || len(st.values) == 0 {
 		return false
 	}
 	n := st.n
 	if n > len(st.values) {
 		n = len(st.values)
 	}
-	var diffs []float64
-	prev := math.NaN()
 	start := 0
 	if st.n == len(st.values) {
 		start = st.i
 	}
+	var count int
+	var sum, sumsq, last float64
+	prev := math.NaN()
 	for k := 0; k < n; k++ {
 		v := st.values[(start+k)%len(st.values)]
 		if !math.IsNaN(prev) {
-			diffs = append(diffs, v-prev)
+			d := v - prev
+			sum += d
+			sumsq += d * d
+			count++
+			last = d
 		}
 		prev = v
 	}
-	if len(diffs) < 20 {
+	if count < 20 {
 		return false
 	}
-	mean, std := meanStd(diffs[:len(diffs)-1])
+	sum -= last
+	sumsq -= last * last
+	c := float64(count - 1)
+	mean := sum / c
+	variance := sumsq/c - mean*mean
+	if variance < 1e-18 {
+		return false
+	}
+	std := math.Sqrt(variance)
 	if std < 1e-9 {
 		return false
 	}
-	last := diffs[len(diffs)-1]
 	return math.Abs(last-mean) > m.cfg.Sigma*std
 }
 
@@ -335,8 +440,16 @@ func (m *mlCollector) RatesBetween(chart, dim string, after, before int64) []flo
 	if st == nil {
 		return nil
 	}
+	if st.bitN == 0 || len(st.bits) == 0 {
+		return nil
+	}
+	start := 0
+	if st.bitN == len(st.bits) {
+		start = st.bitI
+	}
 	var out []float64
-	for _, b := range st.bits {
+	for k := 0; k < st.bitN; k++ {
+		b := st.bits[(start+k)%len(st.bits)]
 		if b.ts >= after && b.ts <= before {
 			out = append(out, b.rate)
 		}

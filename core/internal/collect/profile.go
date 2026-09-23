@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"runtime/metrics"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type profileConfig struct {
 type profileCollector struct {
 	cfg  profileConfig
 	proc *process.Process
+	mem  []metrics.Sample
 }
 
 func init() {
@@ -50,6 +52,10 @@ func (p *profileCollector) Init(reg *registry.Registry) error {
 		ch.Plugin, ch.Module = "profile", "profile"
 		reg.AddChart(ch)
 	}
+	p.mem = []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+	}
 	if p.cfg.Stacks {
 		runtime.SetMutexProfileFraction(5)
 		runtime.SetBlockProfileRate(1)
@@ -69,14 +75,29 @@ func (p *profileCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		}
 	}
 	_ = reg.Collect("profile.cpu", now, map[string]float64{"user": user, "system": sys})
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	_ = reg.Collect("profile.memory", now, map[string]float64{"heap": float64(ms.HeapAlloc), "sys": float64(ms.Sys)})
+	heap, sysBytes := p.readMem()
+	_ = reg.Collect("profile.memory", now, map[string]float64{"heap": heap, "sys": sysBytes})
 	_ = reg.Collect("profile.goroutines", now, map[string]float64{"goroutines": float64(runtime.NumGoroutine())})
 	if p.cfg.Stacks {
 		_ = reg.Collect("profile.stacks", now, map[string]float64{"enabled": 1})
 	}
 	return nil
+}
+
+// readMem uses the runtime/metrics snapshot. ReadMemStats stops the world
+// and was previously taken on every collection tick.
+func (p *profileCollector) readMem() (heap, sys float64) {
+	if len(p.mem) < 2 {
+		return 0, 0
+	}
+	metrics.Read(p.mem)
+	if p.mem[0].Value.Kind() == metrics.KindUint64 {
+		heap = float64(p.mem[0].Value.Uint64())
+	}
+	if p.mem[1].Value.Kind() == metrics.KindUint64 {
+		sys = float64(p.mem[1].Value.Uint64())
+	}
+	return heap, sys
 }
 
 func (p *profileCollector) Functions() []Function {

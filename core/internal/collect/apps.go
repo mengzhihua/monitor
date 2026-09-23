@@ -253,8 +253,26 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		}
 		st.seenAt = now
 		g := st.group.name
-		if t, err := p.TimesWithContext(ctx); err == nil {
-			ms := (t.User + t.System) * 1000
+		cpuSec, rss, threads, readB, writeB, hasIO, ok := readProcCounters(p.Pid)
+		if !ok {
+			if t, err := p.TimesWithContext(ctx); err == nil {
+				cpuSec = t.User + t.System
+				ok = true
+			}
+			if m, err := p.MemoryInfoWithContext(ctx); err == nil && m != nil {
+				rss = m.RSS
+			}
+			if n, err := p.NumThreadsWithContext(ctx); err == nil {
+				threads = n
+			}
+			if a.hasIO {
+				if io, err := p.IOCountersWithContext(ctx); err == nil && io != nil {
+					readB, writeB, hasIO = io.ReadBytes, io.WriteBytes, true
+				}
+			}
+		}
+		if ok {
+			ms := cpuSec * 1000
 			st.cpuPct = 0
 			if st.hasCPU {
 				if d := ms - st.cpuMs; d > 0 {
@@ -264,27 +282,21 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			}
 			st.cpuMs, st.hasCPU = ms, true
 		}
-		if m, err := p.MemoryInfoWithContext(ctx); err == nil && m != nil {
-			st.rss = m.RSS
-			mem[g] += float64(m.RSS)
-		}
-		if n, err := p.NumThreadsWithContext(ctx); err == nil {
-			st.threads = n
-			nthr[g] += float64(n)
-		}
+		st.rss = rss
+		mem[g] += float64(rss)
+		st.threads = threads
+		nthr[g] += float64(threads)
 		nproc[g]++
-		if a.hasIO {
-			if io, err := p.IOCountersWithContext(ctx); err == nil && io != nil {
-				if st.ioOK {
-					if d := float64(io.ReadBytes) - float64(st.readB); d > 0 {
-						a.readB[g] += d
-					}
-					if d := float64(io.WriteBytes) - float64(st.writeB); d > 0 {
-						a.writeB[g] += d
-					}
+		if a.hasIO && hasIO {
+			if st.ioOK {
+				if d := float64(readB) - float64(st.readB); d > 0 {
+					a.readB[g] += d
 				}
-				st.readB, st.writeB, st.ioOK = io.ReadBytes, io.WriteBytes, true
+				if d := float64(writeB) - float64(st.writeB); d > 0 {
+					a.writeB[g] += d
+				}
 			}
+			st.readB, st.writeB, st.ioOK = readB, writeB, true
 		}
 	}
 	for pid, st := range a.pids {

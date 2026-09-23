@@ -198,6 +198,32 @@ func TestMLKMeansWeights(t *testing.T) {
 	}
 }
 
+func TestMLDiffRingStaysBounded(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "demo.x", Dimensions: []*registry.Dimension{{ID: "v"}}})
+	m := &mlCollector{}
+	if err := m.Configure(func(any) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	m.cfg.MaxTrain = 32
+	m.cfg.MinTrain = 1_000_000
+	if err := m.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 100; i++ {
+		_ = reg.Collect("demo.x", now.Add(time.Duration(i)*time.Second), map[string]float64{"v": float64(i)})
+	}
+	st := m.dims[registry.SeriesID("demo.x", "v")]
+	if st == nil || len(st.diffRing) != 32 || st.diffN != 32 || len(st.bits) != m.cfg.Window {
+		t.Fatalf("ring diff=%d/%d bits=%d", len(st.diffRing), st.diffN, len(st.bits))
+	}
+	got := st.copyDiffs()
+	if len(got) != 32 || got[len(got)-1] != 1 { // newest diff is 99-98
+		t.Fatalf("newest diff %#v", got)
+	}
+}
+
 func TestKMeans2Separates(t *testing.T) {
 	var pts [][]float64
 	for i := 0; i < 20; i++ {
