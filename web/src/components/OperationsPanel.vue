@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { version as dashboardVersion } from '../../package.json'
 import { api, ApiError } from '../api'
 import type { HandlingAction, HandlingChange, HandlingStatus, OperationsSnapshot, OperationsView, Problem, ResourceMetric } from '../api'
 import { usePolling } from '../polling'
@@ -190,7 +191,7 @@ function exportSnapshot() {
 <template>
   <div class="operations" aria-label="运维总览">
     <div class="hero">
-      <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>2.0 开发版</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。</p></div>
+      <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。</p></div>
       <div class="hero-actions"><button @click="refresh()">刷新总览</button><button :disabled="!snapshot" @click="exportSnapshot">导出当前快照</button></div>
     </div>
     <p v-if="loading" role="status">正在读取节点和问题…</p>

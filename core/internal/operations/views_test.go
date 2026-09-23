@@ -132,7 +132,11 @@ func TestViewsValidationCapacityAndCorruption(t *testing.T) {
 	if _, err := s.Replace(fmt.Sprintf("%064x", 0), 1, []SavedView{exampleView()}); err != nil {
 		t.Fatal("existing accounts must remain editable", err)
 	}
-	for _, bad := range []string{`{`, `{"version":2,"accounts":{}}`, `{"version":1,"accounts":null}`, `{"version":1,"accounts":{"bad":{"revision":1,"views":[]}}}`, `{"version":1,"accounts":{"` + key + `":{"revision":0,"views":[]}}}`} {
+	for _, bad := range []string{
+		`{`, `null`, `{}`, `{"version":1}`, `{"accounts":{}}`,
+		`{"version":null,"accounts":{}}`, `{"version":2,"accounts":{}}`, `{"version":1,"accounts":null}`,
+		`{"version":1,"accounts":{"bad":{"revision":1,"views":[]}}}`, `{"version":1,"accounts":{"` + key + `":{"revision":0,"views":[]}}}`,
+	} {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "views.json")
 		if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
@@ -145,5 +149,24 @@ func TestViewsValidationCapacityAndCorruption(t *testing.T) {
 		if string(b) != bad {
 			t.Fatal("damaged file overwritten")
 		}
+	}
+}
+
+func TestViewsAcceptsExplicitEmptyEnvelopeWithoutRewriting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "views.json")
+	valid := `{"version":1,"accounts":{}}`
+	if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenViews(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Get(strings.Repeat("a", 64)); got.Revision != 0 || len(got.Views) != 0 {
+		t.Fatal("empty store contains unexpected views", got)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != valid {
+		t.Fatalf("opening rewrote valid empty state: %s, %v", b, err)
 	}
 }

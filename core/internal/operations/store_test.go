@@ -182,3 +182,37 @@ func TestFailedWriteDoesNotAcknowledgeAndCorruptStateFails(t *testing.T) {
 		t.Fatal("corrupt state was ignored")
 	}
 }
+
+func TestOperationsRejectsIncompleteEnvelopeWithoutRewriting(t *testing.T) {
+	for _, bad := range []string{
+		`null`, `{}`, `{"version":1}`, `{"version":2}`, `{"records":{}}`,
+		`{"version":null,"records":{}}`, `{"version":2,"records":null}`,
+	} {
+		t.Run(bad, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "acknowledgements.json")
+			if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Open(dir); err == nil {
+				t.Fatal("accepted incomplete operations state")
+			}
+			if b, err := os.ReadFile(path); err != nil || string(b) != bad {
+				t.Fatalf("damaged state changed: %s, %v", b, err)
+			}
+		})
+	}
+	for _, valid := range []string{`{"version":1,"records":{}}`, `{"version":2,"records":{}}`} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "acknowledgements.json")
+		if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if s, err := Open(dir); err != nil || len(s.Recent()) != 0 {
+			t.Fatalf("valid empty store rejected: %v", err)
+		}
+		if b, err := os.ReadFile(path); err != nil || string(b) != valid {
+			t.Fatalf("opening rewrote valid empty state: %s, %v", b, err)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-# Monitor 实时监控平台 · 2.0 开发版
+# Monitor 实时监控平台 · 2.0.0
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
@@ -27,7 +27,7 @@
 
 「指标图表 → 常用聚合看板」内置 18 组可搜索、按场景分类的视图，覆盖研发总览、接口与网络、数据库与缓存、容器、Kubernetes、JVM、主机压力、GPU 等，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。详见[聚合看板说明](docs/07-preset-dashboards.md)。
 
-本轮是 **2.0 开发版**，新增工作台目前位于 Web，原有 Flutter 客户端继续可用。对标 Netdata、Grafana、Zabbix、Datadog 的具体范围、API、持久化限制与后续计划见 [2.0 说明](docs/06-monitor-2.0.md)。构建使用 `make all VERSION=2.0.0-dev`，尚未发布正式 `v2.0.0` 标签。
+本轮交付 **2.0.0 服务端与 Web 正式版本**。运维工作台位于内嵌 Web，原有 Flutter 客户端保持已有功能和独立版本。新增能力、升级与回退步骤、发布包和验证边界见 [2.0.0 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。
 
 ## 文档
 
@@ -40,6 +40,7 @@
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
 | [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
 | [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 18 组常用聚合看板、分类搜索与指标匹配规则 |
+| [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.0 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始

@@ -96,14 +96,17 @@ func OpenViews(dir string) (*ViewStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > maxViewsBytes || json.Unmarshal(b, &s.state) != nil || s.state.Version != 1 || s.state.Accounts == nil || len(s.state.Accounts) > maxViewAccounts {
+	// A damaged envelope must not inherit the defaults of a brand-new store.
+	var disk viewState
+	if len(b) > maxViewsBytes || json.Unmarshal(b, &disk) != nil || disk.Version != 1 || disk.Accounts == nil || len(disk.Accounts) > maxViewAccounts {
 		return nil, errors.New("invalid saved views file")
 	}
-	for key, c := range s.state.Accounts {
+	for key, c := range disk.Accounts {
 		if !validViewKey(key) || c.Revision == 0 || c.Revision > maxViewRevision || validateViews(c.Views) != nil {
 			return nil, errors.New("invalid saved views account")
 		}
 	}
+	s.state = disk
 	return s, nil
 }
 

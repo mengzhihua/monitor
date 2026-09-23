@@ -2,14 +2,14 @@ VERSION ?= $(shell cat VERSION)
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 BIN      = core/bin
 
-.PHONY: all web core test lint run cross clean
+.PHONY: all web core test lint run cross clean check-version package-server
 
 # Go embeds the generated dashboard. Keep this ordered even under make -j.
 all: web
 	$(MAKE) core
 
 ## web: build the Vue dashboard into core/internal/api/ui/dist (embedded by Go)
-web:
+web: check-version
 	cd web && npm ci && npm run build
 
 ## core: build monitord for the current platform
@@ -21,11 +21,20 @@ run: all
 	$(BIN)/monitord -listen :19999 -data-dir ./data
 
 test:
-	cd core && go vet ./... && go test -race ./...
+	python3 scripts/check-release-version.py
+	python3 scripts/package-server-release_test.py
+	cd core && go vet ./... && go test -race -p 1 ./...
 	cd web && npm run typecheck
 
 lint:
 	cd core && test -z "$$(gofmt -l .)" && go vet ./...
+
+check-version:
+	python3 scripts/check-release-version.py
+
+# Rebuild embedded UI before cross-compilation, including under make -j.
+package-server: web
+	python3 scripts/package-server-release.py --build
 
 ## cross: build server binaries for all supported server platforms
 cross:

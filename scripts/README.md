@@ -8,10 +8,15 @@
 | --- | --- | --- |
 | `build-android-server.sh` | 编译 Android Go 二进制并调用独立 Kotlin 工程的 Gradle | `android/app/src/main/jniLibs/`、`android/app/build/outputs/apk/` |
 | `package-macos-app.sh` | 将已有 Universal `.app` 拆分架构并打包 | 调用者指定的目录，发布流程使用 `dist/` |
+| `package-server-release.py` | 受控构建 8 个服务端目标并生成白名单归档、macOS Universal、提交清单和 SHA-256 | `dist/monitor-<版本>-<提交>/` |
+| `package-server-release_test.py` | 校验错版本/旧构建、符号链接、归档白名单和原目录保护 | 终端测试结果 |
+| `check-release-version.py` | 检查 VERSION、Go 默认版本、Web 包和锁文件一致 | 不一致时返回失败 |
 | `stamp_app_version.py` | 发布构建前同步 Flutter 应用版本 | 修改调用者指定的 `pubspec.yaml` 或构建产物 `version.json` |
 | `stamp_app_version_test.py` | 验证版本写入规则 | 终端测试结果 |
 
 前两个脚本的参数见文件头注释。Android 打包前需 `make web`，macOS 打包前需完成 Flutter Universal 构建。
+
+服务端正式打包使用 `make package-server`：先构建内嵌 Web，再由脚本以根目录 `VERSION` 编译二进制并记录 SHA-256 构建收据，随后打包。需要已提交且干净的工作树；拒绝错平台、非当前提交、脏源码或缺失/不匹配构建收据的二进制。单独运行 `python3 scripts/package-server-release.py` 只打包已具备匹配收据的构建，`--build-only` 可只编译，`--target linux-amd64 --no-universal` 可限制目标。不会覆盖已有发布目录，可用 `--output-root` 指定新的父目录。
 
 ## 验收
 

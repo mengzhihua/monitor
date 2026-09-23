@@ -126,14 +126,17 @@ func Open(dir string) (*Store, error) {
 	if len(b) > 64<<20 {
 		return nil, errors.New("operations state exceeds 64 MiB")
 	}
-	if err = json.Unmarshal(b, &s.state); err != nil {
+	// Decode into a zero value so a missing envelope cannot inherit the valid
+	// defaults reserved for a brand-new store (for example, {} or null).
+	var disk state
+	if err = json.Unmarshal(b, &disk); err != nil {
 		return nil, fmt.Errorf("operations state: %w", err)
 	}
-	if (s.state.Version != 1 && s.state.Version != 2) || s.state.Records == nil || len(s.state.Records) > 5000 {
+	if (disk.Version != 1 && disk.Version != 2) || disk.Records == nil || len(disk.Records) > 5000 {
 		return nil, errors.New("invalid operations state")
 	}
-	for id, r := range s.state.Records {
-		if s.state.Version == 1 {
+	for id, r := range disk.Records {
+		if disk.Version == 1 {
 			r.Status = StatusOpen
 		}
 		if r.ID != id || r.Revision == 0 || len(r.History) > 20 {
@@ -142,11 +145,12 @@ func Open(dir string) (*Store, error) {
 		if !validStatus(r.Status) || (r.Assignee != "" && !ValidAssignee(r.Assignee)) {
 			return nil, errors.New("invalid operations workflow")
 		}
-		s.state.Records[id] = r
+		disk.Records[id] = r
 	}
 	// The next successful write upgrades the file. Older binaries reject v2
 	// instead of silently dropping assignments and progress.
-	s.state.Version = 2
+	disk.Version = 2
+	s.state = disk
 	return s, nil
 }
 
