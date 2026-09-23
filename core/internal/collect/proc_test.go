@@ -16,6 +16,19 @@ func TestParseProcStat(t *testing.T) {
 	}
 }
 
+func TestScanProcStatSkipsLongIntrLine(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("cpu 1 2 3 4\nintr 12345")
+	for i := 0; i < 8000; i++ {
+		b.WriteString(" 1")
+	}
+	b.WriteString("\nctxt 9\nprocesses 77\n")
+	st, err := scanProcStat(strings.NewReader(b.String()))
+	if err != nil || st.intr != 12345 || st.forks != 77 {
+		t.Fatalf("%+v %v", st, err)
+	}
+}
+
 func TestParseFileNR(t *testing.T) {
 	a, u, m, err := parseFileNR("1234\t0\t922337")
 	if err != nil || a != 1234 || u != 0 || m != 922337 {

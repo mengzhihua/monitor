@@ -132,6 +132,52 @@ class ReleaseTests(unittest.TestCase):
                     release.package(root, root / "dist", ["linux-amd64"], False, "go")
             self.assertEqual(list((root / "dist").iterdir()), [])
 
+    def test_build_receipt_rejects_replaced_binary_and_wrong_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.make_fixture(root)
+            release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)
+            with self.assertRaises(release.PackageError):
+                release.validate_receipt(root, ["linux-amd64"], "9.9.9", COMMIT)
+            (root / release.binary_relative("linux-amd64")).write_bytes(b"replaced by manually rebuilt executable")
+            with self.assertRaises(release.PackageError):
+                release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)
+            (root / "core/bin/release-build.json").unlink()
+            with self.assertRaises(release.PackageError):
+                release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)
+
+    def test_controlled_build_injects_source_version_and_records_binary_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.make_fixture(root)
+            with patch.object(release, "source_metadata", return_value=("2.0.0", COMMIT, EPOCH)), patch.object(release, "inspect_binary"), patch.object(release, "command") as run:
+                release.build_binaries(root, ["linux-amd64"], "go")
+            args, cwd, env = run.call_args.args
+            self.assertEqual(args[args.index("-ldflags") + 1], "-s -w -X main.version=2.0.0")
+            self.assertEqual(cwd, root / "core")
+            self.assertEqual((env["GOOS"], env["GOARCH"]), ("linux", "amd64"))
+            release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)
+
+    def test_output_symlink_is_rejected_without_touching_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.make_fixture(root)
+            (root / "outside").mkdir()
+            (root / "linked").symlink_to(root / "outside", target_is_directory=True)
+            with patch.object(release, "source_metadata", return_value=("2.0.0", COMMIT, EPOCH)), patch.object(release, "inspect_binary", return_value={}):
+                with self.assertRaises(release.PackageError):
+                    release.package(root, root / "linked", ["linux-amd64"], False, "go")
+            self.assertEqual(list((root / "outside").iterdir()), [])
+
+    def test_invalid_source_date_epoch_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "VERSION").write_text("2.0.0")
+            for value in ("tomorrow", "0", "4294967296"):
+                with self.subTest(value=value), patch.dict(release.os.environ, {"SOURCE_DATE_EPOCH": value}), patch.object(release, "command", side_effect=[COMMIT, ""]):
+                    with self.assertRaises(release.PackageError):
+                        release.source_metadata(root)
+
     def test_universal_sign_failure_is_not_ignored(self):
         sources = {"darwin-amd64": Path("intel"), "darwin-arm64": Path("arm")}
         for results in (["", "arm64"], ["", "x86_64 arm64", release.PackageError("sign failed")], ["", "x86_64 arm64", "", release.PackageError("verify failed")]):

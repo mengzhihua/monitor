@@ -36,6 +36,12 @@ type Result struct {
 	Values [][]float64
 }
 
+// QueryGrid returns the aggregate query's time coordinates without reading any
+// series. Values remains nil so callers can populate another time-aligned source.
+func QueryGrid(after, before int64, points int) Result {
+	return grid(after, before, points)
+}
+
 // grid splits [after, before] into `points` buckets aligned to the step.
 func grid(after, before int64, points int) Result {
 	if before <= after {

@@ -539,24 +539,36 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 	values := make([][]float64, 0, len(dims))
 	var times []int64
 	var step, resAfter, resBefore int64
+	bit := wantsAnomalyBit(opts)
 	for _, d := range dims {
-		parts := make([][]float64, 0, len(d.charts))
-		for _, c := range d.charts {
-			agg, err := db.QueryAggregated(registry.SeriesID(c.ID, d.id), tier, after, before, points, group)
-			if err != nil {
-				return nil, http.StatusInternalServerError, err.Error()
-			}
+		if bit {
+			// Anomaly history replaces every metric value below. Reuse the
+			// TSDB grid without reading or decoding those discarded series.
 			if times == nil {
+				agg := tsdb.QueryGrid(after, before, points)
 				times = agg.Times
 				step, resAfter, resBefore = agg.Step, agg.After, agg.Before
 			}
-			if len(agg.Values) == 0 {
-				parts = append(parts, nil)
-				continue
+			values = append(values, make([]float64, len(times)))
+		} else {
+			parts := make([][]float64, 0, len(d.charts))
+			for _, c := range d.charts {
+				agg, err := db.QueryAggregated(registry.SeriesID(c.ID, d.id), tier, after, before, points, group)
+				if err != nil {
+					return nil, http.StatusInternalServerError, err.Error()
+				}
+				if times == nil {
+					times = agg.Times
+					step, resAfter, resBefore = agg.Step, agg.After, agg.Before
+				}
+				if len(agg.Values) == 0 {
+					parts = append(parts, nil)
+					continue
+				}
+				parts = append(parts, agg.Values[0])
 			}
-			parts = append(parts, agg.Values[0])
+			values = append(values, sumAligned(parts))
 		}
-		values = append(values, sumAligned(parts))
 		ids = append(ids, d.id)
 		names = append(names, d.name)
 	}
@@ -590,7 +602,6 @@ func (s *Server) queryData(v *view, q url.Values, api int) (*dataResult, int, st
 			}
 		}
 	}
-	bit := wantsAnomalyBit(opts)
 	units := headUnits(charts)
 	if bit {
 		units = "%"

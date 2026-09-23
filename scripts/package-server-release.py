@@ -41,8 +41,12 @@ TARGETS = (
     "windows-amd64", "freebsd-amd64", "freebsd-arm64", "android-arm64",
 )
 DOCUMENTS = (
-    "README.md", "monitor.example.yaml", "docs/06-monitor-2.0.md",
+    "README.md", "monitor.example.yaml", "docs/01-netdata-capability-study.md",
+    "docs/02-architecture.md", "docs/03-plugins-d-protocol.md", "docs/04-netdata-gap.md",
+    "docs/05-acceptance.md", "docs/06-monitor-2.0.md",
     "docs/07-preset-dashboards.md", "docs/08-release-2.0.md",
+    "docs/08-operations-dashboard-research.md", "docs/09-dashboard-final-update.md",
+    "docs/10-final-integration.md", "scripts/README.md",
 )
 VERSION_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
@@ -107,10 +111,10 @@ def source_metadata(root: Path) -> tuple[str, str, int]:
         epoch_text = command(["git", "show", "-s", "--format=%ct", "HEAD"], root)
     try:
         epoch = int(epoch_text)
-        if not 315532800 <= epoch <= 4354819199:  # ZIP timestamp range, 1980..2107
+        if not 315532800 <= epoch <= 4294967295:  # shared ZIP/gzip range, 1980..2106
             raise ValueError()
     except ValueError as exc:
-        raise PackageError("Release timestamp must be within ZIP's 1980..2107 range") from exc
+        raise PackageError("Release timestamp must be within the ZIP/gzip 1980..2106 range") from exc
     return version, commit, epoch
 
 
@@ -171,6 +175,7 @@ def build_binaries(root: Path, targets: list[str], go: str) -> None:
         env.update({"GOOS": os_name, "GOARCH": arch})
         if os_name == "android":
             env["CGO_ENABLED"] = "0"
+        print(f"Building {target} for Monitor {version}", flush=True)
         command([go, "build", "-trimpath", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/monitord"], root / "core", env)
         inspect_binary(binary, target, version, commit, go)
         binaries[target] = {"version": version, "source_commit": commit, "sha256": sha256(binary)}
@@ -357,6 +362,7 @@ def package(root: Path, output_root: Path, targets: list[str], universal: bool, 
                 "size_bytes": archive.stat().st_size, "binary_sha256": binary_hash,
                 "files": sorted(entries), "build": builds[target],
             })
+            print(f"Packaged {archive.name}", flush=True)
         if universal:
             sources["darwin-universal"].unlink()  # only our temporary intermediate
         manifest = staging / "manifest.json"

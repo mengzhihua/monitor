@@ -20,7 +20,10 @@ type ipmiCollector struct {
 	cfg  ipmiConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen map[string]bool
+	last time.Time
 }
+
+const ipmiEvery = 15 * time.Second
 
 func init() {
 	Register("ipmi", func() Collector { return &ipmiCollector{} })
@@ -67,6 +70,9 @@ func (i *ipmiCollector) Init(reg *registry.Registry) error {
 }
 
 func (i *ipmiCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&i.last, now, ipmiEvery) {
+		return nil
+	}
 	raw, err := i.readSensors(ctx)
 	if err != nil {
 		return err

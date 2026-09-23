@@ -27,6 +27,7 @@
 | `verify-operations.py` | 2.0 真实采样、处置/个人视图持久化、服务重启、单条/批量版本冲突及历史查询导出 | `python3 scripts/verify-operations.py` |
 | `verify-notifications.py` | 本机真实内存触发通知、HTTP 成功/503、静默/路由、凭据隐藏、只读权限及重启计数边界 | `python3 scripts/verify-notifications.py` |
 | `verify-maintenance.py` | 预约开始、精确告警范围、活动计划重启、到期恢复新提醒、重叠取消、并发与只读权限、第二次重启保留取消记录 | `python3 scripts/verify-maintenance.py` |
+| `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
 | `soak.py` | 指定时长的持续采集和查询测量 | `python3 scripts/soak.py --seconds 120` |
@@ -34,7 +35,7 @@
 | `benchmark-browser.mjs` | 遍历100张模拟图表后的画布、DOM、事件监听器和 GC 后 JS 堆 | `node scripts/benchmark-browser.mjs --output reports/browser.json` |
 | `e2e-server.mjs` | 为 Playwright 启动临时服务 | 由 `web/playwright.config.ts` 调用，无需手动启动 |
 
-运行验收前先 `make all`。`make acceptance` 串联 Go/Web、默认认证、恢复、Hub 负载、持续采集、浏览器、Flutter 和跨平台编译，所需环境见 [验收记录](../docs/05-acceptance.md)。
+运行验收前先 `make all`。`make acceptance` 串联 Go/Web、默认认证、恢复、运维记录重启持久化、macOS 进程身份、Hub 负载、持续采集、浏览器、Flutter 和跨平台编译，所需环境见 [验收记录](../docs/05-acceptance.md)。进程身份脚本只在 macOS 上运行，`--require-clean-startup` 同时要求启动和稳定阶段的采集失败数为零；其他平台由 Go 测试覆盖通用采集逻辑。
 
 命令行进程测试使用临时配置和数据，读取测试目录生成的密码，不使用部署密码。冒烟占用 `19998` / `18999`，浏览器测试占用 `19997`；其余 Python 进程测试选择本机空闲端口。
 

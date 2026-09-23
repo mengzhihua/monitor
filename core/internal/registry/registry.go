@@ -325,11 +325,7 @@ func (r *Registry) Ingest(chartID string, sec int64, values map[string]float64) 
 		c.lastT = sec
 	}
 	c.mu.Unlock()
-	if r.sink != nil {
-		for id, v := range vals {
-			r.sink.Append(SeriesID(chartID, id), sec, v)
-		}
-	}
+	r.writeSink(sec, chartID, vals)
 	r.mu.RLock()
 	subs := r.subs
 	r.mu.RUnlock()
@@ -337,6 +333,31 @@ func (r *Registry) Ingest(chartID string, sec int64, values map[string]float64) 
 		fn(chartID, sec, vals)
 	}
 	return nil
+}
+
+// writeSink stores one chart's finished samples. Several dimensions share one
+// WAL lock when the sink can take a batch; a single dimension stays on Append.
+func (r *Registry) writeSink(sec int64, chartID string, vals map[string]float64) {
+	if r.sink == nil || len(vals) == 0 {
+		return
+	}
+	if len(vals) > 1 {
+		if bs, ok := r.sink.(interface {
+			AppendMany(ts int64, ids []string, vals []float64)
+		}); ok {
+			ids := make([]string, 0, len(vals))
+			vs := make([]float64, 0, len(vals))
+			for id, v := range vals {
+				ids = append(ids, SeriesID(chartID, id))
+				vs = append(vs, v)
+			}
+			bs.AppendMany(sec, ids, vs)
+			return
+		}
+	}
+	for id, v := range vals {
+		r.sink.Append(SeriesID(chartID, id), sec, v)
+	}
 }
 
 // Collect feeds one collection round of raw values for a chart. ts is the
@@ -403,11 +424,7 @@ func (r *Registry) Collect(chartID string, ts time.Time, raw map[string]float64)
 	c.lastT = sec
 	c.mu.Unlock()
 
-	if r.sink != nil {
-		for id, v := range vals {
-			r.sink.Append(SeriesID(chartID, id), sec, v)
-		}
-	}
+	r.writeSink(sec, chartID, vals)
 	r.mu.RLock()
 	subs := r.subs
 	r.mu.RUnlock()

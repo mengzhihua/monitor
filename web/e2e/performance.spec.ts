@@ -17,7 +17,7 @@ test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async (
   }))
   await page.route('**/api/v1/charts*', route => route.fulfill({ json: { charts } }))
   await page.route('**/api/v1/data?*', route => route.fulfill({ json: {
-    dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
+    units: 'value', dimension_ids: ['value'], result: { data: [[1, 1], [2, 2], [3, 1]] },
   } }))
   await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
@@ -28,7 +28,12 @@ test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async (
     await cards.nth(i).scrollIntoViewIfNeeded()
     await expect(cards.nth(i).locator('canvas')).toBeVisible()
   }
-  await expect.poll(() => page.locator('.card canvas').count()).toBeLessThanOrEqual(18)
+  // The cache holds eight offscreen plots; visible plots depend on card height,
+  // responsive columns and the chart observer's 300px prefetch margin.
+  await expect.poll(() => cards.evaluateAll(elements => elements.filter(card => {
+    const rect = card.getBoundingClientRect()
+    return card.querySelector('canvas') && (rect.bottom < -300 || rect.top > innerHeight + 300)
+  }).length)).toBeLessThanOrEqual(8)
   await expect(cards.first().locator('canvas')).toHaveCount(0)
   expect(await firstCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false)
   await cards.first().scrollIntoViewIfNeeded()

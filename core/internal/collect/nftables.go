@@ -21,7 +21,10 @@ type nftablesCollector struct {
 	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen    map[string]bool
 	netlink bool
+	last    time.Time
 }
+
+const nftablesEvery = 10 * time.Second
 
 func init() {
 	Register("nftables", func() Collector { return &nftablesCollector{} })
@@ -68,6 +71,9 @@ func (n *nftablesCollector) Init(reg *registry.Registry) error {
 }
 
 func (n *nftablesCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !n.netlink && !sampleDue(&n.last, now, nftablesEvery) {
+		return nil
+	}
 	var counters []nftCounter
 	if n.netlink {
 		if got, ok := readNftCountersNetlink(); ok {

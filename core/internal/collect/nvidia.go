@@ -17,8 +17,11 @@ type nvidiaConfig struct {
 }
 
 type nvidiaCollector struct {
-	cfg nvidiaConfig
+	cfg  nvidiaConfig
+	last time.Time
 }
+
+const nvidiaEvery = 5 * time.Second
 
 func init() {
 	Register("nvidia", func() Collector { return &nvidiaCollector{} })
@@ -65,6 +68,9 @@ type nvGPU struct {
 }
 
 func (n *nvidiaCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&n.last, now, nvidiaEvery) {
+		return nil
+	}
 	gpus, err := n.query(ctx)
 	if err != nil {
 		return err

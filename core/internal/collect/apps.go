@@ -65,7 +65,8 @@ type pidState struct {
 	group     *appGroup
 	user      string
 	osGroup   string
-	cpuMs     float64 // user+system, ms
+	cpuMs     float64   // user+system, ms
+	cpuAt     time.Time // last successful CPU sample, not the last collection attempt
 	hasCPU    bool
 	readB     uint64
 	writeB    uint64
@@ -86,6 +87,11 @@ type appsCollector struct {
 
 	mu   sync.Mutex
 	pids map[int32]*pidState
+	// Sampling is serialized by mu; readers only hold tableMu to copy the
+	// last complete table, so an OS query cannot block the processes API.
+	tableMu   sync.RWMutex
+	published []ProcessRow
+	samples   []appProcessUpdate
 	// monotonically increasing per-group counters fed as Incremental
 	cpuMs               map[string]float64
 	readB               map[string]float64
@@ -94,9 +100,15 @@ type appsCollector struct {
 	groupCache          map[string]string
 	userCache           map[string]string
 	pidBuf              []int32
+	dirBuf              []byte
 	scratch             []byte
 	last                time.Time
+	ioAt                time.Time
 }
+
+// appsIOEvery is how often per-process disk counters are opened. CPU still
+// comes from stat every tick; io charts are incremental, so a gap keeps the rate.
+const appsIOEvery = 5 * time.Second
 
 // procCounters is one process sample. ok is false when CPU counters could not be read.
 type procCounters struct {
@@ -109,6 +121,12 @@ type procCounters struct {
 	hasIO, ioDenied bool
 	kthread         bool
 	ok              bool
+}
+
+type appProcessUpdate struct {
+	pid      int32
+	state    *pidState
+	counters procCounters
 }
 
 func init() {
@@ -171,6 +189,11 @@ func (a *appsCollector) Init(reg *registry.Registry) error {
 		return err
 	}
 	a.pids = map[int32]*pidState{}
+	a.samples = nil
+	a.tableMu.Lock()
+	a.published = nil
+	a.last = time.Time{}
+	a.tableMu.Unlock()
 	a.cpuMs, a.readB, a.writeB = map[string]float64{}, map[string]float64{}, map[string]float64{}
 	a.cpuUser, a.cpuOSGroup = map[string]float64{}, map[string]float64{}
 	a.groupCache = map[string]string{}
@@ -232,8 +255,36 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 // appProcess carries identity from the same process-list snapshot as the PID.
 // A fresh gopsutil handle reads live values without retaining cached metadata.
 type appProcess struct {
+	metadata  appProcessMetadata
 	process   *process.Process
 	startedAt int64
+}
+
+// Platforms without a process-table identity snapshot retain the gopsutil
+// path. Command-line access is optional once a readable name is available.
+func readPortableAppIdentity(ctx context.Context, p *process.Process) (name, cmdline string, err error) {
+	if err = ctx.Err(); err != nil {
+		return "", "", err
+	}
+	name, err = p.NameWithContext(ctx)
+	if err != nil || name == "" {
+		return name, "", err
+	}
+	cmdline, _ = p.CmdlineWithContext(ctx)
+	return name, cmdline, ctx.Err()
+}
+
+func (a *appsCollector) readPortableOwners(ctx context.Context, p *process.Process, st *pidState) {
+	if ctx.Err() != nil {
+		return
+	}
+	st.ppid, _ = p.PpidWithContext(ctx)
+	if uname, err := p.UsernameWithContext(ctx); err == nil {
+		st.user = appsOwnerID(uname)
+	}
+	if gids, err := p.GidsWithContext(ctx); err == nil && len(gids) > 0 {
+		st.osGroup = a.lookupOSGroup(gids[0])
+	}
 }
 
 func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
@@ -247,8 +298,19 @@ func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
 }
 
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	pids, native := listProcPIDs(a.pidBuf)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.samples = a.samples[:0]
+	defer func() {
+		clear(a.samples) // release process identities after a completed or aborted pass
+		a.samples = a.samples[:0]
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	pids, native := listProcPIDs(a.pidBuf, &a.dirBuf)
 	a.pidBuf = pids
+	ioNow := a.ioSampleDue(now)
 	var procs []appProcess
 	if !native {
 		var err error
@@ -257,17 +319,6 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			return err
 		}
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	elapsed := now.Sub(a.last).Seconds()
-	if a.last.IsZero() || elapsed <= 0 {
-		elapsed = float64(reg.Host.UpdateEvery)
-	}
-	a.last = now
-
-	mem := map[string]float64{}
-	nproc := map[string]float64{}
-	nthr := map[string]float64{}
 	n := len(procs)
 	if native {
 		n = len(pids)
@@ -289,7 +340,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		st := a.previousPID(pid, startedAt)
 		var sample procCounters
 		if native {
-			sample = readProcSample(pid, st != nil && st.skipIO, &a.scratch)
+			sample = readProcSample(pid, !ioNow || (st != nil && st.skipIO), &a.scratch)
 		}
 		if st == nil {
 			if native {
@@ -310,75 +361,100 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 				}
 				st.group = a.match(st.name, st.cmdline)
 			} else {
-				name, err := gp.NameWithContext(ctx)
+				name, cmdline, err := procs[i].readIdentity(ctx)
 				if err != nil || name == "" {
 					continue // gone or not readable
 				}
 				if runtime.GOOS == "windows" {
 					name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
 				}
-				st = &pidState{name: name, startedAt: startedAt}
-				st.cmdline, _ = gp.CmdlineWithContext(ctx)
-				st.ppid, _ = gp.PpidWithContext(ctx)
+				st = &pidState{name: name, cmdline: cmdline, startedAt: startedAt}
 				st.group = a.match(name, st.cmdline)
-				if uname, err := gp.UsernameWithContext(ctx); err == nil {
-					st.user = appsOwnerID(uname)
-				}
-				if gids, err := gp.GidsWithContext(ctx); err == nil && len(gids) > 0 {
-					st.osGroup = a.lookupOSGroup(gids[0])
-				}
+				procs[i].readOwners(ctx, a, st)
 			}
 			a.pids[pid] = st
 		}
 		if native && !sample.ok {
 			continue // exited between readdir and stat; drop it below
 		}
+		if !native {
+			sample = readAppProcessSample(ctx, gp, ioNow)
+		}
+		a.samples = append(a.samples, appProcessUpdate{pid: pid, state: st, counters: sample})
+	}
+	// No counters, rates, charts or public rows advance until every PID has
+	// been sampled. Keep newly resolved identities cached for the next try.
+	return a.finishSamples(ctx, reg, now)
+}
+
+// Checking the cadence must not advance it until a whole pass succeeds.
+// Otherwise a cancelled pass consumes an I/O slot without publishing its data.
+func (a *appsCollector) ioSampleDue(now time.Time) bool {
+	last := a.ioAt
+	return a.hasIO && sampleDue(&last, now, appsIOEvery)
+}
+
+func (a *appsCollector) finishSamples(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.commitSamples(reg, now)
+	return nil
+}
+
+func (a *appsCollector) commitSamples(reg *registry.Registry, now time.Time) {
+	ioNow := a.ioSampleDue(now)
+	mem := map[string]float64{}
+	nproc := map[string]float64{}
+	nthr := map[string]float64{}
+	for _, update := range a.samples {
+		st, sample := update.state, update.counters
 		st.seenAt = now
 		g := st.group.name
-		var cpuSec float64
-		var rss uint64
-		var threads int32
-		var readB, writeB uint64
-		var hasIO, ok bool
-		if native {
-			if sample.ioDenied {
-				st.skipIO = true
-			}
-			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
-			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
-		} else {
-			sample = readAppProcessSample(ctx, gp, a.hasIO)
-			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
-			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
+		if sample.ioDenied {
+			st.skipIO = true
 		}
 		// A failed read retains its cumulative baseline, but cannot reuse the
 		// previous interval's rate when aggregating CPU by user and OS group.
 		st.cpuPct = 0
-		if ok {
-			ms := cpuSec * 1000
+		if sample.ok {
+			ms := sample.cpuSec * 1000
 			if st.hasCPU {
 				if d := ms - st.cpuMs; d > 0 {
+					elapsed := now.Sub(st.cpuAt).Seconds()
+					if st.cpuAt.IsZero() || elapsed <= 0 {
+						elapsed = float64(reg.Host.UpdateEvery)
+					}
 					a.cpuMs[g] += d
 					st.cpuPct = d / elapsed / 10
+					// Add the actual delta once; reconstructing it from a rate
+					// and a global interval loses CPU time after failed reads.
+					if st.user != "" {
+						a.cpuUser[st.user] += d
+					}
+					if st.osGroup != "" {
+						a.cpuOSGroup[st.osGroup] += d
+					}
 				}
 			}
 			st.cpuMs, st.hasCPU = ms, true
+			st.cpuAt = now
 		}
-		st.rss = rss
-		mem[g] += float64(rss)
-		st.threads = threads
-		nthr[g] += float64(threads)
+		st.rss = sample.rss
+		mem[g] += float64(sample.rss)
+		st.threads = sample.threads
+		nthr[g] += float64(sample.threads)
 		nproc[g]++
-		if a.hasIO && hasIO {
+		if a.hasIO && sample.hasIO {
 			if st.ioOK {
-				if d := float64(readB) - float64(st.readB); d > 0 {
+				if d := float64(sample.readB) - float64(st.readB); d > 0 {
 					a.readB[g] += d
 				}
-				if d := float64(writeB) - float64(st.writeB); d > 0 {
+				if d := float64(sample.writeB) - float64(st.writeB); d > 0 {
 					a.writeB[g] += d
 				}
 			}
-			st.readB, st.writeB, st.ioOK = readB, writeB, true
+			st.readB, st.writeB, st.ioOK = sample.readB, sample.writeB, true
 		}
 	}
 	for pid, st := range a.pids {
@@ -398,19 +474,29 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	_ = reg.Collect("apps.mem", now, mem)
 	_ = reg.Collect("apps.processes", now, nproc)
 	_ = reg.Collect("apps.threads", now, nthr)
-	if a.hasIO {
+	if a.hasIO && ioNow {
 		rd, wr := make(map[string]float64, len(all)), make(map[string]float64, len(all))
 		for _, g := range all {
 			rd[g.name], wr[g.name] = a.readB[g.name], a.writeB[g.name]
 		}
 		_ = reg.Collect("apps.io_read", now, rd)
 		_ = reg.Collect("apps.io_write", now, wr)
+		a.ioAt = now
 	}
-	a.collectOwners(reg, now, elapsed)
-	return nil
+	a.collectOwners(reg, now)
+	a.tableMu.Lock()
+	a.last = now
+	clear(a.published)
+	a.published = a.published[:0]
+	for _, update := range a.samples {
+		st := update.state
+		a.published = append(a.published, ProcessRow{PID: update.pid, PPID: st.ppid, Name: st.name, Group: st.group.name,
+			CPU: st.cpuPct, RSS: st.rss, Threads: st.threads, Cmdline: st.cmdline})
+	}
+	a.tableMu.Unlock()
 }
 
-func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, elapsed float64) {
+func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time) {
 	memU, nprocU := map[string]float64{}, map[string]float64{}
 	memG, nprocG := map[string]float64{}, map[string]float64{}
 	for _, st := range a.pids {
@@ -420,19 +506,10 @@ func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, ela
 		if st.user != "" {
 			nprocU[st.user]++
 			memU[st.user] += float64(st.rss)
-			if st.hasCPU {
-				// cpu delta already applied to group in Collect; recompute from cpuPct
-				if st.cpuPct > 0 {
-					a.cpuUser[st.user] += st.cpuPct * elapsed * 10
-				}
-			}
 		}
 		if st.osGroup != "" {
 			nprocG[st.osGroup]++
 			memG[st.osGroup] += float64(st.rss)
-			if st.cpuPct > 0 {
-				a.cpuOSGroup[st.osGroup] += st.cpuPct * elapsed * 10
-			}
 		}
 	}
 	addCPU := func(chart string, vals map[string]float64) {
@@ -465,14 +542,22 @@ func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, ela
 
 func (a *appsCollector) lookupUser(uid uint32) string {
 	key := strconv.FormatUint(uint64(uid), 10)
+	return a.lookupUserID(key, key)
+}
+
+// Linux retains its cached numeric fallback; Darwin leaves unavailable account
+// names empty and retries for later PIDs if the directory service recovers.
+func (a *appsCollector) lookupUserID(key, fallback string) string {
 	if a.userCache != nil {
 		if n, ok := a.userCache[key]; ok {
 			return n
 		}
 	}
-	name := key
+	name := fallback
 	if u, err := user.LookupId(key); err == nil && u.Username != "" {
 		name = u.Username
+	} else if fallback == "" {
+		return ""
 	}
 	name = appsOwnerID(name)
 	if a.userCache != nil {
@@ -524,15 +609,16 @@ type ProcessRow struct {
 
 // Table is the generic function result shape (Netdata-style columns/rows).
 type Table struct {
-	Columns []string `json:"columns"`
-	Rows    []any    `json:"rows"`
-	Total   int      `json:"total"`
+	Columns     []string `json:"columns"`
+	Rows        []any    `json:"rows"`
+	Total       int      `json:"total"`
+	CollectedAt int64    `json:"collected_at,omitempty"` // last complete sample, Unix seconds
 }
 
 func (a *appsCollector) Functions() []Function {
 	return []Function{{
 		Name:    "processes",
-		Help:    "Live process table (top by CPU, then RSS)",
+		Help:    "Latest complete process snapshot (top by CPU, then RSS)",
 		Timeout: 10,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
 			return a.processes(args), nil
@@ -541,49 +627,94 @@ func (a *appsCollector) Functions() []Function {
 }
 
 func (a *appsCollector) processes(args map[string]string) Table {
-	a.mu.Lock()
-	rows := make([]ProcessRow, 0, len(a.pids))
-	for pid, st := range a.pids {
-		rows = append(rows, ProcessRow{PID: pid, PPID: st.ppid, Name: st.name, Group: st.group.name,
-			CPU: st.cpuPct, RSS: st.rss, Threads: st.threads, Cmdline: st.cmdline})
+	a.tableMu.RLock()
+	rows, total := selectProcessRows(a.published, a.cfg.Top, args["group"], args["sort"])
+	var collectedAt int64
+	if !a.last.IsZero() {
+		collectedAt = a.last.Unix()
 	}
-	a.mu.Unlock()
-	if g := args["group"]; g != "" {
-		f := rows[:0]
-		for _, r := range rows {
-			if r.Group == g {
-				f = append(f, r)
-			}
-		}
-		rows = f
-	}
+	a.tableMu.RUnlock()
 	sortBy := args["sort"]
 	sort.Slice(rows, func(i, j int) bool {
-		switch sortBy {
-		case "rss", "mem":
-			if rows[i].RSS != rows[j].RSS {
-				return rows[i].RSS > rows[j].RSS
-			}
-		case "pid":
-			return rows[i].PID < rows[j].PID
-		default:
-			if rows[i].CPU != rows[j].CPU {
-				return rows[i].CPU > rows[j].CPU
-			}
-			if rows[i].RSS != rows[j].RSS {
-				return rows[i].RSS > rows[j].RSS
-			}
-		}
-		return rows[i].PID < rows[j].PID
+		return processRowLess(&rows[i], &rows[j], sortBy)
 	})
-	total := len(rows)
-	if len(rows) > a.cfg.Top {
-		rows = rows[:a.cfg.Top]
-	}
-	out := Table{Columns: []string{"pid", "ppid", "name", "group", "cpu", "rss", "threads", "cmdline"}, Total: total}
+	out := Table{Columns: []string{"pid", "ppid", "name", "group", "cpu", "rss", "threads", "cmdline"}, Total: total, CollectedAt: collectedAt}
 	out.Rows = make([]any, len(rows))
 	for i, r := range rows {
 		out.Rows[i] = r
 	}
 	return out
+}
+
+func processRowLess(a, b *ProcessRow, sortBy string) bool {
+	switch sortBy {
+	case "rss", "mem":
+		if a.RSS != b.RSS {
+			return a.RSS > b.RSS
+		}
+	case "pid":
+		return a.PID < b.PID
+	default:
+		if a.CPU != b.CPU {
+			return a.CPU > b.CPU
+		}
+		if a.RSS != b.RSS {
+			return a.RSS > b.RSS
+		}
+	}
+	return a.PID < b.PID
+}
+
+// Keep at most limit rows in a heap with the worst selected row at its root.
+// The published table is read-only; the caller holds tableMu while selecting.
+// Total counts all matches, including those outside the returned top rows.
+func selectProcessRows(published []ProcessRow, limit int, group, sortBy string) (rows []ProcessRow, total int) {
+	limit = min(max(limit, 0), len(published))
+	heapReady := false
+	for i := range published {
+		row := &published[i]
+		if group != "" && row.Group != group {
+			continue
+		}
+		total++
+		if limit == 0 {
+			continue
+		}
+		if rows == nil {
+			rows = make([]ProcessRow, 0, limit)
+		}
+		if len(rows) < limit {
+			rows = append(rows, *row)
+			continue
+		}
+		// No heap construction is needed when every matching row will fit.
+		if !heapReady {
+			for root := len(rows)/2 - 1; root >= 0; root-- {
+				siftProcessRowsDown(rows, root, sortBy)
+			}
+			heapReady = true
+		}
+		if processRowLess(row, &rows[0], sortBy) {
+			rows[0] = *row
+			siftProcessRowsDown(rows, 0, sortBy)
+		}
+	}
+	return rows, total
+}
+
+func siftProcessRowsDown(rows []ProcessRow, root int, sortBy string) {
+	for {
+		child := root*2 + 1
+		if child >= len(rows) {
+			return
+		}
+		if child+1 < len(rows) && processRowLess(&rows[child], &rows[child+1], sortBy) {
+			child++
+		}
+		if !processRowLess(&rows[root], &rows[child], sortBy) {
+			return
+		}
+		rows[root], rows[child] = rows[child], rows[root]
+		root = child
+	}
 }

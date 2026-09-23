@@ -71,6 +71,9 @@ jobs:
           python3 scripts/verify-operations.py
           python3 scripts/verify-notifications.py
           python3 scripts/verify-maintenance.py
+      - name: Process identity and snapshot freshness
+        if: runner.os == 'macOS'
+        run: python3 scripts/verify-apps-identity.py --require-clean-startup
       - name: Hub capacity and restart
         if: runner.os == 'Linux'
         run: |

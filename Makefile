@@ -76,6 +76,9 @@ acceptance:
 	python3 scripts/verify-notifications.py
 	python3 scripts/verify-maintenance.py
 	python3 scripts/verify-durability.py
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		python3 scripts/verify-apps-identity.py --require-clean-startup; \
+	fi
 	python3 scripts/load-hub.py
 	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}
 	cd web && npm run test:e2e

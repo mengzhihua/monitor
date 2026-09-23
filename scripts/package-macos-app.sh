@@ -37,7 +37,8 @@ for pair in arm64:arm64 x86_64:amd64; do
     fi
   done
   # ad-hoc re-sign so the thinned bundle still launches (real signing is a later step)
-  codesign --force --deep --sign - "$work/$appname" >/dev/null 2>&1 || true
+  codesign --force --deep --sign - "$work/$appname"
+  codesign --verify --deep --strict --verbose=2 "$work/$appname"
 
   name="$prefix-macos-$label"
   ditto -c -k --sequesterRsrc --keepParent "$work/$appname" "$out/$name.zip"

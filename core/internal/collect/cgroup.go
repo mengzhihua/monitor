@@ -27,6 +27,7 @@ type cgroupCollector struct {
 	seen    map[string]bool
 	cached  []cgroupUnit
 	cacheAt time.Time
+	scratch []byte
 }
 
 func init() {
@@ -75,25 +76,32 @@ func (c *cgroupCollector) Collect(_ context.Context, reg *registry.Registry, now
 	for _, g := range groups {
 		c.ensure(reg, g)
 		id := g.id
-		st := readKV(filepath.Join(g.dir, "cpu.stat"))
+		var cpuVals [3]float64
+		if b, err := readInto(filepath.Join(g.dir, "cpu.stat"), &c.scratch); err == nil {
+			cpuVals[0], _ = kvKey(b, "user_usec")
+			cpuVals[1], _ = kvKey(b, "system_usec")
+			cpuVals[2], _ = kvKey(b, "usage_usec")
+		}
 		_ = reg.Collect("cgroup_"+id+".cpu", now, map[string]float64{
-			"user": st["user_usec"], "system": st["system_usec"], "usage": st["usage_usec"]})
+			"user": cpuVals[0], "system": cpuVals[1], "usage": cpuVals[2]})
 		mem := map[string]float64{}
-		if v, err := readUint(filepath.Join(g.dir, "memory.current")); err == nil {
+		if v, err := readUintBuf(filepath.Join(g.dir, "memory.current"), &c.scratch); err == nil {
 			mem["ram"] = v
 		}
-		if v := readKV(filepath.Join(g.dir, "memory.stat"))["inactive_file"]; v > 0 {
-			if mem["ram"] > v {
-				mem["ram"] -= v
+		if b, err := readInto(filepath.Join(g.dir, "memory.stat"), &c.scratch); err == nil {
+			if v, ok := kvKey(b, "inactive_file"); ok && v > 0 {
+				if mem["ram"] > v {
+					mem["ram"] -= v
+				}
+				mem["cache"] = v
 			}
-			mem["cache"] = v
 		}
 		_ = reg.Collect("cgroup_"+id+".mem", now, mem)
-		rd, wr, ok := readIOStat(filepath.Join(g.dir, "io.stat"))
+		rd, wr, ok := readIOStatBuf(filepath.Join(g.dir, "io.stat"), &c.scratch)
 		if ok {
 			_ = reg.Collect("cgroup_"+id+".throttle_io", now, map[string]float64{"read": rd, "write": wr})
 		}
-		if v, err := readUint(filepath.Join(g.dir, "pids.current")); err == nil {
+		if v, err := readUintBuf(filepath.Join(g.dir, "pids.current"), &c.scratch); err == nil {
 			_ = reg.Collect("cgroup_"+id+".pids_current", now, map[string]float64{"pids": v})
 		}
 	}

@@ -73,6 +73,9 @@ type tier struct {
 	dir    string
 	mu     sync.RWMutex
 	series map[string]*tierSeries
+	// afterSnapshot runs after a rollup block is copied and before those
+	// buckets are removed from memory. Tests only; production leaves it nil.
+	afterSnapshot func(*tierSeries)
 }
 
 func newTier(idx int, spec TierSpec, root string) (*tier, error) {
@@ -266,6 +269,9 @@ func (t *tier) flush(sr *tierSeries) error {
 	}
 	done := append([]Bucket(nil), sr.done...)
 	sr.mu.Unlock()
+	if t.afterSnapshot != nil {
+		t.afterSnapshot(sr)
+	}
 
 	meta, err := writeBlockData(t.seriesDir(sr.id), sr.id, done[0].TS, done[len(done)-1].TS, len(done), encodeBuckets(done))
 	if err != nil {
@@ -273,9 +279,15 @@ func (t *tier) flush(sr *tierSeries) error {
 	}
 	sr.mu.Lock()
 	sr.blocks = append(sr.blocks, meta)
-	sr.done = sr.done[len(done):]
+	sr.done = suffixBucketsNewerThan(sr.done, done[len(done)-1].TS)
 	sr.mu.Unlock()
 	return nil
+}
+
+// suffixBucketsNewerThan keeps buckets strictly after end. done is ordered by TS.
+func suffixBucketsNewerThan(done []Bucket, end int64) []Bucket {
+	i := sort.Search(len(done), func(j int) bool { return done[j].TS > end })
+	return done[i:]
 }
 
 func (t *tier) all() []*tierSeries {
@@ -348,19 +360,20 @@ func (t *tier) snapshot(id string, after, before int64) (blocks []blockMeta, mem
 		}
 	}
 	sr.mu.Lock()
-	blocks = make([]blockMeta, 0, len(sr.blocks))
-	for _, b := range sr.blocks {
-		if b.end >= lo && b.start <= before {
-			blocks = append(blocks, b)
-		}
+	blocks = snapshotBlocks(sr.blocks, lo, before)
+	first := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS >= lo })
+	end := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS > before })
+	if first > end {
+		first = end
 	}
-	mem = make([]Bucket, 0, len(sr.done)+1)
-	for _, b := range sr.done {
-		if b.TS >= lo && b.TS <= before {
-			mem = append(mem, b)
-		}
+	haveOpen := sr.open != nil && sr.open.TS >= lo && sr.open.TS <= before
+	capacity := end - first
+	if haveOpen {
+		capacity++
 	}
-	if sr.open != nil && sr.open.TS >= lo && sr.open.TS <= before {
+	mem = make([]Bucket, end-first, capacity)
+	copy(mem, sr.done[first:end])
+	if haveOpen {
 		mem = append(mem, *sr.open)
 	}
 	sr.mu.Unlock()

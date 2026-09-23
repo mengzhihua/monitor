@@ -24,7 +24,10 @@ type smbiosMemoryCollector struct {
 	cfg  smbiosMemoryConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen map[string]bool
+	last time.Time
 }
+
+const smbiosEvery = 5 * time.Minute
 
 func init() {
 	Register("smbios_memory", func() Collector { return &smbiosMemoryCollector{} })
@@ -66,6 +69,9 @@ func (s *smbiosMemoryCollector) Init(reg *registry.Registry) error {
 }
 
 func (s *smbiosMemoryCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&s.last, now, smbiosEvery) {
+		return nil
+	}
 	dimms, err := s.dimms(ctx)
 	if err != nil {
 		return err

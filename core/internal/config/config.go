@@ -33,6 +33,10 @@ type Config struct {
 		Tier2Retention     time.Duration `yaml:"tier2_retention"`
 	} `yaml:"db"`
 	Web struct {
+		// Enabled turns off the embedded HTTP server entirely (agent-only
+		// deployments reporting to a Hub). nil (unset) keeps it on, so existing
+		// configs behave unchanged.
+		Enabled   *bool    `yaml:"enabled"`
 		Listen    string   `yaml:"listen"`
 		AllowFrom []string `yaml:"allow_from"` // CIDRs; empty = all
 		Token     string   `yaml:"token"`      // admin password/bearer token; generated when no auth is configured
@@ -255,6 +259,10 @@ func Default() *Config {
 	c.Plugins.Dir = "plugins.d"
 	return c
 }
+
+// WebEnabled reports whether the embedded HTTP server should run. web.enabled
+// is unset (nil) by default, which keeps the server on for backward compat.
+func (c *Config) WebEnabled() bool { return c.Web.Enabled == nil || *c.Web.Enabled }
 
 // Load reads path (if it exists) on top of Default().
 func Load(path string) (*Config, error) {

@@ -23,7 +23,10 @@ type cupsCollector struct {
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen map[string]bool
 	ipp  bool
+	last time.Time
 }
+
+const cupsEvery = 15 * time.Second
 
 func init() {
 	Register("cups", func() Collector { return &cupsCollector{} })
@@ -86,6 +89,9 @@ func (c *cupsCollector) addSummary(reg *registry.Registry) {
 }
 
 func (c *cupsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&c.last, now, cupsEvery) {
+		return nil
+	}
 	var dests []cupsDest
 	var jobs int
 	if c.ipp {

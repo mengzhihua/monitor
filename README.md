@@ -5,7 +5,7 @@
 - **服务端** `monitord`（Go 单二进制，配置 `mode: agent` 或 `mode: hub`）：macOS / Linux / Windows / FreeBSD / Android
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
-代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。开发分支采用[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
+代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。完成验证后将改动合入 `main` 并[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
 
 ## 2.0 运维工作台
 
@@ -25,9 +25,13 @@
 
 「个人视图」现在保存到服务端，同一凭据或身份账号连接同一服务后可跨浏览器、跨设备使用。每个账号最多 10 个视图，支持删除、刷新和手动导入旧浏览器视图；并发修改会提示冲突并保留草稿。只读账号也能保存自己的筛选，不能因此处理告警。静态密码/API token 更换后使用新的视图空间；OIDC 按已验证的签发者与主体、LDAP 按目录配置及精确登录名识别。详见 [个人视图说明](docs/06-monitor-2.0.md#个人视图与跨设备使用)。
 
-「指标图表 → 常用聚合看板」内置 18 组可搜索、按场景分类的视图，覆盖研发总览、接口与网络、数据库与缓存、容器、Kubernetes、JVM、主机压力、GPU 等，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。详见[聚合看板说明](docs/07-preset-dashboards.md)。
+「指标图表 → 常用聚合看板」内置 54 个可搜索、按场景分类的样板，覆盖研发总览、数据库与缓存、容器、Kubernetes、入口与证书、容量、硬件、云平台及操作系统等场景，按当前节点实际采集到的图表自动匹配，缺少指标时明确提示。可以复制为个人看板，配置分组、具体图表、顺序、时间范围与列数，并通过 JSON 备份和选择性导入。详见[聚合看板说明](docs/07-preset-dashboards.md)。
+
+本轮 Web 看板收尾更新整合中文指标说明、收藏与分组导航、编辑草稿恢复、整个看板统一历史时间、图表放大与采样统计、相邻时段对比及 CSV 导出。个人看板导入先预览内容与当前节点覆盖情况，再勾选保存为副本；保留未采集的图表配置。使用方式及验收范围见 [Web 看板更新说明](docs/09-dashboard-final-update.md)。
 
 本轮交付 **2.0.0 服务端与 Web 正式版本**。运维工作台位于内嵌 Web，原有 Flutter 客户端保持已有功能和独立版本。新增能力、升级与回退步骤、发布包和验证边界见 [2.0.0 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。
+
+本轮性能与发布收尾将进程快照、历史查询优化与最新看板整合，并补齐跨平台打包依赖和验收入口，详见 [最终整合更新](docs/10-final-integration.md)。
 
 ## 文档
 
@@ -39,7 +43,9 @@
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
 | [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
-| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 18 组常用聚合看板、分类搜索与指标匹配规则 |
+| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 54 个常用聚合样板、个人看板配置、中文说明与历史对比 |
+| [docs/09-dashboard-final-update.md](docs/09-dashboard-final-update.md) | Web 看板收尾更新、导入预览与选择、功能范围及验证边界 |
+| [docs/10-final-integration.md](docs/10-final-integration.md) | 性能与发布收尾、升级说明及本轮验证范围 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.0 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
@@ -273,7 +279,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | --- | --- |
 | 查询 | `/api/v1/data?context=` 同名维度跨图求和；`format=csv\|ssv\|jsonp`；`GET /api/v1/alarm_count`；`GET /api/v1/badge.svg` |
 | `/api/v2` | `contexts` / `nodes` / `data` / `badge.svg`（`api: 2` 包装） |
-| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed、writeback、TIME_WAIT、Docker exited |
+| 告警 | 剩余系统模板：CPU steal/guest、FD、blocked、forks、disk await、IO pressure、IPv4/IPv6 UDP/TCP/IP 错误、page faults、committed（仅 `vm.overcommit_memory=2`）、writeback、TIME_WAIT、Docker exited |
 
 ### 已实现能力（M14：Hub Cloud）
 
@@ -412,6 +418,16 @@ Web 标签页隐藏后暂停轮询与实时连接，回到前台补读数据；�
 
 服务端的慢采集器探测不再阻塞状态读取；图表目录共用一次异常检测快照，Context 只读取需要的边界信息；没有匹配订阅的实时样本跳过编码。TSDB 按机器字读取压缩数据，并合并磁盘块头读取，减少历史查询开销。性能对照、缓存上限和复现命令见[验收记录](docs/05-acceptance.md#2026-09-23-响应延迟与后台资源占用)。
 
+进程查询返回最近一次完整采集快照，慢系统调用不再阻塞查询；`result.collected_at` 是实际采集的 Unix 秒时间戳，首次成功前省略。采样取消时保留上一轮快照和 CPU/IO 基线，错误仍见采集器状态；单个进程漏采后的 CPU 百分比按两次有效样本间隔计算。
+
+进程表按 `apps.top`（默认200）保留候选行，再排序返回；分组过滤在复制前完成，总数仍包含全部匹配进程。固定10,000行输入、返回200行的本机查询微基准中，耗时中位数由3.45 ms降至0.25 ms，单次累计分配由803 KiB降至35 KiB；该数据不包含HTTP编码和系统采集，详见[测量范围与复现](docs/05-acceptance.md#2026-09-23-进程查询按返回上限选择)。
+
+历史查询只为命中的块索引和内存样本分配快照，短窗口不再按全部历史容量预留空间。固定1,000个块索引和1,000个内存桶、只读取最近3个桶的本机微基准中，快照分配由96 KiB降至144 B；这是快照阶段的累计分配，详见[历史窗口测量](docs/05-acceptance.md#2026-09-23-历史查询按时间窗口复制)。
+
+异常历史查询对时间有序的记录使用二分定位，减少 `anomaly-bit` 图表和告警查找时重复扫描整个缓存。迟到样本或时钟回拨时保留原来的扫描行为，乱序记录被覆盖后自动恢复；默认120条有序记录全部读取的微基准分配由1,984 B降至1,024 B。测量范围及写入成本见[异常历史验收](docs/05-acceptance.md#2026-09-23-异常历史范围查询)。
+
+`anomaly-bit` 图表直接使用相同的查询时间网格填入异常率，省去随后会被丢弃的普通指标读取、解码及聚合；普通指标查询保持原路径。固定8条序列、每条3,600个样本的请求处理基准中，耗时由12.1–15.9 ms降至2.58–2.85 ms，含JSON编码、不含网络，详见[异常图表请求验收](docs/05-acceptance.md#2026-09-23-异常图表跳过普通指标读取)。
+
 macOS 默认日志采集使用单个持续运行的 `log stream`，停止每秒启动 `log show`。最近日志表复用采集启动后收到的记录，最多2000条且字符串内容不超过2 MiB；断流明确报错、自动退避重连，受影响的采样区间保留缺口。指定 `after` / `before` 的历史查询仍读取系统日志；`collectors.modules.logs.follow: false` 可使用原有单次查询方式。
 
 macOS 进程采集每轮合并读取 CPU、RSS 和线程数，动态库和时基只初始化一次；系统指标默认只查询所需的3个 `sysctl` 键。Darwin/FreeBSD 网络指标共用一次 TCP/UDP 扫描，Unix 套接字另行采集；连接表先筛选、排序和截取，再读取返回行的进程详情。同一不可访问的 PID 每次请求只尝试一次，失败来源保留缺失值。以上优化不降低采样频率。
@@ -436,13 +452,13 @@ flutter run -d macos      # 或 linux / windows / <android-device> / <ios-device
 flutter analyze && flutter test
 ```
 
-Linux 桌面运行需要 GTK 3 和 **libEGL**（缺 `libEGL.so.1` 会立刻退出）：
+Linux 桌面运行需要 GTK 3、**libEGL** 和 **libsecret**（安全存储插件依赖）；缺少动态库会导致客户端无法启动：
 
 ```bash
 # Debian / Ubuntu
-sudo apt install libegl1 libgtk-3-0
+sudo apt install libegl1 libgtk-3-0 libsecret-1-0
 # Fedora
-sudo dnf install mesa-libEGL gtk3
+sudo dnf install mesa-libEGL gtk3 libsecret
 ```
 
 ### Android 服务端（M4 起步）
@@ -519,16 +535,19 @@ M0–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/�
 
 ## 双仓库推送
 
-每次完成开发和必要验证后，将本次改动提交到当前开发分支，并推送到 GitHub、GitLab 两边。推送开发分支不会自动合并到 `main`；GitHub 上的 Issue、PR、Release 安装包和工作流运行记录不会随 Git 推送复制到 GitLab。
+每次完成开发和必要验证后，将本次负责的改动提交并安全合入 `main`，再将 `main` 同步到 GitHub、GitLab 两边。开发分支或独立工作树中的改动应先完成整合和验证，不得夹带其他开发会话尚未完成的改动。用户当次明确指定其他分支或不推送时，以当次要求为准。GitHub 上的 Issue、PR、Release 安装包和工作流运行记录不会随 Git 推送复制到 GitLab。
 
 ### 首次配置
 
-远程配置保存在本地 Git 配置中，不随代码克隆。新克隆后先运行 `git remote -v` 检查；以下命令将 `origin` 设为从 GitHub 拉取、向两个仓库推送（会替换 `origin` 原有的推送地址，可重复执行）：
+远程配置保存在本地 Git 配置中，不随代码克隆。新克隆或独立配置的工作树先运行 `git remote -v` 检查；以下命令将 `origin` 设为从 GitHub 拉取，并只补充缺少的推送地址，保留已有有效配置：
 
 ```bash
 git remote set-url origin git@github.com:mengzhihua/monitor.git
-git config --local --replace-all remote.origin.pushurl git@github.com:mengzhihua/monitor.git
-git config --local --add remote.origin.pushurl https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git
+for target in git@github.com:mengzhihua/monitor.git https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git; do
+  if ! git config --local --get-all remote.origin.pushurl | grep -Fxq "$target"; then
+    git config --local --add remote.origin.pushurl "$target"
+  fi
+done
 git remote -v
 ```
 
@@ -536,25 +555,25 @@ GitHub 使用已获授权的 SSH 密钥；GitLab 使用 HTTPS，用户名为 `oa
 
 ### 日常提交与验证
 
-检查实际分支和改动，只暂存本次需要交付的文件，完成提交后推送：
+检查实际分支、工作区与远程配置，只暂存本次需要交付的文件。若在开发分支中完成工作，先提交本次改动，再在干净的 `main` 工作树中拉取最新代码并安全合并开发分支，解决冲突后重新完成必要验证。确认当前分支为 `main` 后推送：
 
 ```bash
 git status --short --branch
+git remote -v
 # git add <本次改动的文件>
 # git commit -m "说明本次改动"
-git push -u origin HEAD
+test "$(git branch --show-current)" = main && git push -u origin main
 ```
 
-该命令将当前分支推送到两个仓库，并设置上游；后续在该分支执行 `git push` 即可。默认不会推送其他分支或全部标签。推送后分别核对两边返回的提交 SHA 与 `git rev-parse HEAD` 一致：
+该命令将 `main` 推送到两个仓库，并设置上游；不会推送其他分支或全部标签。推送后分别核对两边 `main` 返回的提交 SHA 与本地 `main` 一致，两边均匹配才算双仓库同步完成：
 
 ```bash
-branch=$(git branch --show-current)
-git rev-parse HEAD
-git ls-remote git@github.com:mengzhihua/monitor.git "refs/heads/$branch"
-git ls-remote https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git "refs/heads/$branch"
+git rev-parse main
+git ls-remote git@github.com:mengzhihua/monitor.git refs/heads/main
+git ls-remote https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git refs/heads/main
 ```
 
-两边推送独立执行，一边成功不代表另一边成功。如果失败，先处理认证、网络或远程历史分歧，再重试 `git push`；已同步的一边会显示无需更新。不要使用强制推送覆盖远程提交。GitHub 工作流自动生成的标签只存在于其创建位置，需要同步标签时再显式拉取并推送对应标签。
+两边推送独立执行，一边成功不代表另一边成功。如果失败，保留已成功的一边，先处理认证、网络或远程历史分歧，再补推失败的一边并重新核对。不要使用强制推送覆盖远程提交。推送 `main` 会触发 GitHub 的自动 Release 流程；代码同步完成后仍需单独检查工作流和安装包发布状态。GitHub 工作流自动生成的标签只存在于其创建位置，需要同步标签时再显式拉取并推送对应标签。
 
 ## 开发验收
 

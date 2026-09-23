@@ -1,7 +1,7 @@
 name: Release
 
-# Every push to main is tagged automatically (patch bump of the latest v* tag,
-# e.g. v0.1.3 -> v0.1.4) and packaged into a GitHub Release. Pushing a tag by
+# Every push to main is tagged automatically (patch bump of the latest stable
+# v* tag, with stable VERSION as a minimum) and packaged into a GitHub Release. Pushing a tag by
 # hand (e.g. v0.2.0 for a minor/major bump) or running the workflow manually
 # against an existing tag builds that tag instead. Artifacts are unsigned unless
 # the optional signing secrets below are configured:
@@ -40,15 +40,37 @@ jobs:
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
+          stable_tag='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          version_lt() {
+            [[ "$1" != "$2" && "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
+          }
+          validate_tag() {
+            [[ "$1" =~ $stable_tag ]] || { echo "release tag must be stable vMAJOR.MINOR.PATCH: $1" >&2; return 1; }
+            # Keep all shipped platform build numbers representable. The Android
+            # versionCode ceiling is 2100000000; minor/patch use fixed places.
+            local major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+            (( ${#major} <= 4 && major <= 2100 && ${#minor} <= 2 && minor < 100 && ${#patch} <= 4 && patch < 10000 )) || { echo "version fields out of range: $1" >&2; return 1; }
+            build=$(( major * 1000000 + minor * 10000 + patch ))
+            (( build <= 2100000000 )) || { echo "build number out of range: $1" >&2; return 1; }
+          }
           if [[ -n "$INPUT_TAG" ]]; then
-            tag="$INPUT_TAG"; ref="$INPUT_TAG"
+            tag="$INPUT_TAG"; ref="refs/tags/$INPUT_TAG"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="$GITHUB_REF_NAME"; ref="$GITHUB_REF"
           else
-            # Push to main: bump the patch of the latest v* tag and tag this commit.
+            # Push to main: bump the latest stable patch, honoring a major/minor
+            # release requested by VERSION. Ignore development/prerelease tags.
             # (Tags pushed with GITHUB_TOKEN do not trigger another run.)
             ref="$GITHUB_SHA"
-            existing=$(git tag --points-at "$GITHUB_SHA" | grep -E '^v[0-9]' | sort -V | tail -1 || true)
+            floor=$(git show "$ref:VERSION" 2>/dev/null || true)
+            if [[ "v$floor" =~ $stable_tag ]]; then
+              floor="v$floor"
+              validate_tag "$floor"
+            else
+              floor=""
+            fi
+            existing=$(git tag --points-at "$GITHUB_SHA" | grep -E "$stable_tag" | sort -V | tail -1 || true)
+            if [[ -n "$existing" && -n "$floor" ]] && version_lt "$existing" "$floor"; then existing=""; fi
             if [[ -n "$existing" ]]; then
               tag="$existing"
             else
@@ -58,13 +80,13 @@ jobs:
               # atomic on the remote, so on rejection refetch tags and recompute.
               for attempt in 1 2 3 4 5; do
                 git fetch -q --tags --force origin
-                last=$(git tag -l 'v[0-9]*' | sort -V | tail -1)
+                last=$(git tag -l 'v[0-9]*' | grep -E "$stable_tag" | sort -V | tail -1 || true)
                 last=${last:-v0.0.0}
-                if [[ "$last" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-                  tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$(( ${BASH_REMATCH[3]} + 1 ))"
-                else
-                  echo "cannot parse latest tag '$last'" >&2; exit 1
-                fi
+                validate_tag "$last"
+                [[ "$last" =~ $stable_tag ]]
+                tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$(( ${BASH_REMATCH[3]} + 1 ))"
+                if [[ -n "$floor" ]] && version_lt "$tag" "$floor"; then tag="$floor"; fi
+                validate_tag "$tag"
                 git tag -a "$tag" "$GITHUB_SHA" -m "Release $tag"
                 if git push origin "refs/tags/$tag"; then break; fi
                 git tag -d "$tag"
@@ -73,14 +95,15 @@ jobs:
               done
             fi
           fi
+          validate_tag "$tag"
+          git rev-parse --verify "$ref^{commit}" >/dev/null
+          source_version=$(git show "$ref:VERSION" 2>/dev/null || true)
+          if [[ "v$source_version" =~ $stable_tag ]] && version_lt "$tag" "v$source_version"; then
+            echo "release tag $tag is older than source VERSION $source_version" >&2; exit 1
+          fi
           version="${tag#v}"
           # Monotonic build number: major*1e6 + minor*1e4 + patch (minor < 100,
           # patch < 10000). Must match scripts/build-android-server.sh.
-          build=1
-          if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-            (( ${BASH_REMATCH[2]} < 100 && ${BASH_REMATCH[3]} < 10000 )) || { echo "version fields out of range: $version" >&2; exit 1; }
-            build=$(( ${BASH_REMATCH[1]} * 1000000 + ${BASH_REMATCH[2]} * 10000 + ${BASH_REMATCH[3]} ))
-          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -97,6 +120,24 @@ jobs:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: stamp Dashboard release version
+        env:
+          RELEASE_VERSION: ${{ needs.meta.outputs.version }}
+        working-directory: web
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const version = process.env.RELEASE_VERSION;
+          for (const file of ['package.json', 'package-lock.json']) {
+            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+            data.version = version;
+            if (file === 'package-lock.json') {
+              if (!data.packages?.['']) throw new Error('package-lock.json has no root package');
+              data.packages[''].version = version;
+            }
+            fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+          }
+          JS
       - run: npm ci
         working-directory: web
       - run: npm run build
@@ -235,7 +276,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.meta.outputs.ref }}" }
-      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libegl1-mesa-dev
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libegl1-mesa-dev libsecret-1-dev
       - uses: subosito/flutter-action@v2
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable, cache: true }
       - run: flutter pub get
@@ -405,8 +446,8 @@ jobs:
             | Android | `monitor-app-*-android.apk` |
             | iOS (unsigned; sideload with your own signing) | `monitor-app-*-ios-unsigned.ipa` |
 
-            Linux desktop needs `libEGL.so.1` (otherwise `./monitor` exits immediately):
-            `sudo apt install libegl1 libgtk-3-0` (Debian/Ubuntu) or `sudo dnf install mesa-libEGL gtk3` (Fedora).
+            Linux desktop needs GTK 3, `libEGL.so.1`, and libsecret for secure storage:
+            `sudo apt install libegl1 libgtk-3-0 libsecret-1-0` (Debian/Ubuntu) or `sudo dnf install mesa-libEGL gtk3 libsecret` (Fedora).
 
             macOS/iOS/Windows packages are not code-signed or notarized yet; on macOS run
             `xattr -dr com.apple.quarantine <app>` after unpacking. `SHA256SUMS.txt` lists all checksums.

@@ -22,7 +22,12 @@ type smartctlCollector struct {
 	cfg     smartctlConfig
 	run     func(ctx context.Context, name string, args ...string) ([]byte, error)
 	devSeen map[string]bool
+	last    time.Time
 }
+
+// smartctlEvery keeps smartctl off the 1s tick. SMART attributes move slowly,
+// and each device is its own process.
+const smartctlEvery = 30 * time.Second
 
 func init() {
 	Register("smartctl", func() Collector { return &smartctlCollector{} })
@@ -61,6 +66,9 @@ func (s *smartctlCollector) Init(reg *registry.Registry) error {
 }
 
 func (s *smartctlCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&s.last, now, smartctlEvery) {
+		return nil
+	}
 	devs, err := s.scan(ctx)
 	if err != nil {
 		return err

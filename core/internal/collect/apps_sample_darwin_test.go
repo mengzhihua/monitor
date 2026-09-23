@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 	"unsafe"
@@ -144,6 +145,110 @@ func TestAppsDarwinFailedSamplePreservesCPUBaseline(t *testing.T) {
 	}
 	if math.Abs(a.cpuUser[st.user]-ownerCPU-5) > 1e-3 || math.Abs(a.cpuOSGroup[st.osGroup]-osGroupCPU-5) > 1e-3 {
 		t.Fatal("recovery did not add exactly the new CPU time to both owners")
+	}
+	if math.Abs(st.cpuPct-0.25) > 1e-3 {
+		t.Fatalf("CPU rate after a missing interval = %f, want 0.25%% over two seconds", st.cpuPct)
+	}
+}
+
+func TestAppsDarwinSlowCanceledSampleDoesNotBlockTable(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	a := &appsCollector{}
+	if err := a.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := a.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	before := a.processes(map[string]string{"sort": "pid"})
+	pid := int32(os.Getpid())
+	initial := *a.pids[pid]
+	started, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	original := appDarwinTaskAPI
+	reader := &appDarwinTaskReader{secondsPerTick: 1e-9, info: func(id, _ int32, _ uint64, out *process.ProcTaskInfo, size int32) int32 {
+		if id == pid {
+			close(started)
+			<-release
+		}
+		out.Total_user = uint64((initial.cpuMs + 500) * 1e6)
+		out.Resident_size = 999999
+		return size
+	}}
+	appDarwinTaskAPI = func() (*appDarwinTaskReader, error) { return reader, nil }
+	done := make(chan error, 1)
+	go func() { done <- a.Collect(ctx, reg, now.Add(time.Second)) }()
+	defer func() {
+		cancel()
+		close(release)
+		err := <-done
+		appDarwinTaskAPI = original
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("interrupted collection returned %v", err)
+		}
+		if !reflect.DeepEqual(initial, *a.pids[pid]) || a.last != now ||
+			!reflect.DeepEqual(before, a.processes(map[string]string{"sort": "pid"})) {
+			t.Error("interrupted OS sample changed a baseline or published snapshot")
+		}
+		for _, update := range a.samples[:cap(a.samples)] {
+			if update.state != nil || update.counters.name != "" {
+				t.Error("aborted pass retained a staging reference")
+				break
+			}
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("fixture sampler was not reached")
+	}
+	queried := make(chan Table, 1)
+	go func() { queried <- a.processes(map[string]string{"sort": "pid"}) }()
+	select {
+	case table := <-queried:
+		if !reflect.DeepEqual(table, before) {
+			t.Fatal("in-flight sample exposed a partial table")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("process query waited for the blocked OS sampler")
+	}
+}
+
+func TestAppsDarwinCanceledColdPassKeepsIdentityOnly(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	a := &appsCollector{}
+	if err := a.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	pid := int32(os.Getpid())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	original := appDarwinTaskAPI
+	defer func() { appDarwinTaskAPI = original }()
+	reader := &appDarwinTaskReader{secondsPerTick: 1e-9, info: func(id, _ int32, _ uint64, out *process.ProcTaskInfo, size int32) int32 {
+		if id == pid {
+			cancel()
+		}
+		out.Total_user = 1000000000
+		return size
+	}}
+	appDarwinTaskAPI = func() (*appDarwinTaskReader, error) { return reader, nil }
+	now := time.Now()
+	if err := a.Collect(ctx, reg, now); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cold cancellation: %v", err)
+	}
+	st := a.pids[pid]
+	if st == nil || st.name == "" || st.hasCPU || !st.seenAt.IsZero() || a.processes(nil).Total != 0 {
+		t.Fatal("canceled cold pass lost identity cache or published partial counters")
+	}
+	appDarwinTaskAPI = original
+	if err := a.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if a.pids[pid] != st || !st.hasCPU || a.processes(nil).Total == 0 {
+		t.Fatal("next pass did not reuse cached identity and publish its first complete snapshot")
 	}
 }
 

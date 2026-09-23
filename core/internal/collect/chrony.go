@@ -18,9 +18,12 @@ type chronyConfig struct {
 }
 
 type chronyCollector struct {
-	cfg chronyConfig
-	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	cfg  chronyConfig
+	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
+	last time.Time
 }
+
+const chronyEvery = 10 * time.Second
 
 func init() {
 	Register("chrony", func() Collector { return &chronyCollector{} })
@@ -80,6 +83,9 @@ type chronySample struct {
 }
 
 func (c *chronyCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&c.last, now, chronyEvery) {
+		return nil
+	}
 	s, err := c.stats(ctx)
 	if err != nil {
 		return err
