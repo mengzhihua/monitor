@@ -56,6 +56,8 @@ type dimML struct {
 	bits      []anomBit // fixed ring of recent 0/100 flags
 	bitI      int
 	bitN      int
+
+	bitDisorder int // adjacent timestamp descents in the logical bit ring
 }
 
 type mlCollector struct {
@@ -236,7 +238,27 @@ func (st *dimML) pushBit(b anomBit, cap int) {
 	}
 	if len(st.bits) != cap {
 		st.bits = make([]anomBit, cap)
-		st.bitI, st.bitN = 0, 0
+		st.bitI, st.bitN, st.bitDisorder = 0, 0, 0
+	}
+	// Remove the oldest adjacency when evicting a full ring. A descending
+	// pair disables binary search only until that pair has been overwritten.
+	if st.bitN == len(st.bits) && st.bitN > 1 {
+		next := st.bitI + 1
+		if next == len(st.bits) {
+			next = 0
+		}
+		if st.bits[st.bitI].ts > st.bits[next].ts {
+			st.bitDisorder--
+		}
+	}
+	if st.bitN > 0 && len(st.bits) > 1 {
+		previous := st.bitI - 1
+		if previous < 0 {
+			previous = len(st.bits) - 1
+		}
+		if st.bits[previous].ts > b.ts {
+			st.bitDisorder++
+		}
 	}
 	st.bits[st.bitI] = b
 	st.bitI++
@@ -476,10 +498,31 @@ func (m *mlCollector) RatesBetween(chart, dim string, after, before int64) []flo
 	if st.bitN == 0 || len(st.bits) == 0 {
 		return nil
 	}
+	if after > before {
+		return nil
+	}
 	start := 0
 	if st.bitN == len(st.bits) {
 		start = st.bitI
 	}
+	if st.bitDisorder == 0 {
+		first := sort.Search(st.bitN, func(i int) bool {
+			return st.bits[(start+i)%len(st.bits)].ts >= after
+		})
+		end := sort.Search(st.bitN, func(i int) bool {
+			return st.bits[(start+i)%len(st.bits)].ts > before
+		})
+		if first == end {
+			return nil
+		}
+		out := make([]float64, end-first)
+		for i := range out {
+			out[i] = st.bits[(start+first+i)%len(st.bits)].rate
+		}
+		return out
+	}
+	// Preserve insertion order and inclusive boundaries for late samples or
+	// a clock moving backwards; those timestamps cannot use binary search.
 	var out []float64
 	for k := 0; k < st.bitN; k++ {
 		b := st.bits[(start+k)%len(st.bits)]
