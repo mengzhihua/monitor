@@ -2,8 +2,8 @@
 import { computed, ref } from 'vue'
 import type { Chart } from '../api'
 import { groupOptions, type PersonalBoard } from '../dashboardConfig'
-const props = defineProps<{ initial: PersonalBoard; charts: Chart[] }>()
-const emit = defineEmits<{ save: [board: PersonalBoard]; cancel: [] }>()
+const props = defineProps<{ initial: PersonalBoard; charts: Chart[]; error?: string }>()
+const emit = defineEmits<{ save: [board: PersonalBoard]; cancel: []; 'save-copy': [board: PersonalBoard] }>()
 const draft = ref<PersonalBoard>(JSON.parse(JSON.stringify(props.initial)))
 const groupSearch = ref('')
 const chartSearch = ref('')
@@ -37,7 +37,8 @@ function move(list: string[], index: number, delta: number) {
       <div class="choices"><label v-for="c in matchingCharts.slice(0,50)" :key="c.id" class="check"><input v-model="draft.chartIds" type="checkbox" :value="c.id" />{{ c.id }} · {{ c.title }}</label></div>
       <ol aria-label="已选图表顺序"><li v-for="(id,i) in draft.chartIds" :key="id"><span>{{ id }}{{ charts.some(c => c.id === id) ? '' : '（当前节点未采集）' }}</span><button type="button" :disabled="i === 0" :aria-label="`上移图表 ${id}`" @click="move(draft.chartIds, i, -1)">↑</button><button type="button" :disabled="i === draft.chartIds.length-1" :aria-label="`下移图表 ${id}`" @click="move(draft.chartIds, i, 1)">↓</button><button type="button" :aria-label="`移除图表 ${id}`" @click="draft.chartIds.splice(i,1)">移除</button></li></ol>
     </fieldset>
-    <div class="actions"><button type="submit">保存看板</button><button type="button" @click="emit('cancel')">取消编辑</button></div>
+    <p v-if="error" role="alert" class="error">{{ error }}</p>
+    <div class="actions"><button type="submit">保存看板</button><button type="button" @click="emit('save-copy', draft)">另存为新看板</button><button type="button" @click="emit('cancel')">取消编辑</button></div>
   </form>
 </template>
 <style scoped>
@@ -50,5 +51,6 @@ button { cursor:pointer; } button:disabled { opacity:.35; cursor:default; } :foc
 .check { flex-direction:row; align-items:center; overflow-wrap:anywhere; } input[type=checkbox] { flex-shrink:0; }
 fieldset { min-width:0; border:1px solid #334155; border-radius:8px; margin:16px 0; } fieldset > input { box-sizing:border-box; width:100%; }
 .choices { max-height:180px; overflow:auto; } ol { padding-left:22px; } li { margin:8px 0; overflow-wrap:anywhere; } li span { margin-right:8px; } li button { margin:2px; }
+.error { color:#fda4af; overflow-wrap:anywhere; }
 .actions { display:flex; gap:12px; flex-wrap:wrap; }
 </style>
