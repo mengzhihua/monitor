@@ -217,7 +217,8 @@ func (s *Store) Append(id string, ts int64, v float64) {
 		t  *tier
 		sr *tierSeries
 	}
-	var pending []pendingTier
+	var pendingBuf [4]pendingTier
+	pending := pendingBuf[:0]
 	for _, t := range s.tiers {
 		tsr := t.getOrCreate(id)
 		if t.append(tsr, ts, v) {
@@ -295,6 +296,107 @@ func (s *Store) Query(id string, after, before int64) ([]Point, error) {
 	}
 	out = append(out, active...)
 	return out, nil
+}
+
+// QueryAggregated folds one series into the same grid as AggregateBuckets.
+// Tier 0 reads each raw block straight into the grid. Higher tiers decode
+// only the rollup columns that group function needs, in the same block-then
+// memory order as QueryTier.
+func (s *Store) QueryAggregated(id string, tier int, after, before int64, points int, fn GroupFunc) (Result, error) {
+	res := grid(after, before, points)
+	f := newFold(res, fn)
+	var err error
+	if tier == 0 {
+		err = s.foldRaw(id, after, before, f)
+	} else {
+		err = s.foldTier(id, tier, after, before, f)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	res.Values = [][]float64{f.finish()}
+	return res, nil
+}
+
+func (s *Store) foldTier(id string, tier int, after, before int64, f *fold) error {
+	if tier < 1 || tier > len(s.tiers) {
+		return fmt.Errorf("tier %d does not exist", tier)
+	}
+	t := s.tiers[tier-1]
+	blocks, mem, lo, ok := t.snapshot(id, after, before)
+	if !ok {
+		return nil
+	}
+	every := t.spec.Every
+	for _, b := range blocks {
+		meta, data, err := readBlockData(b.path)
+		if err != nil {
+			continue
+		}
+		err = foldBucketBlock(data, meta.count, lo, before, every, f)
+		putBuf(data)
+		if err != nil {
+			continue
+		}
+	}
+	for _, b := range mem {
+		f.addBucket(b, every)
+	}
+	return nil
+}
+
+func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
+	if s.opt.Retention > 0 {
+		after = max(after, time.Now().Add(-s.opt.Retention).Unix())
+	}
+	s.mu.RLock()
+	sr := s.series[id]
+	s.mu.RUnlock()
+	if sr == nil {
+		return nil
+	}
+	sr.mu.Lock()
+	blocks := make([]blockMeta, 0, len(sr.blocks))
+	for _, b := range sr.blocks {
+		if b.end >= after && b.start <= before {
+			blocks = append(blocks, b)
+		}
+	}
+	lo := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] >= after })
+	hi := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] > before })
+	if hi > len(sr.vals) {
+		hi = len(sr.vals)
+	}
+	if lo > hi {
+		lo = hi
+	}
+	activeTS := append([]int64(nil), sr.ts[lo:hi]...)
+	activeVals := append([]float64(nil), sr.vals[lo:hi]...)
+	sr.mu.Unlock()
+	for _, b := range blocks {
+		meta, data, err := readBlockData(b.path)
+		if err != nil {
+			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
+			continue
+		}
+		f.save()
+		err = decodeBlockEach(data, meta.count, func(t int64, v float64) {
+			if t >= after && t <= before {
+				f.addPoint(t, v)
+			}
+		})
+		putBuf(data)
+		if err != nil {
+			f.restore()
+			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
+		}
+	}
+	for i, t := range activeTS {
+		if t >= after && t <= before && i < len(activeVals) {
+			f.addPoint(t, activeVals[i])
+		}
+	}
+	return nil
 }
 
 // Bounds returns the oldest and newest timestamp stored for a series.
@@ -624,7 +726,34 @@ func readBlock(path string) ([]int64, []float64, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	defer putBuf(data)
 	return decodeBlock(data, meta.count)
+}
+
+// blockBytes reuses file payloads across queries. Buffers larger than 1MiB
+// are left for GC so one oversized block does not stay pinned.
+var blockBytes sync.Pool
+
+const pooledBlockBytes = 1 << 20
+
+func getBuf(n int) []byte {
+	if n == 0 {
+		return []byte{}
+	}
+	if v := blockBytes.Get(); v != nil {
+		b := v.([]byte)
+		if cap(b) >= n {
+			return b[:n]
+		}
+	}
+	return make([]byte, n)
+}
+
+func putBuf(b []byte) {
+	if cap(b) == 0 || cap(b) > pooledBlockBytes {
+		return
+	}
+	blockBytes.Put(b[:0])
 }
 
 func readBlockData(path string) (blockMeta, []byte, error) {
@@ -637,8 +766,9 @@ func readBlockData(path string) (blockMeta, []byte, error) {
 	if err != nil {
 		return blockMeta{}, nil, err
 	}
-	data := make([]byte, dataLen)
+	data := getBuf(int(dataLen))
 	if _, err := io.ReadFull(f, data); err != nil {
+		putBuf(data)
 		return blockMeta{}, nil, err
 	}
 	return meta, data, nil

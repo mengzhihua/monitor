@@ -74,17 +74,20 @@ func (w *walLog) appendLocked(id string, ts int64, v float64) error {
 	if len(id) == 0 || len(id) > walMaxIDLen {
 		return fmt.Errorf("wal: bad series id")
 	}
-	var hdr [2 + 8 + 8]byte
-	binary.LittleEndian.PutUint16(hdr[0:2], uint16(len(id)))
-	binary.LittleEndian.PutUint64(hdr[2:10], uint64(ts))
-	binary.LittleEndian.PutUint64(hdr[10:18], math.Float64bits(v))
-	if _, err := w.bw.Write(hdr[:2]); err != nil {
-		return err
+	n := 2 + len(id) + 16
+	var stack [128]byte
+	buf := stack[:0]
+	if n > len(stack) {
+		buf = make([]byte, n)
+	} else {
+		buf = stack[:n]
 	}
-	if _, err := w.bw.WriteString(id); err != nil {
-		return err
-	}
-	_, err := w.bw.Write(hdr[2:])
+	binary.LittleEndian.PutUint16(buf[0:2], uint16(len(id)))
+	copy(buf[2:], id)
+	off := 2 + len(id)
+	binary.LittleEndian.PutUint64(buf[off:off+8], uint64(ts))
+	binary.LittleEndian.PutUint64(buf[off+8:off+16], math.Float64bits(v))
+	_, err := w.bw.Write(buf)
 	return err
 }
 

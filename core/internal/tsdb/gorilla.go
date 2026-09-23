@@ -27,8 +27,24 @@ func (w *bitWriter) writeBit(b bool) {
 }
 
 func (w *bitWriter) writeBits(v uint64, n uint) {
-	for i := int(n) - 1; i >= 0; i-- {
-		w.writeBit((v>>uint(i))&1 == 1)
+	for n > 0 {
+		if w.nbits == 0 || w.nbits == 8 {
+			w.buf = append(w.buf, 0)
+			w.nbits = 0
+		}
+		room := 8 - w.nbits
+		take := room
+		if take > n {
+			take = n
+		}
+		shift := n - take
+		chunk := v >> shift
+		if take < 64 {
+			chunk &= (1 << take) - 1
+		}
+		w.buf[len(w.buf)-1] |= byte(chunk) << (room - take)
+		w.nbits += take
+		n = shift
 	}
 }
 
@@ -52,15 +68,20 @@ func (r *bitReader) readBit() (bool, error) {
 
 func (r *bitReader) readBits(n uint) (uint64, error) {
 	var v uint64
-	for i := uint(0); i < n; i++ {
-		b, err := r.readBit()
-		if err != nil {
-			return 0, err
+	for n > 0 {
+		if r.pos>>3 >= uint(len(r.buf)) {
+			return 0, errEOF
 		}
-		v <<= 1
-		if b {
-			v |= 1
+		room := 8 - (r.pos & 7)
+		take := room
+		if take > n {
+			take = n
 		}
+		shift := room - take
+		chunk := uint64(r.buf[r.pos>>3]>>shift) & ((1 << take) - 1)
+		v = (v << take) | chunk
+		r.pos += take
+		n -= take
 	}
 	return v, nil
 }
@@ -132,19 +153,36 @@ func decodeBlock(buf []byte, n int) ([]int64, []float64, error) {
 	if n == 0 || len(buf) == 0 {
 		return nil, nil, nil
 	}
-	r := &bitReader{buf: buf}
 	ts := make([]int64, 0, n)
 	vals := make([]float64, 0, n)
-	t0, err := r.readBits(64)
+	err := decodeBlockEach(buf, n, func(t int64, v float64) {
+		ts = append(ts, t)
+		vals = append(vals, v)
+	})
 	if err != nil {
 		return nil, nil, err
+	}
+	return ts, vals, nil
+}
+
+// decodeBlockEach visits samples in timestamp order. An empty buffer yields
+// no samples and no error, matching decodeBlock. A truncated stream returns
+// an error after any samples already visited, so callers that must keep the
+// block atomic need to roll back.
+func decodeBlockEach(buf []byte, n int, fn func(ts int64, v float64)) error {
+	if n == 0 || len(buf) == 0 {
+		return nil
+	}
+	r := &bitReader{buf: buf}
+	t0, err := r.readBits(64)
+	if err != nil {
+		return err
 	}
 	v0, err := r.readBits(64)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	ts = append(ts, int64(t0))
-	vals = append(vals, math.Float64frombits(v0))
+	fn(int64(t0), math.Float64frombits(v0))
 	prevTS, prevVal := int64(t0), v0
 	var prevDelta int64
 	var lead, trail uint8
@@ -152,14 +190,14 @@ func decodeBlock(buf []byte, n int) ([]int64, []float64, error) {
 		var dod int64
 		b, err := r.readBit()
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		if b {
 			b2, _ := r.readBit()
 			if !b2 {
 				v, err := r.readBits(7)
 				if err != nil {
-					return nil, nil, err
+					return err
 				}
 				dod = int64(v) - 63
 			} else {
@@ -167,7 +205,7 @@ func decodeBlock(buf []byte, n int) ([]int64, []float64, error) {
 				if !b3 {
 					v, err := r.readBits(9)
 					if err != nil {
-						return nil, nil, err
+						return err
 					}
 					dod = int64(v) - 255
 				} else {
@@ -175,13 +213,13 @@ func decodeBlock(buf []byte, n int) ([]int64, []float64, error) {
 					if !b4 {
 						v, err := r.readBits(12)
 						if err != nil {
-							return nil, nil, err
+							return err
 						}
 						dod = int64(v) - 2047
 					} else {
 						v, err := r.readBits(64)
 						if err != nil {
-							return nil, nil, err
+							return err
 						}
 						dod = int64(v)
 					}
@@ -190,28 +228,27 @@ func decodeBlock(buf []byte, n int) ([]int64, []float64, error) {
 		}
 		prevDelta += dod
 		prevTS += prevDelta
-		ts = append(ts, prevTS)
 
 		b, err = r.readBit()
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		if !b {
-			vals = append(vals, math.Float64frombits(prevVal))
+			fn(prevTS, math.Float64frombits(prevVal))
 			continue
 		}
 		ctrl, err := r.readBit()
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		if ctrl {
 			l, err := r.readBits(5)
 			if err != nil {
-				return nil, nil, err
+				return err
 			}
 			s, err := r.readBits(6)
 			if err != nil {
-				return nil, nil, err
+				return err
 			}
 			lead = uint8(l)
 			sig := uint8(s)
@@ -222,10 +259,10 @@ func decodeBlock(buf []byte, n int) ([]int64, []float64, error) {
 		}
 		x, err := r.readBits(uint(64 - lead - trail))
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		prevVal ^= x << trail
-		vals = append(vals, math.Float64frombits(prevVal))
+		fn(prevTS, math.Float64frombits(prevVal))
 	}
-	return ts, vals, nil
+	return nil
 }
