@@ -112,50 +112,94 @@ func (s *Store) QueryHistory(q HistoryQuery) (HistoryPage, error) {
 	if (q.Snapshot != "" && q.Snapshot != s.historyVersion) || (q.Cursor != "" && cursor.Snapshot != s.historyVersion) {
 		return HistoryPage{}, ErrHistoryChanged
 	}
-	out := HistoryPage{Records: []HistoryRecord{}, Stored: len(s.state.Records), Capacity: 5000, ActionsPerRecord: 20, Snapshot: s.historyVersion, Filter: q.HistoryFilter}
-	matches := make([]Record, 0)
-	for _, r := range s.state.Records {
-		at := updatedAt(r)
-		if (q.Node != "" && r.Problem.Node != q.Node) || (q.Assignee != "" && r.Assignee != q.Assignee) ||
-			(q.Status != "" && r.Status != q.Status) || (q.Severity != "" && r.Problem.Severity != q.Severity) ||
-			(q.Acknowledged != "" && r.Acknowledged != (q.Acknowledged == "true")) || at < q.From || (q.Until > 0 && at > q.Until) {
-			continue
+	ordered := s.orderedHistoryLocked()
+	capacity := q.Limit
+	if q.All {
+		capacity = len(ordered)
+	}
+	out := HistoryPage{Records: make([]HistoryRecord, 0, min(capacity, len(ordered))), Stored: len(ordered), Capacity: 5000, ActionsPerRecord: 20, Snapshot: s.historyVersion, Filter: q.HistoryFilter}
+	if q.HistoryFilter == (HistoryFilter{}) {
+		// From defaults to zero, so retain the existing exclusion of negative
+		// legacy timestamps. They form a suffix of the shared descending order.
+		ordered = ordered[:sort.Search(len(ordered), func(i int) bool { return updatedAt(ordered[i]) < 0 })]
+		out.Total = len(ordered)
+		if offset > out.Total {
+			return HistoryPage{}, ErrInvalidQuery
 		}
-		actorMatches := q.Actor == ""
-		texts := []string{r.ID, r.Problem.Node, r.Problem.Hostname, r.Problem.Chart, r.Problem.Name, r.Assignee}
-		for _, h := range r.History {
-			actorMatches = actorMatches || h.Actor == q.Actor
-			if q.Search != "" {
-				texts = append(texts, h.Actor, h.Note, h.Assignee, h.PreviousAssignee)
+		end := min(offset+capacity, out.Total)
+		for _, r := range ordered[offset:end] {
+			out.Records = append(out.Records, copyHistoryRecord(r))
+		}
+	} else {
+		// The order is shared, but matches are not cached per filter. Count all
+		// matches for pagination/export while copying only the requested page.
+		for _, r := range ordered {
+			if !matchesHistory(r, q.HistoryFilter) {
+				continue
+			}
+			out.Total++
+			if out.Total > offset && (q.All || len(out.Records) < q.Limit) {
+				out.Records = append(out.Records, copyHistoryRecord(r))
 			}
 		}
-		if !actorMatches || (q.Search != "" && !strings.Contains(strings.ToLower(strings.Join(texts, "\n")), q.Search)) {
-			continue
+		if offset > out.Total {
+			return HistoryPage{}, ErrInvalidQuery
 		}
-		matches = append(matches, r)
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		a, b := updatedAt(matches[i]), updatedAt(matches[j])
-		if a != b {
-			return a > b
-		}
-		return matches[i].ID < matches[j].ID
-	})
-	out.Total = len(matches)
-	if offset > out.Total {
-		return HistoryPage{}, ErrInvalidQuery
-	}
-	end := min(offset+q.Limit, out.Total)
-	if q.All {
-		end = out.Total
-	}
-	for _, r := range matches[offset:end] {
-		r.History = append([]Action{}, r.History...)
-		out.Records = append(out.Records, HistoryRecord{Record: r, UpdatedAt: updatedAt(r), HistoryTruncated: r.Revision > uint64(len(r.History))})
-	}
+	end := offset + len(out.Records)
 	if end < out.Total {
 		b, _ := json.Marshal(historyCursor{Version: 1, Snapshot: out.Snapshot, Filter: filterID, Offset: end})
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return out, nil
+}
+
+// orderedHistoryLocked borrows records from the current immutable state. Both
+// overview and history reads reuse the same bounded order. Callers hold s.mu
+// and must copy action slices before returning records to callers.
+func (s *Store) orderedHistoryLocked() []Record {
+	if s.historyOrder == nil {
+		s.historyOrder = make([]Record, 0, len(s.state.Records))
+		for _, r := range s.state.Records {
+			s.historyOrder = append(s.historyOrder, r)
+		}
+		sort.Slice(s.historyOrder, func(i, j int) bool {
+			a, b := s.historyOrder[i], s.historyOrder[j]
+			if updatedAt(a) != updatedAt(b) {
+				return updatedAt(a) > updatedAt(b)
+			}
+			return a.ID < b.ID
+		})
+	}
+	return s.historyOrder
+}
+
+func copyHistoryRecord(r Record) HistoryRecord {
+	r.History = append([]Action{}, r.History...)
+	return HistoryRecord{Record: r, UpdatedAt: updatedAt(r), HistoryTruncated: r.Revision > uint64(len(r.History))}
+}
+
+func matchesHistory(r Record, q HistoryFilter) bool {
+	at := updatedAt(r)
+	if (q.Node != "" && r.Problem.Node != q.Node) || (q.Assignee != "" && r.Assignee != q.Assignee) ||
+		(q.Status != "" && r.Status != q.Status) || (q.Severity != "" && r.Problem.Severity != q.Severity) ||
+		(q.Acknowledged != "" && r.Acknowledged != (q.Acknowledged == "true")) || at < q.From || (q.Until > 0 && at > q.Until) {
+		return false
+	}
+	actorMatches := q.Actor == ""
+	var texts []string
+	if q.Search != "" {
+		texts = []string{r.ID, r.Problem.Node, r.Problem.Hostname, r.Problem.Chart, r.Problem.Name, r.Assignee}
+	}
+	if q.Actor != "" || q.Search != "" {
+		for _, h := range r.History {
+			actorMatches = actorMatches || h.Actor == q.Actor
+			if q.Search != "" {
+				texts = append(texts, h.Actor, h.Note, h.Assignee, h.PreviousAssignee)
+			} else if actorMatches {
+				break
+			}
+		}
+	}
+	return actorMatches && (q.Search == "" || strings.Contains(strings.ToLower(strings.Join(texts, "\n")), q.Search))
 }

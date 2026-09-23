@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -104,6 +103,7 @@ type Store struct {
 	path           string
 	state          state
 	historyVersion string
+	historyOrder   []Record // read-only under mu; invalidated after successful writes
 }
 
 // Open fails closed on corrupt state; it never silently discards operator notes.
@@ -280,6 +280,7 @@ func (s *Store) ApplyBatch(items []BatchItem, actor string, change Change) ([]Re
 	}
 	s.state = next
 	s.historyVersion = ""
+	s.historyOrder = nil
 	return records, nil
 }
 
@@ -287,27 +288,9 @@ func (s *Store) ApplyBatch(items []BatchItem, actor string, change Change) ([]Re
 func (s *Store) Recent() []Record {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]Record, 0, len(s.state.Records))
-	for _, r := range s.state.Records {
-		out = append(out, r)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		var at, bt int64
-		if len(a.History) > 0 {
-			at = a.History[len(a.History)-1].At
-		}
-		if len(b.History) > 0 {
-			bt = b.History[len(b.History)-1].At
-		}
-		if at != bt {
-			return at > bt
-		}
-		return a.ID < b.ID
-	})
-	if len(out) > 100 {
-		out = out[:100]
-	}
+	ordered := s.orderedHistoryLocked()
+	out := make([]Record, min(100, len(ordered)))
+	copy(out, ordered)
 	for i := range out {
 		out[i].History = append([]Action{}, out[i].History...)
 	}
