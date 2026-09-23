@@ -21,7 +21,7 @@ type logsConfig struct {
 	Files    []string `yaml:"files"`
 	Channels []string `yaml:"channels"` // Windows Event Log / ETW channel names
 	Top      int      `yaml:"top"`      // max rows returned by the logs function
-	Follow   *bool    `yaml:"follow"`   // journalctl -f; nil or true follows, false is one-shot only
+	Follow   *bool    `yaml:"follow"`   // journal / unified-log stream; false is one-shot only
 }
 
 type logsCollector struct {
@@ -29,6 +29,7 @@ type logsCollector struct {
 	lastUnix int64
 	seenFile map[string]int64 // path → size
 
+	unified    *unifiedFollower
 	followOn   bool
 	cancel     context.CancelFunc
 	mu         sync.Mutex
@@ -130,7 +131,17 @@ func defaultLogFiles() []string {
 func (l *logsCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
 	sev := map[string]float64{"emerg": 0, "alert": 0, "crit": 0, "err": 0, "warning": 0, "notice": 0, "info": 0, "debug": 0}
 	var n float64
-	if l.followOn {
+	if l.unified != nil {
+		var counts map[string]float64
+		var err error
+		n, counts, err = l.unified.counters()
+		if err != nil {
+			return err
+		}
+		for k, v := range counts {
+			sev[k] = v
+		}
+	} else if l.followOn {
 		l.mu.Lock()
 		n = l.pending
 		for k, v := range l.pendingSev {
@@ -157,6 +168,9 @@ func (l *logsCollector) Collect(_ context.Context, reg *registry.Registry, now t
 }
 
 func (l *logsCollector) Stop() {
+	if l.unified != nil {
+		l.unified.stop()
+	}
 	if l.cancel != nil {
 		l.cancel()
 	}
@@ -194,7 +208,16 @@ func (l *logsCollector) Functions() []Function {
 			if q.Limit > 1000 {
 				q.Limit = 1000
 			}
-			rows := l.query(q)
+			var rows []LogRow
+			if l.useUnifiedBuffer(q) {
+				var err error
+				rows, err = l.unified.recent(q)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				rows = l.query(q)
+			}
 			tab := Table{Columns: []string{"time", "priority", "unit", "pid", "message", "cursor"}, Total: len(rows), Rows: make([]any, len(rows))}
 			for i, r := range rows {
 				tab.Rows[i] = r

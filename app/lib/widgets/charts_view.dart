@@ -536,7 +536,10 @@ class _ChartCardState extends State<ChartCard> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      RepaintBoundary(child: _buildCard(context));
+
+  Widget _buildCard(BuildContext context) {
     final c = widget.chart;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -641,7 +644,7 @@ class _ChartCardState extends State<ChartCard> {
           barWidth: 1.5,
           isCurved: false,
           dotData: FlDotData(
-            show: true,
+            show: isolated.isNotEmpty,
             checkToShowDot: (spot, _) => isolated.contains(spot.x),
             getDotPainter: (spot, percent, bar, index) =>
                 FlDotCirclePainter(radius: 2.5, color: color, strokeWidth: 0),

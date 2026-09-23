@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Measure an isolated monitord on macOS/Linux with a fixed local HTTP workload.
 
-Build the Web assets and binary first. Results measure only the daemon process,
-not helper processes, browsers, or system-wide load. 100% CPU is one CPU core.
+Build the Web assets and binary first. By default results measure only the
+daemon. --include-children adds whole-run CPU accounting from wait4 and sampled
+direct-child RSS/CPU/launch lower bounds. 100% CPU is one CPU core.
 """
 
 import argparse
 import concurrent.futures
+import hashlib
 import http.client
 import json
 import math
@@ -51,7 +53,39 @@ def cpu_seconds(value):
     return total + (int(days) * 86400 if separator else 0)
 
 
-def sample(pid):
+def sample(pid, include_children=False):
+    if include_children:
+        # A single process table snapshot avoids launching ps once per child.
+        # comm excludes command arguments, which might contain credentials.
+        output = subprocess.check_output(
+            ["ps", "-A", "-o", "pid=,ppid=,time=,rss=,comm="],
+            text=True, env=dict(os.environ, LC_ALL="C"),
+        )
+        parent, children = None, []
+        for line in output.splitlines():
+            fields = line.strip().split(None, 4)
+            if len(fields) != 5:
+                continue
+            child_pid, parent_pid = int(fields[0]), int(fields[1])
+            if child_pid != pid and parent_pid != pid:
+                continue
+            point = {
+                "pid": child_pid, "cpu_seconds": cpu_seconds(fields[2]),
+                "rss_mib": int(fields[3]) / 1024,
+                "command": Path(fields[4]).name,
+            }
+            if child_pid == pid:
+                parent = point
+            else:
+                children.append(point)
+        if parent is None:
+            raise RuntimeError("daemon disappeared during process sampling")
+        return {
+            "elapsed_seconds": time.monotonic(),
+            "cpu_seconds": parent["cpu_seconds"], "rss_mib": parent["rss_mib"],
+            "children": children,
+            "daemon_and_direct_children_rss_mib": parent["rss_mib"] + sum(child["rss_mib"] for child in children),
+        }
     # BSD and procps ps both report cumulative CPU time and RSS in KiB here.
     output = subprocess.check_output(
         ["ps", "-p", str(pid), "-o", "time=,rss="],
@@ -64,6 +98,77 @@ def sample(pid):
     }
 
 
+class BenchmarkProcess:
+    """Own one child and reap it exclusively through wait4, never Popen.wait.
+
+    wait4 preserves CPU from waited descendants, including short-lived commands
+    that can disappear between ps snapshots. It reports the complete lifetime;
+    it cannot isolate just the steady-state measurement interval.
+    """
+
+    def __init__(self, command, **kwargs):
+        self.started = time.monotonic()
+        self._process = subprocess.Popen(command, **kwargs)
+        self.pid = self._process.pid
+        self.returncode = None
+        self.usage = None
+        self.usage_error = None
+        self.wall_seconds = None
+        self._ended = False
+
+    def poll(self):
+        if not self._ended:
+            try:
+                pid, status, usage = os.wait4(self.pid, os.WNOHANG)
+            except ChildProcessError:
+                # Do not invent zero CPU if a signal handler or other code
+                # unexpectedly reaped the child before this owner could do so.
+                self.usage_error = "child was already reaped; wait4 resource usage unavailable"
+                self._ended = True
+                self.returncode = self._process.returncode
+                self._process.returncode = self.returncode if self.returncode is not None else 0
+            else:
+                if pid:
+                    self._ended = True
+                    self.returncode = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -os.WTERMSIG(status)
+                    self.usage = usage
+                    # Prevent Popen's destructor from trying to reap the PID.
+                    self._process.returncode = self.returncode
+            if self._ended:
+                self.wall_seconds = time.monotonic() - self.started
+        return self.returncode if self.returncode is not None else (-1 if self._ended else None)
+
+    def send_signal(self, value):
+        if self.poll() is None:
+            try:
+                os.kill(self.pid, value)
+            except ProcessLookupError:
+                self.poll()
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired("benchmark daemon", timeout)
+            time.sleep(.02)
+        return self.returncode
+
+    def kill(self):
+        self.send_signal(signal.SIGKILL)
+
+    def lifetime_usage(self):
+        scope = "whole lifetime including startup, warmup, measurement and shutdown; daemon plus descendants reaped by their parents"
+        if self.usage is None:
+            return {"available": False, "scope": scope, "reason": self.usage_error or "daemon has not been reaped"}
+        cpu = self.usage.ru_utime + self.usage.ru_stime
+        return {
+            "available": True, "scope": scope, "wall_seconds": self.wall_seconds,
+            "user_cpu_seconds": self.usage.ru_utime, "system_cpu_seconds": self.usage.ru_stime,
+            "cpu_seconds": cpu, "cpu_one_core_percent": 100 * cpu / self.wall_seconds,
+            "not_steady_state": True,
+        }
+
+
 def stop(process):
     if process.poll() is None:
         process.send_signal(signal.SIGINT)
@@ -74,7 +179,42 @@ def stop(process):
             process.wait()
 
 
-def measure(process, port, token, duration):
+def child_summary(samples, elapsed, daemon_cpu):
+    # Unique observed PIDs are only a launch lower bound. Short-lived commands
+    # may start and finish between snapshots; PID reuse can also undercount.
+    initial = {child["pid"]: child["cpu_seconds"] for child in samples[0]["children"]}
+    observed = {}
+    launches = {}
+    for point in samples:
+        for child in point["children"]:
+            pid = child["pid"]
+            if pid not in observed:
+                observed[pid] = dict(child)
+                if pid not in initial:
+                    command = child["command"]
+                    launches[command] = launches.get(command, 0) + 1
+            else:
+                observed[pid]["cpu_seconds"] = max(observed[pid]["cpu_seconds"], child["cpu_seconds"])
+    cpu = sum(max(0, child["cpu_seconds"] - initial.get(pid, 0)) for pid, child in observed.items())
+    rss = [point["daemon_and_direct_children_rss_mib"] for point in samples]
+    return {
+        "scope": "daemon and direct children only, during measurement",
+        "cpu_and_launches_are_observed_lower_bounds": True,
+        "limitations": "sampling can miss short-lived commands, final CPU time and RSS peaks; RSS mean/p95 are point-sampled statistics, not continuous measurements; PID reuse can undercount; summed RSS double-counts shared pages",
+        "direct_children_present_at_start": len(initial),
+        "distinct_direct_child_pids_observed": len(observed),
+        "direct_child_launches_observed_lower_bound": sum(launches.values()),
+        "launches_by_command_lower_bound": dict(sorted(launches.items())),
+        "direct_child_cpu_seconds_observed_lower_bound": cpu,
+        "daemon_and_direct_children_cpu_one_core_percent_lower_bound": 100 * (daemon_cpu + cpu) / elapsed,
+        "daemon_and_direct_children_rss_mib_sampled": {
+            "mean": statistics.mean(rss), "p95": percentile(rss, .95),
+            "max_observed_lower_bound": max(rss), "start": rss[0], "end": rss[-1],
+        },
+    }
+
+
+def measure(process, port, token, duration, include_children=False, child_interval=.2):
     headers = {"Authorization": "Bearer " + token}
     barrier = threading.Barrier(len(WORKLOAD) + 1)
     cancelled = threading.Event()
@@ -120,15 +260,16 @@ def measure(process, port, token, duration):
             "mean_response_bytes": statistics.mean(sizes) if sizes else None,
         }
 
-    first = sample(process.pid)
+    first = sample(process.pid, include_children)
+    interval = child_interval if include_children else 1
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(WORKLOAD)) as pool:
         try:
             workers = [pool.submit(worker, *work) for work in WORKLOAD]
             barrier.wait()
             samples = [first]
             while time.monotonic() - first["elapsed_seconds"] < duration:
-                time.sleep(min(1, max(0, duration - (time.monotonic() - first["elapsed_seconds"]))))
-                samples.append(sample(process.pid))
+                time.sleep(min(interval, max(0, duration - (time.monotonic() - first["elapsed_seconds"]))))
+                samples.append(sample(process.pid, include_children))
             endpoints = dict(worker.result() for worker in workers)
         finally:
             cancelled.set()
@@ -137,7 +278,7 @@ def measure(process, port, token, duration):
     elapsed = last["elapsed_seconds"] - first["elapsed_seconds"]
     cpu = last["cpu_seconds"] - first["cpu_seconds"]
     rss = [point["rss_mib"] for point in samples]
-    return {
+    result = {
         "endpoints": endpoints, "measured_wall_seconds": elapsed,
         "cpu_seconds": cpu, "cpu_one_core_percent": 100 * cpu / elapsed,
         "rss_mib": {"mean": statistics.mean(rss), "p95": percentile(rss, .95),
@@ -145,6 +286,9 @@ def measure(process, port, token, duration):
         "samples": [dict(point, elapsed_seconds=point["elapsed_seconds"] - first["elapsed_seconds"])
                     for point in samples],
     }
+    if include_children:
+        result["child_process_sampling"] = child_summary(samples, elapsed, cpu)
+    return result
 
 
 def run(args, result, directory):
@@ -155,7 +299,7 @@ def run(args, result, directory):
         port = probe.getsockname()[1]
     with (directory / "server.log").open("w") as log:
         started = time.monotonic()
-        process = subprocess.Popen(
+        process = BenchmarkProcess(
             [str(args.binary), "-config", str(config), "-listen", f"127.0.0.1:{port}",
              "-data-dir", str(directory / "data")], cwd=directory,
             stdout=log, stderr=subprocess.STDOUT,
@@ -199,10 +343,12 @@ def run(args, result, directory):
                 rows = read(f"/api/v1/data?chart={chart}&after=-60&points=60").get("result", {}).get("data", [])
                 if not any(value is not None for row in rows for value in row[1:]):
                     raise RuntimeError("required chart has no populated samples: " + chart)
-            result.update(measure(process, port, token, args.duration))
+            result.update(measure(process, port, token, args.duration, args.include_children, args.child_sample_interval))
         finally:
             stop(process)
             result["exit_code"] = process.returncode
+            if args.include_children:
+                result["process_tree_lifetime"] = process.lifetime_usage()
 
 
 def main():
@@ -212,6 +358,8 @@ def main():
     parser.add_argument("--output", type=Path, help="JSON path; default: new directory in the system temp directory")
     parser.add_argument("--warmup", type=seconds, default=15, help="warmup seconds (default: 15)")
     parser.add_argument("--duration", type=seconds, default=60, help="measurement seconds (default: 60)")
+    parser.add_argument("--include-children", action="store_true", help="add whole-run wait4 CPU and sampled direct-child resource/launch lower bounds")
+    parser.add_argument("--child-sample-interval", type=seconds, default=.2, help="seconds between direct-child snapshots when enabled (default: 0.2, plus ps runtime)")
     args = parser.parse_args()
     if platform.system() not in ("Darwin", "Linux"):
         parser.error("only macOS and Linux are supported (BSD/procps ps required)")
@@ -229,8 +377,12 @@ def main():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, interrupt)
+    digest = hashlib.sha256()
+    with args.binary.open("rb") as binary:
+        for chunk in iter(lambda: binary.read(1 << 20), b""):
+            digest.update(chunk)
     result = {
-        "label": args.label, "binary": str(args.binary),
+        "label": args.label, "binary": str(args.binary), "binary_sha256": digest.hexdigest(),
         "host": {"os": platform.platform(), "arch": platform.machine(), "logical_cpus": os.cpu_count()},
         "method": {
             "warmup_seconds": args.warmup, "measurement_seconds": args.duration,
@@ -239,9 +391,16 @@ def main():
             "http": "one keep-alive connection per worker; scheduled requests catch up after delays",
             "workers_hz": {name: frequency for name, _, frequency in WORKLOAD},
             "cpu_definition": "daemon CPU seconds delta / wall seconds * 100; 100% = one CPU core",
-            "rss_definition": "daemon resident memory sampled every second via ps",
+            "rss_definition": "daemon resident memory sampled via ps",
+            "sample_interval_seconds": args.child_sample_interval if args.include_children else 1,
         },
     }
+    if args.include_children:
+        result["method"]["children"] = {
+            "lifetime_cpu": "wait4 on only the self-started daemon; includes waited descendants and startup/warmup/shutdown",
+            "measurement_samples": "ps direct children only; CPU and command launches are observed lower bounds",
+            "sampling_overhead": "process-table snapshots add observer work; use identical intervals for A/B; observer ps is excluded from daemon wait4 accounting",
+        }
     status = 0
     with tempfile.TemporaryDirectory(prefix="monitor-runtime-") as temporary:
         directory = Path(temporary)

@@ -741,7 +741,10 @@ func (s *Server) handleFunctions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) functions() []collect.Function {
-	out := s.sched.Functions()
+	var out []collect.Function
+	if s.sched != nil {
+		out = s.sched.Functions()
+	}
 	return append(out, s.opt.ExtraFunctions...)
 }
 
@@ -860,7 +863,10 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	args := map[string]string{"query": q.Get("query"), "source": q.Get("source"), "after": q.Get("after"), "before": q.Get("before"), "limit": q.Get("limit"), "channel": q.Get("channel")}
+	args := map[string]string{}
+	for _, key := range []string{"query", "source", "after", "before", "limit", "channel", "unit", "priority", "boot", "cursor", "xpath"} {
+		args[key] = q.Get(key)
+	}
 	if v.node != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
@@ -872,11 +878,27 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"function": "logs", "node": v.id, "time": time.Now().Unix(), "result": json.RawMessage(res)})
 		return
 	}
+	// Reuse the collector's live buffer and configured sources. The standalone
+	// query remains available when the logs collector is not enabled.
+	for _, fn := range s.functions() {
+		if fn.Name != "logs" {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		res, err := fn.Run(ctx, args)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"function": "logs", "time": time.Now().Unix(), "result": res})
+		return
+	}
 	limit := 200
 	if n, _ := strconv.Atoi(q.Get("limit")); n > 0 {
-		limit = n
+		limit = min(n, 1000)
 	}
-	lq := collect.LogQuery{Source: q.Get("source"), Query: q.Get("query"), Channel: q.Get("channel"), Limit: limit}
+	lq := collect.LogQuery{Source: q.Get("source"), Query: q.Get("query"), Channel: q.Get("channel"), Limit: limit, Unit: q.Get("unit"), Priority: q.Get("priority"), Boot: q.Get("boot"), Cursor: q.Get("cursor"), XPath: q.Get("xpath")}
 	if n, _ := strconv.ParseInt(q.Get("after"), 10, 64); n != 0 {
 		lq.After = n
 	}

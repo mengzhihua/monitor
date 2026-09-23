@@ -42,6 +42,7 @@ void main() {
       await tester.pumpWidget(card(series));
       final plot = tester.widget<LineChart>(find.byType(LineChart));
       final bar = plot.data.lineBarsData.single;
+      expect(bar.dotData.show, isTrue);
       expect(bar.spots[1].isNull(), isTrue);
       expect(bar.dotData.checkToShowDot(bar.spots[0], bar), isTrue);
       expect(bar.dotData.checkToShowDot(bar.spots[2], bar), isTrue);
@@ -69,6 +70,7 @@ void main() {
       await tester.pumpWidget(card(series));
       var plot = tester.widget<LineChart>(find.byType(LineChart));
       final bar = plot.data.lineBarsData.single;
+      expect(bar.dotData.show, isTrue);
       expect(bar.dotData.checkToShowDot(bar.spots.single, bar), isTrue);
       series.reset(
         ChartData(

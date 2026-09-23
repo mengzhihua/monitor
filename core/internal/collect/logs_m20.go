@@ -47,6 +47,10 @@ func (l *logsCollector) startFollow() {
 	if !l.followEnabled() {
 		return
 	}
+	if runtime.GOOS == "darwin" && len(l.cfg.Files) == 0 {
+		l.unified = newUnifiedFollower(unifiedStream, time.Second)
+		return
+	}
 	if startSDJournal(l) {
 		return
 	}
@@ -311,6 +315,23 @@ func firstNonempty(values ...string) string {
 	return ""
 }
 
+func (m unifiedLogRecord) row() LogRow {
+	row := LogRow{
+		Message:  firstNonempty(m.EventMessage, m.Message),
+		Unit:     firstNonempty(m.Subsystem, m.ProcessImagePath, m.SenderImagePath),
+		PID:      firstNonempty(unifiedPID(m.ProcessID), unifiedPID(m.ProcessIdentifier)),
+		Priority: unifiedPri(firstNonempty(m.MessageType, m.Type)),
+	}
+	if ts := m.Timestamp; ts != "" {
+		if t, err := time.Parse("2006-01-02 15:04:05.000000-0700", ts); err == nil {
+			row.Time = t.Unix()
+		} else if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			row.Time = t.Unix()
+		}
+	}
+	return row
+}
+
 func parseLogShow(s string, q LogQuery) []LogRow {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -339,19 +360,7 @@ func parseLogShow(s string, q LogQuery) []LogRow {
 	}
 	var rows []LogRow
 	for _, m := range objs {
-		row := LogRow{
-			Message:  firstNonempty(m.EventMessage, m.Message),
-			Unit:     firstNonempty(m.Subsystem, m.ProcessImagePath, m.SenderImagePath),
-			PID:      firstNonempty(unifiedPID(m.ProcessID), unifiedPID(m.ProcessIdentifier)),
-			Priority: unifiedPri(firstNonempty(m.MessageType, m.Type)),
-		}
-		if ts := m.Timestamp; ts != "" {
-			if t, err := time.Parse("2006-01-02 15:04:05.000000-0700", ts); err == nil {
-				row.Time = t.Unix()
-			} else if t, err := time.Parse(time.RFC3339, ts); err == nil {
-				row.Time = t.Unix()
-			}
-		}
+		row := m.row()
 		if !acceptLog(q, row) {
 			continue
 		}

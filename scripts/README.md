@@ -41,3 +41,5 @@ python3 scripts/soak.py --seconds 120 --output reports/agent-soak.json
 浏览器截图和 trace 保留 Playwright 的原生位置 `web/test-results/`；Flutter、Gradle 产物保留各工程自己的 `build/`。不要把产物移进源码目录，也不要提交真实配置、密码、备份或日志。
 
 两个 `benchmark-*` 脚本都支持 `--binary` 和 `--label`，可对不同版本构建重复同一场景。运行对比时避免同时编译或运行其它压测；运行基准默认先预热15秒再采样60秒，CPU百分比以单个逻辑核为100%，只计 `monitord` 主进程，不含外部采集命令或浏览器。浏览器基准需要先在 `web/` 安装依赖，默认使用 Chrome；`--channel chromium` 使用已安装的 Playwright Chromium。模拟历史数据只有3行，测量的是保留资源，不代表生产查询吞吐或系统总内存。两者均使用自建临时服务并在结束后删除临时凭据和数据，JSON旁保留测试服务日志。
+
+运行基准可加 `--include-children --child-sample-interval 0.2`，补充外部采集命令的开销：`process_tree_lifetime` 使用 `wait4` 统计本次启动的服务及已回收后代的 CPU，包含启动、预热、测量和退出全程，不能当作60秒稳定区间的 CPU。`child_process_sampling` 按进程表快照统计服务及直接子进程的 RSS，可能重复计算共享页；短命令和瞬时峰值可能漏采，因此子进程 CPU、启动数量和最大 RSS 只是观测下限，平均值/p95 是采样统计。对比两版时保持相同采样间隔；采样工具本身的开销不计入服务 CPU。

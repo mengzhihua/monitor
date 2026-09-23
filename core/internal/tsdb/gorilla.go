@@ -1,6 +1,7 @@
 package tsdb
 
 import (
+	"encoding/binary"
 	"errors"
 	"math"
 	"math/bits"
@@ -67,6 +68,33 @@ func (r *bitReader) readBit() (bool, error) {
 }
 
 func (r *bitReader) readBits(n uint) (uint64, error) {
+	if n == 0 {
+		return 0, nil
+	}
+	bytePos, offset := r.pos>>3, r.pos&7
+	if bytePos >= uint(len(r.buf)) {
+		return 0, errEOF
+	}
+	if n <= 8-offset {
+		v := uint64(r.buf[bytePos]>>(8-offset-n)) & ((1 << n) - 1)
+		r.pos += n
+		return v, nil
+	}
+	// Values commonly span most of a machine word. Read that word once rather
+	// than assembling it byte by byte; an unaligned 64-bit field can need one
+	// extra byte. The short tail keeps the bounded reader below.
+	if n <= 64 && uint(len(r.buf))-bytePos >= 8 {
+		v := binary.BigEndian.Uint64(r.buf[bytePos:]) << offset
+		if n+offset > 64 {
+			if bytePos+8 >= uint(len(r.buf)) {
+				r.pos = uint(len(r.buf)) * 8
+				return 0, errEOF
+			}
+			v |= uint64(r.buf[bytePos+8]) >> (8 - offset)
+		}
+		r.pos += n
+		return v >> (64 - n), nil
+	}
 	var v uint64
 	for n > 0 {
 		if r.pos>>3 >= uint(len(r.buf)) {
