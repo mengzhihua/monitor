@@ -24,7 +24,7 @@ func benchmarkMetadataServer(b *testing.B, charts int) *Server {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = db.Close() })
-	reg := registry.New(&registry.Host{ID: "local", Hostname: "benchmark", UpdateEvery: 1}, nil)
+	reg := registry.New(&registry.Host{ID: "local", Hostname: "benchmark", UpdateEvery: 1}, db)
 	sched := collect.NewScheduler(reg, log, collect.Options{Names: []string{"ml"}})
 	for i := 0; i < charts; i++ {
 		chart := &registry.Chart{ID: fmt.Sprintf("test.chart%d", i), Context: "test.shared"}

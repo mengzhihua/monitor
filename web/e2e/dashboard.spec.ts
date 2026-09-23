@@ -2,8 +2,16 @@ import { test, expect } from '@playwright/test'
 
 const token = 'browser-test-token'
 
-test('visible charts load on demand and reuse their canvas after scrolling', async ({page}) => {
+test('visible charts load on demand and reuse nearby canvases with live data', async ({page}) => {
+  // A short viewport keeps a nearby round trip within the eight-chart idle
+  // cache on both layouts, independent of the host's CPU/chart count.
+  await page.setViewportSize({ width: page.viewportSize()!.width, height: 350 })
   let historyRequests = 0
+  const subscriptions: string[][] = []
+  page.on('websocket', socket => socket.on('framesent', frame => {
+    const message = JSON.parse(String(frame.payload))
+    if (message.charts) subscriptions.push(message.charts)
+  }))
   page.on('request', request => {
     if (request.url().includes('/api/v1/data?')) historyRequests++
   })
@@ -11,15 +19,28 @@ test('visible charts load on demand and reuse their canvas after scrolling', asy
   const cards = page.locator('.card')
   await expect(cards.first().locator('canvas').first()).toBeVisible()
   const total = await cards.count()
-  expect(total).toBeGreaterThan(4)
+  expect(total).toBeGreaterThan(8)
   expect(await page.locator('.card canvas').count()).toBeLessThan(total)
   expect(historyRequests).toBeLessThan(total)
+  const firstId = (await cards.first().locator('.id').textContent())!
   const firstCanvas = await cards.first().locator('canvas').first().elementHandle()
-  await cards.last().scrollIntoViewIfNeeded()
-  await expect(cards.last().locator('canvas').first()).toBeVisible()
+  await expect.poll(() => subscriptions.at(-1)?.includes(firstId)).toBe(true)
+  await cards.first().evaluate(card => window.scrollBy(0, card.getBoundingClientRect().bottom + 301))
+  await expect.poll(() => subscriptions.at(-1)?.includes(firstId)).toBe(false)
+  expect(await cards.first().evaluate(card => card.getBoundingClientRect().bottom)).toBeLessThan(-300)
+  expect(await firstCanvas!.evaluate(canvas => canvas.isConnected)).toBe(true)
+  expect(await page.locator('.card').evaluateAll(cards => cards.filter(card =>
+    card.querySelector('canvas') && card.getBoundingClientRect().bottom < -300,
+  ).length)).toBeLessThanOrEqual(8)
   await cards.first().scrollIntoViewIfNeeded()
+  await expect.poll(() => subscriptions.at(-1)?.includes(firstId)).toBe(true)
   await expect(cards.first().locator('canvas').first()).toBeVisible()
   expect(await page.evaluate((canvas) => canvas === document.querySelector('.card canvas'), firstCanvas)).toBe(true)
+
+  const plot = await cards.first().locator('.u-over').boundingBox()
+  expect(plot).not.toBeNull()
+  await page.mouse.move(plot!.x + plot!.width - 0.05, plot!.y + plot!.height / 2)
+  await expect(cards.first().locator('.u-value').nth(1)).toContainText(/\d/)
 })
 
 test('login, real chart, long history, layout and logout', async ({page, request}, info) => {
