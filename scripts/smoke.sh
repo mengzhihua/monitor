@@ -93,7 +93,10 @@ hub:
   room: edge
   peer_token: smoke-ring-test-only
 EOF
-"$BIN" -config "$HUBDATA/monitor.yaml" -listen "127.0.0.1:$HUBPORT" -log-level warn &
+# Pass -data-dir on the command line. Git Bash on Windows rewrites POSIX
+# arguments for native executables, but a /tmp path written into the YAML is
+# read by Go as \tmp\... and the password file lands outside the temp dir.
+"$BIN" -config "$HUBDATA/monitor.yaml" -listen "127.0.0.1:$HUBPORT" -data-dir "$HUBDATA/data" -log-level warn &
 HPID=$!
 trap 'kill $PID $HPID 2>/dev/null || true; wait $PID 2>/dev/null || true; wait $HPID 2>/dev/null || true; rm -rf "$DATA" "$HUBDATA"' EXIT
 for i in $(seq 1 30); do
