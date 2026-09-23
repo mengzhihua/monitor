@@ -612,48 +612,93 @@ func (a *appsCollector) Functions() []Function {
 
 func (a *appsCollector) processes(args map[string]string) Table {
 	a.tableMu.RLock()
-	rows := append([]ProcessRow(nil), a.published...)
+	rows, total := selectProcessRows(a.published, a.cfg.Top, args["group"], args["sort"])
 	var collectedAt int64
 	if !a.last.IsZero() {
 		collectedAt = a.last.Unix()
 	}
 	a.tableMu.RUnlock()
-	if g := args["group"]; g != "" {
-		f := rows[:0]
-		for _, r := range rows {
-			if r.Group == g {
-				f = append(f, r)
-			}
-		}
-		rows = f
-	}
 	sortBy := args["sort"]
 	sort.Slice(rows, func(i, j int) bool {
-		switch sortBy {
-		case "rss", "mem":
-			if rows[i].RSS != rows[j].RSS {
-				return rows[i].RSS > rows[j].RSS
-			}
-		case "pid":
-			return rows[i].PID < rows[j].PID
-		default:
-			if rows[i].CPU != rows[j].CPU {
-				return rows[i].CPU > rows[j].CPU
-			}
-			if rows[i].RSS != rows[j].RSS {
-				return rows[i].RSS > rows[j].RSS
-			}
-		}
-		return rows[i].PID < rows[j].PID
+		return processRowLess(&rows[i], &rows[j], sortBy)
 	})
-	total := len(rows)
-	if len(rows) > a.cfg.Top {
-		rows = rows[:a.cfg.Top]
-	}
 	out := Table{Columns: []string{"pid", "ppid", "name", "group", "cpu", "rss", "threads", "cmdline"}, Total: total, CollectedAt: collectedAt}
 	out.Rows = make([]any, len(rows))
 	for i, r := range rows {
 		out.Rows[i] = r
 	}
 	return out
+}
+
+func processRowLess(a, b *ProcessRow, sortBy string) bool {
+	switch sortBy {
+	case "rss", "mem":
+		if a.RSS != b.RSS {
+			return a.RSS > b.RSS
+		}
+	case "pid":
+		return a.PID < b.PID
+	default:
+		if a.CPU != b.CPU {
+			return a.CPU > b.CPU
+		}
+		if a.RSS != b.RSS {
+			return a.RSS > b.RSS
+		}
+	}
+	return a.PID < b.PID
+}
+
+// Keep at most limit rows in a heap with the worst selected row at its root.
+// The published table is read-only; the caller holds tableMu while selecting.
+// Total counts all matches, including those outside the returned top rows.
+func selectProcessRows(published []ProcessRow, limit int, group, sortBy string) (rows []ProcessRow, total int) {
+	limit = min(max(limit, 0), len(published))
+	heapReady := false
+	for i := range published {
+		row := &published[i]
+		if group != "" && row.Group != group {
+			continue
+		}
+		total++
+		if limit == 0 {
+			continue
+		}
+		if rows == nil {
+			rows = make([]ProcessRow, 0, limit)
+		}
+		if len(rows) < limit {
+			rows = append(rows, *row)
+			continue
+		}
+		// No heap construction is needed when every matching row will fit.
+		if !heapReady {
+			for root := len(rows)/2 - 1; root >= 0; root-- {
+				siftProcessRowsDown(rows, root, sortBy)
+			}
+			heapReady = true
+		}
+		if processRowLess(row, &rows[0], sortBy) {
+			rows[0] = *row
+			siftProcessRowsDown(rows, 0, sortBy)
+		}
+	}
+	return rows, total
+}
+
+func siftProcessRowsDown(rows []ProcessRow, root int, sortBy string) {
+	for {
+		child := root*2 + 1
+		if child >= len(rows) {
+			return
+		}
+		if child+1 < len(rows) && processRowLess(&rows[child], &rows[child+1], sortBy) {
+			child++
+		}
+		if !processRowLess(&rows[root], &rows[child], sortBy) {
+			return
+		}
+		rows[root], rows[child] = rows[child], rows[root]
+		root = child
+	}
 }
