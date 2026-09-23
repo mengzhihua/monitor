@@ -107,11 +107,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         : (value) => setState(() => _remember = value ?? false),
                   ),
                   const SizedBox(height: 16),
-                  if (st.error != null)
+                  for (final message in {
+                    st.storageWarning,
+                    st.error,
+                  }.whereType<String>())
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Text(
-                        st.error!,
+                        message,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.error,
                         ),
