@@ -2,6 +2,25 @@ package collect
 
 import "testing"
 
+func TestAppsUserLookupFallbackAndCache(t *testing.T) {
+	a := &appsCollector{userCache: map[string]string{}}
+	const unknown = "invalid-uid"
+	if got := a.lookupUserID(unknown, ""); got != "" {
+		t.Fatalf("unresolved portable user must remain unavailable: %q", got)
+	}
+	if _, cached := a.userCache[unknown]; cached {
+		t.Fatal("transient unavailable username must not poison later PID lookups")
+	}
+	a.userCache[unknown] = "resolved_user"
+	if got := a.lookupUserID(unknown, ""); got != "resolved_user" {
+		t.Fatal("resolved username cache was not reused")
+	}
+	delete(a.userCache, unknown)
+	if got := a.lookupUserID(unknown, "12345"); got != "12345" {
+		t.Fatal("native numeric UID fallback changed")
+	}
+}
+
 func TestAppsPIDReuseDropsPreviousBaselines(t *testing.T) {
 	previous := &pidState{
 		name: "previous owner", startedAt: 1000,

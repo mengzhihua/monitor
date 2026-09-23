@@ -238,8 +238,36 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 // appProcess carries identity from the same process-list snapshot as the PID.
 // A fresh gopsutil handle reads live values without retaining cached metadata.
 type appProcess struct {
+	metadata  appProcessMetadata
 	process   *process.Process
 	startedAt int64
+}
+
+// Platforms without a process-table identity snapshot retain the gopsutil
+// path. Command-line access is optional once a readable name is available.
+func readPortableAppIdentity(ctx context.Context, p *process.Process) (name, cmdline string, err error) {
+	if err = ctx.Err(); err != nil {
+		return "", "", err
+	}
+	name, err = p.NameWithContext(ctx)
+	if err != nil || name == "" {
+		return name, "", err
+	}
+	cmdline, _ = p.CmdlineWithContext(ctx)
+	return name, cmdline, ctx.Err()
+}
+
+func (a *appsCollector) readPortableOwners(ctx context.Context, p *process.Process, st *pidState) {
+	if ctx.Err() != nil {
+		return
+	}
+	st.ppid, _ = p.PpidWithContext(ctx)
+	if uname, err := p.UsernameWithContext(ctx); err == nil {
+		st.user = appsOwnerID(uname)
+	}
+	if gids, err := p.GidsWithContext(ctx); err == nil && len(gids) > 0 {
+		st.osGroup = a.lookupOSGroup(gids[0])
+	}
 }
 
 func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
@@ -320,23 +348,16 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 				}
 				st.group = a.match(st.name, st.cmdline)
 			} else {
-				name, err := gp.NameWithContext(ctx)
+				name, cmdline, err := procs[i].readIdentity(ctx)
 				if err != nil || name == "" {
 					continue // gone or not readable
 				}
 				if runtime.GOOS == "windows" {
 					name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
 				}
-				st = &pidState{name: name, startedAt: startedAt}
-				st.cmdline, _ = gp.CmdlineWithContext(ctx)
-				st.ppid, _ = gp.PpidWithContext(ctx)
+				st = &pidState{name: name, cmdline: cmdline, startedAt: startedAt}
 				st.group = a.match(name, st.cmdline)
-				if uname, err := gp.UsernameWithContext(ctx); err == nil {
-					st.user = appsOwnerID(uname)
-				}
-				if gids, err := gp.GidsWithContext(ctx); err == nil && len(gids) > 0 {
-					st.osGroup = a.lookupOSGroup(gids[0])
-				}
+				procs[i].readOwners(ctx, a, st)
 			}
 			a.pids[pid] = st
 		}
@@ -477,14 +498,22 @@ func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, ela
 
 func (a *appsCollector) lookupUser(uid uint32) string {
 	key := strconv.FormatUint(uint64(uid), 10)
+	return a.lookupUserID(key, key)
+}
+
+// Linux retains its cached numeric fallback; Darwin leaves unavailable account
+// names empty and retries for later PIDs if the directory service recovers.
+func (a *appsCollector) lookupUserID(key, fallback string) string {
 	if a.userCache != nil {
 		if n, ok := a.userCache[key]; ok {
 			return n
 		}
 	}
-	name := key
+	name := fallback
 	if u, err := user.LookupId(key); err == nil && u.Username != "" {
 		name = u.Username
+	} else if fallback == "" {
+		return ""
 	}
 	name = appsOwnerID(name)
 	if a.userCache != nil {
