@@ -23,6 +23,9 @@ type procM17 struct {
 	interrupts, softirqs, snmp, tcDump                  string
 	ibSeen, tcSeen, numaSeen                            map[string]bool
 	irqSeen, softSeen                                   map[string]bool
+	tcAt                                                time.Time
+	pageAt                                              time.Time
+	pageZones                                           map[string]map[string]float64
 }
 
 func (m procM17) any() bool {
@@ -197,9 +200,11 @@ func (p *procCollector) collectM17(reg *registry.Registry, now time.Time) {
 	if m.haveNUMA {
 		p.collectNUMA(reg, now)
 	}
-	if m.havePage {
+	if m.havePage && (m.pageAt.IsZero() || now.Sub(m.pageAt) >= slowSampleEvery) {
 		if raw, err := readTrim(m.pagetype); err == nil {
-			p.collectPageType(reg, now, parsePageType(raw))
+			m.pageZones = parsePageType(raw)
+			m.pageAt = now
+			p.collectPageType(reg, now, m.pageZones)
 		}
 	}
 	if m.haveIRQ {
@@ -270,11 +275,15 @@ func (p *procCollector) ensureIBCharts(reg *registry.Registry, dev, port, id str
 func (p *procCollector) collectTC(reg *registry.Registry, now time.Time) {
 	raw := p.m17.tcDump
 	if raw == "" {
+		if !p.m17.tcAt.IsZero() && now.Sub(p.m17.tcAt) < slowSampleEvery {
+			return
+		}
 		out, err := execRun(3*time.Second)(context.Background(), "tc", "-s", "qdisc")
 		if err != nil {
 			return
 		}
 		raw = string(out)
+		p.m17.tcAt = now
 	}
 	for _, q := range parseTC(raw) {
 		id := sanitizeID(q.Dev + "_" + q.Handle)

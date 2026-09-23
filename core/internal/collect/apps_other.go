@@ -2,6 +2,10 @@
 
 package collect
 
-func readProcCounters(int32) (cpuSec float64, rss uint64, threads int32, readB, writeB uint64, hasIO, ok bool) {
-	return 0, 0, 0, 0, 0, false, false
-}
+func listProcPIDs(dst []int32) ([]int32, bool) { return dst[:0], false }
+
+func readProcSample(int32, bool, *[]byte) procCounters { return procCounters{} }
+
+func readProcCmdline(int32) string { return "" }
+
+func readProcOwners(int32) (uint32, uint32, bool, bool) { return 0, 0, false, false }

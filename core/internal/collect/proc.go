@@ -11,6 +11,10 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
+// slowSampleEvery is the cadence for large, slowly changing /proc files and
+// for commands that would otherwise be spawned every tick.
+const slowSampleEvery = 5 * time.Second
+
 // procCollector reads Linux /proc extras that gopsutil does not cover:
 // entropy, file descriptors, forks/interrupts from /proc/stat, PSI,
 // IPv4 protocol counters from /proc/net/snmp, conntrack, softnet, SysV IPC,

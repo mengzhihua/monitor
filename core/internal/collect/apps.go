@@ -69,6 +69,7 @@ type pidState struct {
 	readB   uint64
 	writeB  uint64
 	ioOK    bool
+	skipIO  bool // permission or missing io; don't reopen it every tick
 	seenAt  time.Time
 	rss     uint64
 	threads int32
@@ -90,7 +91,23 @@ type appsCollector struct {
 	writeB              map[string]float64
 	cpuUser, cpuOSGroup map[string]float64
 	groupCache          map[string]string
+	userCache           map[string]string
+	pidBuf              []int32
+	scratch             []byte
 	last                time.Time
+}
+
+// procCounters is one /proc/<pid> sample. ok is false when stat could not be read.
+type procCounters struct {
+	name            string
+	ppid            int32
+	cpuSec          float64
+	rss             uint64
+	threads         int32
+	readB, writeB   uint64
+	hasIO, ioDenied bool
+	kthread         bool
+	ok              bool
 }
 
 func init() {
@@ -156,6 +173,7 @@ func (a *appsCollector) Init(reg *registry.Registry) error {
 	a.cpuMs, a.readB, a.writeB = map[string]float64{}, map[string]float64{}, map[string]float64{}
 	a.cpuUser, a.cpuOSGroup = map[string]float64{}, map[string]float64{}
 	a.groupCache = map[string]string{}
+	a.userCache = map[string]string{}
 
 	all := append(append([]*appGroup{}, a.groups...), a.other)
 	mk := func(id, title, units string, prio int, algo registry.Algorithm, mul, div int64) *registry.Chart {
@@ -211,9 +229,15 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 }
 
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	procs, err := process.ProcessesWithContext(ctx)
-	if err != nil {
-		return err
+	pids, native := listProcPIDs(a.pidBuf)
+	a.pidBuf = pids
+	var procs []*process.Process
+	if !native {
+		var err error
+		procs, err = process.ProcessesWithContext(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -226,47 +250,93 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	mem := map[string]float64{}
 	nproc := map[string]float64{}
 	nthr := map[string]float64{}
-	for _, p := range procs {
+	n := len(procs)
+	if native {
+		n = len(pids)
+	}
+	for i := 0; i < n; i++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		st := a.pids[p.Pid]
+		var pid int32
+		var gp *process.Process
+		if native {
+			pid = pids[i]
+		} else {
+			gp = procs[i]
+			pid = gp.Pid
+		}
+		st := a.pids[pid]
+		var sample procCounters
+		if native {
+			sample = readProcSample(pid, st != nil && st.skipIO, &a.scratch)
+		}
 		if st == nil {
-			name, err := p.NameWithContext(ctx)
-			if err != nil || name == "" {
-				continue // gone or not readable
+			if native {
+				if !sample.ok || sample.name == "" {
+					continue
+				}
+				st = &pidState{name: sample.name, ppid: sample.ppid}
+				if !sample.kthread {
+					st.cmdline = readProcCmdline(pid)
+					if uid, gid, haveUID, haveGID := readProcOwners(pid); haveUID || haveGID {
+						if haveUID {
+							st.user = a.lookupUser(uid)
+						}
+						if haveGID {
+							st.osGroup = a.lookupOSGroup(gid)
+						}
+					}
+				}
+				st.group = a.match(st.name, st.cmdline)
+			} else {
+				name, err := gp.NameWithContext(ctx)
+				if err != nil || name == "" {
+					continue // gone or not readable
+				}
+				if runtime.GOOS == "windows" {
+					name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
+				}
+				st = &pidState{name: name}
+				st.cmdline, _ = gp.CmdlineWithContext(ctx)
+				st.ppid, _ = gp.PpidWithContext(ctx)
+				st.group = a.match(name, st.cmdline)
+				if uname, err := gp.UsernameWithContext(ctx); err == nil {
+					st.user = appsOwnerID(uname)
+				}
+				if gids, err := gp.GidsWithContext(ctx); err == nil && len(gids) > 0 {
+					st.osGroup = a.lookupOSGroup(gids[0])
+				}
 			}
-			if runtime.GOOS == "windows" {
-				name = strings.TrimSuffix(name, ".exe") // so "chrome" matches chrome.exe
-			}
-			st = &pidState{name: name}
-			st.cmdline, _ = p.CmdlineWithContext(ctx)
-			st.ppid, _ = p.PpidWithContext(ctx)
-			st.group = a.match(name, st.cmdline)
-			if uname, err := p.UsernameWithContext(ctx); err == nil {
-				st.user = appsOwnerID(uname)
-			}
-			if gids, err := p.GidsWithContext(ctx); err == nil && len(gids) > 0 {
-				st.osGroup = a.lookupOSGroup(gids[0])
-			}
-			a.pids[p.Pid] = st
+			a.pids[pid] = st
+		}
+		if native && !sample.ok {
+			continue // exited between readdir and stat; drop it below
 		}
 		st.seenAt = now
 		g := st.group.name
-		cpuSec, rss, threads, readB, writeB, hasIO, ok := readProcCounters(p.Pid)
-		if !ok {
-			if t, err := p.TimesWithContext(ctx); err == nil {
-				cpuSec = t.User + t.System
-				ok = true
+		var cpuSec float64
+		var rss uint64
+		var threads int32
+		var readB, writeB uint64
+		var hasIO, ok bool
+		if native {
+			if sample.ioDenied {
+				st.skipIO = true
 			}
-			if m, err := p.MemoryInfoWithContext(ctx); err == nil && m != nil {
+			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
+			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
+		} else if t, err := gp.TimesWithContext(ctx); err == nil {
+			cpuSec = t.User + t.System
+			ok = true
+			if m, err := gp.MemoryInfoWithContext(ctx); err == nil && m != nil {
 				rss = m.RSS
 			}
-			if n, err := p.NumThreadsWithContext(ctx); err == nil {
+			if n, err := gp.NumThreadsWithContext(ctx); err == nil {
 				threads = n
 			}
 			if a.hasIO {
-				if io, err := p.IOCountersWithContext(ctx); err == nil && io != nil {
+				if io, err := gp.IOCountersWithContext(ctx); err == nil && io != nil {
 					readB, writeB, hasIO = io.ReadBytes, io.WriteBytes, true
 				}
 			}
@@ -379,6 +449,24 @@ func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, ela
 	addAbs("apps.mem_group", memG, 1<<20)
 	addAbs("apps.processes_user", nprocU, 1)
 	addAbs("apps.processes_group", nprocG, 1)
+}
+
+func (a *appsCollector) lookupUser(uid uint32) string {
+	key := strconv.FormatUint(uint64(uid), 10)
+	if a.userCache != nil {
+		if n, ok := a.userCache[key]; ok {
+			return n
+		}
+	}
+	name := key
+	if u, err := user.LookupId(key); err == nil && u.Username != "" {
+		name = u.Username
+	}
+	name = appsOwnerID(name)
+	if a.userCache != nil {
+		a.userCache[key] = name
+	}
+	return name
 }
 
 func (a *appsCollector) lookupOSGroup(gid uint32) string {
