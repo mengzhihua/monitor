@@ -153,6 +153,7 @@ func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/operations", s.handleOperations)
 	m.HandleFunc("POST /api/v1/operations/acknowledgements", s.handleAcknowledgement)
+	m.HandleFunc("POST /api/v1/operations/handling", s.handleHandling)
 	m.HandleFunc("GET /api/v1/info", s.handleInfo)
 	m.HandleFunc("GET /api/v1/charts", s.handleCharts)
 	m.HandleFunc("GET /api/v1/chart", s.handleChart)

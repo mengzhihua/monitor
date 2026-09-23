@@ -14,7 +14,7 @@ paths:
       description: Ignores chart node selection. Metrics are nullable and carry sample freshness. Includes local and Hub-owned alarms; peer-only alarm coverage is unknown.
       responses:
         "200":
-          description: Snapshot with now, nodes, problems, summary, activity (latest 100 handled episodes) and persistent.
+          description: Snapshot with now, nodes, problems, summary, activity (latest 100 handled episodes), persistent, current_user and assignees (eligible configured operators plus the current eligible identity; no credentials). Summary includes unassigned, open, investigating and watching counts across current problems.
         "401":
           description: Authentication required
   /api/v1/operations/acknowledgements:
@@ -41,6 +41,45 @@ paths:
           description: Saved record with problem context, acknowledged, revision and history.
         "400":
           description: Invalid action, note or JSON body
+        "401":
+          description: Authentication required
+        "403":
+          description: Read-only role
+        "409":
+          description: Episode recovered or changed, or record revision changed
+        "503":
+          description: Record could not be persisted
+  /api/v1/operations/handling:
+    post:
+      summary: Assign an operator and track human investigation progress
+      description: Admin and troubleshooter only. Also accepts acknowledgement actions. Actor comes from authentication. Assignment and progress do not confirm, silence or resolve the alarm. Changes apply only to the current severity episode and require its current revision. An assign target must appear in this caller's assignees list. New alarm episodes start unassigned with open progress. No external notification is sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, action, revision]
+              properties:
+                id: {type: string, minLength: 64, maxLength: 64}
+                action: {type: string, enum: [acknowledge, unacknowledge, comment, assign, unassign, progress]}
+                revision: {type: integer, minimum: 0}
+                note:
+                  type: string
+                  description: Optional except for comment; maximum 2048 UTF-8 bytes.
+                assignee:
+                  type: string
+                  description: Required and non-empty for assign only; maximum 128 UTF-8 bytes; no control characters. Unassign clears the owner.
+                status:
+                  type: string
+                  enum: [open, investigating, watching]
+                  description: Required for progress only. Never represents alarm recovery.
+      responses:
+        "200":
+          description: Saved record with problem, acknowledged, assignee, status, revision and recent 20 history actions. Assignment/progress actions include previous and new values.
+        "400":
+          description: Invalid action, fields, status, assignee or JSON
         "401":
           description: Authentication required
         "403":

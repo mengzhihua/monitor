@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/operations"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
@@ -83,7 +85,7 @@ func TestOperationsAcknowledgementLifecycleAndRBAC(t *testing.T) {
 	}
 	defer eng.Close()
 	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
-	opt := Options{Health: eng, OperationsDir: t.TempDir(), Users: []User{{Name: "reader", Token: "viewer", Role: RoleViewer}, {Name: "on-call", Token: "operator", Role: RoleTroubleshooter}}}
+	opt := Options{Health: eng, OperationsDir: t.TempDir(), Users: []User{{Name: "reader", Token: "viewer", Role: RoleViewer}, {Name: "on-call", Token: "operator", Role: RoleTroubleshooter}, {Name: "backup", Token: "backup-token", Role: RoleAdmin}}}
 	s, err := New(reg, db, sched, opt)
 	if err != nil {
 		t.Fatal(err)
@@ -126,20 +128,62 @@ func TestOperationsAcknowledgementLifecycleAndRBAC(t *testing.T) {
 	if eng.Alarms()[0].Status != health.StatusWarning || eng.IsSilenced("system.ram", "ram_high") {
 		t.Fatal("acknowledgement altered health evaluation")
 	}
+	if snap.CurrentUser.Name != "reader" || len(snap.Assignees) != 2 || snap.Assignees[0].Name != "backup" || snap.Assignees[1].Name != "on-call" {
+		t.Fatal(snap.Assignees, snap.CurrentUser)
+	}
+	b, _ := json.Marshal(snap)
+	if bytes.Contains(b, []byte("backup-token")) || bytes.Contains(b, []byte(`"token"`)) {
+		t.Fatal("snapshot exposed credential")
+	}
+	workflow := func(token string, revision uint64, change map[string]any, want int) {
+		t.Helper()
+		change["id"], change["revision"] = p.ID, revision
+		b, _ := json.Marshal(change)
+		req, _ := http.NewRequest("POST", ts.URL+"/api/v1/operations/handling", bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != want {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("workflow %v status=%d want=%d: %s", change, resp.StatusCode, want, body)
+		}
+	}
+	workflow("viewer", 1, map[string]any{"action": "assign", "assignee": "on-call"}, 403)
+	workflow("", 1, map[string]any{"action": "assign", "assignee": "on-call"}, 401)
+	for _, name := range []string{"reader", "not-configured"} {
+		workflow("operator", 1, map[string]any{"action": "assign", "assignee": name}, 400)
+	}
+	workflow("operator", 1, map[string]any{"action": "progress", "status": "resolved"}, 400)
+	workflow("operator", 1, map[string]any{"action": "assign", "assignee": "backup", "actor": "forged"}, 400)
+	post("operator", p.ID, "assign", 1, 400)
+	workflow("operator", 1, map[string]any{"action": "assign", "assignee": "on-call"}, 200)
+	workflow("backup-token", 1, map[string]any{"action": "assign", "assignee": "backup"}, 409)
+	workflow("operator", 2, map[string]any{"action": "progress", "status": "investigating", "note": "checking memory"}, 200)
+	getJSON(t, ts.URL+"/api/v1/operations?token=viewer", &snap)
+	if snap.Summary["unassigned"] != 0 || snap.Summary["investigating"] != 1 || snap.Problems[0].Handling.Assignee != "on-call" || snap.Problems[0].Handling.Status != operations.StatusInvestigating || !snap.Problems[0].Handling.Acknowledged {
+		t.Fatal(snap)
+	}
+	if eng.Alarms()[0].Status != health.StatusWarning || eng.IsSilenced("system.ram", "ram_high") {
+		t.Fatal("workflow altered alarm state")
+	}
 	// New server with the same state directory keeps the acknowledgement.
 	s2, err := New(reg, db, sched, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !s2.operations.Get(p.ID).Acknowledged {
+	if r := s2.operations.Get(p.ID); !r.Acknowledged || r.Assignee != "on-call" || r.Status != operations.StatusInvestigating {
 		t.Fatal("restart lost record")
 	}
 	set(95, 2)
 	getJSON(t, ts.URL+"/api/v1/operations?token=viewer", &snap)
-	if snap.Problems[0].ID == p.ID || snap.Problems[0].Handling.Acknowledged || snap.Problems[0].Severity != "CRITICAL" {
+	if snap.Problems[0].ID == p.ID || snap.Problems[0].Handling.Acknowledged || snap.Problems[0].Severity != "CRITICAL" || snap.Problems[0].Handling.Assignee != "" || snap.Problems[0].Handling.Status != operations.StatusOpen {
 		t.Fatal("escalation inherited acknowledgement")
 	}
 	post("operator", p.ID, "acknowledge", 1, 409)
+	workflow("operator", 3, map[string]any{"action": "progress", "status": "watching"}, 409)
 	set(5, 4)
 	getJSON(t, ts.URL+"/api/v1/operations?token=viewer", &snap)
 	if len(snap.Problems) != 0 {

@@ -88,6 +88,9 @@ health:
                 old = before['problems'][0]
                 request('/acknowledgements', {'id': old['id'], 'action': 'acknowledge',
                         'revision': 0, 'note': 'Restart acceptance: record must survive.'})
+                request('/handling', {'id': old['id'], 'action': 'assign', 'assignee': 'admin', 'revision': 1})
+                request('/handling', {'id': old['id'], 'action': 'progress', 'status': 'investigating',
+                        'revision': 2, 'note': 'Restart acceptance: owner and progress must survive.'})
                 assert request()['problems'][0]['handling']['acknowledged']
                 store = root / 'data/operations/acknowledgements.json'
                 assert store.is_file()
@@ -98,10 +101,15 @@ health:
                 after = wait_ready()
                 record = next(r for r in after['activity'] if r['id'] == old['id'])
                 assert record['acknowledged'] and record['history'][-1]['note'].startswith('Restart acceptance')
+                assert record['assignee'] == 'admin' and record['status'] == 'investigating'
+                assert record['history'][-1]['previous_status'] == 'open'
+                assert record['revision'] == 3
                 # Health intentionally evaluates afresh after restart: never suppress a new episode.
                 assert after['problems'][0]['id'] != old['id']
                 assert not after['problems'][0]['handling']['acknowledged']
-                print('PASS: real samples, durable handling history, clean restart, new episode not auto-confirmed')
+                assert after['problems'][0]['handling']['assignee'] == ''
+                assert after['problems'][0]['handling']['status'] == 'open'
+                print('PASS: real samples, durable owner/progress/history, clean restart, new episode unassigned and unconfirmed')
             finally:
                 stop()
 

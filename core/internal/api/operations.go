@@ -51,12 +51,35 @@ type problem struct {
 }
 
 type operationsSnapshot struct {
-	Activity   []operations.Record `json:"activity"`
-	Now        int64               `json:"now"`
-	Nodes      []operationsNode    `json:"nodes"`
-	Problems   []problem           `json:"problems"`
-	Summary    map[string]int      `json:"summary"`
-	Persistent bool                `json:"persistent"`
+	CurrentUser User                `json:"current_user"`
+	Assignees   []User              `json:"assignees"`
+	Activity    []operations.Record `json:"activity"`
+	Now         int64               `json:"now"`
+	Nodes       []operationsNode    `json:"nodes"`
+	Problems    []problem           `json:"problems"`
+	Summary     map[string]int      `json:"summary"`
+	Persistent  bool                `json:"persistent"`
+}
+
+// Static operators plus the caller's federated identity. Never expose tokens
+// or enumerate OIDC/LDAP sessions as a user directory.
+func (s *Server) operationsAssignees(r *http.Request) []User {
+	users := append([]User{}, s.opt.Users...)
+	if s.opt.Token != "" {
+		users = append(users, User{Name: "admin", Role: RoleAdmin})
+	}
+	users = append(users, userOf(r))
+	out := []User{}
+	seen := map[string]bool{}
+	for _, u := range users {
+		if (u.Role != RoleAdmin && u.Role != RoleTroubleshooter) || !operations.ValidAssignee(u.Name) || seen[u.Name] {
+			continue
+		}
+		seen[u.Name] = true
+		out = append(out, User{Name: u.Name, Role: u.Role})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func finiteValue(v float64) *float64 {
@@ -137,8 +160,8 @@ func problemID(node string, a health.Alarm) string {
 
 func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 	now := time.Now().Unix()
-	out := operationsSnapshot{Now: now, Nodes: []operationsNode{}, Problems: []problem{}, Persistent: s.operations.Persistent(),
-		Summary: map[string]int{"nodes": 0, "live": 0, "stale": 0, "offline": 0, "critical": 0, "warning": 0, "unacknowledged": 0, "coverage_unknown": 0}}
+	out := operationsSnapshot{Now: now, Nodes: []operationsNode{}, Problems: []problem{}, Persistent: s.operations.Persistent(), CurrentUser: userOf(r), Assignees: s.operationsAssignees(r),
+		Summary: map[string]int{"nodes": 0, "live": 0, "stale": 0, "offline": 0, "critical": 0, "warning": 0, "unacknowledged": 0, "coverage_unknown": 0, "unassigned": 0, "open": 0, "investigating": 0, "watching": 0}}
 	// Global snapshot ignores the current chart's node/status/contexts filter.
 	request := r.Clone(r.Context())
 	u := *r.URL
@@ -192,6 +215,10 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 			if !p.Handling.Acknowledged {
 				out.Summary["unacknowledged"]++
 			}
+			if p.Handling.Assignee == "" {
+				out.Summary["unassigned"]++
+			}
+			out.Summary[p.Handling.Status]++
 		}
 	}
 	sort.Slice(out.Problems, func(i, j int) bool {
@@ -217,10 +244,17 @@ func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAcknowledgement(w http.ResponseWriter, r *http.Request) {
+	s.handleProblemChange(w, r, false)
+}
+
+func (s *Server) handleHandling(w http.ResponseWriter, r *http.Request) {
+	s.handleProblemChange(w, r, true)
+}
+
+func (s *Server) handleProblemChange(w http.ResponseWriter, r *http.Request, workflow bool) {
 	var body struct {
+		operations.Change
 		ID       string  `json:"id"`
-		Action   string  `json:"action"`
-		Note     string  `json:"note"`
 		Revision *uint64 `json:"revision"`
 	}
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
@@ -234,9 +268,22 @@ func (s *Server) handleAcknowledgement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Note = strings.TrimSpace(body.Note)
-	if body.Revision == nil || len(body.ID) != 64 || len(body.Note) > 2048 || (body.Action != "acknowledge" && body.Action != "unacknowledge" && body.Action != "comment") || (body.Action == "comment" && body.Note == "") {
-		http.Error(w, "invalid action or note (maximum 2048 bytes)", 400)
+	if body.Revision == nil || len(body.ID) != 64 || body.Change.Validate() != nil || (!workflow && body.Action != "acknowledge" && body.Action != "unacknowledge" && body.Action != "comment") {
+		http.Error(w, "invalid handling change (note maximum 2048 UTF-8 bytes)", 400)
 		return
+	}
+	if body.Action == "assign" {
+		eligible := false
+		for _, u := range s.operationsAssignees(r) {
+			if u.Name == body.Assignee {
+				eligible = true
+				break
+			}
+		}
+		if !eligible {
+			http.Error(w, "assignee must be an available admin or troubleshooter", 400)
+			return
+		}
 	}
 	// Never let a delayed action confirm a newer severity/episode.
 	found := false
@@ -252,14 +299,18 @@ func (s *Server) handleAcknowledgement(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "problem recovered or changed; refresh before updating", 409)
 		return
 	}
-	record, err := s.operations.Update(body.ID, userOf(r).Name, body.Action, body.Note, *body.Revision, target)
+	record, err := s.operations.Apply(body.ID, userOf(r).Name, body.Change, *body.Revision, target)
 	if errors.Is(err, operations.ErrConflict) {
 		http.Error(w, err.Error(), 409)
 		return
 	}
+	if errors.Is(err, operations.ErrInvalidChange) {
+		http.Error(w, err.Error(), 400)
+		return
+	}
 	if err != nil {
-		s.log.Error("persist acknowledgement", "err", err)
-		http.Error(w, fmt.Sprintf("could not save acknowledgement: %v", err), 503)
+		s.log.Error("persist problem handling", "err", err)
+		http.Error(w, fmt.Sprintf("could not save handling record: %v", err), 503)
 		return
 	}
 	writeJSON(w, record)

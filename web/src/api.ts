@@ -43,10 +43,19 @@ export interface ResourceMetric { value: number | null; at: number; state: 'fres
 export interface OperationsNode extends NodeInfo {
   cpu: ResourceMetric; memory: ResourceMetric; alarm_coverage: 'local' | 'mirrored' | 'disabled' | 'unknown' | 'empty'
 }
+export type HandlingStatus = 'open' | 'investigating' | 'watching'
+export interface HandlingAction {
+  at: number; actor: string; action: string; note: string
+  previous_assignee?: string; assignee?: string; previous_status?: HandlingStatus; status?: HandlingStatus
+}
+export interface HandlingChange {
+  action: 'acknowledge' | 'unacknowledge' | 'comment' | 'assign' | 'unassign' | 'progress'
+  assignee?: string; status?: HandlingStatus
+}
 export interface HandlingRecord {
   problem: { node: string; hostname: string; chart: string; name: string; severity: string; since: number }
-  id: string; acknowledged: boolean; revision: number
-  history: { at: number; actor: string; action: string; note: string }[]
+  id: string; acknowledged: boolean; revision: number; assignee: string; status: HandlingStatus
+  history: HandlingAction[]
 }
 export interface Problem {
   id: string; node: string; hostname: string; node_status: string; chart: string; name: string
@@ -54,6 +63,8 @@ export interface Problem {
   since: number; updated: number; stale: boolean; handling: HandlingRecord
 }
 export interface OperationsSnapshot {
+  current_user: { name: string; role: string }
+  assignees: { name: string; role: string }[]
   activity: HandlingRecord[]
   now: number; nodes: OperationsNode[]; problems: Problem[]; summary: Record<string, number>; persistent: boolean
 }
@@ -192,6 +203,8 @@ export const api = {
   operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
   acknowledge: (body: { id: string; action: string; note: string; revision: number }) =>
     post<HandlingRecord>('/api/v1/operations/acknowledgements', body),
+  handleProblem: (body: HandlingChange & { id: string; note: string; revision: number }) =>
+    post<HandlingRecord>('/api/v1/operations/handling', body),
   info: (signal?: AbortSignal) => get<Info>('/api/v1/info', signal),
   nodes: (signal?: AbortSignal) => get<NodesResponse>('/api/v1/nodes', signal),
   charts: (signal?: AbortSignal) => get<ChartsResponse>(`/api/v1/charts${q({})}`, signal),
