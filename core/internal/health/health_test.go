@@ -109,6 +109,68 @@ func TestParseLookupDelayRepeat(t *testing.T) {
 	}
 }
 
+func TestCommittedMemoryAlarmRequiresEnforcedLimit(t *testing.T) {
+	rules, err := DefaultRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, r := range rules {
+		if r.Spec.Name == "committed_memory" {
+			found = true
+			if r.Spec.Labels["commit_limit"] != "enforced" || r.Spec.Calc != "$this * 100 / $limit" {
+				t.Fatalf("committed_memory spec = %+v", r.Spec)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing committed_memory rule")
+	}
+	open := func(t *testing.T, labels map[string]string) *Engine {
+		t.Helper()
+		db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
+		reg.AddChart(&registry.Chart{
+			ID: "mem.committed", Family: "ram", Units: "MiB", Labels: labels,
+			Dimensions: []*registry.Dimension{{ID: "committed"}, {ID: "limit"}},
+		})
+		e, err := New(reg, db, Options{Rules: rules, Hostname: "h", LogDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(e.Close)
+		now := time.Unix(1_700_000_000, 0)
+		for i := 0; i < 5; i++ {
+			// 5x the decorative ceiling. This is normal with heuristic overcommit.
+			_ = reg.Collect("mem.committed", now, map[string]float64{"committed": 5000, "limit": 1000})
+			now = now.Add(time.Second)
+		}
+		e.Tick(now)
+		return e
+	}
+	plain := open(t, nil)
+	for _, a := range plain.Alarms() {
+		if a.Name == "committed_memory" && a.Active {
+			t.Fatalf("unlabeled chart raised %+v", a)
+		}
+	}
+	strict := open(t, map[string]string{"commit_limit": "enforced"})
+	var alarm *Alarm
+	for i := range strict.Alarms() {
+		if strict.Alarms()[i].Name == "committed_memory" {
+			a := strict.Alarms()[i]
+			alarm = &a
+		}
+	}
+	if alarm == nil || !alarm.Active || alarm.Status != StatusCritical || math.Abs(alarm.Value-500) > 0.1 {
+		t.Fatalf("enforced alarm = %+v", alarm)
+	}
+}
+
 func TestDefaultRulesCompile(t *testing.T) {
 	rules, err := DefaultRules()
 	if err != nil {
