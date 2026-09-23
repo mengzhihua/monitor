@@ -98,7 +98,7 @@ type appsCollector struct {
 	last                time.Time
 }
 
-// procCounters is one /proc/<pid> sample. ok is false when stat could not be read.
+// procCounters is one process sample. ok is false when CPU counters could not be read.
 type procCounters struct {
 	name            string
 	ppid            int32
@@ -346,24 +346,16 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			}
 			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
 			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
-		} else if t, err := gp.TimesWithContext(ctx); err == nil {
-			cpuSec = t.User + t.System
-			ok = true
-			if m, err := gp.MemoryInfoWithContext(ctx); err == nil && m != nil {
-				rss = m.RSS
-			}
-			if n, err := gp.NumThreadsWithContext(ctx); err == nil {
-				threads = n
-			}
-			if a.hasIO {
-				if io, err := gp.IOCountersWithContext(ctx); err == nil && io != nil {
-					readB, writeB, hasIO = io.ReadBytes, io.WriteBytes, true
-				}
-			}
+		} else {
+			sample = readAppProcessSample(ctx, gp, a.hasIO)
+			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
+			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
 		}
+		// A failed read retains its cumulative baseline, but cannot reuse the
+		// previous interval's rate when aggregating CPU by user and OS group.
+		st.cpuPct = 0
 		if ok {
 			ms := cpuSec * 1000
-			st.cpuPct = 0
 			if st.hasCPU {
 				if d := ms - st.cpuMs; d > 0 {
 					a.cpuMs[g] += d

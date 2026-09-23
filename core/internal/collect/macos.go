@@ -15,7 +15,7 @@ import (
 
 // macosConfig is collectors.modules.macos (mach host metrics; non-Darwin disables).
 type macosConfig struct {
-	Command string        `yaml:"command"` // sysctl
+	Command string        `yaml:"command"` // sysctl; custom executables keep the legacy -a invocation
 	Timeout time.Duration `yaml:"timeout"`
 }
 
@@ -57,9 +57,6 @@ func (m *macosCollector) Init(reg *registry.Registry) error {
 	sample, err := m.sample(context.Background())
 	if err != nil {
 		return err
-	}
-	if sample.pressure == nil && sample.swapUsed == nil && sample.thermal == nil && sample.battery == nil {
-		return errors.New("macos: no memory pressure, swap, thermal, or battery metrics")
 	}
 	add := func(id, title, units string, prio int, dims ...*registry.Dimension) {
 		reg.AddChart(&registry.Chart{ID: id, Family: "macos", Title: title, Units: units, Priority: prio,
@@ -114,7 +111,14 @@ type macosSample struct {
 
 func (m *macosCollector) sample(ctx context.Context) (macosSample, error) {
 	var s macosSample
-	sys, err := m.exec(ctx, m.cfg.Command, "-a")
+	args := []string{"-a"}
+	if m.cfg.Command == "sysctl" {
+		// Enumerating all kernel keys can be expensive and exposes thousands of
+		// unrelated values. -i skips keys unavailable on this Mac (for example
+		// Intel-only thermal information) while retaining the available ones.
+		args = []string{"-i", "kern.memorystatus_vm_pressure_level", "vm.swapusage", "machdep.xcpm.cpu_thermal_level"}
+	}
+	sys, err := m.exec(ctx, m.cfg.Command, args...)
 	if err != nil && m.run == nil {
 		return s, err
 	}
@@ -125,8 +129,11 @@ func (m *macosCollector) sample(ctx context.Context) (macosSample, error) {
 	if batt, err := m.exec(ctx, "pmset", "-g", "batt"); err == nil {
 		parsePmsetBatt(string(batt), &s)
 	}
-	if s.pressure == nil && s.swapUsed == nil && s.thermal == nil && s.battery == nil && err != nil {
-		return s, err
+	if s.pressure == nil && s.swapUsed == nil && s.thermal == nil && s.battery == nil {
+		if err != nil {
+			return s, err
+		}
+		return s, errors.New("macos: no memory pressure, swap, thermal, or battery metrics")
 	}
 	return s, nil
 }
@@ -168,7 +175,11 @@ func parseMacosSysctl(s string, out *macosSample) {
 				out.pressure = &p
 			}
 		case "machdep.xcpm.cpu_thermal_level":
-			if n, err := strconv.ParseFloat(strings.Fields(v)[0], 64); err == nil {
+			fields := strings.Fields(v)
+			if len(fields) == 0 {
+				continue
+			}
+			if n, err := strconv.ParseFloat(fields[0], 64); err == nil {
 				out.thermal = &n
 			}
 		case "vm.swapusage":

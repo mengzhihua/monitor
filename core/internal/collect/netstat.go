@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,7 +18,9 @@ import (
 // netstatCollector exposes the live `network-connections` function (Netdata's
 // apps.plugin equivalent) and a summary chart of TCP states.
 type netstatCollector struct {
-	top int
+	top             int
+	readConnections func(context.Context, string) ([]psnet.ConnectionStat, error)
+	readProcess     func(context.Context, int32) (string, string)
 }
 
 type netstatConfig struct {
@@ -51,7 +54,7 @@ func (n *netstatCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	if _, err := psnet.Connections("tcp"); err != nil {
+	if _, err := n.read(context.Background(), "tcp"); err != nil {
 		return err
 	}
 	ch := &registry.Chart{ID: "ip.tcpsock", Family: "ip", Title: "TCP sockets by state", Units: "connections",
@@ -67,15 +70,58 @@ func (n *netstatCollector) Init(reg *registry.Registry) error {
 }
 
 func (n *netstatCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	tcp, err := psnet.ConnectionsWithContext(ctx, "tcp")
+	return n.collectSockets(ctx, reg, now, runtime.GOOS == "darwin" || runtime.GOOS == "freebsd")
+}
+
+func (n *netstatCollector) read(ctx context.Context, kind string) ([]psnet.ConnectionStat, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var rows []psnet.ConnectionStat
+	var err error
+	if n.readConnections != nil {
+		rows, err = n.readConnections(ctx, kind)
+	} else {
+		rows, err = psnet.ConnectionsWithContext(ctx, kind)
+	}
+	// Some platform readers suppress a killed command's error. A deadline
+	// still means unavailable data, even if they returned an empty slice.
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return rows, err
+}
+
+func (n *netstatCollector) collectSockets(ctx context.Context, reg *registry.Registry, now time.Time, combinedInternet bool) error {
+	kind := "tcp"
+	if combinedInternet {
+		// Darwin/FreeBSD use lsof. One Internet scan contains both TCP and UDP;
+		// "all" still excludes Unix sockets, so keep that separate scan.
+		kind = "inet"
+	}
+	connections, err := n.read(ctx, kind)
 	if err != nil {
 		return err
 	}
+	tcpCount, udpCount := 0, 0
 	states := map[string]float64{}
 	for _, s := range tcpStates {
 		states[strings.ToLower(s)] = 0
 	}
-	for _, c := range tcp {
+	for _, c := range connections {
+		if combinedInternet {
+			if c.Family == 1 { // AF_UNIX, including SOCK_STREAM, is not TCP.
+				continue
+			}
+			if c.Type == 2 {
+				udpCount++
+				continue
+			}
+			if c.Type != 1 {
+				continue
+			}
+		}
+		tcpCount++
 		id := strings.ToLower(c.Status)
 		if id == "" {
 			id = "close"
@@ -84,10 +130,17 @@ func (n *netstatCollector) Collect(ctx context.Context, reg *registry.Registry, 
 	}
 	_ = reg.Collect("ip.tcpsock", now, states)
 
-	udp, _ := psnet.ConnectionsWithContext(ctx, "udp")
-	unixc, _ := psnet.ConnectionsWithContext(ctx, "unix")
-	_ = reg.Collect("ip.sockstat", now, map[string]float64{
-		"tcp": float64(len(tcp)), "udp": float64(len(udp)), "unix": float64(len(unixc))})
+	counts := map[string]float64{"tcp": float64(tcpCount)}
+	if combinedInternet {
+		counts["udp"] = float64(udpCount)
+	} else if udp, err := n.read(ctx, "udp"); err == nil {
+		counts["udp"] = float64(len(udp))
+	}
+	if unixc, err := n.read(ctx, "unix"); err == nil {
+		counts["unix"] = float64(len(unixc))
+	}
+	// Unsupported or failed secondary sources remain missing, not healthy zero.
+	_ = reg.Collect("ip.sockstat", now, counts)
 	return nil
 }
 
@@ -124,16 +177,13 @@ func (n *netstatCollector) connections(ctx context.Context, args map[string]stri
 	if kind == "" {
 		kind = "all"
 	}
-	conns, err := psnet.ConnectionsWithContext(ctx, kind)
+	conns, err := n.read(ctx, kind)
 	if err != nil && kind == "all" {
-		conns, err = psnet.ConnectionsWithContext(ctx, "inet")
+		conns, err = n.read(ctx, "inet")
 	}
 	if err != nil {
 		return Table{}, err
 	}
-	inodes := procNetInodes(nil)
-	names := map[int32]string{}
-	cmds := map[int32]string{}
 	wantState := strings.ToUpper(args["state"])
 	wantProto := strings.ToLower(args["protocol"])
 	rows := make([]ConnRow, 0, len(conns))
@@ -145,23 +195,11 @@ func (n *netstatCollector) connections(ctx context.Context, args map[string]stri
 		if wantState != "" && !strings.EqualFold(c.Status, wantState) {
 			continue
 		}
-		name, cmd := names[c.Pid], cmds[c.Pid]
-		if name == "" && cmd == "" && c.Pid > 0 {
-			if p, err := process.NewProcessWithContext(ctx, c.Pid); err == nil {
-				name, _ = p.NameWithContext(ctx)
-				cmd, _ = p.CmdlineWithContext(ctx)
-			}
-			names[c.Pid], cmds[c.Pid] = name, cmd
-		}
-		if len(cmd) > 200 {
-			cmd = cmd[:200]
-		}
 		local, remote := fmtAddr(c.Laddr), fmtAddr(c.Raddr)
 		rows = append(rows, ConnRow{
 			Protocol: proto, State: c.Status,
 			Local: local, Remote: remote,
-			PID: c.Pid, Name: name, Cmdline: cmd,
-			Inode: inodes[local+"|"+remote],
+			PID: c.Pid,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -176,6 +214,34 @@ func (n *netstatCollector) connections(ctx context.Context, args map[string]stri
 	total := len(rows)
 	if len(rows) > n.top {
 		rows = rows[:n.top]
+	}
+	// Resolve expensive process details only for rows that will be returned.
+	// Cache failures as well: an inaccessible PID can own many sockets.
+	type processDetails struct{ name, cmd string }
+	details := map[int32]processDetails{}
+	var inodes map[string]string
+	if len(rows) > 0 {
+		inodes = procNetInodes(nil)
+	}
+	for i := range rows {
+		r := &rows[i]
+		if r.PID > 0 {
+			d, ok := details[r.PID]
+			if !ok {
+				if n.readProcess != nil {
+					d.name, d.cmd = n.readProcess(ctx, r.PID)
+				} else if p, err := process.NewProcessWithContext(ctx, r.PID); err == nil {
+					d.name, _ = p.NameWithContext(ctx)
+					d.cmd, _ = p.CmdlineWithContext(ctx)
+				}
+				if len(d.cmd) > 200 {
+					d.cmd = d.cmd[:200]
+				}
+				details[r.PID] = d
+			}
+			r.Name, r.Cmdline = d.name, d.cmd
+		}
+		r.Inode = inodes[r.Local+"|"+r.Remote]
 	}
 	out := Table{Columns: []string{"protocol", "state", "local", "remote", "pid", "name", "cmdline", "inode"}, Total: total}
 	out.Rows = make([]any, len(rows))
