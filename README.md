@@ -5,6 +5,8 @@
 - **服务端** `monitord`（Go 单二进制，配置 `mode: agent` 或 `mode: hub`）：macOS / Linux / Windows / FreeBSD / Android
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
+代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。开发分支采用[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
+
 ## 文档
 
 | 文档 | 内容 |
@@ -489,6 +491,45 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 M0–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → 日志/查看器 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
 
 后续仍不进默认二进制的是带 BTF 的 eBPF CO-RE 重定位，以及 850 个 Prometheus 集成名（继续 `prom.*`）。见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) §2.7。
+
+## 双仓库推送
+
+每次完成开发和必要验证后，将本次改动提交到当前开发分支，并推送到 GitHub、GitLab 两边。推送开发分支不会自动合并到 `main`；GitHub 上的 Issue、PR、Release 安装包和工作流运行记录不会随 Git 推送复制到 GitLab。
+
+### 首次配置
+
+远程配置保存在本地 Git 配置中，不随代码克隆。新克隆后先运行 `git remote -v` 检查；以下命令将 `origin` 设为从 GitHub 拉取、向两个仓库推送（会替换 `origin` 原有的推送地址，可重复执行）：
+
+```bash
+git remote set-url origin git@github.com:mengzhihua/monitor.git
+git config --local --replace-all remote.origin.pushurl git@github.com:mengzhihua/monitor.git
+git config --local --add remote.origin.pushurl https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git
+git remote -v
+```
+
+GitHub 使用已获授权的 SSH 密钥；GitLab 使用 HTTPS，用户名为 `oauth2`，密码为具有仓库写入权限的访问令牌。将令牌保存到系统凭据管理器（macOS 使用钥匙串），不要将令牌写入远程 URL、文档或提交。自定义名称的 SSH 密钥需在本机 SSH 配置中指定。
+
+### 日常提交与验证
+
+检查实际分支和改动，只暂存本次需要交付的文件，完成提交后推送：
+
+```bash
+git status --short --branch
+# git add <本次改动的文件>
+# git commit -m "说明本次改动"
+git push -u origin HEAD
+```
+
+该命令将当前分支推送到两个仓库，并设置上游；后续在该分支执行 `git push` 即可。默认不会推送其他分支或全部标签。推送后分别核对两边返回的提交 SHA 与 `git rev-parse HEAD` 一致：
+
+```bash
+branch=$(git branch --show-current)
+git rev-parse HEAD
+git ls-remote git@github.com:mengzhihua/monitor.git "refs/heads/$branch"
+git ls-remote https://oauth2@gitlab.tly.life:20443/mengzhihua/netdata.git "refs/heads/$branch"
+```
+
+两边推送独立执行，一边成功不代表另一边成功。如果失败，先处理认证、网络或远程历史分歧，再重试 `git push`；已同步的一边会显示无需更新。不要使用强制推送覆盖远程提交。GitHub 工作流自动生成的标签只存在于其创建位置，需要同步标签时再显式拉取并推送对应标签。
 
 ## 开发验收
 

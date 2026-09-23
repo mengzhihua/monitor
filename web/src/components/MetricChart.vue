@@ -6,10 +6,12 @@ import type { Chart } from '../api'
 import { api } from '../api'
 import { live } from '../live'
 import { pageVisible } from '../visibility'
+import { metricHelp, dimensionHelp, unitHelp } from '../metricHelp'
 import { activateChart, retainChart } from '../chart_cache'
 
 const props = defineProps<{ chart: Chart; window: number }>()
 
+const help = computed(() => metricHelp(props.chart))
 const card = ref<HTMLDivElement>()
 const el = ref<HTMLDivElement>()
 const error = ref('')
@@ -180,6 +182,14 @@ function render() {
   plot?.destroy()
   plot = new uPlot(makeOpts(width), buildData(), el.value)
   plotDefinition = definition
+  // uPlot owns legend DOM; decorate it after each recreation, in its actual
+  // series order (the stacked renderer reverses dimensions).
+  el.value.querySelectorAll<HTMLElement>('.u-legend .u-series').forEach((row, index) => {
+    const dim = props.chart.dimensions.find(d => d.id === dims[dimIndex(index)])
+    const text = index === 0 ? '采样时间：鼠标选中位置对应的本地时间。' : dim ? dimensionHelp(props.chart, dim) : help.value
+    row.title = text
+    row.querySelectorAll<HTMLElement>('th, td').forEach(cell => { cell.title = text })
+  })
 }
 
 function onLive(t: number, v: Record<string, number>) {
@@ -288,7 +298,7 @@ watch(pageVisible, updateVisibility)
 watch(() => props.chart.last_entry, (t) => { lastSample.value = Math.max(lastSample.value, t || 0) })
 /** Anything that feeds makeOpts/buildData/load: a changed definition needs a full reload. */
 const defFingerprint = () =>
-  [props.chart.chart_type, props.chart.update_every, props.chart.anomaly ? 1 : 0, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}\u0000${d.anomaly ? 1 : 0}`)].join('\u0001')
+  [props.chart.id, props.chart.context, props.chart.title, props.chart.units, props.chart.chart_type, props.chart.update_every, props.chart.anomaly ? 1 : 0, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}\u0000${d.anomaly ? 1 : 0}`)].join('\u0001')
 watch([() => props.window, defFingerprint], () => {
   updateSubscription()
   if (visible) void load(); else ++loadGeneration
@@ -299,13 +309,18 @@ watch([() => props.window, defFingerprint], () => {
   <div ref="card" class="card" :class="{ anom: chart.anomaly }">
     <div class="head">
       <div>
-        <span class="title">{{ chart.title }}</span>
-        <span class="id">{{ chart.id }}</span>
+        <span class="title" :title="help">{{ chart.title }}</span>
+        <span class="id" :title="help">{{ chart.id }}</span>
         <span v-if="anomalous || chart.anomaly" class="anom">ANOM</span>
       </div>
       <span v-if="stale" class="err" :title="lastSample ? new Date(lastSample * 1000).toLocaleString() : '尚无样本'">{{ lastSample ? '数据过期' : '暂无数据' }}</span>
-      <span class="units">{{ chart.units }}</span>
+      <span class="units" :title="unitHelp(chart.units)">{{ chart.units }}</span>
     </div>
+    <details class="metric-help">
+      <summary :title="help">中文指标说明</summary>
+      <p>{{ help }}</p>
+      <ul><li v-for="dim in chart.dimensions.filter(d => !d.hidden)" :key="dim.id">{{ dimensionHelp(chart, dim) }}</li></ul>
+    </details>
     <div ref="el" class="plot"></div>
     <div v-if="error" class="err">{{ error }}</div>
   </div>
@@ -316,6 +331,12 @@ watch([() => props.window, defFingerprint], () => {
 .card.anom { border-color: #7f1d1d; box-shadow: inset 0 0 0 1px #7f1d1d; }
 .badge { margin-left: 8px; font-size: 10px; color: #fecaca; background: #7f1d1d; border-radius: 8px; padding: 0 6px; }
 .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.metric-help { color:#94a3b8; font-size:12px; margin:6px 0; overflow-wrap:anywhere; }
+.metric-help summary { cursor:help; width:fit-content; color:#5eead4; }
+.metric-help p, .metric-help li { white-space:pre-line; line-height:1.7; }
+.metric-help ul { padding-left:18px; }
+.title, .units, .id, :deep(.u-series) { cursor:help; }
+.head { flex-wrap:wrap; gap:6px; overflow-wrap:anywhere; }
 .title { font-weight: 600; font-size: 14px; }
 .id { color: #64748b; font-size: 11px; margin-left: 8px; font-family: ui-monospace, monospace; }
 .anom { margin-left: 8px; font-size: 10px; font-weight: 700; color: #fecaca; background: #7f1d1d; border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em; }

@@ -1,0 +1,172 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import type { Chart } from '../api'
+import { dashboards, chartsForGroup } from '../dashboards'
+import DashboardEditor from './DashboardEditor.vue'
+import { asDashboard, decodeBoards, encodeBoards, newBoard, storageKey, validateBoards, type PersonalBoard } from '../dashboardConfig'
+import MetricChart from './MetricChart.vue'
+
+const props = defineProps<{ charts: Chart[]; window: number; filter: string; node: string }>()
+const personal = ref<PersonalBoard[]>([])
+const error = ref('')
+const notice = ref('')
+try { const saved = localStorage.getItem(storageKey); if (saved) personal.value = decodeBoards(saved) }
+catch { error.value = '无法读取个人看板配置。内置样板仍可使用；保存新配置会替换浏览器中的原配置，请先备份。' }
+const selected = ref('developer')
+const editing = ref<PersonalBoard | null>(null)
+const deleting = ref(false)
+const collapsed = ref(false)
+const allBoards = computed(() => [...dashboards, ...personal.value.map(asDashboard)])
+const settings = computed(() => personal.value.find(b => b.id === selected.value))
+const limit = computed(() => settings.value?.limit ?? 4)
+const effectiveWindow = computed(() => settings.value?.windowSec || props.window)
+function persist(next: PersonalBoard[]): boolean {
+  try { localStorage.setItem(storageKey, encodeBoards(next)); personal.value = next; error.value = ''; return true }
+  catch (e) { error.value = `保存失败，原配置未改变：${e instanceof Error ? e.message : '浏览器存储不可用'}`; return false }
+}
+function startEditor(copy = false) {
+  editing.value = copy ? { ...newBoard(), title: `${board.value.title} 副本`.slice(0,100), description: board.value.description, groupIds: board.value.groups.filter(g => !g.chartIds).map(g => g.id), ...(settings.value ? { ...settings.value, id: newBoard().id, title: `${settings.value.title} 副本`.slice(0,100) } : {}) } : newBoard()
+  deleting.value = false; notice.value = ''
+}
+function saveBoard(value: PersonalBoard) {
+  try {
+    const [clean] = validateBoards([value])
+    const next = personal.value.some(b => b.id === value.id) ? personal.value.map(b => b.id === value.id ? clean! : b) : [...personal.value, clean!]
+    if (persist(next)) { selected.value = value.id; editing.value = null; category.value = '我的看板'; search.value = ''; notice.value = '已保存到当前浏览器。' }
+  } catch (e) { error.value = e instanceof Error ? e.message : '配置无效。' }
+}
+function removeBoard() {
+  if (persist(personal.value.filter(b => b.id !== selected.value))) { selected.value = 'developer'; deleting.value = false; resetCatalog(); notice.value = '个人看板已删除。' }
+}
+function exportBoards() {
+  const url = URL.createObjectURL(new Blob([encodeBoards(personal.value)], { type: 'application/json' }))
+  const link = document.createElement('a'); link.href = url; link.download = 'monitor-dashboards.json'; link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+async function importBoards(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    if (file.size > 500_000) throw new Error('配置文件不能超过 500 KB。')
+    const imported = decodeBoards(await file.text()).map(b => ({ ...b, id: newBoard().id }))
+    if (!imported.length) throw new Error('配置文件中没有看板。')
+    if (persist([...personal.value, ...imported])) { category.value = '我的看板'; search.value = ''; selected.value = imported[0]!.id; notice.value = `已导入 ${imported.length} 个副本。` }
+  } catch (e) { error.value = `导入失败：${e instanceof Error ? e.message : '配置无效'}` }
+  input.value = ''
+}
+const expanded = ref<string[]>([])
+const search = ref('')
+const category = ref('全部')
+const categories = ['全部', '我的看板', ...new Set(dashboards.map(b => b.category))]
+const catalog = computed(() => {
+  const query = search.value.trim().toLowerCase()
+  return allBoards.value.filter(b => (category.value === '全部' || category.value === b.category)
+    && `${b.title} ${b.description} ${b.groups.map(g => g.title).join(' ')}`.toLowerCase().includes(query))
+})
+const coverage = computed(() => {
+  const uniqueGroups = new Map(allBoards.value.flatMap(b => b.groups).map(g => [g.id, g]))
+  const matched = new Map([...uniqueGroups.values()].map(g => [g.id, chartsForGroup(props.charts, g).length]))
+  return Object.fromEntries(allBoards.value.map(b => [b.id, b.groups.filter(g => matched.get(g.id)).length]))
+})
+function resetCatalog() { search.value = ''; category.value = '全部' }
+const board = computed(() => allBoards.value.find(b => b.id === selected.value) ?? dashboards[0]!)
+const groups = computed(() => board.value.groups.map(group => {
+  const matched = chartsForGroup(props.charts, group)
+  const query = props.filter.trim().toLowerCase()
+  const filtered = matched.filter(c => !query || `${c.id} ${c.title} ${c.family}`.toLowerCase().includes(query))
+  return { ...group, matched, filtered, visible: expanded.value.includes(group.id) ? filtered : filtered.slice(0, limit.value) }
+}))
+const visibleGroups = computed(() => groups.value.filter(g => !settings.value?.hideEmpty || g.matched.length))
+const count = computed(() => new Set(groups.value.flatMap(g => g.matched.map(c => c.id))).size)
+const available = computed(() => groups.value.filter(g => g.matched.length).length)
+watch(selected, () => { deleting.value = false })
+watch([selected, () => props.node, () => props.filter], () => { expanded.value = [] })
+</script>
+
+<template>
+  <div class="dashboards" aria-label="常用聚合看板">
+    <div class="intro"><div><span class="eyebrow">开箱即用 · 自动匹配当前节点</span><h1>常用聚合看板</h1></div><span class="badge">{{ dashboards.length }} 个内置样板</span></div>
+    <p class="muted">无需选指标或编写查询。样板直接使用当前节点已有采集数据，切换节点后自动更新。</p>
+    <div class="toolbar">
+      <button @click="startEditor()">新建看板</button><button @click="startEditor(true)">复制为个人看板</button>
+      <button :disabled="!personal.length" @click="exportBoards">导出个人看板</button>
+      <label class="import">导入为副本<input type="file" accept=".json,application/json" aria-label="导入看板配置" @change="importBoards" /></label>
+      <button :aria-expanded="!collapsed" @click="collapsed = !collapsed">{{ collapsed ? '展开样板目录' : '收起样板目录' }}</button>
+    </div>
+    <p class="muted">个人配置仅保存在当前浏览器；可导出 JSON 备份或迁移，不包含监控数据与认证令牌。</p>
+    <p v-if="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
+    <DashboardEditor v-if="editing" :key="editing.id" :initial="editing" :charts="charts" @save="saveBoard" @cancel="editing = null" />
+    <div v-show="!collapsed" class="catalog-tools">
+      <input v-model="search" type="search" aria-label="搜索看板样板" placeholder="搜索样板，例如 Redis、Java、DNS…" />
+      <div class="categories" aria-label="看板分类">
+        <button v-for="item in categories" :key="item" :aria-pressed="category === item" @click="category = item">{{ item }}</button>
+      </div>
+      <span class="muted">{{ catalog.length }} 个匹配样板 · 当前查看：{{ board.title }}</span>
+    </div>
+    <div v-if="!collapsed && !catalog.length" class="missing">没有匹配的样板。<button class="reset" @click="resetCatalog">清除样板筛选</button></div>
+    <div v-show="!collapsed" class="presets" aria-label="选择看板">
+      <button v-for="item in catalog" :key="item.id" :aria-pressed="selected === item.id" @click="selected = item.id">
+        <b>{{ item.title }}</b><span>{{ item.description }}</span><small>{{ item.category }} · {{ coverage[item.id] }}/{{ item.groups.length }} 类指标已采集</small>
+      </button>
+    </div>
+    <div class="board-heading"><h2>{{ board.title }}</h2><span>{{ available }}/{{ groups.length }} 类指标已采集 · {{ count }} 张图表</span></div>
+    <div v-if="settings" class="toolbar">
+      <button @click="editing = { ...settings }; notice = ''">编辑个人看板</button><button @click="deleting = !deleting">删除个人看板</button>
+      <span class="muted">{{ settings.windowSec ? `独立时间范围：${settings.windowSec / 60} 分钟` : '跟随顶部时间范围' }} · {{ settings.columns || '自适应' }} 列 · 每组 {{ limit }} 张</span>
+      <span v-if="deleting">确认删除“{{ board.title }}”？<button @click="removeBoard">确认删除</button><button @click="deleting = false">取消删除</button></span>
+    </div>
+    <p v-if="settings?.hideEmpty" class="muted">已隐藏 {{ groups.length - visibleGroups.length }} 个未采集分组；隐藏不代表运行正常。</p>
+    <p class="muted">{{ board.description }} 各图保留原始单位；不同指标不混算。</p>
+    <aside v-if="board.checklist" class="runbook" aria-label="建议排查顺序">
+      <b>建议排查顺序</b>
+      <ol><li v-for="step in board.checklist" :key="step">{{ step }}</li></ol>
+    </aside>
+    <section v-for="group in visibleGroups" :key="group.id" class="board-group" :aria-label="group.title">
+      <div class="group-heading"><h3>{{ group.title }}</h3><span>{{ group.filtered.length }} 张图表</span></div>
+      <p class="muted">{{ group.hint }}</p>
+      <div v-if="!group.matched.length" class="missing">当前节点尚未采集这类指标。已有采集数据接入后会自动展示，无需配置看板。</div>
+      <div v-else-if="!group.filtered.length" class="missing">没有匹配当前筛选条件的图表，请清空或修改顶部筛选。</div>
+      <div v-else class="board-grid" :class="settings?.columns ? `columns-${settings.columns}` : ''">
+        <MetricChart v-for="chart in group.visible" :key="node + ':' + chart.id" :chart="chart" :window="effectiveWindow" />
+      </div>
+      <button v-if="group.filtered.length > limit" class="more" @click="expanded = expanded.includes(group.id) ? expanded.filter(id => id !== group.id) : [...expanded, group.id]">
+        {{ expanded.includes(group.id) ? '收起' : `展开其余 ${group.filtered.length - limit} 张图表` }}
+      </button>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:14px 0; }
+.toolbar button, .import { padding:8px 12px; } .import { border:1px solid #334155; border-radius:8px; max-width:100%; box-sizing:border-box; } .import input { display:block; max-width:100%; margin-top:6px; }
+[role=alert] { color:#fda4af; overflow-wrap:anywhere; } [role=status] { color:#5eead4; } button:disabled { opacity:.4; cursor:default; }
+.board-grid.columns-1 { grid-template-columns:minmax(0,1fr); }
+@media(min-width:900px) { .board-grid.columns-2 { grid-template-columns:repeat(2,minmax(0,1fr)); } .board-grid.columns-3 { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+.dashboards { max-width: 1800px; margin: 0 auto; }
+.intro, .board-heading, .group-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+h1 { font-size:24px; margin:6px 0; } h2 { font-size:20px; margin:0; } h3 { font-size:16px; margin:0; }
+.eyebrow { color:#5eead4; font-size:12px; } .badge { background:#134e4a; color:#99f6e4; border-radius:20px; padding:5px 12px; }
+.muted, .board-heading span, .group-heading span { color:#94a3b8; font-size:13px; }
+.presets { max-height:420px; overflow:auto; padding:4px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:20px 0 28px; }
+.catalog-tools { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:18px; }
+.catalog-tools input { width:100%; max-width:380px; min-width:0; background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:8px; padding:10px; font:inherit; }
+.categories { display:flex; flex-wrap:wrap; gap:6px; }
+.categories button, .reset { padding:7px 10px; }
+.categories button[aria-pressed=true] { color:#99f6e4; border-color:#2dd4bf; }
+.presets small { color:#5eead4; font-size:11px; }
+button { cursor:pointer; font:inherit; color:#e2e8f0; border:1px solid #334155; background:#0f172a; border-radius:10px; }
+.presets button { text-align:left; padding:16px; display:flex; flex-direction:column; gap:8px; }
+.presets button span { font-size:12px; color:#94a3b8; line-height:1.6; }
+.presets button[aria-pressed=true] { border-color:#2dd4bf; background:#102d32; }
+button:focus-visible { outline:2px solid #5eead4; outline-offset:3px; }
+.runbook { background:#0f172a; border-left:3px solid #2dd4bf; border-radius:6px; padding:14px 18px; font-size:13px; }
+.runbook ol { margin:8px 0 0; padding-left:20px; color:#cbd5e1; }
+.runbook li + li { margin-top:6px; }
+.board-group { margin:20px 0; padding-top:16px; border-top:1px solid #1e293b; }
+.board-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); gap:12px; }
+.missing { padding:18px; border:1px dashed #334155; border-radius:8px; color:#94a3b8; font-size:13px; }
+.more { padding:7px 14px; margin-top:12px; }
+@media(max-width:900px) { .presets { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:480px) { .presets button { padding:12px; } h1 { font-size:21px; } }
+</style>
