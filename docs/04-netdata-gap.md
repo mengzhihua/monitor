@@ -1,5 +1,7 @@
 # Monitor 全量移植 Netdata：差距清单与后续计划
 
+> 当前五阶段交付及最新验收见[验收记录](05-acceptance.md)。下方阶段快照保留了本轮早期结果和当时的待办；检查点性能、客户端安全存储、浏览器和macOS打包状态已在新记录中更新。
+
 > 对照 [Netdata](https://github.com/netdata/netdata) Agent + Cloud 全表面。
 > **目标：全部搬过来**（图表 ID / 语义对齐；目标不存在则零配置自动禁用）。
 > Prometheus / StatsD / OTLP / plugins.d 是**过渡覆盖**，不是终点：能原生采集的都做成 Go 采集器。
@@ -20,7 +22,7 @@ Agent 主路径（采集 → 存 → 告警 → 流 → 查）和 **go.d 应用�
 | Hub / Cloud | **产品面（M25）** | claim/Space/Room/OIDC/环复制/LDAP/share + ACLK MQTT-over-WSS + Cloud 控制台 + 图上异常高亮 + Correlations UI |
 | 850+ Prometheus 集成名 | **M26 点名包装** | 具名 profile 出原生 ID（etcd/minio/vault/…）；其余仍 `prom.*`；已有采集器的不重复包装 |
 
-约 **179** 个内置采集器（含 Darwin `macos`）。Netdata 公开目录约 **850+ 集成名**（多数是 Prometheus 抓取别名）。Monitor 原生覆盖大约 **21%** 的集成名、**核心 Agent 路径约 80%**（采集→存→告警→流→查）。深度缺口集中在真 eBPF CO-RE。
+注册模块数量以当前构建的 `monitord -list-collectors` 输出为准；注册数量不代表真实端点验收。尚无统一覆盖率分母，不给出 Agent 或集成覆盖百分比。
 
 ## 1. 现在有什么（M0–M19 / M22 / M23）
 
@@ -248,10 +250,70 @@ Hub Cloud 产品面。不碰 go.d。
 ## 6. 工程约束（各批通用）
 
 - 图表 ID / context / 单位 / algorithm（absolute vs incremental）对齐 Netdata。
-- Init 失败 = 该采集器禁用，不影响其它模块。
+- Init 失败进入后台退避重试，不影响其它模块；手动禁用不重试。
 - 默认静态二进制、无 CGO；需要 CGO 的能力用 build tag，CI 主矩阵仍 `CGO_ENABLED=0`。
 - 不跑全量 Maven；Go 变更用已有 `go test` / 单测类，前端 `vue-tsc`。
 - 新 API 必须进 `scripts/smoke.sh`。
 - Windows 路径禁止 `:` 等非法字符（RAPL 已踩过）。
 - Health 锁不可重入；通知计数先 `markNotified` 再 `Add`。
 - 分支名 `cursor/netdata-mNN-<topic>-8c7b`，PR 对 `main`。
+
+## 6. 稳定性阶段验收（2026-09-22）
+
+| 能力 | 实现及依赖 | 自动验证 | 真实环境 / 待完成 |
+| --- | --- | --- | --- |
+| OIDC | 标准 go-oidc 验证签名/issuer/audience/expiry，nonce、PKCE、浏览器 state，限时会话及 logout；OIDC 单独配置时禁止匿名管理员 | 签名模拟 IdP 正反例、越权/过期/退出 | 外部 IdP 联调待验收 |
+| HTTPS 采集 | 13 个曾共用 insecureClient 的模块（含合并后的 Proxmox）默认校验证书；tls.ca_file、tls.insecure_skip_verify | 本地 TLS 服务：不可信拒绝、CA 信任成功、显式不安全成功 | K8s / BMC / 存储真实设备待验收 |
+| MSSQL | 依赖 sqlcmd；命中率使用 numerator/base，缺失计数不写零 | 比例/缺失/零分母回归 | SQL Server 实机待验收 |
+| 采集器恢复 | 初始化失败 5 秒至 60 秒退避后台重试；手动禁用不重探；重新启用先初始化 | 离线恢复、并发启停 race 回归 | 长时间运行待验收 |
+| Web / Agent / Hub | Go >=1.25，CI 固定1.27.1；Node 24.19.0 | make all、make test（含 race/vet）、scripts/smoke.sh 通过 | 本轮 macOS amd64；其他平台以 CI 结果为准 |
+| 历史/持久化/HA | 三层 TSDB、Agent 补传已有；现有 Hub ring 仅最后样本 | 现有单测通过 | 阶段3继续；不得称为完整 HA |
+| Flutter / Android | 客户端、Kotlin 服务壳已有 | 本轮未执行移动端构建 | 安全存储、后台恢复、真机验收继续 |
+
+CI 与 Release 使用同一 Go/Node 版本；开发机不再依赖 PATH 中的旧 Node 18。
+TLS 行为变更：自签名端点应配置私有 CA，不再静默接受任意证书。
+
+## 7. 阶段3：持久化、备份和历史复制
+
+- TSDB 检查点默认 30s；块内容同步后原子替换，Unix 同步所在目录；Windows 目录同步由系统管理。
+- `/api/v1/info` 的 `db.persistence` 报告最后成功检查点的开始/完成时间及错误。**30s 是调度间隔，不是硬性丢失上限**：异常退出可能丢失上次成功检查点之后的数据；尚未实现逐样本 WAL 或跨层事务。
+- 检查点最多8个并发写任务，不阻塞正常采样；写块期间保留可查询的缓冲区，避免瞬时数据空洞。未结束的 rollup bucket 也进入检查点。
+- `monitord -config monitor.yaml -data-dir ./data -backup-dir /path/new-backup`：停服备份，SHA-256 清单，拒绝正在使用的数据目录。
+- `monitord -config monitor.yaml -data-dir /path/new-data -restore-from /path/new-backup`：校验后恢复，只允许新目录；失败留下的目录不应启动使用，应检查原因并换一个新目录重试。备份包含监控数据和可能的 Hub 凭证，应限制访问。
+- Hub ring 改成每图每次最多4页、每页5分钟原始分辨率历史；仅HTTP成功后推进进度，保留60s重叠；速率不再二次计算，副本身份跨重启保留。
+- **HA边界**：还不是共识集群或任意故障零丢失；60s重叠不能覆盖任意慢检查点或副本盘丢失。完整重建可重启源Hub重新回放尚在保留期内的历史；超8MiB单页会记录错误而不会错误推进游标。
+- 验证：备份占用/损坏/覆盖保护，检查点后异常退出的 raw/rollup 恢复，查询与检查点并发，Hub历史补传及拒绝重试，进程级 SIGKILL 与备份恢复比对。复现：`make verify-durability`。
+
+## 8. 阶段4：日常使用与客户端恢复
+
+- Dashboard：6小时/24小时/7天窗口，每图最多1200历史点；长窗口每30秒重新降采样，不累积逐秒数组；异步查询过期响应丢弃，卸载后不再更新图表。
+- 节点健康卡片显示在线/过期/离线、最后数据和严重告警；图表区分暂无数据与过期；采集器悬停显示失败原因；存储落盘失败直接显示。
+- Flutter：移除旧版 SharedPreferences 中的明文 token，凭证仅保留本次运行，连接表单明确提示重启后重新输入；WebSocket 使用编码子协议，URL 不再携带 token。平台安全存储和推送仍待后续真实设备验收。
+- Android：子进程崩溃 1s→60s 重启退避，稳定运行一分钟后重置；手动停止取消重试；Android 15 dataSync 超时主动停止，启动限制不再冒充永久保活。
+- Android 15+ 不从 BOOT_COMPLETED 启动 dataSync：需要打开应用启动。依据：https://developer.android.com/about/versions/15/behavior-changes-15 。仍需真机验证后台耗电和系统回收行为。
+- 验证：Vue生产构建通过，Flutter analyze与6项单测通过。浏览器控制工具超时，UI目视验收未完成；Android服务端调试APK构建通过；Flutter macOS完整打包因缺少CocoaPods未通过，不能将代码检查等同于真机通过。
+
+## 9. 阶段5：可复现的容量与运行基线
+
+- `monitord -list-collectors` 输出编译进二进制的模块名；它只说明注册，不说明依赖满足或真实设备验证通过。
+- `make bench`：2000条序列的内存追加、24小时历史读取并聚合到600点、2000条序列的同步检查点分别测量；明确区分追加耗时和持久化耗时。
+- `make soak`：隔离数据和临时端口，连续120秒采集 cpu/mem/load/disk/net，记录API延迟、RSS、磁盘量与采集错误；出错返回非零。
+- CI（Linux/macOS）加入独立进程的强杀恢复、运行中备份拒绝及备份恢复比对；Go/Flutter现有检查保留。
+- 本机基线（Intel i7-9750H，macOS amd64）：120秒、74张图表、60次请求，查询中位数3.05ms，最大186.61ms，最大RSS18.27MiB，最终磁盘266000字节，采集/请求/关闭错误0。
+- 微基准：2000序列追加498ns/sample（**不包含持久化**），24小时读取+600点聚合674377ns/query（约0.67ms）。同时存在其他构建负载，结果不是独占主机峰值。
+- 持久化微基准：2000条序列首次同步检查点耗时249.66秒（本机并行构建期间）。当前每序列文件同步仍是明显瓶颈，不适合据此承诺大规模写入或30秒持久化上限；下一步优先评估WAL与合并块。
+- 尚不能宣称：1000节点/200万samples每秒、72小时稳定、Hub无感切换、全部采集器真实可用。下一批应测独立Linux Hub的10→100→1000节点阶梯负载、磁盘耗尽、网络分区和长时间保留清理；以实测决定是否引入WAL和合并块存储。
+
+## 10. 与远端 M17–M23 合并验收
+
+- 保留新增采集器、告警维护、Contexts、LDAP/share 与 FreeBSD 功能；Proxmox 采用统一的默认证书校验及私有CA配置。
+- LDAP单独配置时拒绝匿名管理员；空LDAP配置不改变本地开放模式；登录角色校验、会话退出撤销和LDAPS证书验证均有回归测试。`ldap://`仍是明文协议，部署时应使用可信证书的`ldaps://`。
+- 合并后 Go vet、全量race测试、Vue构建/typecheck、API/Hub冒烟、独立进程强杀及备份恢复通过。编译进二进制的模块为174个，不能据此推导真实设备覆盖率。
+- 备份恢复核对4行固定时刻RAM数据完全一致；运行中备份被正确拒绝。性能数字来自上述本机基线，并非新增加的全部采集器负载测量。
+
+### 构建产物复核
+
+- `make cross`通过8个目标：Linux amd64/arm64、macOS amd64/arm64、Windows amd64、FreeBSD amd64/arm64、Android arm64。交叉编译不等同于目标机器运行验收。
+- Android服务端`app-debug.apk`：版本`3fc5046`、包名`dev.monitor.server`、minSdk26、targetSdk35；APK v2签名通过，解包后的Go程序与本次编译文件逐字节一致。
+- APK SHA-256：`94f916a040e8f15832021346425789e871f880fd40c10bfd6c6a0ecf374a297d`。未执行手机安装或后台实机验收。
+- 远端`main`在验收期间继续新增M19/M26等提交，本轮已验证成果交付到`codex/reliability-stages-3-5`。这些后续远端改动不在上述验收范围；合并前需再次集成测试。

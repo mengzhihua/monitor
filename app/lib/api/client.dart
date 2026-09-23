@@ -25,7 +25,11 @@ class ServerConfig {
   final String token;
 
   Uri uri(String path, [Map<String, String> query = const {}]) {
-    final base = Uri.parse(baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl);
+    final base = Uri.parse(
+      baseUrl.endsWith('/')
+          ? baseUrl.substring(0, baseUrl.length - 1)
+          : baseUrl,
+    );
     return base.replace(
       path: '${base.path}$path',
       queryParameters: query.isEmpty ? null : query,
@@ -37,6 +41,12 @@ class ServerConfig {
     return u.replace(scheme: u.scheme == 'https' ? 'wss' : 'ws');
   }
 
+  List<String> get liveProtocols => [
+    'monitor',
+    if (token.isNotEmpty)
+      'bearer.${base64Url.encode(utf8.encode(token)).replaceAll("=", "")}',
+  ];
+
   Map<String, String> get headers =>
       token.isEmpty ? const {} : {'Authorization': 'Bearer $token'};
 }
@@ -45,12 +55,15 @@ class ServerConfig {
 /// `node` selector (`local` or a hub node id).
 class ApiClient {
   ApiClient(this.config, {http.Client? httpClient})
-      : _http = httpClient ?? http.Client();
+    : _http = httpClient ?? http.Client();
 
   final ServerConfig config;
   final http.Client _http;
 
-  Future<Map<String, dynamic>> _get(String path, [Map<String, String> q = const {}]) async {
+  Future<Map<String, dynamic>> _get(
+    String path, [
+    Map<String, String> q = const {},
+  ]) async {
     final res = await _http
         .get(config.uri('/api/v1$path', q), headers: config.headers)
         .timeout(const Duration(seconds: 15));
@@ -60,8 +73,10 @@ class ApiClient {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
-  Map<String, String> _q(String? node, [Map<String, String> extra = const {}]) =>
-      {if (node != null && node.isNotEmpty) 'node': node, ...extra};
+  Map<String, String> _q(
+    String? node, [
+    Map<String, String> extra = const {},
+  ]) => {if (node != null && node.isNotEmpty) 'node': node, ...extra};
 
   Future<ServerInfo> info() async => ServerInfo.fromJson(await _get('/info'));
 
@@ -133,11 +148,13 @@ class ApiClient {
   LiveSubscription live({required List<String> charts, String? node}) {
     final ch = WebSocketChannel.connect(
       config.wsUri('/api/v1/live', {
-        if (config.token.isNotEmpty) 'token': config.token,
+        // An omitted/empty filter means all charts on the server. A blank ID
+        // explicitly selects none until the caller has visible charts.
+        'charts': charts.isEmpty ? ' ' : charts.join(','),
         if (node != null && node.isNotEmpty) 'node': node,
       }),
+      protocols: config.liveProtocols,
     );
-    ch.sink.add(jsonEncode({'charts': charts}));
     return LiveSubscription._(ch);
   }
 
@@ -178,8 +195,11 @@ class LiveSubscription {
       .where((s) => s != null)
       .cast<LiveSample>();
 
-  void setCharts(List<String> charts) =>
-      _ch.sink.add(jsonEncode({'charts': charts}));
+  void setCharts(List<String> charts) => _ch.sink.add(
+    jsonEncode({
+      'charts': charts.isEmpty ? [' '] : charts,
+    }),
+  );
 
   Future<void> close() => _ch.sink.close();
 }

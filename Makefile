@@ -4,7 +4,9 @@ BIN      = core/bin
 
 .PHONY: all web core test lint run cross clean
 
-all: web core
+# Go embeds the generated dashboard. Keep this ordered even under make -j.
+all: web
+	$(MAKE) core
 
 ## web: build the Vue dashboard into core/internal/api/ui/dist (embedded by Go)
 web:
@@ -39,3 +41,31 @@ cross:
 
 clean:
 	rm -rf $(BIN) core/internal/api/ui/dist/assets core/internal/api/ui/dist/index.html core/internal/api/ui/dist/favicon.svg
+
+.PHONY: verify-durability bench soak
+verify-durability: core
+	python3 scripts/verify-durability.py
+
+bench:
+	cd core && go test -run '^$$' -bench 'Benchmark(Append2000Series|Query24Hours600Points)' -benchtime=10000x -benchmem ./internal/tsdb
+	cd core && go test -run '^$$' -bench BenchmarkCheckpoint2000Series -benchtime=1x -benchmem ./internal/tsdb
+
+soak: core
+	python3 scripts/soak.py --seconds 120
+
+.PHONY: acceptance hub-load
+hub-load: core
+	python3 scripts/load-hub.py
+
+# Install the documented Go/Node/Flutter toolchains and Playwright browser first.
+# Keep UI generation before compilation of the embedded server.
+acceptance:
+	$(MAKE) all
+	$(MAKE) test
+	python3 scripts/verify-default-auth.py
+	python3 scripts/verify-durability.py
+	python3 scripts/load-hub.py
+	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}
+	cd web && npm run test:e2e
+	cd app && flutter analyze && flutter test
+	$(MAKE) cross

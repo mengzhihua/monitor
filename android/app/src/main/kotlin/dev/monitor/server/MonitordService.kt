@@ -8,6 +8,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import java.util.ArrayDeque
@@ -52,6 +55,9 @@ class MonitordService : Service() {
 
     private var process: Process? = null
     private val stopping = AtomicBoolean(false)
+    private val handler = Handler(Looper.getMainLooper())
+    private var restartDelayMs = 1000L
+    private var restartPending = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -59,12 +65,14 @@ class MonitordService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 stopping.set(true)
+                handler.removeCallbacksAndMessages(null)
+                restartPending = false
                 process?.destroy()
                 stopSelf()
                 return START_NOT_STICKY
             }
             else -> {
-                if (process == null) launch()
+                if (process == null && !restartPending) { stopping.set(false); launch() }
                 return START_STICKY
             }
         }
@@ -83,7 +91,6 @@ class MonitordService : Service() {
         cfg.writeText(settings.toYaml(dataDir.absolutePath))
 
         startForegroundCompat(settings.port)
-        stopping.set(false)
         val pb = ProcessBuilder(
             bin.absolutePath,
             "-config", cfg.absolutePath,
@@ -91,7 +98,12 @@ class MonitordService : Service() {
         ).redirectErrorStream(true).directory(filesDir)
         pb.environment()["HOME"] = filesDir.absolutePath
         pb.environment()["TMPDIR"] = cacheDir.absolutePath
-        val p = pb.start()
+        val p = try { pb.start() } catch (e: Exception) {
+            appendLog("Unable to start monitord: ${e.message}")
+            scheduleRestart()
+            return
+        }
+        val started = SystemClock.elapsedRealtime()
         process = p
         running = true
         port = settings.port
@@ -105,15 +117,35 @@ class MonitordService : Service() {
             }
             val code = p.waitFor()
             appendLog("monitord exited with code $code")
-            running = false
-            process = null
-            sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName))
-            if (!stopping.get()) {
-                // crashed: let the system restart us (START_STICKY)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+            handler.post {
+                if (process !== p) return@post
+                running = false
+                process = null
+                sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName))
+                if (SystemClock.elapsedRealtime() - started > 60000) restartDelayMs = 1000L
+                if (!stopping.get()) scheduleRestart()
             }
         }.start()
+    }
+
+    private fun scheduleRestart() {
+        if (stopping.get() || restartPending) return
+        restartPending = true
+        val delay = restartDelayMs
+        restartDelayMs = (restartDelayMs * 2).coerceAtMost(60000L)
+        appendLog("Retrying monitord in ${delay / 1000}s")
+        handler.postDelayed({
+            restartPending = false
+            if (!stopping.get() && process == null) launch()
+        }, delay)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        appendLog("Android stopped background dataSync monitoring; reopen the app to restart")
+        stopping.set(true)
+        handler.removeCallbacksAndMessages(null)
+        process?.destroy()
+        stopSelf()
     }
 
     private fun startForegroundCompat(port: Int) {
@@ -137,6 +169,8 @@ class MonitordService : Service() {
 
     override fun onDestroy() {
         stopping.set(true)
+        handler.removeCallbacksAndMessages(null)
+        restartPending = false
         process?.destroy()
         process = null
         running = false

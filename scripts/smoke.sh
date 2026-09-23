@@ -9,7 +9,8 @@ BIN=${BIN:-core/bin/monitord}
 
 PORT=${PORT:-19998}
 DATA=$(mktemp -d)
-"$BIN" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
+touch "$DATA/monitor.yaml"
+"$BIN" -config "$DATA/monitor.yaml" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
 PID=$!
 trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$DATA"' EXIT
 
@@ -18,6 +19,9 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 sleep 4
+# Exercise the default generated credential, without opting out of authentication.
+SMOKE_PASSWORD=$(cat "$DATA/web-password")
+curl() { command curl -H "Authorization: Bearer $SMOKE_PASSWORD" "$@"; }
 
 fail() { echo "SMOKE FAIL: $*"; exit 1; }
 
@@ -87,6 +91,7 @@ global:
 hub:
   space: smoke
   room: edge
+  peer_token: smoke-ring-test-only
 EOF
 "$BIN" -config "$HUBDATA/monitor.yaml" -listen "127.0.0.1:$HUBPORT" -log-level warn &
 HPID=$!
@@ -97,14 +102,15 @@ for i in $(seq 1 30); do
 done
 curl -sf "http://127.0.0.1:$HUBPORT/healthz" >/dev/null || fail "hub healthz"
 
-eval "$(python3 - "$HUBPORT" <<'PY'
-import json, sys, urllib.request, urllib.error
+eval "$(python3 - "$HUBPORT" "$HUBDATA/data/web-password" <<'PY'
+import json, sys, pathlib, urllib.request, urllib.error
 base = f"http://127.0.0.1:{sys.argv[1]}"
+password = pathlib.Path(sys.argv[2]).read_text().strip()
 def get(path):
-    return json.load(urllib.request.urlopen(base + path))
+    return req("GET", path)
 def req(method, path, body=None, headers=None):
     data = None if body is None else json.dumps(body).encode()
-    r = urllib.request.Request(base + path, data=data, method=method, headers=headers or {"Content-Type": "application/json"})
+    r = urllib.request.Request(base + path, data=data, method=method, headers=headers or {"Content-Type": "application/json", "Authorization": "Bearer " + password})
     with urllib.request.urlopen(r) as resp:
         raw = resp.read()
         return json.loads(raw) if raw else {}
@@ -124,7 +130,7 @@ ring = req("POST", "/api/v1/hub/ring", {
     "host": {"id": "peer-agent", "hostname": "peer-agent", "os": "linux", "update_every": 1},
     "charts": [{"id": "system.ram", "context": "system.ram", "units": "MiB", "dimensions": [{"id": "used"}, {"id": "free"}]}],
     "samples": [{"chart": "system.ram", "t": 1, "v": {"used": 11, "free": 22}}],
-})
+}, headers={"Content-Type": "application/json", "Authorization": "Bearer smoke-ring-test-only"})
 assert ring.get("replica") is True, ring
 nodes = get("/api/v1/nodes")["nodes"]
 assert any(n.get("id") == "peer-agent" and n.get("replica") for n in nodes), nodes

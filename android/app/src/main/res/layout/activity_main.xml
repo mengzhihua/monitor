@@ -39,6 +39,13 @@
                 android:text="@string/open_dashboard" />
         </LinearLayout>
 
+        <Button
+            android:id="@+id/password"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/login_password" />
+
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
@@ -57,18 +58,18 @@ func validateUsers(us []User) error {
 // authenticate maps the request credential to a user. With no token and no
 // users configured the API is open and callers act as admin.
 func (s *Server) authenticate(r *http.Request) (User, bool) {
-	if s.opt.Token == "" && len(s.opt.Users) == 0 {
+	if s.opt.Token == "" && len(s.opt.Users) == 0 && s.oidc == nil && s.ldap == nil {
 		return anonymous, true
 	}
 	tok := requestToken(r)
 	if tok == "" {
 		return User{}, false
 	}
-	if s.opt.Token != "" && tok == s.opt.Token {
+	if s.opt.Token != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.opt.Token)) == 1 {
 		return User{Name: "admin", Role: RoleAdmin}, true
 	}
 	for _, u := range s.opt.Users {
-		if u.Token == tok {
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(u.Token)) == 1 {
 			return u, true
 		}
 	}
@@ -87,7 +88,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 
 func publicAPI(path string) bool {
 	switch path {
-	case stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
+	case "/api/v1/auth/oidc/status", stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
 		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap":
 		return true
 	}
@@ -97,6 +98,9 @@ func publicAPI(path string) bool {
 // allows is the RBAC matrix: reads for everyone, Functions from
 // troubleshooter up, mutations admin only.
 func (ro Role) allows(r *http.Request) bool {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/oidc/logout" {
+		return true
+	}
 	switch ro {
 	case RoleAdmin:
 		return true

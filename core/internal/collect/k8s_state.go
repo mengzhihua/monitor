@@ -13,6 +13,7 @@ import (
 
 // k8sStateConfig is collectors.modules.k8s_state (API nodes/pods).
 type k8sStateConfig struct {
+	TLS     CollectorTLS  `yaml:"tls"`
 	URL     string        `yaml:"url"`
 	Token   string        `yaml:"token"`
 	Timeout time.Duration `yaml:"timeout"`
@@ -53,7 +54,11 @@ func (k *k8sStateCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	k.client = insecureClient(k.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(k.cfg.Timeout, k.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	k.client = client
 	k.token = k8sBearer(k.cfg.Token)
 	k.nodes, k.pods = map[string]bool{}, map[string]bool{}
 	bases := []string{strings.TrimRight(k.cfg.URL, "/")}

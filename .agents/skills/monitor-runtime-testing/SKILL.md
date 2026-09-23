@@ -25,7 +25,7 @@ None for local default mode. Use an explicitly agreed temporary token for auth t
 - Counts depend on host cores, disks, interfaces and mounts; compare UI with API instead of assuming fixed totals.
 
 ## Protocol and restart checks
-- Direct unauthenticated local API calls are suitable when no browser identity is in use.
+- Default deployments require authentication. Read the isolated test data directory’s `web-password` and send it as a Bearer token; do not print credentials into test output.
 - An independent native browser WebSocket can capture `/api/v1/live?charts=system.cpu,system.ram`; validate `{chart,t,v}`, finite values and one-second timestamp increments.
 - Save non-null RAM timestamp/value rows immediately before SIGINT. Restart using the same data directory; require positive `tsdb: loaded series=N blocks=M` and compare overlapping rows exactly.
 - Keep the before/after queries within their history window. Use fixed absolute bounds when repeatability is important.
@@ -35,7 +35,7 @@ None for local default mode. Use an explicitly agreed temporary token for auth t
 - A config with `web.token` guards API/metrics but not root/static assets.
 - Test absent/wrong token -> 401, query/Bearer token -> 200.
 - Distinguish public UI-shell availability from a functioning authenticated dashboard. Test `/?token=...` explicitly; the UI may not forward it to API/WebSocket.
-- Restore the default no-token service after testing.
+- Stop the isolated test processes after testing. Keep the default password protection enabled; never restore an anonymous service.
 
 ## Hub runtime setup and checks
 - Use separate configs/data directories for Hub and agent. Configure `mode: hub`, `hub.api_keys`, and `web.users` on the Hub; configure `stream.enabled`, `stream.destinations`, and `stream.api_key` on the agent. Use distinct web ports (e.g. 19999/19998); do not run smoke.sh on an occupied agent port.

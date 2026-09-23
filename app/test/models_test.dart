@@ -4,10 +4,26 @@ import 'package:monitor_app/api/models.dart';
 import 'package:monitor_app/version.dart';
 
 void main() {
+  test('Live token uses an encoded subprotocol, never a URL parameter', () {
+    const config = ServerConfig(
+      baseUrl: 'https://monitor.example',
+      token: 'token with spaces',
+    );
+    expect(
+      config.wsUri('/api/v1/live').queryParameters.containsKey('token'),
+      false,
+    );
+    expect(config.liveProtocols.first, 'monitor');
+    expect(config.liveProtocols.last, startsWith('bearer.'));
+    expect(config.liveProtocols.last.contains(' '), false);
+    expect(config.liveProtocols.last.contains('='), false);
+  });
   test('ServerConfig builds http and ws URIs with token', () {
     const cfg = ServerConfig(baseUrl: 'https://hub.example:19999', token: 't');
-    expect(cfg.uri('/api/v1/info').toString(),
-        'https://hub.example:19999/api/v1/info');
+    expect(
+      cfg.uri('/api/v1/info').toString(),
+      'https://hub.example:19999/api/v1/info',
+    );
     final ws = cfg.wsUri('/api/v1/live', {'chart': 'system.cpu'});
     expect(ws.scheme, 'wss');
     expect(ws.queryParameters['chart'], 'system.cpu');
@@ -21,7 +37,7 @@ void main() {
         'data': [
           [1700000000, 1.5, null],
           [1700000001, 2.0, 3.0],
-        ]
+        ],
       },
     });
     expect(d.dimensionIds, ['user', 'system']);
@@ -45,7 +61,7 @@ void main() {
         'columns': ['pid', 'name', 'cpu'],
         'total': 1,
         'rows': [
-          {'pid': 1, 'name': 'init', 'cpu': 0.5}
+          {'pid': 1, 'name': 'init', 'cpu': 0.5},
         ],
       },
     });
@@ -57,7 +73,11 @@ void main() {
   });
 
   test('FunctionInfo fromJson', () {
-    final f = FunctionInfo.fromJson({'name': 'logs', 'help': 'h', 'timeout': 8});
+    final f = FunctionInfo.fromJson({
+      'name': 'logs',
+      'help': 'h',
+      'timeout': 8,
+    });
     expect(f.name, 'logs');
     expect(f.timeout, 8);
   });

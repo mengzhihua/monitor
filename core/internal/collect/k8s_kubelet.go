@@ -13,6 +13,7 @@ import (
 
 // k8sKubeletConfig is collectors.modules.k8s_kubelet.
 type k8sKubeletConfig struct {
+	TLS     CollectorTLS  `yaml:"tls"`
 	URL     string        `yaml:"url"`
 	Token   string        `yaml:"token"`
 	Timeout time.Duration `yaml:"timeout"`
@@ -46,7 +47,11 @@ func (k *k8sKubeletCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	k.client = insecureClient(k.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(k.cfg.Timeout, k.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	k.client = client
 	urls := []string{k.cfg.URL}
 	if k.cfg.URL == "" {
 		urls = []string{

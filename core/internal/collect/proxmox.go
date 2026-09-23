@@ -15,6 +15,7 @@ import (
 
 // proxmoxConfig is collectors.modules.proxmox (PVE REST /api2/json).
 type proxmoxConfig struct {
+	TLS      CollectorTLS  `yaml:"tls"`
 	URL      string        `yaml:"url"`
 	User     string        `yaml:"user"`
 	Password string        `yaml:"password"`
@@ -60,7 +61,11 @@ func (p *proxmoxCollector) Init(reg *registry.Registry) error {
 	p.base = strings.TrimRight(p.cfg.URL, "/")
 	p.seen = map[string]bool{}
 	if p.client == nil {
-		p.client = insecureClient(p.cfg.Timeout)
+		var err error
+		p.client, err = collectorHTTPClient(p.cfg.Timeout, p.cfg.TLS)
+		if err != nil {
+			return err
+		}
 	}
 	if p.get == nil {
 		p.get = p.doGet

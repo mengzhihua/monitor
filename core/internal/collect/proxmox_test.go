@@ -60,3 +60,14 @@ func TestProxmoxCollectorFixture(t *testing.T) {
 		t.Fatal("expected disable without credentials")
 	}
 }
+
+func TestProxmoxRejectsUntrustedTLS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("credentials reached untrusted Proxmox endpoint")
+	}))
+	defer srv.Close()
+	c := &proxmoxCollector{cfg: proxmoxConfig{URL: srv.URL, Token: "test-token", Timeout: time.Second}}
+	if err := c.Init(registry.New(&registry.Host{Hostname: "test", UpdateEvery: 1}, nil)); err == nil {
+		t.Fatal("untrusted TLS accepted")
+	}
+}

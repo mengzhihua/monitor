@@ -12,6 +12,7 @@ import (
 
 // vcsaConfig is collectors.modules.vcsa (vCenter Server Appliance REST health).
 type vcsaConfig struct {
+	TLS      CollectorTLS  `yaml:"tls"`
 	URL      string        `yaml:"url"`
 	User     string        `yaml:"user"`
 	Password string        `yaml:"password"`
@@ -50,7 +51,11 @@ func (v *vcsaCollector) Init(reg *registry.Registry) error {
 	if strings.TrimSpace(v.cfg.User) == "" {
 		return fmt.Errorf("vcsa: no credentials")
 	}
-	v.client = insecureClient(v.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(v.cfg.Timeout, v.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	v.client = client
 	base := strings.TrimRight(v.cfg.URL, "/")
 	if base == "" {
 		base = "https://127.0.0.1:5480"

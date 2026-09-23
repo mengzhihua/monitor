@@ -13,6 +13,7 @@ import (
 
 // scaleioConfig is collectors.modules.scaleio (VxFlex OS Gateway API).
 type scaleioConfig struct {
+	TLS      CollectorTLS  `yaml:"tls"`
 	URL      string        `yaml:"url"`
 	User     string        `yaml:"user"`
 	Password string        `yaml:"password"`
@@ -48,7 +49,11 @@ func (s *scaleioCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	s.client = insecureClient(s.cfg.Timeout)
+	client, tlsErr := collectorHTTPClient(s.cfg.Timeout, s.cfg.TLS)
+	if tlsErr != nil {
+		return tlsErr
+	}
+	s.client = client
 	base := strings.TrimRight(s.cfg.URL, "/")
 	if base == "" {
 		base = "https://127.0.0.1"

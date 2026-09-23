@@ -2,7 +2,7 @@
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
-- **服务端** `monitord`（Go 单二进制，`--mode agent|hub`）：macOS / Linux / Windows / FreeBSD / Android
+- **服务端** `monitord`（Go 单二进制，配置 `mode: agent` 或 `mode: hub`）：macOS / Linux / Windows / FreeBSD / Android
 - **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
 ## 文档
@@ -13,15 +13,19 @@
 | [docs/02-architecture.md](docs/02-architecture.md) | Monitor 架构设计：总体架构、技术选型、服务端模块（采集/TSDB/健康/ML/流式/API/Functions）、Hub、Android 服务端专项、客户端、仓库结构、路线图、能力对照表 |
 | [docs/03-plugins-d-protocol.md](docs/03-plugins-d-protocol.md) | plugins.d 外部采集器协议：命令语法、进程生命周期、配置、示例插件 |
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
+| [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
+| [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
-## 快速开始（M0）
+## 快速开始
 
-依赖：Go 1.23+、Node 22+（仅构建 Dashboard 时需要）。
+依赖：Go 1.25+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
 
 ```bash
 make all          # 1) 构建 Vue Dashboard 并嵌入  2) 编译 core/bin/monitord
 ./core/bin/monitord -listen :19999 -data-dir ./data
-# 浏览器打开 http://localhost:19999/
+# 在另一终端读取本机生成的登录密码（无需用户名）：
+cat ./data/web-password
+# 浏览器打开 http://localhost:19999/，输入上面的密码
 ```
 
 也可以只用 Go（不构建前端则 Dashboard 为空页，API 正常）：
@@ -31,6 +35,39 @@ cd core && go run ./cmd/monitord -listen :19999
 ```
 
 配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
+
+### 默认登录密码
+
+未配置 `web.token`、`web.users`、OIDC 或 LDAP 时，首次启动会生成**每台部署独立的随机管理员密码**，无需用户名。重启沿用该密码；旧的无认证部署升级后也会要求登录。已有认证配置继续生效，不会额外生成管理员密码。
+
+密码位于 `<data_dir>/web-password`。`data_dir` 来自 `-data-dir` 或 `global.data_dir`，默认是**启动时工作目录**下的 `./data`，不是可执行文件所在目录。按上面的启动命令，在另一终端读取：
+
+```bash
+# macOS / Linux / FreeBSD，在启动命令所在目录执行
+cat ./data/web-password
+```
+
+```powershell
+# Windows PowerShell
+Get-Content .\data\web-password
+```
+
+在 Web 或 Flutter 客户端的“登录密码 / API token”输入框填写密码。Android **服务端**启动后点击“查看登录密码”，详见 [Android 服务端说明](android/README.md)。API 和 Prometheus 抓取使用 `Authorization: Bearer <密码>`；登录页静态资源及 `/healthz` 健康检查仍可公开访问，监控数据、日志、指标及实时连接需要认证。
+
+密码文件在 Unix 上使用 `0600` 权限，启动日志只提示位置，不打印密码。文件损坏或无法保存时服务拒绝启动。Windows 部署请通过数据目录 ACL 限制其他用户读取；备份包含该密码，应按敏感数据保管。
+
+### 修改或重置密码
+
+自定义密码：在服务器私有的 `monitor.yaml` 中设置一个足够长的随机值，然后重启服务。该配置不提交到 Git：
+
+```yaml
+web:
+  token: "替换为你生成的长随机密码"
+```
+
+重置**自动生成的密码**：先停止服务，删除实际数据目录中的 `web-password`，再启动并读取新文件。旧密码立即失效。若已配置 `web.token`、`web.users`、OIDC 或 LDAP，应修改对应的认证配置，删除文件不会重置这些凭据。
+
+远程部署应通过 HTTPS 反向代理或可信加密网络访问；密码认证本身不加密 HTTP。不要把真实密码写进 URL、文档或仓库。
 
 跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、freebsd(amd64/arm64)、android(arm64) 二进制。
 
@@ -44,9 +81,9 @@ cd core && go run ./cmd/monitord -listen :19999
 | TSDB tier1/tier2 | 每分钟 / 每小时降采样层（每桶 min/max/sum/last/count，均值 = sum/count），写入时同步折叠、按层独立保留（默认 90 天 / 2 年）、重启恢复；`/api/v1/data` 按 `(before-after)/points` 自动选层（`tier=auto|0|1|2` 可强制），粗层无数据时自动回退到细层；`/api/v1/info.db.tiers` 暴露各层 update_every/保留/序列/块/字节 |
 | plugins.d | 外部采集器进程（任意语言）通过 stdout 文本协议接入：`CHART/DIMENSION/CLABEL/BEGIN/SET/END/FLUSH/VARIABLE/DISABLE/EXIT`；自动发现 `plugins.d/*.plugin`，也可在 `plugins.list` 显式声明；崩溃自动重启（1s→60s 指数退避）、无输出看门狗、进程组回收、`DISABLE` 自禁用；状态在 `/api/v1/collectors.plugins` 与 `/api/v1/info.plugins` |
 | 应用/服务采集器 | `apps`：进程按应用分组 → `apps.cpu/mem/processes/threads/io_*`；`systemd`：cgroup v2 每服务 CPU/内存/IO；`docker`：每容器 cpu/mem/net/blkio；`nginx`（stub_status）；`apache`（server-status?auto）；`phpfpm`；`redis`（内置 RESP）；`memcached`（STATS）。目标不可达时自动禁用 |
-| Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`、`services`、`logs`、`containers`、`disks`、`mounts`、`network-interfaces`；Hub 上 `streaming` |
-| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/contexts` `/collectors` `/functions` `/function` `/weights` `/logs`；`POST /api/v1/ingest/openmetrics` `/otlp`；`/api/v1/alarms` `/alarm_log` `/alarm_rules` `/alarm_variables` `/alarms/silence`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；可选 `token` 与 `allow_from` CIDR 访问控制 |
-| Dashboard | Vue3 + uPlot，按 family 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板，Functions 面板（进程/连接/服务表） |
+| Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`、`services`、`logs`、`containers`、`disks`、`mounts`、`network-interfaces`；采集忙碌时仍保持函数入口可用，手动禁用后撤销；Hub 上 `streaming` |
+| API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/contexts` `/collectors` `/functions` `/function` `/weights` `/logs`；`POST /api/v1/ingest/openmetrics` `/otlp`；`/api/v1/alarms` `/alarm_log` `/alarm_rules` `/alarm_variables` `/alarms/silence`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；默认密码认证与可选 `allow_from` CIDR 访问控制 |
+| Dashboard | Vue3 + uPlot，按 family 分组，历史图表随视口加载、滚出后暂停请求、周期刷新错峰且复用画布，WebSocket 实时增量刷新；采集器状态、告警、Functions 面板 |
 
 ### 已实现能力（M1：健康/告警）
 
@@ -344,7 +381,7 @@ cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 
 ### 客户端（Flutter，M3 起步）
 
-`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址（可选 Bearer token）即可连接，Hub 模式下可切换节点；图表页按 family 分组，历史数据走 `/api/v1/data`，实时点走 `/api/v1/live` WebSocket（断线 3s 自动重连）；告警页显示当前告警与最近状态变化；Functions 页调用 `/api/v1/function`（进程/连接/服务/日志等表）。
+`app/` 是 macOS / Windows / Linux / Android / iOS 五端客户端：填入 Agent 或 Hub 地址和登录密码 / API token 即可连接，Hub 模式下可切换节点；图表页按 family 分组，仅为屏幕附近的图表加载历史和订阅实时数据，滚动或筛选复用已有 WebSocket（断线 3s 自动重连并补读历史）。切到其他页签时暂停图表轮询和实时连接；1 小时及更长窗口每 30 秒读取聚合历史，不接收逐秒实时点。告警页显示当前告警与最近状态变化；Functions 页调用 `/api/v1/function`（进程/连接/服务/日志等表）。
 
 ```bash
 cd app && flutter pub get
@@ -384,23 +421,55 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 
 目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。Linux 客户端请先安装 `libegl1`（见上文）。
 
-## 仓库规划
+## 仓库结构
 
+```text
+.
+├── core/                       Go 服务端模块
+│   ├── cmd/monitord/           程序入口，Agent / Hub 共用
+│   └── internal/              采集、TSDB、认证/API、Hub、流协议等实现
+├── web/                        Vue Dashboard 源码与浏览器测试
+│   ├── src/
+│   └── e2e/
+├── app/                        Flutter 五端客户端
+│   ├── lib/
+│   ├── test/                  单元测试
+│   ├── integration_test/      原生安全存储测试
+│   └── android/ ios/ macos/ windows/ linux/   客户端平台工程
+├── android/                    独立 Android 服务端（Kotlin 前台服务）
+├── plugins.d/                  外部采集器示例
+├── scripts/                    构建、打包、版本处理和运行验收脚本
+├── docs/                       架构、协议、差距与验收记录
+├── .github/workflows/          CI 与 Release
+├── .agents/skills/             开发助手的本地验收指引
+├── monitor.example.yaml        可提交的配置模板
+└── Makefile                    根目录统一构建入口
 ```
-core/      Go：monitord（agent/hub）、monitorctl、gomobile 绑定
-web/       Vue3 Dashboard（embed 进 monitord）
-app/       Flutter 五端客户端
-android/   Android 服务端壳（Kotlin 前台服务，运行随包分发的 monitord）
-scripts/   smoke 测试、Android 服务端打包、macOS 分架构打包
-.github/   CI 与 Release 工作流
-plugins/   外部采集器（plugins.d 文本协议）
-proto/     节点↔Hub 流协议
-api/       OpenAPI 定义
-packaging/ 安装包与安装脚本
-```
+
+`app/android/` 构建 Flutter **客户端**；根目录 `android/` 构建 **服务端**，二者是独立应用。协议实现位于 `core/internal/stream/`，HTTP API 位于 `core/internal/api/`。详细职责见[架构文档 §8](docs/02-architecture.md#8-代码仓库结构monorepo)。
+
+### 生成文件与本地数据
+
+| 路径 | 用途 | Git 管理 |
+| --- | --- | --- |
+| `core/bin/` | 本机与跨平台服务端二进制 | 忽略 |
+| `core/internal/api/ui/dist/` | `web/` 构建产物，供 Go 嵌入 | 只保留 `.gitkeep` |
+| `app/build/`、`android/app/build/` | Flutter / Android 构建产物 | 忽略 |
+| `android/app/src/main/jniLibs/` | Android 服务端打包时生成的 Go 二进制 | 忽略 |
+| `dist/` | Release 压缩包、DMG、APK 等交付产物 | 忽略 |
+| `reports/` | 持续采集、Hub 负载等验收报告 | 忽略 |
+| `web/test-results/`、`web/playwright-report/` | 浏览器截图和测试报告 | 忽略 |
+| `data/`、`core/data/` | 本地监控数据和默认密码 | 忽略 |
+| `monitor.yaml`、`web-password` | 部署私有配置与凭据 | 忽略 |
+
+从根目录运行 `make all`，包括 `make -j all`，会先构建前端再编译服务端。`make core` 用于已准备好嵌入资源的场景（例如 CI 下载前端构建产物后）；直接使用它不会更新 Dashboard。`make clean` 只清理服务端二进制及嵌入的前端构建文件，不删除运行数据、配置或密码。
 
 ## 路线图
 
 M0–M26 已合入：骨架 → Agent → Hub → 客户端 → Android → ML/摄入 → 日志/OTLP → go.d 全目录 → API/Health → Cloud 骨架 → k-means → 跨平台骨架 → 原生插件补齐 → 内核深度 → 日志/查看器 → Windows Perflib → FreeBSD 插件剩余 → IBM/pandas/容器运行时 → 查询 API → ACLK / Cloud 控制台 → Prometheus 点名原生 ID。
 
 后续可选：真 eBPF CO-RE、profile.plugin 等（见 [docs/04-netdata-gap.md](docs/04-netdata-gap.md) §2.7）。
+
+## 开发验收
+
+五阶段交付范围、性能数字、升级/降级注意事项和复现命令见[验收记录](docs/05-acceptance.md)。工具链和浏览器就绪后运行 `make acceptance`；跨平台编译及本机模拟负载不等同于真实设备或72小时验收。

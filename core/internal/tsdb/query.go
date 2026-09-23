@@ -61,10 +61,17 @@ func Aggregate(seriesPoints [][]Point, after, before int64, points int, fn Group
 	res := Result{After: after, Before: before, Step: step, Times: times, Values: make([][]float64, len(seriesPoints))}
 	for si, pts := range seriesPoints {
 		out := make([]float64, n)
-		for i := range out {
-			out[i] = math.NaN()
+		var seen []bool
+		var counts []int64
+		if fn != GroupMedian && fn != GroupMin && fn != GroupMax && fn != GroupSum && fn != GroupLast {
+			counts = make([]int64, n)
 		}
-		buckets := make([][]float64, n)
+		var buckets [][]float64
+		if fn == GroupMedian {
+			buckets = make([][]float64, n)
+		} else {
+			seen = make([]bool, n)
+		}
 		for _, p := range pts {
 			if p.TS <= after || p.TS > times[n-1] {
 				continue
@@ -73,13 +80,49 @@ func Aggregate(seriesPoints [][]Point, after, before int64, points int, fn Group
 			if bi < 0 || bi >= n {
 				continue
 			}
-			buckets[bi] = append(buckets[bi], p.Value)
-		}
-		for i, b := range buckets {
-			if len(b) == 0 {
+			if fn == GroupMedian {
+				buckets[bi] = append(buckets[bi], p.Value)
 				continue
 			}
-			out[i] = reduce(b, fn)
+			if !seen[bi] {
+				seen[bi] = true
+				switch fn {
+				case GroupMin, GroupMax:
+					out[bi] = p.Value
+				}
+			}
+			switch fn {
+			case GroupMin:
+				if p.Value < out[bi] {
+					out[bi] = p.Value
+				}
+			case GroupMax:
+				if p.Value > out[bi] {
+					out[bi] = p.Value
+				}
+			case GroupLast:
+				out[bi] = p.Value
+			case GroupSum:
+				out[bi] += p.Value
+			default:
+				out[bi] += p.Value
+				counts[bi]++
+			}
+		}
+		for i := range out {
+			if fn == GroupMedian {
+				if len(buckets[i]) == 0 {
+					out[i] = math.NaN()
+				} else {
+					out[i] = reduce(buckets[i], fn)
+				}
+				continue
+			}
+			if !seen[i] {
+				out[i] = math.NaN()
+			} else if counts != nil {
+				out[i] /= float64(counts[i])
+			}
 		}
 		res.Values[si] = out
 	}

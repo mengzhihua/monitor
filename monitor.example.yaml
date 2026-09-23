@@ -10,8 +10,8 @@ global:
 
 db:
   tier0_retention: 336h        # 14 days of per-second data
-  tier0_retention_size: 1GiB   # or delete oldest blocks beyond this size
-  checkpoint: 10m              # flush in-memory samples to disk this often
+  tier0_retention_size: 1GiB   # raw archived-block budget; checkpoint/rollup bytes are additional
+  checkpoint: 30s              # atomic active-data checkpoint cadence; not a hard RPO
   tiers: 3                     # 1 = raw only, 2 = +1-minute rollups, 3 = +1-hour rollups
   tier1_retention: 2160h       # 90 days of per-minute min/max/avg/sum/count
   tier2_retention: 17520h      # 2 years of per-hour rollups
@@ -19,7 +19,7 @@ db:
 web:
   listen: ":19999"
   allow_from: []       # CIDRs allowed to reach the API/UI, e.g. ["10.0.0.0/8", "127.0.0.1"]
-  token: ""            # if set, /api and /metrics require ?token= or "Authorization: Bearer" (admin)
+  token: ""            # admin login password / bearer token. Empty + no users/OIDC/LDAP generates data_dir/web-password; NEVER enables anonymous access.
   users: []            # named credentials with roles; any token/users setting turns anonymous access off
   # - { name: ops,   token: "change-me-1", role: admin }          # everything, incl. DELETE /api/v1/nodes
   # - { name: oncall, token: "change-me-2", role: troubleshooter } # read + Functions (processes table…)
@@ -31,7 +31,7 @@ web:
     redirect_url: ""     # e.g. http://hub:19999/api/v1/auth/oidc/callback
     role: viewer         # minted session role: admin | troubleshooter | viewer
   ldap:                  # optional LDAP simple bind; POST /api/v1/auth/ldap {user,password}
-    url: ""              # ldap://dc.example.com:389
+    url: ""              # ldaps://dc.example.com:636 (verified TLS); ldap:// is plaintext
     user_dn: ""          # uid=%s,ou=people,dc=example,dc=com
     role: viewer
 
@@ -753,3 +753,12 @@ export:
   # - { type: kinesis, url: "https://kinesis.example/streams/monitor/record", prefix: monitor, every: 10s }
   # - { type: pubsub, url: "https://pubsub.googleapis.com/v1/projects/p/topics/monitor:publish", every: 10s }
   # - { type: kafka, url: "http://127.0.0.1:8082/topics/monitor", prefix: monitor, every: 10s }
+
+# HTTPS collectors (Kubernetes, Redfish, Puppet, PAN-OS, PowerStore/PowerVault,
+# ScaleIO, VCSA, vSphere, Proxmox) verify server certificates by default.
+# Add beneath the relevant collectors.modules.<name> mapping:
+#   tls:
+#     ca_file: /path/to/private-ca.pem
+#     insecure_skip_verify: false
+# Existing self-signed endpoints must configure their CA (preferred), or
+# explicitly opt into insecure_skip_verify: true for isolated test deployments.

@@ -1,13 +1,13 @@
 package api
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,9 +126,7 @@ type shareTok struct {
 func newShareStore() *shareStore { return &shareStore{toks: map[string]shareTok{}} }
 
 func (s *shareStore) issue(node string, ttl time.Duration) shareTok {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	tok := hex.EncodeToString(b)
+	tok := randomToken()
 	until := time.Now().Add(ttl).Unix()
 	st := shareTok{Token: tok, Role: RoleViewer, Node: node, Name: "share", Until: until}
 	s.mu.Lock()
@@ -154,9 +152,7 @@ func (s *shareStore) user(tok string) (User, bool) {
 }
 
 func (s *shareStore) issueUser(name string, role Role, ttl time.Duration) shareTok {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	tok := hex.EncodeToString(b)
+	tok := randomToken()
 	until := time.Now().Add(ttl).Unix()
 	if role == "" {
 		role = RoleViewer
@@ -261,14 +257,25 @@ func ldapSimpleBind(cfg *LDAPConfig, user, password string) error {
 	} else if dn == "" {
 		dn = user
 	}
-	host := strings.TrimPrefix(strings.TrimPrefix(cfg.URL, "ldap://"), "ldaps://")
-	if host == "" {
-		return fmt.Errorf("ldap url required")
+	u, err := url.Parse(cfg.URL)
+	if err != nil || (u.Scheme != "ldap" && u.Scheme != "ldaps") || u.Hostname() == "" || u.User != nil {
+		return fmt.Errorf("invalid ldap URL")
 	}
-	if !strings.Contains(host, ":") {
-		host += ":389"
+	port := u.Port()
+	if port == "" {
+		port = "389"
+		if u.Scheme == "ldaps" {
+			port = "636"
+		}
 	}
-	c, err := net.DialTimeout("tcp", host, 5*time.Second)
+	host := net.JoinHostPort(u.Hostname(), port)
+	var c net.Conn
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	if u.Scheme == "ldaps" {
+		c, err = tls.DialWithDialer(dialer, "tcp", host, &tls.Config{MinVersion: tls.VersionTLS12, ServerName: u.Hostname()})
+	} else {
+		c, err = dialer.Dial("tcp", host)
+	}
 	if err != nil {
 		return err
 	}

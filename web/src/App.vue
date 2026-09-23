@@ -17,6 +17,7 @@ const charts = ref<Chart[]>([])
 const error = ref('')
 const needToken = ref(false)
 const tokenInput = ref('')
+const loginError = ref('')
 const connected = ref(false)
 const windowSec = ref(300)
 const filter = ref('')
@@ -49,6 +50,9 @@ const windows = [
   { label: '5 分钟', v: 300 },
   { label: '15 分钟', v: 900 },
   { label: '1 小时', v: 3600 },
+  { label: '6 小时', v: 21600 },
+  { label: '24 小时', v: 86400 },
+  { label: '7 天', v: 604800 },
 ]
 
 /** Group charts by the first segment of the chart id (system, cpu, mem, disk…). */
@@ -114,6 +118,15 @@ async function refresh() {
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
+      live.stop()
+      connected.value = false
+      info.value = null
+      charts.value = []
+      nodes.value = []
+      alarms.value = []
+      alarmLog.value = []
+      functions.value = []
+      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = false
       error.value = ''
       return
     }
@@ -157,11 +170,25 @@ function onAlarmEvent(e: AlarmLogEntry) {
   }
 }
 
+async function logout() {
+  try {
+    const response = await fetch('/api/v1/auth/oidc/logout', { method: 'POST', headers: { Authorization: `Bearer ${auth.token}` } })
+    if (!response.ok && response.status !== 401) throw new Error('退出失败，请重试')
+    auth.token = ''
+    location.reload()
+  } catch (e) { error.value = String(e) }
+}
+
 async function submitToken() {
+  loginError.value = ''
   auth.token = tokenInput.value.trim()
   tokenInput.value = ''
   await refresh()
   if (!needToken.value) live.restart()
+  else {
+    auth.token = ''
+    loginError.value = '密码或访问令牌不正确，请重试。'
+  }
 }
 
 function fmtUptime(s: number) {
@@ -177,12 +204,12 @@ onMounted(async () => {
   selection.node = saved
   live.onState = (up) => (connected.value = up)
   live.onAlarm = onAlarmEvent
-  fetch('/api/v1/auth/oidc/login', { redirect: 'manual' }).then((r) => { oidcAvailable.value = r.status === 302 }).catch(() => {})
+  fetch('/api/v1/auth/oidc/status').then((r) => r.json()).then((s) => { oidcAvailable.value = s.enabled === true }).catch(() => {})
   await refresh()
   if (!needToken.value) live.start()
   timer = window.setInterval(refresh, 30000)
 })
-onBeforeUnmount(() => clearInterval(timer))
+onBeforeUnmount(() => { clearInterval(timer); live.stop() })
 </script>
 
 <template>
@@ -225,6 +252,7 @@ onBeforeUnmount(() => clearInterval(timer))
         <option v-for="w in windows" :key="w.v" :value="w.v">{{ w.label }}</option>
       </select>
     </div>
+    <button v-if="info && auth.token" @click="logout">退出登录</button>
   </header>
 
   <div class="layout">
@@ -233,7 +261,7 @@ onBeforeUnmount(() => clearInterval(timer))
         @click="activeSection = s.name">{{ s.name }} <small>{{ s.charts.length }}</small></a>
       <div class="collectors" v-if="info && !currentNode">
         <div class="nav-title">采集器</div>
-        <div v-for="c in info.collectors" :key="c.name" class="col" :class="{ bad: !c.enabled || c.error }">
+        <div v-for="c in info.collectors" :key="c.name" class="col" :class="{ bad: !c.enabled || c.error }" :title="c.error || (c.enabled ? '采集正常' : '已禁用或等待依赖恢复')">
           <span>{{ c.name }}</span>
           <small>{{ c.enabled ? (c.error ? 'error' : c.last_run_ms + 'ms') : 'off' }}</small>
         </div>
@@ -249,6 +277,14 @@ onBeforeUnmount(() => clearInterval(timer))
     </nav>
 
     <main>
+      <div v-if="isHub" class="node-overview" aria-label="节点健康总览">
+        <button v-for="n in nodes" :key="n.id" @click="selectNode(n.id)" :class="['node-card', n.status]">
+          <b>{{ n.hostname }}</b><span>{{ n.status === 'live' ? '在线' : n.status === 'stale' ? '数据过期' : '离线' }}</span>
+          <small>{{ n.charts_count }} 图表 · {{ n.alarms?.critical || 0 }} 严重告警{{ n.replica ? ' · 副本' : '' }}</small>
+          <small v-if="n.last_data">最后数据：{{ new Date(n.last_data * 1000).toLocaleString() }}</small>
+        </button>
+      </div>
+      <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
       <AlarmsPanel v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" @close="showAlarms = false" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
@@ -258,8 +294,10 @@ onBeforeUnmount(() => clearInterval(timer))
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
       <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { filter = id; showCloud = false }" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
-        <p>此 Agent 已启用访问令牌（web.token），请输入后继续。</p>
-        <input v-model="tokenInput" type="password" placeholder="token" autocomplete="off" autofocus />
+        <p>请输入登录密码或访问令牌。</p>
+        <p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>
+        <input v-model="tokenInput" type="password" placeholder="登录密码或访问令牌" aria-label="登录密码或访问令牌" autocomplete="current-password" required autofocus />
+        <p v-if="loginError" role="alert">{{ loginError }}</p>
         <button type="submit">进入</button>
         <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
@@ -277,6 +315,9 @@ onBeforeUnmount(() => clearInterval(timer))
 </template>
 
 <style scoped>
+.node-overview { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+.node-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px; background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:12px; cursor:pointer; }
+.node-card.stale, .node-card.offline { border-color:#f59e0b; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 16px; background: #0b1120; border-bottom: 1px solid #1e293b; position: sticky; top: 0; z-index: 10; }
 .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
 .logo { color: #22c55e; }

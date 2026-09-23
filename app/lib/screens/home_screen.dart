@@ -34,7 +34,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ChartsView(
           key: ValueKey('charts:${st.selectedNode}'),
           client: st.client!,
-          node: _nodeParam),
+          node: _nodeParam,
+          active: _tab == 0),
       AlarmsView(
           key: ValueKey('alarms:${st.selectedNode}'),
           client: st.client!,

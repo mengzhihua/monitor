@@ -58,12 +58,13 @@ type TierInfo struct {
 }
 
 type tierSeries struct {
-	id      string
-	mu      sync.Mutex
-	open    *Bucket
-	done    []Bucket
-	blocks  []blockMeta
-	flushMu sync.Mutex
+	id        string
+	mu        sync.Mutex
+	open      *Bucket
+	savedOpen *Bucket
+	done      []Bucket
+	blocks    []blockMeta
+	flushMu   sync.Mutex
 }
 
 type tier struct {
@@ -160,7 +161,6 @@ func (t *tier) load() (int, error) {
 				sr.open = &b
 			}
 		}
-		_ = os.Remove(path)
 	}
 	return n, nil
 }
@@ -191,6 +191,10 @@ func (t *tier) saveOpen(sr *tierSeries) error {
 	sr.mu.Lock()
 	var b *Bucket
 	if sr.open != nil {
+		if sr.savedOpen != nil && *sr.savedOpen == *sr.open {
+			sr.mu.Unlock()
+			return nil
+		}
 		cp := *sr.open
 		b = &cp
 	}
@@ -204,6 +208,11 @@ func (t *tier) saveOpen(sr *tierSeries) error {
 		return nil
 	}
 	_, err := writeBlockFile(path, sr.id, b.TS, b.TS, 1, encodeBuckets([]Bucket{*b}))
+	if err == nil {
+		sr.mu.Lock()
+		sr.savedOpen = b
+		sr.mu.Unlock()
+	}
 	return err
 }
 
@@ -255,19 +264,16 @@ func (t *tier) flush(sr *tierSeries) error {
 		sr.mu.Unlock()
 		return nil
 	}
-	done := sr.done
-	sr.done = nil
+	done := append([]Bucket(nil), sr.done...)
 	sr.mu.Unlock()
 
 	meta, err := writeBlockData(t.seriesDir(sr.id), sr.id, done[0].TS, done[len(done)-1].TS, len(done), encodeBuckets(done))
 	if err != nil {
-		sr.mu.Lock()
-		sr.done = append(done, sr.done...)
-		sr.mu.Unlock()
 		return err
 	}
 	sr.mu.Lock()
 	sr.blocks = append(sr.blocks, meta)
+	sr.done = sr.done[len(done):]
 	sr.mu.Unlock()
 	return nil
 }
@@ -299,6 +305,11 @@ func (t *tier) enforceRetention(now time.Time) {
 	cutoff := now.Add(-t.spec.Retention).Unix()
 	for _, sr := range t.all() {
 		sr.mu.Lock()
+		n := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS+t.spec.Every > cutoff })
+		sr.done = sr.done[n:]
+		if sr.open != nil && sr.open.TS+t.spec.Every <= cutoff {
+			sr.open = nil
+		}
 		keep := sr.blocks[:0]
 		for _, b := range sr.blocks {
 			if b.end+t.spec.Every <= cutoff {
@@ -601,10 +612,17 @@ func AggregateBuckets(series [][]Bucket, every int64, after, before int64, point
 	res := Result{After: after, Before: before, Step: step, Times: times, Values: make([][]float64, len(series))}
 	for si, bs := range series {
 		out := make([]float64, n)
-		for i := range out {
-			out[i] = math.NaN()
+		var seen []bool
+		var counts []int64
+		if fn != GroupMedian && fn != GroupMin && fn != GroupMax && fn != GroupSum && fn != GroupLast {
+			counts = make([]int64, n)
 		}
-		groups := make([][]Bucket, n)
+		var groups [][]Bucket
+		if fn == GroupMedian {
+			groups = make([][]Bucket, n)
+		} else {
+			seen = make([]bool, n)
+		}
 		for _, b := range bs {
 			key := b.TS + every - 1 // last instant the bucket may cover
 			if key > before && b.TS <= before {
@@ -617,13 +635,55 @@ func AggregateBuckets(series [][]Bucket, every int64, after, before int64, point
 			if bi < 0 || bi >= n {
 				continue
 			}
-			groups[bi] = append(groups[bi], b)
-		}
-		for i, g := range groups {
-			if len(g) == 0 {
+			if fn == GroupMedian {
+				groups[bi] = append(groups[bi], b)
 				continue
 			}
-			out[i] = reduceBuckets(g, fn)
+			if !seen[bi] {
+				seen[bi] = true
+				switch fn {
+				case GroupMin:
+					out[bi] = b.Min
+				case GroupMax:
+					out[bi] = b.Max
+				}
+			}
+			switch fn {
+			case GroupMin:
+				if b.Min < out[bi] {
+					out[bi] = b.Min
+				}
+			case GroupMax:
+				if b.Max > out[bi] {
+					out[bi] = b.Max
+				}
+			case GroupLast:
+				out[bi] = b.Last
+			case GroupSum:
+				out[bi] += b.Sum
+			default: // sample-weighted average
+				out[bi] += b.Sum
+				counts[bi] += b.Count
+			}
+		}
+		for i := range out {
+			if fn == GroupMedian {
+				if len(groups[i]) == 0 {
+					out[i] = math.NaN()
+				} else {
+					out[i] = reduceBuckets(groups[i], fn)
+				}
+				continue
+			}
+			if !seen[i] {
+				out[i] = math.NaN()
+			} else if counts != nil {
+				if counts[i] == 0 {
+					out[i] = math.NaN()
+				} else {
+					out[i] /= float64(counts[i])
+				}
+			}
 		}
 		res.Values[si] = out
 	}

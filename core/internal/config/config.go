@@ -35,7 +35,7 @@ type Config struct {
 	Web struct {
 		Listen    string   `yaml:"listen"`
 		AllowFrom []string `yaml:"allow_from"` // CIDRs; empty = all
-		Token     string   `yaml:"token"`      // optional bearer token for the API (admin)
+		Token     string   `yaml:"token"`      // admin password/bearer token; generated when no auth is configured
 		Users     []User   `yaml:"users"`      // named credentials with roles
 		OIDC      OIDC     `yaml:"oidc"`
 		LDAP      LDAP     `yaml:"ldap"`
@@ -212,7 +212,7 @@ func Default() *Config {
 	c.Global.DataDir = "./data"
 	c.DB.Tier0Retention = 14 * 24 * time.Hour
 	c.DB.Tier0RetentionSize = "1GiB"
-	c.DB.Checkpoint = 10 * time.Minute
+	c.DB.Checkpoint = 30 * time.Second
 	c.DB.Tiers = 3
 	c.DB.Tier1Retention = 90 * 24 * time.Hour
 	c.DB.Tier2Retention = 2 * 365 * 24 * time.Hour

@@ -16,6 +16,7 @@ class ConnectScreen extends StatefulWidget {
 class _ConnectScreenState extends State<ConnectScreen> {
   final _url = TextEditingController(text: 'http://127.0.0.1:19999');
   final _token = TextEditingController();
+  bool _remember = true;
   final _form = GlobalKey<FormState>();
 
   @override
@@ -28,8 +29,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
     final url = _url.text.trim().replaceAll(RegExp(r'/+$'), '');
-    await widget.state
-        .connect(ServerConfig(baseUrl: url, token: _token.text.trim()));
+    await widget.state.connect(
+      ServerConfig(baseUrl: url, token: _token.text.trim()),
+      remember: _remember,
+    );
   }
 
   @override
@@ -49,13 +52,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 children: [
                   const Icon(Icons.monitor_heart, size: 64),
                   const SizedBox(height: 8),
-                  Text('Monitor',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineMedium),
+                  Text(
+                    'Monitor',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
                   const SizedBox(height: 4),
-                  Text('v$appVersion',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                    'v$appVersion',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                   const SizedBox(height: 24),
                   TextFormField(
                     controller: _url,
@@ -67,7 +74,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     ),
                     validator: (v) {
                       final u = Uri.tryParse((v ?? '').trim());
-                      if (u == null || !u.hasScheme || u.host.isEmpty) {
+                      if (u == null ||
+                          !(u.scheme == 'http' || u.scheme == 'https') ||
+                          u.host.isEmpty ||
+                          u.userInfo.isNotEmpty ||
+                          u.hasQuery ||
+                          u.hasFragment) {
                         return 'Enter a http(s) URL';
                       }
                       return null;
@@ -78,18 +90,31 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     controller: _token,
                     obscureText: true,
                     decoration: const InputDecoration(
-                      labelText: 'API token (optional)',
+                      labelText: 'Login password / API token',
+                      helperText:
+                          'Stored with the operating system secure storage.',
                       border: OutlineInputBorder(),
                     ),
                     onFieldSubmitted: (_) => _submit(),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Remember token securely'),
+                    value: _remember,
+                    onChanged: st.loading
+                        ? null
+                        : (value) => setState(() => _remember = value ?? false),
                   ),
                   const SizedBox(height: 16),
                   if (st.error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(st.error!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
+                      child: Text(
+                        st.error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ),
                   FilledButton(
                     onPressed: st.loading ? null : _submit,
@@ -97,7 +122,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         ? const SizedBox(
                             height: 18,
                             width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Text('Connect'),
                   ),
                 ],

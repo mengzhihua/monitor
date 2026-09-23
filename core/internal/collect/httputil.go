@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -14,13 +16,31 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-func insecureClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // local kubelet/apiserver often use self-signed certs
-		},
+// CollectorTLS verifies HTTPS by default. Private CAs are explicitly configured.
+type CollectorTLS struct {
+	CAFile             string `yaml:"ca_file"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+func collectorHTTPClient(timeout time.Duration, cfg CollectorTLS) (*http.Client, error) {
+	tc := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureSkipVerify} // operator opt-in
+	if cfg.CAFile != "" {
+		pem, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("TLS CA: %w", err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("TLS CA: no certificates in %s", cfg.CAFile)
+		}
+		tc.RootCAs = pool
 	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = tc
+	return &http.Client{Timeout: timeout, Transport: tr}, nil
 }
 
 func httpGet(ctx context.Context, client *http.Client, url string) ([]byte, error) {

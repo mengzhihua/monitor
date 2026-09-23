@@ -65,7 +65,7 @@ flowchart TB
 
 | 层 | 选型 | 理由 |
 | --- | --- | --- |
-| 服务端核心（Agent / Hub） | **Go 1.22+**，单静态二进制 | 一份代码交叉编译 linux/darwin/windows/freebsd/android(arm64)；`gopsutil` 覆盖系统指标；goroutine 适合上千采集器并发。 |
+| 服务端核心（Agent / Hub） | **Go 1.25+**，单静态二进制 | 一份代码交叉编译 linux/darwin/windows/freebsd/android(arm64)；`gopsutil` 覆盖系统指标；goroutine 适合上千采集器并发。 |
 | 时序库 | 自研嵌入式 **tsdb**（Gorilla XOR + delta-of-delta，分层降采样） | 对标 dbengine 的 ~1 byte/sample；无外部依赖；Android 可用。 |
 | 元数据库 | **SQLite**（`modernc.org/sqlite` 纯 Go） ；Hub 大规模可切 **PostgreSQL** | 纯 Go 无 cgo，四平台一致；Hub 用 `Store` 接口抽象。 |
 | 节点 ↔ Hub 通信 | **WebSocket over TLS + Protobuf 帧**（单端口 443 友好） | 对标 ACLK；穿代理/NAT；双向：上行流数据，下行控制/函数调用。 |
@@ -297,7 +297,7 @@ Hub 收到函数请求时，若目标 host 在线，通过流控制通道转发�
 
 ## 5. Hub（集中点）额外能力
 
-Hub = `monitord --mode hub`，在 Agent 全部能力之上增加：
+Hub 通过 `monitor.yaml` 中的 `mode: hub` 启用（程序没有 `--mode` 参数），在 Agent 全部能力之上增加：
 
 | 模块 | 说明 |
 | --- | --- |
@@ -311,13 +311,13 @@ Hub = `monitord --mode hub`，在 Agent 全部能力之上增加：
 | 客户端服务 | 用户登录、Dashboard 布局保存、收藏、分享只读链接、移动端设备注册（推送 token）。 |
 | API | `/api/v1/hub/{spaces,rooms,nodes,users,roles,tokens,notifications,devices,dashboards}` |
 
-Hub 在 Android 上同样可运行（例如用一台安卓平板做家庭 / 车间的小型集中点）：同一 AAR，Kotlin 壳以前台服务运行，SQLite + tsdb 落到应用私有目录。
+当前 Android 服务端由 Kotlin 前台服务启动静态 `monitord` 子进程，数据落到应用私有目录；设置页提供 Agent 上报 Hub 的配置，尚无切换 Hub 模式的界面。
 
 ---
 
 ## 6. Android 服务端专项设计
 
-Android 作为**被监控节点**是相对 Netdata 的扩展。约束与对策：
+Android 作为**被监控节点**是相对 Netdata 的扩展。下表保留专项设计目标，包含尚未实现的 gomobile、Kotlin 采集桥和 WorkManager；当前工程形态见表后说明及 [Android 服务端 README](../android/README.md)。
 
 | 约束 | 对策 |
 | --- | --- |
@@ -328,7 +328,7 @@ Android 作为**被监控节点**是相对 Netdata 的扩展。约束与对策�
 | 省电 | Android 上 `update_every` 默认 5s、ML 默认关、tier0 retention 默认 1 天；空闲屏幕关闭时可降为 15s。 |
 | 已 root / 工控设备 | 检测 root 后自动启用完整 Linux 采集器集与外部采集器。 |
 
-**Android 项目形态**：`android/` 是一个 Kotlin App（`MonitorService`），依赖 `monitord.aar`（gomobile 产物）与 Flutter 客户端模块（同一 APK 里既是服务端也是客户端；用户可只开其中之一）。
+**当前 Android 项目形态**：`android/` 是独立 Kotlin App，`MonitordService` 前台服务通过 `ProcessBuilder` 启动随包分发的 `jniLibs/arm64-v8a/libmonitord.so`（实际为静态 Go 可执行文件）。它不依赖 AAR，也不嵌入 Flutter。Flutter Android 客户端由 `app/android/` 单独构建。
 
 > iOS 未列入服务端：iOS 不允许第三方 App 长期后台运行与读取系统级指标，因此 iOS 只做客户端。
 
@@ -362,40 +362,32 @@ Dart API 客户端由 OpenAPI 生成；模型与 Web 端共享一份 `openapi.ya
 
 ## 8. 代码仓库结构（Monorepo）
 
-```
-monitor/
-├── README.md
-├── docs/                         # 本设计文档、协议、API、运维手册
-├── proto/                        # stream.proto（节点↔Hub 帧）、function.proto
-├── api/openapi.yaml              # REST API 定义（Web / Flutter 共用）
-├── core/                         # Go module: github.com/mengzhihua/monitor/core
-│   ├── cmd/monitord/             # 主程序：--mode agent|hub
-│   ├── cmd/monitorctl/           # CLI：claim、config、health check、plugin 调试
-│   ├── internal/collect/         # 采集框架 + internal collectors（按 GOOS 分文件）
-│   ├── internal/plugins/         # plugins.d 外部采集器管理与文本协议解析
-│   ├── internal/ingest/          # openmetrics / statsd / otlp
-│   ├── internal/registry/        # host/chart/dimension 元数据、算法（incremental 等）
-│   ├── internal/tsdb/            # WAL、chunk 编码、tier、retention、query
-│   ├── internal/health/          # 规则解析、表达式、状态机、静默
-│   ├── internal/notify/          # 渠道插件
-│   ├── internal/ml/              # k-means 异常检测、weights/correlations
-│   ├── internal/stream/          # WSS client/server、replication、proxy、cluster
-│   ├── internal/export/          # prometheus rw / influx / opentsdb
-│   ├── internal/functions/       # processes / connections / logs / services
-│   ├── internal/api/             # HTTP 路由、鉴权、WS live、embed UI
-│   ├── internal/hub/             # space/room/user/rbac/claim/devices/push
-│   ├── internal/store/           # SQLite / Postgres 元数据仓储
-│   ├── internal/platform/        # 服务安装（systemd/launchd/SCM）、特权助手 mon-sudo
-│   ├── mobile/                   # gomobile 绑定入口（Start/Stop/Feed/Query）
-│   └── health.d/ collectors.d/   # 内置规则与采集器默认配置（embed）
-├── plugins/                      # 外部采集器示例（python.d、bash）
-├── web/                          # Vue3 Dashboard（构建产物 embed 到 core）
-├── app/                          # Flutter 客户端（android/ios/macos/windows/linux）
-├── android/                      # Android 服务端壳（Kotlin 前台服务 + 采集桥）+ 集成 Flutter 模块
-├── packaging/                    # deb/rpm/pkg/msi/AppImage/docker、安装脚本 install.sh / install.ps1
-├── scripts/                      # smoke.sh、开发脚本
-└── .github/workflows/            # 构建矩阵、release、e2e
-```
+以下对应当前源码；根目录入口、产物与数据位置见 [README](../README.md#仓库结构)。
+
+| 目录 | 当前职责 |
+| --- | --- |
+| `core/cmd/monitord/` | Go 主程序、配置加载、Agent / Hub 生命周期 |
+| `core/internal/config/` | YAML 配置、默认登录密码生成与加载 |
+| `core/internal/api/` | HTTP / WebSocket、认证、RBAC、内嵌 Web 资源 |
+| `core/internal/collect/` | 采集框架、内置采集器、ML 与按需 Functions，平台差异由 GOOS 文件区分 |
+| `core/internal/plugins/` | 外部 plugins.d 进程与文本协议 |
+| `core/internal/ingest/`、`export/` | 数据摄入与对外导出 |
+| `core/internal/registry/` | Host / Chart / Dimension 元数据与采样算法 |
+| `core/internal/tsdb/` | 原始块、原子检查点、降采样层、保留策略和查询 |
+| `core/internal/backup/` | 数据目录锁、离线备份与校验恢复 |
+| `core/internal/health/` | 规则、表达式、告警与通知；`rules/` 保存内嵌 YAML 规则 |
+| `core/internal/stream/`、`hub/` | Agent 上报协议、MQTT 帧、Hub 节点/组织/副本与查询扇出 |
+| `web/src/`、`web/e2e/` | Vue Dashboard 与浏览器验收 |
+| `app/lib/`、`app/test/`、`app/integration_test/` | Flutter 客户端、单元测试与原生集成测试 |
+| `app/android/` 等平台目录 | Flutter 客户端的五端工程 |
+| `android/` | 独立 Android 服务端 Kotlin 工程 |
+| `plugins.d/` | 外部采集器示例 |
+| `scripts/` | 构建、打包和测试脚本，见 [脚本索引](../scripts/README.md) |
+| `docs/`、`.github/workflows/` | 文档和 CI / Release |
+
+Go 单元测试与包源码放在一起；Flutter、浏览器和真实进程验收分别由各自工程及 `scripts/` 管理。`dist/`、`reports/`、各工程的 `build/` 与本地数据目录是生成输出，不提交源码库。
+
+早期规划中的 `proto/`、根目录 `api/openapi.yaml`、`packaging/`、`core/mobile/` 和 `cmd/monitorctl/` 尚未落地。当前不为它们创建空目录；后续实现对应能力时再引入。TSDB 当前没有逐样本 WAL，不能将规划中的 WAL 当成现有持久化保证。
 
 ---
 
@@ -502,7 +494,7 @@ sequenceDiagram
 | Health alarms/templates | `internal/health`（表达式兼容） | M1 |
 | alarm-notify 多渠道 | `internal/notify` | M1 |
 | Functions | `internal/functions` | M1 |
-| Streaming / Replication / Parent | `internal/stream` + `--mode hub` | M2 |
+| Streaming / Replication / Parent | `internal/stream` + 配置 `mode: hub` | M2 |
 | Netdata Cloud（Space/Room/RBAC/集中通知） | `internal/hub` | M2 |
 | Mobile App 告警推送 | `app/`（Flutter）+ Hub push | M3 |
 | ML anomaly detection / Anomaly Advisor / Metric Correlations | `internal/collect/ml.go` + `/api/v1/weights` | M5 |
@@ -525,7 +517,7 @@ sequenceDiagram
 | icecast / phpdaemon / pika / maxscale / nginxplus / nginxunit / docker_engine / riakkv / litespeed / boinc / spigotmc / w1sensor | `internal/collect` | M12 续 4 |
 | ap / dockerhub / ethtool / intelgpu / logind / dcgm / panos / powerstore / powervault / s3check / scaleio / smbios_memory | `internal/collect` | M12 续 5 |
 | vcsa / mssql / oracledb / sql / cloudwatch / azure_monitor / vsphere / cato_networks / snmp_traps / snmp_topology | `internal/collect` | M12 续 6 |
-| （无）Android 服务端 | `android/` + `core/mobile` | M4 |
+| （无）Android 服务端 | `android/` + 静态 `monitord` 子进程 | M4 |
 | （仅移动）五端原生客户端 | `app/` Charts / Alarms / Functions | M3 / M16 |
 | Windows.plugin 进程/线程/句柄 | `internal/collect/windows.go` | M16 |
 | freebsd.plugin sysctl | `internal/collect/freebsd.go` | M16 |
