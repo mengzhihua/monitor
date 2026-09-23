@@ -370,8 +370,10 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 		},
 		"user": userOf(r),
 	}
+	var nodes []*hub.Node
 	if s.opt.Nodes != nil {
-		out["nodes_count"] = len(s.opt.Nodes.List()) + 1
+		nodes = s.opt.Nodes.List()
+		out["nodes_count"] = len(nodes) + 1
 		out["streaming_enabled"] = s.opt.Nodes.IngestEnabled()
 	}
 	if s.opt.Stream != nil {
@@ -387,14 +389,14 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 	if s.opt.Nodes != nil {
 		now := time.Now()
 		live := 0
-		for _, n := range s.opt.Nodes.List() {
-			if n.Info(now).Status == hub.StatusLive {
+		for _, n := range nodes {
+			if n.Status(now) == hub.StatusLive {
 				live++
 			}
 		}
 		aclk["available"] = true
 		aclk["online"] = s.opt.Nodes.IngestEnabled() && live > 0
-		aclk["nodes"] = len(s.opt.Nodes.List())
+		aclk["nodes"] = len(nodes)
 		aclk["live"] = live
 		aclk["protocol"] = "stream+mqtt"
 		aclk["storage"] = s.opt.Nodes.Storage()
@@ -429,7 +431,7 @@ func (s *Server) handleCharts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	charts := v.reg.Charts()
-	out := make(map[string]any, len(charts))
+	out := make(map[string]chartMetadata, len(charts))
 	// A snapshot scans all tracked dimensions. Share it across this response
 	// instead of repeating the scan for every chart.
 	anom, src := s.anomalies(), s.anomaly()
@@ -447,33 +449,65 @@ func (s *Server) anomalies() map[string]bool {
 	return nil
 }
 
-func chartJSON(c *registry.Chart, db tsdb.Reader, anom map[string]bool, src health.AnomalySource) map[string]any {
+// Explicit wire types avoid per-field maps and interface boxing for every
+// dimension on each metadata poll. Dynamic bounds and anomaly state are still
+// read for each response; no chart definition or response is cached.
+type dimensionMetadata struct {
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Algorithm  registry.Algorithm `json:"algorithm"`
+	Multiplier int64              `json:"multiplier"`
+	Divisor    int64              `json:"divisor"`
+	Hidden     bool               `json:"hidden"`
+	Anomaly    bool               `json:"anomaly,omitempty"`
+	Rate       *float64           `json:"dimension_anomaly,omitempty"`
+}
+
+type chartMetadata struct {
+	ID          string              `json:"id"`
+	Context     string              `json:"context"`
+	Family      string              `json:"family"`
+	Title       string              `json:"title"`
+	Units       string              `json:"units"`
+	Type        registry.ChartType  `json:"chart_type"`
+	Priority    int                 `json:"priority"`
+	UpdateEvery int                 `json:"update_every"`
+	Plugin      string              `json:"plugin"`
+	Module      string              `json:"module"`
+	Labels      map[string]string   `json:"labels"`
+	Dimensions  []dimensionMetadata `json:"dimensions"`
+	FirstEntry  int64               `json:"first_entry"`
+	LastEntry   int64               `json:"last_entry"`
+	Anomaly     bool                `json:"anomaly"`
+}
+
+func chartJSON(c *registry.Chart, db tsdb.Reader, anom map[string]bool, src health.AnomalySource) chartMetadata {
 	dims := c.Dims()
 	first, last := chartBounds(c.ID, dims, db)
-	dimOut := make([]map[string]any, 0, len(dims))
+	dimOut := make([]dimensionMetadata, 0, len(dims))
 	anomalous := false
 	for _, d := range dims {
-		m := map[string]any{"id": d.ID, "name": d.Name, "algorithm": d.Algorithm, "multiplier": d.Multiplier, "divisor": d.Divisor, "hidden": d.Hidden}
+		m := dimensionMetadata{ID: d.ID, Name: d.Name, Algorithm: d.Algorithm, Multiplier: d.Multiplier, Divisor: d.Divisor, Hidden: d.Hidden}
 		if anom[registry.SeriesID(c.ID, d.ID)] {
-			m["anomaly"] = true
+			m.Anomaly = true
 			anomalous = true
 		}
 		if src != nil {
 			if r, ok := src.Rate(c.ID, d.ID); ok {
-				m["dimension_anomaly"] = r
+				m.Rate = &r
 				if r >= 50 {
-					m["anomaly"] = true
+					m.Anomaly = true
 					anomalous = true
 				}
 			}
 		}
 		dimOut = append(dimOut, m)
 	}
-	return map[string]any{
-		"id": c.ID, "context": c.Context, "family": c.Family, "title": c.Title, "units": c.Units,
-		"chart_type": c.Type, "priority": c.Priority, "update_every": c.UpdateEvery, "plugin": c.Plugin,
-		"module": c.Module, "labels": c.Labels, "dimensions": dimOut, "first_entry": first, "last_entry": last,
-		"anomaly": anomalous,
+	return chartMetadata{
+		ID: c.ID, Context: c.Context, Family: c.Family, Title: c.Title, Units: c.Units,
+		Type: c.Type, Priority: c.Priority, UpdateEvery: c.UpdateEvery, Plugin: c.Plugin,
+		Module: c.Module, Labels: c.Labels, Dimensions: dimOut, FirstEntry: first, LastEntry: last,
+		Anomaly: anomalous,
 	}
 }
 

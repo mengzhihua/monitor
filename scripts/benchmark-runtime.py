@@ -4,6 +4,8 @@
 Build the Web assets and binary first. By default results measure only the
 daemon. --include-children adds whole-run CPU accounting from wait4 and sampled
 direct-child RSS/CPU/launch lower bounds. 100% CPU is one CPU core.
+Use --collectors cpu,mem,apps,netstat to compare a fixed collector selection.
+Catalog IDs and sanitized collector status are captured outside measurement.
 """
 
 import argparse
@@ -15,6 +17,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -41,6 +44,56 @@ def seconds(value):
     return number
 
 
+def collector_names(value):
+    names = [name.strip() for name in value.split(",")]
+    if not names or any(not re.fullmatch(r"[a-z][a-z0-9_-]*", name) for name in names):
+        raise argparse.ArgumentTypeError("use comma-separated collector names (letters, digits, underscores, hyphens)")
+    names = sorted(set(names))
+    if not {"cpu", "mem"}.issubset(names):
+        raise argparse.ArgumentTypeError("include cpu and mem for the fixed system.cpu/system.ram HTTP workload")
+    return names
+
+
+def collector_config(names):
+    # Only a collector allowlist is configurable. Do not accept a deployment
+    # config that could enable streaming, exports, credentials or data paths.
+    if names is None:
+        return ""
+    return "collectors:\n  enabled: " + json.dumps(names, separators=(",", ":")) + "\n"
+
+
+def catalog_snapshot(read, started):
+    charts = read("/api/v1/charts")["charts"]
+    statuses = read("/api/v1/collectors")["status"]
+    catalog = {chart_id: sorted(dimension["id"] for dimension in (chart.get("dimensions") or []))
+               for chart_id, chart in sorted(charts.items())}
+    collectors = []
+    for status in statuses:
+        # Error text, plugin commands, labels and arbitrary metadata may carry
+        # credentials. Persist only IDs and these explicitly typed counters.
+        item = {"name": status["name"], "has_error": bool(status.get("error"))}
+        if type(status.get("enabled")) is bool:
+            item["enabled"] = status["enabled"]
+        for field in ("runs", "failures", "last_run_ms"):
+            if type(status.get(field)) is int:
+                item[field] = status[field]
+        collectors.append(item)
+    return {
+        "available": True, "elapsed_since_launch_seconds": time.monotonic() - started,
+        "chart_count": len(catalog), "series_count": sum(len(dims) for dims in catalog.values()),
+        "chart_dimensions": catalog, "collectors": sorted(collectors, key=lambda item: item["name"]),
+    }
+
+
+def validate_collectors(names, snapshot):
+    if names is not None:
+        actual = {status["name"] for status in snapshot["collectors"]}
+        if actual != set(names):
+            raise RuntimeError("selected collector status does not match requested names; missing="
+                               + ",".join(sorted(set(names) - actual))
+                               + "; unexpected=" + ",".join(sorted(actual - set(names))))
+
+
 def percentile(values, fraction):
     return sorted(values)[max(0, math.ceil(len(values) * fraction) - 1)] if values else None
 
@@ -54,6 +107,7 @@ def cpu_seconds(value):
 
 
 def sample(pid, include_children=False):
+    started = time.monotonic()
     if include_children:
         # A single process table snapshot avoids launching ps once per child.
         # comm excludes command arguments, which might contain credentials.
@@ -80,8 +134,9 @@ def sample(pid, include_children=False):
                 children.append(point)
         if parent is None:
             raise RuntimeError("daemon disappeared during process sampling")
+        finished = time.monotonic()
         return {
-            "elapsed_seconds": time.monotonic(),
+            "elapsed_seconds": finished, "snapshot_duration_ms": (finished - started) * 1000,
             "cpu_seconds": parent["cpu_seconds"], "rss_mib": parent["rss_mib"],
             "children": children,
             "daemon_and_direct_children_rss_mib": parent["rss_mib"] + sum(child["rss_mib"] for child in children),
@@ -91,8 +146,9 @@ def sample(pid, include_children=False):
         ["ps", "-p", str(pid), "-o", "time=,rss="],
         text=True, env=dict(os.environ, LC_ALL="C"),
     ).split()
+    finished = time.monotonic()
     return {
-        "elapsed_seconds": time.monotonic(),
+        "elapsed_seconds": finished, "snapshot_duration_ms": (finished - started) * 1000,
         "cpu_seconds": cpu_seconds(output[0]),
         "rss_mib": int(output[1]) / 1024,
     }
@@ -214,6 +270,23 @@ def child_summary(samples, elapsed, daemon_cpu):
     }
 
 
+def sampling_summary(samples, interval):
+    gaps = [right["elapsed_seconds"] - left["elapsed_seconds"]
+            for left, right in zip(samples, samples[1:])]
+    costs = [point["snapshot_duration_ms"] for point in samples]
+    return {
+        "sample_count": len(samples), "nominal_wait_seconds": interval,
+        "actual_interval_seconds": {
+            "mean": statistics.mean(gaps) if gaps else None,
+            "p95": percentile(gaps, .95), "max": max(gaps) if gaps else None,
+        },
+        "snapshot_duration_ms": {
+            "mean": statistics.mean(costs), "p95": percentile(costs, .95), "max": max(costs),
+        },
+        "scope": "ps invocation plus parsing; actual intervals include this observer overhead and scheduling delays",
+    }
+
+
 def measure(process, port, token, duration, include_children=False, child_interval=.2):
     headers = {"Authorization": "Bearer " + token}
     barrier = threading.Barrier(len(WORKLOAD) + 1)
@@ -283,6 +356,7 @@ def measure(process, port, token, duration, include_children=False, child_interv
         "cpu_seconds": cpu, "cpu_one_core_percent": 100 * cpu / elapsed,
         "rss_mib": {"mean": statistics.mean(rss), "p95": percentile(rss, .95),
                     "max": max(rss), "start": rss[0], "end": rss[-1]},
+        "process_sampling": sampling_summary(samples, interval),
         "samples": [dict(point, elapsed_seconds=point["elapsed_seconds"] - first["elapsed_seconds"])
                     for point in samples],
     }
@@ -292,8 +366,16 @@ def measure(process, port, token, duration, include_children=False, child_interv
 
 
 def run(args, result, directory):
-    config = directory / "empty.yaml"
-    config.write_text("")
+    config = directory / "benchmark.yaml"
+    configuration = collector_config(args.collectors)
+    config.write_text(configuration)
+    result["method"].update({
+        "default_collectors": args.collectors is None,
+        "selected_collectors": args.collectors,
+        "config_sha256": hashlib.sha256(configuration.encode("utf-8")).hexdigest(),
+        "config_scope": "empty defaults" if args.collectors is None else "generated collector allowlist only",
+        "catalog_snapshots": "before and after measurement; outside steady-state samples, included in lifetime CPU",
+    })
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -336,14 +418,21 @@ def run(args, result, directory):
                 raise RuntimeError("daemon did not become ready within 30 seconds")
             result["startup_ready_ms"] = (time.monotonic() - started) * 1000
             time.sleep(args.warmup)
-            charts = read("/api/v1/charts").get("charts", {})
-            result["chart_count"] = len(charts)
-            result["series_count"] = sum(len(chart.get("dimensions", {})) for chart in charts.values())
+            before = catalog_snapshot(read, started)
+            result["catalog_snapshots"] = {"before": before}
+            result["chart_count"] = before["chart_count"]
+            result["series_count"] = before["series_count"]
+            validate_collectors(args.collectors, before)
             for chart in ("system.ram", "system.cpu"):
                 rows = read(f"/api/v1/data?chart={chart}&after=-60&points=60").get("result", {}).get("data", [])
                 if not any(value is not None for row in rows for value in row[1:]):
                     raise RuntimeError("required chart has no populated samples: " + chart)
             result.update(measure(process, port, token, args.duration, args.include_children, args.child_sample_interval))
+            try:
+                result["catalog_snapshots"]["after"] = catalog_snapshot(read, started)
+            except Exception as error:
+                result["catalog_snapshots"]["after"] = {"available": False, "error_type": type(error).__name__}
+                raise RuntimeError("post-measurement catalog snapshot failed (" + type(error).__name__ + ")") from None
         finally:
             stop(process)
             result["exit_code"] = process.returncode
@@ -358,6 +447,7 @@ def main():
     parser.add_argument("--output", type=Path, help="JSON path; default: new directory in the system temp directory")
     parser.add_argument("--warmup", type=seconds, default=15, help="warmup seconds (default: 15)")
     parser.add_argument("--duration", type=seconds, default=60, help="measurement seconds (default: 60)")
+    parser.add_argument("--collectors", type=collector_names, help="fixed comma-separated collector names; must include cpu,mem; default: all with an empty config")
     parser.add_argument("--include-children", action="store_true", help="add whole-run wait4 CPU and sampled direct-child resource/launch lower bounds")
     parser.add_argument("--child-sample-interval", type=seconds, default=.2, help="seconds between direct-child snapshots when enabled (default: 0.2, plus ps runtime)")
     args = parser.parse_args()

@@ -9,7 +9,7 @@ async function visibility(page: Page, hidden: boolean) {
   }, hidden)
 }
 
-test('scrolling 100 charts retains only a bounded number of canvases', async ({ page }) => {
+test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async ({ page }) => {
   const charts = Object.fromEntries(Array.from({ length: 100 }, (_, i) => {
     const id = `test.chart${i}`
     return [id, { id, title: id, context: 'test', family: 'test', units: 'value', chart_type: 'line',
@@ -22,14 +22,18 @@ test('scrolling 100 charts retains only a bounded number of canvases', async ({ 
   await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
   await expect(cards).toHaveCount(100)
+  await expect(cards.first().locator('canvas')).toBeVisible()
+  const firstCanvas = await cards.first().locator('canvas').elementHandle()
   for (let i = 0; i < 100; i += 4) {
     await cards.nth(i).scrollIntoViewIfNeeded()
     await expect(cards.nth(i).locator('canvas')).toBeVisible()
   }
   await expect.poll(() => page.locator('.card canvas').count()).toBeLessThanOrEqual(18)
   await expect(cards.first().locator('canvas')).toHaveCount(0)
+  expect(await firstCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false)
   await cards.first().scrollIntoViewIfNeeded()
   await expect(cards.first().locator('canvas')).toBeVisible()
+  expect(await page.evaluate(canvas => canvas === document.querySelector('.card canvas'), firstCanvas)).toBe(false)
 })
 
 test('long history unsubscribes metrics and a hidden dashboard stops requests and live socket', async ({ page }) => {
