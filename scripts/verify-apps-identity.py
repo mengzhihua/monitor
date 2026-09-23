@@ -103,8 +103,15 @@ def main():
                 else:
                     raise AssertionError("process table allowed unauthenticated access")
 
+                observed_times = set()
+
                 def rows():
-                    return {row["pid"]: row for row in read(query)["result"]["rows"]}
+                    result = read(query)["result"]
+                    if result["rows"]:
+                        timestamp = result.get("collected_at")
+                        assert isinstance(timestamp, int) and timestamp > 0, "process snapshot has no collection timestamp"
+                        observed_times.add(timestamp)
+                    return {row["pid"]: row for row in result["rows"]}
 
                 def apps_status():
                     return next(item for item in read("/api/v1/collectors")["status"] if item["name"] == "apps")
@@ -159,10 +166,18 @@ def main():
                     return owned[0].pid not in current and owned[1].pid in current
 
                 eventually(removed, "exited PID removal while the live PID remains")
-                data = read("/api/v1/data?chart=apps.processes&after=-30&points=30")
+                assert len(observed_times) >= 2, "process snapshot timestamp did not advance"
+                # Query the exact observed sampling window, including the exit
+                # snapshot, instead of a wall-clock-relative range that can
+                # move while the test is running on a busy host.
+                history_after, history_before = min(observed_times) - 1, max(observed_times) + 1
+                data = read("/api/v1/data?" + urllib.parse.urlencode({
+                    "chart": "apps.processes", "after": history_after, "before": history_before,
+                    "points": history_before - history_after,
+                }))
                 column = data["dimension_ids"].index("identity_fixture") + 1
                 counts = [row[column] for row in data["result"]["data"] if row[column] is not None]
-                assert 2 in counts and 1 in counts, "history does not reflect fixture exit"
+                assert 2 in counts and 1 in counts, f"fixture history counts={counts}; window={history_after}:{history_before}"
                 status = apps_status()
                 assert status["enabled"] and status["runs"] >= 3 and not status.get("error"), "apps collector unavailable"
                 failure_lines = [line for line in (root / "server.log").read_text().splitlines()
@@ -182,6 +197,7 @@ def main():
                                   "startup_observed_ms": startup_elapsed_ms,
                                   "observed_healthy_run_ms": initial_status["last_run_ms"],
                                   "runs_at_first_observation": initial_status["runs"],
+                                  "snapshot_times_verified": len(observed_times),
                                   "known_failure_causes": failure_kinds,
                                   "clean_shutdown": True}))
             finally:

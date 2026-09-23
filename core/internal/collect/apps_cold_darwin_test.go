@@ -31,3 +31,24 @@ func BenchmarkAppsDarwinColdCollect(b *testing.B) {
 		b.ReportMetric(float64(len(a.pids)), "pids/op")
 	}
 }
+
+func BenchmarkAppsDarwinSteadyCollect(b *testing.B) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	a := &appsCollector{}
+	if err := a.Init(reg); err != nil {
+		b.Fatal(err)
+	}
+	now := time.Now()
+	if err := a.Collect(context.Background(), reg, now); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := a.Collect(context.Background(), reg, now.Add(time.Duration(i+1)*time.Second)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(len(a.pids)), "pids/op")
+}

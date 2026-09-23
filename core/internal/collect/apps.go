@@ -65,7 +65,8 @@ type pidState struct {
 	group     *appGroup
 	user      string
 	osGroup   string
-	cpuMs     float64 // user+system, ms
+	cpuMs     float64   // user+system, ms
+	cpuAt     time.Time // last successful CPU sample, not the last collection attempt
 	hasCPU    bool
 	readB     uint64
 	writeB    uint64
@@ -86,6 +87,11 @@ type appsCollector struct {
 
 	mu   sync.Mutex
 	pids map[int32]*pidState
+	// Sampling is serialized by mu; readers only hold tableMu to copy the
+	// last complete table, so an OS query cannot block the processes API.
+	tableMu   sync.RWMutex
+	published []ProcessRow
+	samples   []appProcessUpdate
 	// monotonically increasing per-group counters fed as Incremental
 	cpuMs               map[string]float64
 	readB               map[string]float64
@@ -109,6 +115,12 @@ type procCounters struct {
 	hasIO, ioDenied bool
 	kthread         bool
 	ok              bool
+}
+
+type appProcessUpdate struct {
+	pid      int32
+	state    *pidState
+	counters procCounters
 }
 
 func init() {
@@ -171,6 +183,11 @@ func (a *appsCollector) Init(reg *registry.Registry) error {
 		return err
 	}
 	a.pids = map[int32]*pidState{}
+	a.samples = nil
+	a.tableMu.Lock()
+	a.published = nil
+	a.last = time.Time{}
+	a.tableMu.Unlock()
 	a.cpuMs, a.readB, a.writeB = map[string]float64{}, map[string]float64{}, map[string]float64{}
 	a.cpuUser, a.cpuOSGroup = map[string]float64{}, map[string]float64{}
 	a.groupCache = map[string]string{}
@@ -275,6 +292,16 @@ func (a *appsCollector) previousPID(pid int32, startedAt int64) *pidState {
 }
 
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.samples = a.samples[:0]
+	defer func() {
+		clear(a.samples) // release process identities after a completed or aborted pass
+		a.samples = a.samples[:0]
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	pids, native := listProcPIDs(a.pidBuf)
 	a.pidBuf = pids
 	var procs []appProcess
@@ -285,17 +312,6 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			return err
 		}
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	elapsed := now.Sub(a.last).Seconds()
-	if a.last.IsZero() || elapsed <= 0 {
-		elapsed = float64(reg.Host.UpdateEvery)
-	}
-	a.last = now
-
-	mem := map[string]float64{}
-	nproc := map[string]float64{}
-	nthr := map[string]float64{}
 	n := len(procs)
 	if native {
 		n = len(pids)
@@ -354,52 +370,76 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		if native && !sample.ok {
 			continue // exited between readdir and stat; drop it below
 		}
+		if !native {
+			sample = readAppProcessSample(ctx, gp, a.hasIO)
+		}
+		a.samples = append(a.samples, appProcessUpdate{pid: pid, state: st, counters: sample})
+	}
+	// No counters, rates, charts or public rows advance until every PID has
+	// been sampled. Keep newly resolved identities cached for the next try.
+	return a.finishSamples(ctx, reg, now)
+}
+
+func (a *appsCollector) finishSamples(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.commitSamples(reg, now)
+	return nil
+}
+
+func (a *appsCollector) commitSamples(reg *registry.Registry, now time.Time) {
+	mem := map[string]float64{}
+	nproc := map[string]float64{}
+	nthr := map[string]float64{}
+	for _, update := range a.samples {
+		st, sample := update.state, update.counters
 		st.seenAt = now
 		g := st.group.name
-		var cpuSec float64
-		var rss uint64
-		var threads int32
-		var readB, writeB uint64
-		var hasIO, ok bool
-		if native {
-			if sample.ioDenied {
-				st.skipIO = true
-			}
-			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
-			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
-		} else {
-			sample = readAppProcessSample(ctx, gp, a.hasIO)
-			cpuSec, rss, threads = sample.cpuSec, sample.rss, sample.threads
-			readB, writeB, hasIO, ok = sample.readB, sample.writeB, sample.hasIO, sample.ok
+		if sample.ioDenied {
+			st.skipIO = true
 		}
 		// A failed read retains its cumulative baseline, but cannot reuse the
 		// previous interval's rate when aggregating CPU by user and OS group.
 		st.cpuPct = 0
-		if ok {
-			ms := cpuSec * 1000
+		if sample.ok {
+			ms := sample.cpuSec * 1000
 			if st.hasCPU {
 				if d := ms - st.cpuMs; d > 0 {
+					elapsed := now.Sub(st.cpuAt).Seconds()
+					if st.cpuAt.IsZero() || elapsed <= 0 {
+						elapsed = float64(reg.Host.UpdateEvery)
+					}
 					a.cpuMs[g] += d
 					st.cpuPct = d / elapsed / 10
+					// Add the actual delta once; reconstructing it from a rate
+					// and a global interval loses CPU time after failed reads.
+					if st.user != "" {
+						a.cpuUser[st.user] += d
+					}
+					if st.osGroup != "" {
+						a.cpuOSGroup[st.osGroup] += d
+					}
 				}
 			}
 			st.cpuMs, st.hasCPU = ms, true
+			st.cpuAt = now
 		}
-		st.rss = rss
-		mem[g] += float64(rss)
-		st.threads = threads
-		nthr[g] += float64(threads)
+		st.rss = sample.rss
+		mem[g] += float64(sample.rss)
+		st.threads = sample.threads
+		nthr[g] += float64(sample.threads)
 		nproc[g]++
-		if a.hasIO && hasIO {
+		if a.hasIO && sample.hasIO {
 			if st.ioOK {
-				if d := float64(readB) - float64(st.readB); d > 0 {
+				if d := float64(sample.readB) - float64(st.readB); d > 0 {
 					a.readB[g] += d
 				}
-				if d := float64(writeB) - float64(st.writeB); d > 0 {
+				if d := float64(sample.writeB) - float64(st.writeB); d > 0 {
 					a.writeB[g] += d
 				}
 			}
-			st.readB, st.writeB, st.ioOK = readB, writeB, true
+			st.readB, st.writeB, st.ioOK = sample.readB, sample.writeB, true
 		}
 	}
 	for pid, st := range a.pids {
@@ -427,11 +467,20 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		_ = reg.Collect("apps.io_read", now, rd)
 		_ = reg.Collect("apps.io_write", now, wr)
 	}
-	a.collectOwners(reg, now, elapsed)
-	return nil
+	a.collectOwners(reg, now)
+	a.tableMu.Lock()
+	a.last = now
+	clear(a.published)
+	a.published = a.published[:0]
+	for _, update := range a.samples {
+		st := update.state
+		a.published = append(a.published, ProcessRow{PID: update.pid, PPID: st.ppid, Name: st.name, Group: st.group.name,
+			CPU: st.cpuPct, RSS: st.rss, Threads: st.threads, Cmdline: st.cmdline})
+	}
+	a.tableMu.Unlock()
 }
 
-func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, elapsed float64) {
+func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time) {
 	memU, nprocU := map[string]float64{}, map[string]float64{}
 	memG, nprocG := map[string]float64{}, map[string]float64{}
 	for _, st := range a.pids {
@@ -441,19 +490,10 @@ func (a *appsCollector) collectOwners(reg *registry.Registry, now time.Time, ela
 		if st.user != "" {
 			nprocU[st.user]++
 			memU[st.user] += float64(st.rss)
-			if st.hasCPU {
-				// cpu delta already applied to group in Collect; recompute from cpuPct
-				if st.cpuPct > 0 {
-					a.cpuUser[st.user] += st.cpuPct * elapsed * 10
-				}
-			}
 		}
 		if st.osGroup != "" {
 			nprocG[st.osGroup]++
 			memG[st.osGroup] += float64(st.rss)
-			if st.cpuPct > 0 {
-				a.cpuOSGroup[st.osGroup] += st.cpuPct * elapsed * 10
-			}
 		}
 	}
 	addCPU := func(chart string, vals map[string]float64) {
@@ -553,15 +593,16 @@ type ProcessRow struct {
 
 // Table is the generic function result shape (Netdata-style columns/rows).
 type Table struct {
-	Columns []string `json:"columns"`
-	Rows    []any    `json:"rows"`
-	Total   int      `json:"total"`
+	Columns     []string `json:"columns"`
+	Rows        []any    `json:"rows"`
+	Total       int      `json:"total"`
+	CollectedAt int64    `json:"collected_at,omitempty"` // last complete sample, Unix seconds
 }
 
 func (a *appsCollector) Functions() []Function {
 	return []Function{{
 		Name:    "processes",
-		Help:    "Live process table (top by CPU, then RSS)",
+		Help:    "Latest complete process snapshot (top by CPU, then RSS)",
 		Timeout: 10,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
 			return a.processes(args), nil
@@ -570,13 +611,13 @@ func (a *appsCollector) Functions() []Function {
 }
 
 func (a *appsCollector) processes(args map[string]string) Table {
-	a.mu.Lock()
-	rows := make([]ProcessRow, 0, len(a.pids))
-	for pid, st := range a.pids {
-		rows = append(rows, ProcessRow{PID: pid, PPID: st.ppid, Name: st.name, Group: st.group.name,
-			CPU: st.cpuPct, RSS: st.rss, Threads: st.threads, Cmdline: st.cmdline})
+	a.tableMu.RLock()
+	rows := append([]ProcessRow(nil), a.published...)
+	var collectedAt int64
+	if !a.last.IsZero() {
+		collectedAt = a.last.Unix()
 	}
-	a.mu.Unlock()
+	a.tableMu.RUnlock()
 	if g := args["group"]; g != "" {
 		f := rows[:0]
 		for _, r := range rows {
@@ -609,7 +650,7 @@ func (a *appsCollector) processes(args map[string]string) Table {
 	if len(rows) > a.cfg.Top {
 		rows = rows[:a.cfg.Top]
 	}
-	out := Table{Columns: []string{"pid", "ppid", "name", "group", "cpu", "rss", "threads", "cmdline"}, Total: total}
+	out := Table{Columns: []string{"pid", "ppid", "name", "group", "cpu", "rss", "threads", "cmdline"}, Total: total, CollectedAt: collectedAt}
 	out.Rows = make([]any, len(rows))
 	for i, r := range rows {
 		out.Rows[i] = r
