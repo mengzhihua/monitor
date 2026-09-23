@@ -4,9 +4,11 @@ package collect
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"os"
 	"strconv"
+	"syscall"
 )
 
 // clkTicks is Linux USER_HZ. /proc stat times are always in these ticks,
@@ -27,28 +29,72 @@ func init() {
 
 // listProcPIDs reads numeric /proc entries. gopsutil's process list stats
 // every pid and reads /proc/<pid>/stat just to build the slice.
-func listProcPIDs(dst []int32) ([]int32, bool) {
+func listProcPIDs(dst []int32, dirBuf *[]byte) ([]int32, bool) {
 	f, err := os.Open("/proc")
 	if err != nil {
 		return dst[:0], false
 	}
 	defer f.Close()
-	names, err := f.Readdirnames(-1)
-	if err != nil {
-		return dst[:0], false
+	buf := *dirBuf
+	if cap(buf) < 8192 {
+		buf = make([]byte, 8192)
+	} else {
+		buf = buf[:cap(buf)]
 	}
 	dst = dst[:0]
-	for _, n := range names {
-		if n == "" || n[0] < '1' || n[0] > '9' {
-			continue
+	for {
+		n, err := syscall.ReadDirent(int(f.Fd()), buf)
+		if n > 0 {
+			dst = parseProcDirents(buf[:n], dst)
 		}
-		pid, err := strconv.ParseInt(n, 10, 32)
-		if err != nil {
-			continue
+		if n <= 0 || err != nil {
+			break
 		}
-		dst = append(dst, int32(pid))
 	}
+	*dirBuf = buf
 	return dst, true
+}
+
+// parseProcDirents reads getdents64 records and keeps numeric names.
+// Names are parsed in place so the directory listing does not allocate a string per pid.
+func parseProcDirents(buf []byte, dst []int32) []int32 {
+	for len(buf) >= 19 {
+		reclen := int(binary.NativeEndian.Uint16(buf[16:18]))
+		if reclen < 19 || reclen > len(buf) {
+			break
+		}
+		ino := binary.NativeEndian.Uint64(buf[0:8])
+		rec := buf[:reclen]
+		buf = buf[reclen:]
+		if ino == 0 {
+			continue
+		}
+		name := rec[19:]
+		if i := bytes.IndexByte(name, 0); i >= 0 {
+			name = name[:i]
+		}
+		if pid, ok := parsePID(name); ok {
+			dst = append(dst, pid)
+		}
+	}
+	return dst
+}
+
+func parsePID(name []byte) (int32, bool) {
+	if len(name) == 0 || name[0] < '1' || name[0] > '9' {
+		return 0, false
+	}
+	var n int64
+	for _, c := range name {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int64(c-'0')
+		if n > 1<<31-1 {
+			return 0, false
+		}
+	}
+	return int32(n), true
 }
 
 // readProcSample reads CPU, RSS, threads and (unless skipped) disk bytes
@@ -73,9 +119,6 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 		ok:      true,
 	}
 	if skipIO || kthread {
-		if skipIO {
-			out.ioDenied = true
-		}
 		return out
 	}
 	ib, err := readInto("/proc/"+id+"/io", buf)

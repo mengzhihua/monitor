@@ -30,8 +30,16 @@ func TestReadProcSampleSelf(t *testing.T) {
 	if !s.ok || s.name == "" || s.threads < 1 {
 		t.Fatalf("%+v", s)
 	}
-	pids, ok := listProcPIDs(nil)
+	var dir []byte
+	pids, ok := listProcPIDs(nil, &dir)
 	if !ok || len(pids) == 0 {
 		t.Fatal("no pids")
 	}
+	self := int32(os.Getpid())
+	for _, pid := range pids {
+		if pid == self {
+			return
+		}
+	}
+	t.Fatalf("self pid %d missing from %d entries", self, len(pids))
 }

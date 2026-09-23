@@ -93,9 +93,15 @@ type appsCollector struct {
 	groupCache          map[string]string
 	userCache           map[string]string
 	pidBuf              []int32
+	dirBuf              []byte
 	scratch             []byte
 	last                time.Time
+	ioAt                time.Time
 }
+
+// appsIOEvery is how often per-process disk counters are opened. CPU still
+// comes from stat every tick; io charts are incremental, so a gap keeps the rate.
+const appsIOEvery = 5 * time.Second
 
 // procCounters is one /proc/<pid> sample. ok is false when stat could not be read.
 type procCounters struct {
@@ -229,8 +235,12 @@ func (a *appsCollector) match(name, cmdline string) *appGroup {
 }
 
 func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
-	pids, native := listProcPIDs(a.pidBuf)
+	pids, native := listProcPIDs(a.pidBuf, &a.dirBuf)
 	a.pidBuf = pids
+	ioNow := false
+	if a.hasIO {
+		ioNow = sampleDue(&a.ioAt, now, appsIOEvery)
+	}
 	var procs []*process.Process
 	if !native {
 		var err error
@@ -269,7 +279,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		st := a.pids[pid]
 		var sample procCounters
 		if native {
-			sample = readProcSample(pid, st != nil && st.skipIO, &a.scratch)
+			sample = readProcSample(pid, !ioNow || (st != nil && st.skipIO), &a.scratch)
 		}
 		if st == nil {
 			if native {
@@ -335,7 +345,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			if n, err := gp.NumThreadsWithContext(ctx); err == nil {
 				threads = n
 			}
-			if a.hasIO {
+			if a.hasIO && ioNow {
 				if io, err := gp.IOCountersWithContext(ctx); err == nil && io != nil {
 					readB, writeB, hasIO = io.ReadBytes, io.WriteBytes, true
 				}
@@ -386,7 +396,7 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	_ = reg.Collect("apps.mem", now, mem)
 	_ = reg.Collect("apps.processes", now, nproc)
 	_ = reg.Collect("apps.threads", now, nthr)
-	if a.hasIO {
+	if a.hasIO && ioNow {
 		rd, wr := make(map[string]float64, len(all)), make(map[string]float64, len(all))
 		for _, g := range all {
 			rd[g.name], wr[g.name] = a.readB[g.name], a.writeB[g.name]

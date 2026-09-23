@@ -2,8 +2,11 @@ package collect
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -186,11 +189,84 @@ func parseProcStat(s string) procStatExtra {
 }
 
 func parseProcStatFile(path string) (procStatExtra, error) {
-	s, err := readTrim(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return procStatExtra{}, err
 	}
-	return parseProcStat(s), nil
+	defer f.Close()
+	return scanProcStat(f)
+}
+
+// scanProcStat reads intr's total and the processes counter without keeping
+// the rest of the intr line. That line is one integer per IRQ.
+func scanProcStat(r io.Reader) (procStatExtra, error) {
+	br := bufio.NewReaderSize(r, 4096)
+	var out procStatExtra
+	var haveIntr, haveForks bool
+	for {
+		line, err := br.ReadSlice('\n')
+		switch err {
+		case nil:
+			matchProcStat(line, &out, &haveIntr, &haveForks)
+		case bufio.ErrBufferFull:
+			matchProcStat(line, &out, &haveIntr, &haveForks)
+			err = discardLine(br)
+		case io.EOF:
+			matchProcStat(line, &out, &haveIntr, &haveForks)
+			return out, nil
+		default:
+			return out, err
+		}
+		if haveIntr && haveForks {
+			return out, nil
+		}
+		if err != nil {
+			if err == io.EOF {
+				return out, nil
+			}
+			return out, err
+		}
+	}
+}
+
+func discardLine(br *bufio.Reader) error {
+	for {
+		_, err := br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return err
+	}
+}
+
+func matchProcStat(line []byte, out *procStatExtra, haveIntr, haveForks *bool) {
+	if !*haveIntr && bytes.HasPrefix(line, []byte("intr ")) {
+		if v, ok := leadingUint(line[5:]); ok {
+			out.intr = v
+			*haveIntr = true
+		}
+	} else if !*haveForks && bytes.HasPrefix(line, []byte("processes ")) {
+		if v, ok := leadingUint(line[len("processes "):]); ok {
+			out.forks = v
+			*haveForks = true
+		}
+	}
+}
+
+func leadingUint(b []byte) (float64, bool) {
+	i := 0
+	for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
+		i++
+	}
+	if i >= len(b) || b[i] < '0' || b[i] > '9' {
+		return 0, false
+	}
+	var n uint64
+	for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+		n = n*10 + uint64(b[i]-'0')
+		i++
+	}
+	return float64(n), true
 }
 
 func readFloat(path string) (float64, error) {

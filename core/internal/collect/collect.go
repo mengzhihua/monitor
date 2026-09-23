@@ -363,6 +363,15 @@ func (s *Scheduler) stop() {
 func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 	var wg sync.WaitGroup
 	for _, r := range s.cols {
+		// Most registered collectors fail Init and stay disabled. Spawning a
+		// goroutine per name every second is the steady-state cost of that list.
+		r.mu.Lock()
+		ready := r.desired && r.initialized
+		retry := r.desired && !r.initialized && !r.configFailed && !now.Before(r.retryAt)
+		r.mu.Unlock()
+		if !ready && !retry {
+			continue
+		}
 		wg.Add(1)
 		go func(r *running) {
 			defer wg.Done()

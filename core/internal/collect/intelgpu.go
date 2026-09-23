@@ -19,7 +19,10 @@ type intelgpuCollector struct {
 	cfg  intelgpuConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen map[string]bool
+	last time.Time
 }
+
+const intelgpuEvery = 5 * time.Second
 
 func init() {
 	Register("intelgpu", func() Collector { return &intelgpuCollector{} })
@@ -66,6 +69,9 @@ func (i *intelgpuCollector) Init(reg *registry.Registry) error {
 }
 
 func (i *intelgpuCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&i.last, now, intelgpuEvery) {
+		return nil
+	}
 	m, err := i.sample(ctx)
 	if err != nil {
 		return err
