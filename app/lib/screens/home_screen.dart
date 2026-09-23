@@ -59,7 +59,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(index: _tab, children: pages),
+      body: Column(
+        children: [
+          for (final message in [st.storageWarning, st.error].whereType<String>())
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                message,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          Expanded(child: IndexedStack(index: _tab, children: pages)),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),

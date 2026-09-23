@@ -22,6 +22,12 @@ class _MonitorAppState extends State<MonitorApp> {
   late final Future<void> _restore = _state.restore();
 
   @override
+  void dispose() {
+    if (widget.state == null) _state.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Monitor',
