@@ -39,11 +39,13 @@ class _HomeScreenState extends State<HomeScreen> {
       AlarmsView(
           key: ValueKey('alarms:${st.selectedNode}'),
           client: st.client!,
-          node: _nodeParam),
+          node: _nodeParam,
+          active: _tab == 1),
       FunctionsView(
           key: ValueKey('functions:${st.selectedNode}'),
           client: st.client!,
-          node: _nodeParam),
+          node: _nodeParam,
+          active: _tab == 2),
     ];
     return Scaffold(
       appBar: AppBar(

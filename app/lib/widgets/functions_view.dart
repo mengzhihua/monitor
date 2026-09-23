@@ -9,10 +9,16 @@ import '../api/models.dart';
 /// Live Functions tables (`/api/v1/functions` + `/function`), matching the
 /// embedded Vue panel: pick a function, filter rows, tap numeric columns to sort.
 class FunctionsView extends StatefulWidget {
-  const FunctionsView({super.key, required this.client, this.node});
+  const FunctionsView({
+    super.key,
+    required this.client,
+    this.node,
+    this.active = true,
+  });
 
   final ApiClient client;
   final String? node;
+  final bool active;
 
   @override
   State<FunctionsView> createState() => _FunctionsViewState();
@@ -27,34 +33,113 @@ class _FunctionsViewState extends State<FunctionsView> {
   String? _error;
   bool _loading = true;
   Timer? _timer;
+  Timer? _filterTimer;
+  Future<void>? _pending;
+  int _generation = 0;
+  DateTime? _catalogLoadedAt;
 
   @override
   void initState() {
     super.initState();
-    _bootstrap();
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _load());
+    if (widget.active) _load();
+  }
+
+  void _stop() {
+    ++_generation;
+    _timer?.cancel();
+    _filterTimer?.cancel();
+    _pending = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant FunctionsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final sourceChanged =
+        oldWidget.client != widget.client || oldWidget.node != widget.node;
+    if (!sourceChanged && oldWidget.active == widget.active) return;
+    _stop();
+    _catalogLoadedAt = null;
+    if (sourceChanged) {
+      _fns = const [];
+      _selected = '';
+      _result = null;
+      _error = null;
+      _loading = true;
+    }
+    if (widget.active) _load();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _stop();
     super.dispose();
   }
 
-  Future<void> _bootstrap() async {
+  bool get _serverSorted => const {
+    'processes',
+    'services',
+    'network-connections',
+    'windows-services',
+  }.contains(_selected);
+  bool get _serverFiltered =>
+      _selected == 'logs' || _selected == 'windows-services';
+
+  Future<void> _load() {
+    if (!mounted || !widget.active) return Future.value();
+    if (_pending != null) return _pending!;
+    _timer?.cancel();
+    _filterTimer?.cancel();
+    final generation = ++_generation;
+    return _pending = _fetch(generation).whenComplete(() {
+      if (!mounted || generation != _generation || !widget.active) return;
+      _pending = null;
+      _timer = Timer(const Duration(seconds: 2), _load);
+    });
+  }
+
+  Future<void> _fetch(int generation) async {
     try {
-      final list = await widget.client.functions(node: widget.node);
-      if (!mounted) return;
+      if (_fns.isEmpty ||
+          _catalogLoadedAt == null ||
+          DateTime.now().difference(_catalogLoadedAt!) >=
+              const Duration(seconds: 30)) {
+        final list = await widget.client.functions(node: widget.node);
+        if (!mounted || generation != _generation) return;
+        setState(() {
+          _fns = list;
+          _catalogLoadedAt = DateTime.now();
+          if (!list.any((function) => function.name == _selected)) {
+            _selected = list.isEmpty ? '' : list.first.name;
+            _result = null;
+          }
+        });
+      }
+      if (_selected.isEmpty) {
+        setState(() {
+          _loading = false;
+          _error = null;
+        });
+        return;
+      }
+      final selected = _selected;
+      final args = <String, String>{
+        if (_serverSorted && _sort.isNotEmpty) 'sort': _sort,
+        if (_serverFiltered && _filter.trim().isNotEmpty)
+          'query': _filter.trim(),
+      };
+      final result = await widget.client.function(
+        selected,
+        node: widget.node,
+        args: args,
+      );
+      if (!mounted || generation != _generation) return;
       setState(() {
-        _fns = list;
-        if (_selected.isEmpty && list.isNotEmpty) {
-          _selected = list.first.name;
-        }
+        _result = result;
         _error = null;
+        _loading = false;
       });
-      await _load();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -62,36 +147,18 @@ class _FunctionsViewState extends State<FunctionsView> {
     }
   }
 
-  Future<void> _load() async {
-    if (_selected.isEmpty) {
-      if (mounted) setState(() => _loading = false);
-      return;
-    }
-    try {
-      final args = <String, String>{};
-      if (_selected == 'processes' ||
-          _selected == 'services' ||
-          _selected == 'network-connections' ||
-          _selected == 'windows-services') {
-        if (_sort.isNotEmpty) args['sort'] = _sort;
-      }
-      if (_filter.trim().isNotEmpty &&
-          (_selected == 'logs' || _selected == 'windows-services')) {
-        args['query'] = _filter.trim();
-      }
-      final r = await widget.client.function(_selected, node: widget.node, args: args);
-      if (!mounted) return;
-      setState(() {
-        _result = r;
-        _error = null;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
+  void _queryChanged({bool debounce = false}) {
+    _stop();
+    setState(() {
+      _result = null;
+      _loading = true;
+      _error = null;
+    });
+    if (!widget.active) return;
+    if (debounce) {
+      _filterTimer = Timer(const Duration(milliseconds: 300), _load);
+    } else {
+      _load();
     }
   }
 
@@ -102,11 +169,14 @@ class _FunctionsViewState extends State<FunctionsView> {
     final q = _filter.trim().toLowerCase();
     if (q.isNotEmpty) {
       list = list
-          .where((r) => r.values.any((v) => v.toString().toLowerCase().contains(q)))
+          .where(
+            (r) => r.values.any((v) => v.toString().toLowerCase().contains(q)),
+          )
           .toList();
     }
     if (_sort.isNotEmpty && list.isNotEmpty && list.first[_sort] is num) {
-      list = [...list]..sort((a, b) => _num(b[_sort]).compareTo(_num(a[_sort])));
+      list = [...list]
+        ..sort((a, b) => _num(b[_sort]).compareTo(_num(a[_sort])));
     }
     return list;
   }
@@ -142,7 +212,22 @@ class _FunctionsViewState extends State<FunctionsView> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_fns.isEmpty) {
-      return Center(child: Text(_error ?? 'No functions on this node'));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _error ?? 'No functions on this node',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonal(onPressed: _load, child: const Text('Retry')),
+            ],
+          ),
+        ),
+      );
     }
     final table = _result?.table;
     final rows = _rows();
@@ -155,22 +240,31 @@ class _FunctionsViewState extends State<FunctionsView> {
               Expanded(
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _fns.any((f) => f.name == _selected) ? _selected : _fns.first.name,
+                  value: _fns.any((f) => f.name == _selected)
+                      ? _selected
+                      : _fns.first.name,
                   items: [
                     for (final f in _fns)
-                      DropdownMenuItem(value: f.name, child: Text(f.help.isEmpty ? f.name : '${f.name} — ${f.help}')),
+                      DropdownMenuItem(
+                        value: f.name,
+                        child: Text(
+                          f.help.isEmpty ? f.name : '${f.name} — ${f.help}',
+                        ),
+                      ),
                   ],
                   onChanged: (v) {
-                    if (v == null) return;
+                    if (v == null || v == _selected) return;
                     setState(() => _selected = v);
-                    _load();
+                    _queryChanged();
                   },
                 ),
               ),
               const SizedBox(width: 8),
               if (table != null)
-                Text('${rows.length} / ${table.total}',
-                    style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  '${rows.length} / ${table.total}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
             ],
           ),
         ),
@@ -182,25 +276,37 @@ class _FunctionsViewState extends State<FunctionsView> {
               isDense: true,
               prefixIcon: Icon(Icons.search, size: 18),
             ),
-            onChanged: (v) => setState(() => _filter = v),
+            onChanged: (v) {
+              setState(() => _filter = v);
+              if (_serverFiltered) _queryChanged(debounce: true);
+            },
           ),
         ),
+        if (_loading) const LinearProgressIndicator(),
         if (_error != null)
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ),
         Expanded(
           child: table == null
               ? SingleChildScrollView(
                   padding: const EdgeInsets.all(12),
                   child: SelectableText(
-                    _result?.raw == null ? '' : const JsonEncoder.withIndent('  ').convert(_result!.raw),
+                    _result?.raw == null
+                        ? ''
+                        : const JsonEncoder.withIndent(
+                            '  ',
+                          ).convert(_result!.raw),
                   ),
                 )
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     children: [
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
@@ -211,25 +317,42 @@ class _FunctionsViewState extends State<FunctionsView> {
                           columns: [
                             for (final c in table.columns)
                               DataColumn(
-                                label: Text(c,
-                                    style: TextStyle(
-                                        fontWeight: _sort == c ? FontWeight.bold : FontWeight.normal)),
+                                label: Text(
+                                  c,
+                                  style: TextStyle(
+                                    fontWeight: _sort == c
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
                                 onSort: _sortable(c)
-                                    ? (_, __) => setState(() => _sort = c)
+                                    ? (_, __) {
+                                        setState(() => _sort = c);
+                                        if (_serverSorted) _queryChanged();
+                                      }
                                     : null,
                                 numeric: _sortable(c),
                               ),
                           ],
                           rows: [
                             for (final r in rows)
-                              DataRow(cells: [
-                                for (final c in table.columns)
-                                  DataCell(SizedBox(
-                                    width: c == 'cmdline' || c == 'message' ? 280 : null,
-                                    child: Text(_fmt(c, r[c]),
-                                        maxLines: 2, overflow: TextOverflow.ellipsis),
-                                  )),
-                              ]),
+                              DataRow(
+                                cells: [
+                                  for (final c in table.columns)
+                                    DataCell(
+                                      SizedBox(
+                                        width: c == 'cmdline' || c == 'message'
+                                            ? 280
+                                            : null,
+                                        child: Text(
+                                          _fmt(c, r[c]),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
                           ],
                         ),
                       ),
