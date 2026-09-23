@@ -20,7 +20,10 @@ type lvmCollector struct {
 	cfg    lvmConfig
 	run    func(ctx context.Context, name string, args ...string) ([]byte, error)
 	lvSeen map[string]bool
+	last   time.Time
 }
+
+const lvmEvery = 15 * time.Second
 
 func init() {
 	Register("lvm", func() Collector { return &lvmCollector{} })
@@ -59,6 +62,9 @@ func (l *lvmCollector) Init(reg *registry.Registry) error {
 }
 
 func (l *lvmCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	if !sampleDue(&l.last, now, lvmEvery) {
+		return nil
+	}
 	rows, err := l.list(ctx)
 	if err != nil {
 		return err

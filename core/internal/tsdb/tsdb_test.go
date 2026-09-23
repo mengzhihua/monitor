@@ -438,3 +438,45 @@ func TestTierRetentionDropsOldBlocks(t *testing.T) {
 		t.Fatalf("recent buckets missing: %+v", bs)
 	}
 }
+
+func TestAppendManyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, BlockSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := int64(1_700_000_000)
+	s.AppendMany(start, []string{"cpu|user", "cpu|system"}, []float64{1, 2})
+	s.AppendMany(start, []string{"cpu|user"}, []float64{9}) // same timestamp is dropped
+	s.AppendMany(start+1, []string{"cpu|user", "cpu|system"}, []float64{3, 4})
+	s.AppendMany(start+2, nil, nil)
+	user, err := s.Query("cpu|user", start, start+2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys, err := s.Query("cpu|system", start, start+2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(user) != 2 || user[0].Value != 1 || user[1].Value != 3 {
+		t.Fatalf("user %+v", user)
+	}
+	if len(sys) != 2 || sys[0].Value != 2 || sys[1].Value != 4 {
+		t.Fatalf("system %+v", sys)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(Options{Dir: dir, BlockSize: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	user, err = s.Query("cpu|user", start, start+2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(user) != 2 || user[0].Value != 1 || user[1].TS != start+1 || user[1].Value != 3 {
+		t.Fatalf("reopened user %+v", user)
+	}
+}

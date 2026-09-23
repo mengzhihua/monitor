@@ -188,9 +188,11 @@ func TestSmartctlParse(t *testing.T) {
 	if err != nil || d.Name != "sda" || !d.Passed || d.Temp != 31 || d.PowerOn != 7200 || d.Cycles != 9 {
 		t.Fatalf("%+v %v", d, err)
 	}
+	calls := 0
 	s := &smartctlCollector{
 		cfg: smartctlConfig{Command: "smartctl", Timeout: time.Second},
 		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			calls++
 			if len(args) > 0 && args[0] == "--scan" {
 				return []byte("/dev/sda -d sat\n"), nil
 			}
@@ -201,11 +203,25 @@ func TestSmartctlParse(t *testing.T) {
 	if err := s.Init(reg); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Collect(context.Background(), reg, time.Now()); err != nil {
+	now := time.Unix(1_700_000_000, 0)
+	if err := s.Collect(context.Background(), reg, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := reg.Chart("smartctl.device_smart_status.sda"); !ok {
 		t.Fatal("missing chart")
+	}
+	after := calls
+	if err := s.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if calls != after {
+		t.Fatalf("smartctl ran again after 1s: calls %d -> %d", after, calls)
+	}
+	if err := s.Collect(context.Background(), reg, now.Add(smartctlEvery)); err != nil {
+		t.Fatal(err)
+	}
+	if calls == after {
+		t.Fatal("smartctl did not run again after the sample interval")
 	}
 }
 

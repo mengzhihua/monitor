@@ -5,7 +5,6 @@ package collect
 import (
 	"bytes"
 	"errors"
-	"io"
 	"os"
 	"strconv"
 )
@@ -56,7 +55,7 @@ func listProcPIDs(dst []int32) ([]int32, bool) {
 // from one stat file plus an optional io file.
 func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 	id := strconv.FormatInt(int64(pid), 10)
-	b, err := readFileReuse("/proc/"+id+"/stat", buf)
+	b, err := readInto("/proc/"+id+"/stat", buf)
 	if err != nil {
 		return procCounters{}
 	}
@@ -79,7 +78,7 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 		}
 		return out
 	}
-	ib, err := readFileReuse("/proc/"+id+"/io", buf)
+	ib, err := readInto("/proc/"+id+"/io", buf)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist) {
 			out.ioDenied = true
@@ -135,34 +134,6 @@ func readProcOwners(pid int32) (uid, gid uint32, haveUID, haveGID bool) {
 		}
 	}
 	return uid, gid, haveUID, haveGID
-}
-
-func readFileReuse(path string, buf *[]byte) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	b := (*buf)[:0]
-	var tmp [1024]byte
-	for {
-		n, err := f.Read(tmp[:])
-		if n > 0 {
-			b = append(b, tmp[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			*buf = b
-			return nil, err
-		}
-		if n == 0 {
-			break
-		}
-	}
-	*buf = b
-	return b, nil
 }
 
 // parseProcPIDStat reads comm, ppid, utime, stime, rss (pages) and num_threads.
