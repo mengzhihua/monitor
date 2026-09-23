@@ -1,7 +1,13 @@
 package tsdb
 
 import (
+	"encoding/binary"
+	"io"
+	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,4 +97,104 @@ func TestQueryAggregatedMatchesMaterialized(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestQueryAggregatedSkipsTruncatedBlock(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, BlockSize: 4, Tiers: []TierSpec{}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Now().Unix() - 30
+	for i := int64(0); i < 4; i++ {
+		s.Append("cpu|user", start+i, float64(i+1))
+	}
+	s.Append("cpu|user", start+4, 100)
+	paths := blockPaths(t, dir, "tier0")
+	if len(paths) != 1 {
+		t.Fatalf("blocks: %v", paths)
+	}
+	shortenBlockPayload(t, paths[0])
+	got, err := s.QueryAggregated("cpu|user", 0, start-1, start+10, 20, GroupSum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sumFinite(got.Values[0]) != 100 {
+		t.Fatalf("truncated raw block leaked: %v", got.Values)
+	}
+}
+
+func TestQueryAggregatedSkipsTruncatedTierBlock(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, BlockSize: 100, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Now().Unix() - 300
+	start -= start % 60
+	for _, ts := range []int64{0, 60} {
+		s.Append("cpu|user", start+ts, 4)
+		s.Append("cpu|user", start+ts+1, 4)
+	}
+	s.Append("cpu|user", start+120, 10)
+	paths := blockPaths(t, dir, "tier1")
+	if len(paths) != 1 {
+		t.Fatalf("tier blocks: %v", paths)
+	}
+	shortenBlockPayload(t, paths[0])
+	got, err := s.QueryAggregated("cpu|user", 1, start-1, start+180, 8, GroupSum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sumFinite(got.Values[0]) != 10 {
+		t.Fatalf("truncated tier block leaked: %v", got.Values)
+	}
+}
+
+func blockPaths(t *testing.T, root, tier string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".blk") {
+			return nil
+		}
+		if strings.Contains(p, tier+string(filepath.Separator)) || strings.Contains(p, "/"+tier+"/") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func shortenBlockPayload(t *testing.T, path string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idLen := int(binary.LittleEndian.Uint16(b[5:7]))
+	off := 4 + 1 + 2 + idLen + 8 + 8 + 4
+	dataLen := binary.LittleEndian.Uint32(b[off : off+4])
+	if dataLen < 2 || int(dataLen) > len(b)-off-4 {
+		t.Fatalf("payload %d file %d", dataLen, len(b))
+	}
+	binary.LittleEndian.PutUint32(b[off:], dataLen-1)
+	if err := os.WriteFile(path, b[:len(b)-1], 0o640); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sumFinite(v []float64) float64 {
+	var s float64
+	for _, x := range v {
+		if !math.IsNaN(x) {
+			s += x
+		}
+	}
+	return s
 }

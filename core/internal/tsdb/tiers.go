@@ -331,16 +331,15 @@ func (t *tier) query(id string, after, before int64) ([]Bucket, error) {
 	return out, err
 }
 
-// walk emits buckets in block-then-memory order. cols selects which gorilla
-// columns to decode (min, max, sum, last, count); memory buckets are already
-// complete and ignore cols.
-func (t *tier) walk(id string, after, before int64, cols [5]bool, emit func(Bucket)) error {
+// snapshot copies the blocks and in-memory buckets visible for [after, before].
+// lo is the oldest bucket start that can still cover after.
+func (t *tier) snapshot(id string, after, before int64) (blocks []blockMeta, mem []Bucket, lo int64, ok bool) {
 	sr := t.get(id)
 	if sr == nil {
-		return nil
+		return nil, nil, 0, false
 	}
 	// a bucket starting at TS covers up to TS+Every-1
-	lo := after - t.spec.Every + 1
+	lo = after - t.spec.Every + 1
 	// Retention is enforced per block on disk; a block can straddle the cutoff,
 	// so also hide expired buckets at read time.
 	if t.spec.Retention > 0 {
@@ -349,13 +348,13 @@ func (t *tier) walk(id string, after, before int64, cols [5]bool, emit func(Buck
 		}
 	}
 	sr.mu.Lock()
-	blocks := make([]blockMeta, 0, len(sr.blocks))
+	blocks = make([]blockMeta, 0, len(sr.blocks))
 	for _, b := range sr.blocks {
 		if b.end >= lo && b.start <= before {
 			blocks = append(blocks, b)
 		}
 	}
-	mem := make([]Bucket, 0, len(sr.done)+1)
+	mem = make([]Bucket, 0, len(sr.done)+1)
 	for _, b := range sr.done {
 		if b.TS >= lo && b.TS <= before {
 			mem = append(mem, b)
@@ -365,22 +364,81 @@ func (t *tier) walk(id string, after, before int64, cols [5]bool, emit func(Buck
 		mem = append(mem, *sr.open)
 	}
 	sr.mu.Unlock()
+	return blocks, mem, lo, true
+}
 
+// walk emits buckets in block-then-memory order. cols selects which gorilla
+// columns to decode (min, max, sum, last, count); memory buckets are already
+// complete and ignore cols.
+func (t *tier) walk(id string, after, before int64, cols [5]bool, emit func(Bucket)) error {
+	blocks, mem, lo, ok := t.snapshot(id, after, before)
+	if !ok {
+		return nil
+	}
 	for _, b := range blocks {
 		meta, data, err := readBlockData(b.path)
 		if err != nil {
 			continue
 		}
-		if err := decodeBucketsEach(data, meta.count, cols, func(x Bucket) {
+		err = decodeBucketsEach(data, meta.count, cols, func(x Bucket) {
 			if x.TS >= lo && x.TS <= before {
 				emit(x)
 			}
-		}); err != nil {
+		})
+		putBuf(data)
+		if err != nil {
 			continue
 		}
 	}
 	for _, b := range mem {
 		emit(b)
+	}
+	return nil
+}
+
+// foldBucketBlock adds one on-disk rollup block straight into the grid.
+// A truncated column restores the fold to its state before this block.
+func foldBucketBlock(buf []byte, n int, lo, before, every int64, f *fold) error {
+	chunks, err := splitBucketCols(buf)
+	if err != nil {
+		return err
+	}
+	if f.fn == GroupMedian {
+		return decodeBucketsEach(buf, n, colsForGroup(GroupMedian), func(b Bucket) {
+			if b.TS >= lo && b.TS <= before {
+				f.addBucket(b, every)
+			}
+		})
+	}
+	cols := colsForGroup(f.fn)
+	f.save()
+	for col := 0; col < 5; col++ {
+		if !cols[col] {
+			continue
+		}
+		err := decodeBlockEach(chunks[col], n, func(ts int64, v float64) {
+			if ts < lo || ts > before {
+				return
+			}
+			b := Bucket{TS: ts}
+			switch col {
+			case 0:
+				b.Min = v
+			case 1:
+				b.Max = v
+			case 2:
+				b.Sum = v
+			case 3:
+				b.Last = v
+			case 4:
+				b.Count = int64(v)
+			}
+			f.addBucket(b, every)
+		})
+		if err != nil {
+			f.restore()
+			return err
+		}
 	}
 	return nil
 }
@@ -477,29 +535,40 @@ func decodeBuckets(buf []byte, n int) ([]Bucket, error) {
 	return bs, nil
 }
 
+func splitBucketCols(buf []byte) ([5][]byte, error) {
+	var chunks [5][]byte
+	for col := 0; col < 5; col++ {
+		if len(buf) < 4 {
+			return chunks, errors.New("truncated bucket block")
+		}
+		l := int(binary.LittleEndian.Uint32(buf))
+		buf = buf[4:]
+		if l > len(buf) {
+			return chunks, errors.New("truncated bucket block")
+		}
+		chunks[col] = buf[:l]
+		buf = buf[l:]
+	}
+	return chunks, nil
+}
+
 // decodeBucketsEach decodes a bucket block and calls emit once per sample.
 // cols selects gorilla columns (min, max, sum, last, count). Unselected
 // columns are skipped. Timestamps come from the first decoded column; every
 // column was encoded from the same timestamp stream. emit runs only after
 // every selected column decodes, so a truncated block adds nothing.
 func decodeBucketsEach(buf []byte, n int, cols [5]bool, emit func(Bucket)) error {
+	chunks, err := splitBucketCols(buf)
+	if err != nil {
+		return err
+	}
 	var ts []int64
 	var colv [5][]float64
 	for col := 0; col < 5; col++ {
-		if len(buf) < 4 {
-			return errors.New("truncated bucket block")
-		}
-		l := int(binary.LittleEndian.Uint32(buf))
-		buf = buf[4:]
-		if l > len(buf) {
-			return errors.New("truncated bucket block")
-		}
-		chunk := buf[:l]
-		buf = buf[l:]
 		if !cols[col] {
 			continue
 		}
-		cts, vals, err := decodeBlock(chunk, n)
+		cts, vals, err := decodeBlock(chunks[col], n)
 		if err != nil {
 			return err
 		}

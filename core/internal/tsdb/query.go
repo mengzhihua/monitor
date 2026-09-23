@@ -71,6 +71,14 @@ type fold struct {
 	counts []int64
 	rawMed [][]float64
 	bukMed [][]Bucket
+	// Snapshots undo a block whose decode fails after some samples were applied.
+	snapOut    []float64
+	snapSeen   []bool
+	snapCounts []int64
+	snapMed    []int
+	snapMedNil bool
+	snapBuk    []int
+	snapBukNil bool
 }
 
 func newFold(res Result, fn GroupFunc) *fold {
@@ -92,6 +100,68 @@ func (f *fold) reset(fn GroupFunc) {
 	f.seen = make([]bool, f.n)
 	if fn != GroupMin && fn != GroupMax && fn != GroupSum && fn != GroupLast {
 		f.counts = make([]int64, f.n)
+	}
+}
+
+func (f *fold) save() {
+	f.snapOut = append(f.snapOut[:0], f.out...)
+	if f.seen != nil {
+		f.snapSeen = append(f.snapSeen[:0], f.seen...)
+	}
+	if f.counts != nil {
+		f.snapCounts = append(f.snapCounts[:0], f.counts...)
+	}
+	if f.rawMed == nil {
+		f.snapMedNil = true
+	} else {
+		f.snapMedNil = false
+		if cap(f.snapMed) < len(f.rawMed) {
+			f.snapMed = make([]int, len(f.rawMed))
+		}
+		f.snapMed = f.snapMed[:len(f.rawMed)]
+		for i := range f.rawMed {
+			f.snapMed[i] = len(f.rawMed[i])
+		}
+	}
+	if f.bukMed == nil {
+		f.snapBukNil = true
+	} else {
+		f.snapBukNil = false
+		if cap(f.snapBuk) < len(f.bukMed) {
+			f.snapBuk = make([]int, len(f.bukMed))
+		}
+		f.snapBuk = f.snapBuk[:len(f.bukMed)]
+		for i := range f.bukMed {
+			f.snapBuk[i] = len(f.bukMed[i])
+		}
+	}
+}
+
+func (f *fold) restore() {
+	copy(f.out, f.snapOut)
+	if f.seen != nil {
+		copy(f.seen, f.snapSeen)
+	}
+	if f.counts != nil {
+		copy(f.counts, f.snapCounts)
+	}
+	if f.snapMedNil {
+		f.rawMed = nil
+	} else {
+		for i := range f.snapMed {
+			if i < len(f.rawMed) {
+				f.rawMed[i] = f.rawMed[i][:f.snapMed[i]]
+			}
+		}
+	}
+	if f.snapBukNil {
+		f.bukMed = nil
+	} else {
+		for i := range f.snapBuk {
+			if i < len(f.bukMed) {
+				f.bukMed[i] = f.bukMed[i][:f.snapBuk[i]]
+			}
+		}
 	}
 }
 

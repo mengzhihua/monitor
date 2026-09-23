@@ -323,9 +323,26 @@ func (s *Store) foldTier(id string, tier int, after, before int64, f *fold) erro
 		return fmt.Errorf("tier %d does not exist", tier)
 	}
 	t := s.tiers[tier-1]
-	return t.walk(id, after, before, colsForGroup(f.fn), func(b Bucket) {
-		f.addBucket(b, t.spec.Every)
-	})
+	blocks, mem, lo, ok := t.snapshot(id, after, before)
+	if !ok {
+		return nil
+	}
+	every := t.spec.Every
+	for _, b := range blocks {
+		meta, data, err := readBlockData(b.path)
+		if err != nil {
+			continue
+		}
+		err = foldBucketBlock(data, meta.count, lo, before, every, f)
+		putBuf(data)
+		if err != nil {
+			continue
+		}
+	}
+	for _, b := range mem {
+		f.addBucket(b, every)
+	}
+	return nil
 }
 
 func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
@@ -357,15 +374,21 @@ func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
 	activeVals := append([]float64(nil), sr.vals[lo:hi]...)
 	sr.mu.Unlock()
 	for _, b := range blocks {
-		ts, vals, err := readBlock(b.path)
+		meta, data, err := readBlockData(b.path)
 		if err != nil {
 			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
 			continue
 		}
-		for i, t := range ts {
+		f.save()
+		err = decodeBlockEach(data, meta.count, func(t int64, v float64) {
 			if t >= after && t <= before {
-				f.addPoint(t, vals[i])
+				f.addPoint(t, v)
 			}
+		})
+		putBuf(data)
+		if err != nil {
+			f.restore()
+			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
 		}
 	}
 	for i, t := range activeTS {
@@ -703,7 +726,34 @@ func readBlock(path string) ([]int64, []float64, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	defer putBuf(data)
 	return decodeBlock(data, meta.count)
+}
+
+// blockBytes reuses file payloads across queries. Buffers larger than 1MiB
+// are left for GC so one oversized block does not stay pinned.
+var blockBytes sync.Pool
+
+const pooledBlockBytes = 1 << 20
+
+func getBuf(n int) []byte {
+	if n == 0 {
+		return []byte{}
+	}
+	if v := blockBytes.Get(); v != nil {
+		b := v.([]byte)
+		if cap(b) >= n {
+			return b[:n]
+		}
+	}
+	return make([]byte, n)
+}
+
+func putBuf(b []byte) {
+	if cap(b) == 0 || cap(b) > pooledBlockBytes {
+		return
+	}
+	blockBytes.Put(b[:0])
 }
 
 func readBlockData(path string) (blockMeta, []byte, error) {
@@ -716,8 +766,9 @@ func readBlockData(path string) (blockMeta, []byte, error) {
 	if err != nil {
 		return blockMeta{}, nil, err
 	}
-	data := make([]byte, dataLen)
+	data := getBuf(int(dataLen))
 	if _, err := io.ReadFull(f, data); err != nil {
+		putBuf(data)
 		return blockMeta{}, nil, err
 	}
 	return meta, data, nil
