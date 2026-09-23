@@ -27,8 +27,24 @@ func (w *bitWriter) writeBit(b bool) {
 }
 
 func (w *bitWriter) writeBits(v uint64, n uint) {
-	for i := int(n) - 1; i >= 0; i-- {
-		w.writeBit((v>>uint(i))&1 == 1)
+	for n > 0 {
+		if w.nbits == 0 || w.nbits == 8 {
+			w.buf = append(w.buf, 0)
+			w.nbits = 0
+		}
+		room := 8 - w.nbits
+		take := room
+		if take > n {
+			take = n
+		}
+		shift := n - take
+		chunk := v >> shift
+		if take < 64 {
+			chunk &= (1 << take) - 1
+		}
+		w.buf[len(w.buf)-1] |= byte(chunk) << (room - take)
+		w.nbits += take
+		n = shift
 	}
 }
 
@@ -52,15 +68,20 @@ func (r *bitReader) readBit() (bool, error) {
 
 func (r *bitReader) readBits(n uint) (uint64, error) {
 	var v uint64
-	for i := uint(0); i < n; i++ {
-		b, err := r.readBit()
-		if err != nil {
-			return 0, err
+	for n > 0 {
+		if r.pos>>3 >= uint(len(r.buf)) {
+			return 0, errEOF
 		}
-		v <<= 1
-		if b {
-			v |= 1
+		room := 8 - (r.pos & 7)
+		take := room
+		if take > n {
+			take = n
 		}
+		shift := room - take
+		chunk := uint64(r.buf[r.pos>>3]>>shift) & ((1 << take) - 1)
+		v = (v << take) | chunk
+		r.pos += take
+		n -= take
 	}
 	return v, nil
 }

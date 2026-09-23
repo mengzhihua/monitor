@@ -46,14 +46,32 @@ func BenchmarkQuery24Hours600Points(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buckets, err := s.QueryTier("cpu", tier, start, start+86399)
-		if err != nil {
+		result, err := s.QueryAggregated("cpu", tier, start, start+86399, 600, GroupAverage)
+		if err != nil || len(result.Times) == 0 {
 			b.Fatal(err)
 		}
-		every, _ := s.TierEvery(tier)
-		result := AggregateBuckets([][]Bucket{buckets}, every, start, start+86399, 600, GroupAverage)
-		if len(result.Times) == 0 {
-			b.Fatal("empty query")
+	}
+}
+
+func BenchmarkQueryHourTier0(b *testing.B) {
+	s, err := Open(Options{Dir: b.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Now().Unix() - 3600
+	for i := int64(0); i < 3600; i++ {
+		s.Append("cpu", start+i, float64(i%100))
+	}
+	if err := s.Flush(); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := s.QueryAggregated("cpu", 0, start, start+3599, 60, GroupAverage)
+		if err != nil || len(result.Times) == 0 {
+			b.Fatal(err)
 		}
 	}
 }

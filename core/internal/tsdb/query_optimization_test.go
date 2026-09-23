@@ -3,6 +3,7 @@ package tsdb
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 // Every reducer must retain its bucket boundaries and empty-slot behavior.
@@ -49,5 +50,45 @@ func TestAggregateStreamingReducers(t *testing.T) {
 	zeroCount := AggregateBuckets([][]Bucket{{{TS: 101, Sum: 7, Count: 0}}}, 1, 100, 102, 1, GroupAverage)
 	if !math.IsNaN(zeroCount.Values[0][0]) {
 		t.Fatalf("zero-count rollup must have no average: %v", zeroCount.Values)
+	}
+}
+
+func TestQueryAggregatedMatchesMaterialized(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), BlockSize: 3, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := time.Now().Unix() - 30
+	start -= start % 60
+	for i := int64(0); i < 8; i++ {
+		s.Append("cpu|user", start+i*60, float64((i%4)+1))
+		s.Append("cpu|user", start+i*60+1, float64((i%4)+3))
+	}
+	for _, tier := range []int{0, 1} {
+		for _, fn := range []GroupFunc{GroupAverage, GroupMin, GroupMax, GroupSum, GroupLast, GroupMedian} {
+			got, err := s.QueryAggregated("cpu|user", tier, start-1, start+8*60, 4, fn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bs, err := s.QueryTier("cpu|user", tier, start-1, start+8*60)
+			if err != nil {
+				t.Fatal(err)
+			}
+			every, _ := s.TierEvery(tier)
+			want := AggregateBuckets([][]Bucket{bs}, every, start-1, start+8*60, 4, fn)
+			if len(got.Values) != 1 || len(got.Values[0]) != len(want.Values[0]) || got.Step != want.Step {
+				t.Fatalf("tier %d %s shape got %v want %v", tier, fn, got.Values, want.Values)
+			}
+			for i := range want.Values[0] {
+				g, w := got.Values[0][i], want.Values[0][i]
+				if math.IsNaN(g) && math.IsNaN(w) {
+					continue
+				}
+				if g != w {
+					t.Fatalf("tier %d %s [%d] got %v want %v", tier, fn, i, got.Values, want.Values)
+				}
+			}
+		}
 	}
 }

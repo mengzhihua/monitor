@@ -324,9 +324,20 @@ func (t *tier) enforceRetention(now time.Time) {
 }
 
 func (t *tier) query(id string, after, before int64) ([]Bucket, error) {
+	var out []Bucket
+	err := t.walk(id, after, before, [5]bool{true, true, true, true, true}, func(b Bucket) {
+		out = append(out, b)
+	})
+	return out, err
+}
+
+// walk emits buckets in block-then-memory order. cols selects which gorilla
+// columns to decode (min, max, sum, last, count); memory buckets are already
+// complete and ignore cols.
+func (t *tier) walk(id string, after, before int64, cols [5]bool, emit func(Bucket)) error {
 	sr := t.get(id)
 	if sr == nil {
-		return nil, nil
+		return nil
 	}
 	// a bucket starting at TS covers up to TS+Every-1
 	lo := after - t.spec.Every + 1
@@ -355,23 +366,40 @@ func (t *tier) query(id string, after, before int64) ([]Bucket, error) {
 	}
 	sr.mu.Unlock()
 
-	out := make([]Bucket, 0, len(mem)+len(blocks)*t.spec.BlockSize/4)
 	for _, b := range blocks {
 		meta, data, err := readBlockData(b.path)
 		if err != nil {
 			continue
 		}
-		bs, err := decodeBuckets(data, meta.count)
-		if err != nil {
+		if err := decodeBucketsEach(data, meta.count, cols, func(x Bucket) {
+			if x.TS >= lo && x.TS <= before {
+				emit(x)
+			}
+		}); err != nil {
 			continue
 		}
-		for _, x := range bs {
-			if x.TS >= lo && x.TS <= before {
-				out = append(out, x)
-			}
-		}
 	}
-	return append(out, mem...), nil
+	for _, b := range mem {
+		emit(b)
+	}
+	return nil
+}
+
+// colsForGroup is the rollup columns a reducer reads. Average and median
+// need sum and count; the others need a single column.
+func colsForGroup(fn GroupFunc) [5]bool {
+	switch fn {
+	case GroupMin:
+		return [5]bool{true, false, false, false, false}
+	case GroupMax:
+		return [5]bool{false, true, false, false, false}
+	case GroupSum:
+		return [5]bool{false, false, true, false, false}
+	case GroupLast:
+		return [5]bool{false, false, false, true, false}
+	default:
+		return [5]bool{false, false, true, false, true}
+	}
 }
 
 // first returns the start of the oldest bucket held for a series.
@@ -439,37 +467,67 @@ func encodeBuckets(bs []Bucket) []byte {
 }
 
 func decodeBuckets(buf []byte, n int) ([]Bucket, error) {
-	bs := make([]Bucket, n)
+	bs := make([]Bucket, 0, n)
+	err := decodeBucketsEach(buf, n, [5]bool{true, true, true, true, true}, func(b Bucket) {
+		bs = append(bs, b)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return bs, nil
+}
+
+// decodeBucketsEach decodes a bucket block and calls emit once per sample.
+// cols selects gorilla columns (min, max, sum, last, count). Unselected
+// columns are skipped. Timestamps come from the first decoded column; every
+// column was encoded from the same timestamp stream. emit runs only after
+// every selected column decodes, so a truncated block adds nothing.
+func decodeBucketsEach(buf []byte, n int, cols [5]bool, emit func(Bucket)) error {
+	var ts []int64
+	var colv [5][]float64
 	for col := 0; col < 5; col++ {
 		if len(buf) < 4 {
-			return nil, errors.New("truncated bucket block")
+			return errors.New("truncated bucket block")
 		}
 		l := int(binary.LittleEndian.Uint32(buf))
 		buf = buf[4:]
 		if l > len(buf) {
-			return nil, errors.New("truncated bucket block")
+			return errors.New("truncated bucket block")
 		}
-		ts, vals, err := decodeBlock(buf[:l], n)
-		if err != nil {
-			return nil, err
-		}
+		chunk := buf[:l]
 		buf = buf[l:]
-		for i := range bs {
-			switch col {
-			case 0:
-				bs[i].TS, bs[i].Min = ts[i], vals[i]
-			case 1:
-				bs[i].Max = vals[i]
-			case 2:
-				bs[i].Sum = vals[i]
-			case 3:
-				bs[i].Last = vals[i]
-			case 4:
-				bs[i].Count = int64(vals[i])
-			}
+		if !cols[col] {
+			continue
 		}
+		cts, vals, err := decodeBlock(chunk, n)
+		if err != nil {
+			return err
+		}
+		if ts == nil {
+			ts = cts
+		}
+		colv[col] = vals
 	}
-	return bs, nil
+	for i := 0; i < n && i < len(ts); i++ {
+		b := Bucket{TS: ts[i]}
+		if v := colv[0]; i < len(v) {
+			b.Min = v[i]
+		}
+		if v := colv[1]; i < len(v) {
+			b.Max = v[i]
+		}
+		if v := colv[2]; i < len(v) {
+			b.Sum = v[i]
+		}
+		if v := colv[3]; i < len(v) {
+			b.Last = v[i]
+		}
+		if v := colv[4]; i < len(v) {
+			b.Count = int64(v[i])
+		}
+		emit(b)
+	}
+	return nil
 }
 
 // ---- Store integration ----
@@ -589,103 +647,17 @@ func (s *Store) QueryAuto(id string, after, before int64, points int) ([]Bucket,
 // AggregateBuckets is Aggregate over pre-rolled buckets. min/max/sum are
 // exact; average is sample-weighted; median falls back to bucket means.
 func AggregateBuckets(series [][]Bucket, every int64, after, before int64, points int, fn GroupFunc) Result {
-	if before <= after {
-		before = after + 1
-	}
-	span := before - after
-	if points <= 0 {
-		points = int(span)
-	}
-	step := (span + int64(points) - 1) / int64(points)
-	if step < 1 {
-		step = 1
-	}
-	after = after - (after % step)
-	n := int((before - after + step - 1) / step)
-	times := make([]int64, n)
-	for i := range times {
-		times[i] = after + int64(i+1)*step
-	}
-	if every < 1 {
-		every = 1
-	}
-	res := Result{After: after, Before: before, Step: step, Times: times, Values: make([][]float64, len(series))}
+	res := grid(after, before, points)
+	res.Values = make([][]float64, len(series))
+	f := newFold(res, fn)
 	for si, bs := range series {
-		out := make([]float64, n)
-		var seen []bool
-		var counts []int64
-		if fn != GroupMedian && fn != GroupMin && fn != GroupMax && fn != GroupSum && fn != GroupLast {
-			counts = make([]int64, n)
-		}
-		var groups [][]Bucket
-		if fn == GroupMedian {
-			groups = make([][]Bucket, n)
-		} else {
-			seen = make([]bool, n)
+		if si > 0 {
+			f.reset(fn)
 		}
 		for _, b := range bs {
-			key := b.TS + every - 1 // last instant the bucket may cover
-			if key > before && b.TS <= before {
-				key = before // bucket still filling at the end of the range
-			}
-			if key <= after || key > times[n-1] {
-				continue
-			}
-			bi := int((key - after - 1) / step)
-			if bi < 0 || bi >= n {
-				continue
-			}
-			if fn == GroupMedian {
-				groups[bi] = append(groups[bi], b)
-				continue
-			}
-			if !seen[bi] {
-				seen[bi] = true
-				switch fn {
-				case GroupMin:
-					out[bi] = b.Min
-				case GroupMax:
-					out[bi] = b.Max
-				}
-			}
-			switch fn {
-			case GroupMin:
-				if b.Min < out[bi] {
-					out[bi] = b.Min
-				}
-			case GroupMax:
-				if b.Max > out[bi] {
-					out[bi] = b.Max
-				}
-			case GroupLast:
-				out[bi] = b.Last
-			case GroupSum:
-				out[bi] += b.Sum
-			default: // sample-weighted average
-				out[bi] += b.Sum
-				counts[bi] += b.Count
-			}
+			f.addBucket(b, every)
 		}
-		for i := range out {
-			if fn == GroupMedian {
-				if len(groups[i]) == 0 {
-					out[i] = math.NaN()
-				} else {
-					out[i] = reduceBuckets(groups[i], fn)
-				}
-				continue
-			}
-			if !seen[i] {
-				out[i] = math.NaN()
-			} else if counts != nil {
-				if counts[i] == 0 {
-					out[i] = math.NaN()
-				} else {
-					out[i] /= float64(counts[i])
-				}
-			}
-		}
-		res.Values[si] = out
+		res.Values[si] = f.finish()
 	}
 	return res
 }

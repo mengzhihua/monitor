@@ -217,7 +217,8 @@ func (s *Store) Append(id string, ts int64, v float64) {
 		t  *tier
 		sr *tierSeries
 	}
-	var pending []pendingTier
+	var pendingBuf [4]pendingTier
+	pending := pendingBuf[:0]
 	for _, t := range s.tiers {
 		tsr := t.getOrCreate(id)
 		if t.append(tsr, ts, v) {
@@ -295,6 +296,84 @@ func (s *Store) Query(id string, after, before int64) ([]Point, error) {
 	}
 	out = append(out, active...)
 	return out, nil
+}
+
+// QueryAggregated folds one series into the same grid as AggregateBuckets.
+// Tier 0 reads each raw block straight into the grid. Higher tiers decode
+// only the rollup columns that group function needs, in the same block-then
+// memory order as QueryTier.
+func (s *Store) QueryAggregated(id string, tier int, after, before int64, points int, fn GroupFunc) (Result, error) {
+	res := grid(after, before, points)
+	f := newFold(res, fn)
+	var err error
+	if tier == 0 {
+		err = s.foldRaw(id, after, before, f)
+	} else {
+		err = s.foldTier(id, tier, after, before, f)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	res.Values = [][]float64{f.finish()}
+	return res, nil
+}
+
+func (s *Store) foldTier(id string, tier int, after, before int64, f *fold) error {
+	if tier < 1 || tier > len(s.tiers) {
+		return fmt.Errorf("tier %d does not exist", tier)
+	}
+	t := s.tiers[tier-1]
+	return t.walk(id, after, before, colsForGroup(f.fn), func(b Bucket) {
+		f.addBucket(b, t.spec.Every)
+	})
+}
+
+func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
+	if s.opt.Retention > 0 {
+		after = max(after, time.Now().Add(-s.opt.Retention).Unix())
+	}
+	s.mu.RLock()
+	sr := s.series[id]
+	s.mu.RUnlock()
+	if sr == nil {
+		return nil
+	}
+	sr.mu.Lock()
+	blocks := make([]blockMeta, 0, len(sr.blocks))
+	for _, b := range sr.blocks {
+		if b.end >= after && b.start <= before {
+			blocks = append(blocks, b)
+		}
+	}
+	lo := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] >= after })
+	hi := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] > before })
+	if hi > len(sr.vals) {
+		hi = len(sr.vals)
+	}
+	if lo > hi {
+		lo = hi
+	}
+	activeTS := append([]int64(nil), sr.ts[lo:hi]...)
+	activeVals := append([]float64(nil), sr.vals[lo:hi]...)
+	sr.mu.Unlock()
+	for _, b := range blocks {
+		ts, vals, err := readBlock(b.path)
+		if err != nil {
+			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
+			continue
+		}
+		for i, t := range ts {
+			if t >= after && t <= before {
+				f.addPoint(t, vals[i])
+			}
+		}
+	}
+	for i, t := range activeTS {
+		if t >= after && t <= before && i < len(activeVals) {
+			f.addPoint(t, activeVals[i])
+		}
+	}
+	return nil
 }
 
 // Bounds returns the oldest and newest timestamp stored for a series.
