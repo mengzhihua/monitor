@@ -8,6 +8,7 @@ import { live } from '../live'
 
 const props = defineProps<{ chart: Chart; window: number }>()
 
+const card = ref<HTMLDivElement>()
 const el = ref<HTMLDivElement>()
 const latest = ref<Record<string, number>>({})
 const error = ref('')
@@ -17,16 +18,20 @@ const stale = computed(() => !lastSample.value || clock.value-lastSample.value >
 let loadGeneration = 0
 let disposed = false
 let refreshTimer: number | undefined
+let visible = false
+let io: IntersectionObserver | null = null
 const anomaly = ref<Record<string, number>>({})
 const anomalous = computed(() => Object.values(anomaly.value).some((v) => v >= 50))
 
 let plot: uPlot | null = null
+let plotDefinition = ''
 let unsub: (() => void) | null = null
 let times: number[] = []
 let raw: (number | null)[][] = []
 let dims: string[] = []
 let anomBits: number[] = []
 let pending = false
+let renderFrame: number | undefined
 
 const palette = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#64748b']
 
@@ -121,12 +126,13 @@ function makeOpts(width: number): uPlot.Options {
 async function load() {
   const generation = ++loadGeneration
   error.value = ''
-  dims = visibleDims()
+  const requestedDims = visibleDims()
   try {
     // One bucket per collection period, otherwise slow charts come back as
     // mostly-null 1s rows and uPlot draws nothing between isolated samples.
     const d = await api.data(props.chart.id, -props.window, 0, Math.min(1200, Math.ceil(props.window / step())))
     if (disposed || generation !== loadGeneration) return
+    dims = requestedDims
     times = d.result.data.map((r) => r[0] as number)
     const idx = new Map(d.dimension_ids.map((id, i) => [id, i + 1]))
     const bits: Record<string, number> = {}
@@ -153,9 +159,6 @@ async function load() {
   } catch (e) {
     if (disposed || generation !== loadGeneration) return
     error.value = String(e)
-    times = []
-    raw = dims.map(() => [])
-    anomBits = dims.map(() => 0)
   }
   render()
 }
@@ -163,8 +166,14 @@ async function load() {
 function render() {
   if (!el.value) return
   const width = el.value.clientWidth || 600
-  if (plot) plot.destroy()
+  const definition = [defFingerprint(), ...dims, ...anomBits].join('\u0001')
+  if (plot && plotDefinition === definition) {
+    plot.setData(buildData())
+    return
+  }
+  plot?.destroy()
   plot = new uPlot(makeOpts(width), buildData(), el.value)
+  plotDefinition = definition
 }
 
 function onLive(t: number, v: Record<string, number>) {
@@ -187,30 +196,75 @@ function onLive(t: number, v: Record<string, number>) {
   latest.value = v
   if (!pending) {
     pending = true
-    requestAnimationFrame(() => { pending = false; plot?.setData(buildData()) })
+    renderFrame = requestAnimationFrame(() => {
+      pending = false
+      renderFrame = undefined
+      if (!disposed) plot?.setData(buildData())
+    })
   }
 }
 
 let ro: ResizeObserver | null = null
 
+/** Spread periodic history queries across 30 seconds instead of bursting all charts at once. */
+function refreshOffset(id: string) {
+  let hash = 2166136261
+  for (let i = 0; i < id.length; i++) hash = Math.imul(hash ^ id.charCodeAt(i), 16777619)
+  return 1000 + (hash >>> 0) % 29000
+}
+
+function scheduleRefresh(first: boolean) {
+  clearTimeout(refreshTimer)
+  refreshTimer = window.setTimeout(async () => {
+    if (!visible || disposed) return
+    clock.value = Date.now() / 1000
+    await load()
+    if (visible && !disposed) scheduleRefresh(false)
+  }, first ? refreshOffset(props.chart.id) : 30000)
+}
+
 onMounted(() => {
-  load()
-  refreshTimer = window.setInterval(() => { clock.value = Date.now()/1000; load() }, 30000)
-  unsub = live.subscribe(props.chart.id, (m) => onLive(m.t, m.v))
+  io = new IntersectionObserver((entries) => {
+    const inView = entries.some((entry) => entry.isIntersecting)
+    if (inView === visible) return
+    visible = inView
+    if (inView) {
+      clock.value = Date.now() / 1000
+      void load()
+      unsub = live.subscribe(props.chart.id, (m) => onLive(m.t, m.v))
+      scheduleRefresh(true)
+    } else {
+      ++loadGeneration
+      clearTimeout(refreshTimer)
+      unsub?.()
+      unsub = null
+    }
+  }, { rootMargin: '300px 0px' })
+  io.observe(card.value!)
   ro = new ResizeObserver(() => { if (plot && el.value) plot.setSize({ width: el.value.clientWidth, height: 180 }) })
   ro.observe(el.value!)
 })
-onBeforeUnmount(() => { disposed = true; ++loadGeneration; clearInterval(refreshTimer); unsub?.(); ro?.disconnect(); plot?.destroy() })
-watch(() => props.window, load)
+onBeforeUnmount(() => {
+  disposed = true
+  ++loadGeneration
+  clearTimeout(refreshTimer)
+  if (renderFrame !== undefined) cancelAnimationFrame(renderFrame)
+  io?.disconnect()
+  unsub?.()
+  ro?.disconnect()
+  plot?.destroy()
+  plot = null
+})
+watch(() => props.window, () => { if (visible) void load(); else ++loadGeneration })
 watch(() => props.chart.last_entry, (t) => { lastSample.value = Math.max(lastSample.value, t || 0) })
 /** Anything that feeds makeOpts/buildData/load: a changed definition needs a full reload. */
 const defFingerprint = () =>
   [props.chart.chart_type, props.chart.update_every, props.chart.anomaly ? 1 : 0, ...props.chart.dimensions.map((d) => `${d.id}\u0000${d.name}\u0000${d.hidden ? 1 : 0}\u0000${d.anomaly ? 1 : 0}`)].join('\u0001')
-watch(defFingerprint, load)
+watch(defFingerprint, () => { if (visible) void load(); else ++loadGeneration })
 </script>
 
 <template>
-  <div class="card" :class="{ anom: chart.anomaly }">
+  <div ref="card" class="card" :class="{ anom: chart.anomaly }">
     <div class="head">
       <div>
         <span class="title">{{ chart.title }}</span>
@@ -234,7 +288,7 @@ watch(defFingerprint, load)
 .id { color: #64748b; font-size: 11px; margin-left: 8px; font-family: ui-monospace, monospace; }
 .anom { margin-left: 8px; font-size: 10px; font-weight: 700; color: #fecaca; background: #7f1d1d; border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em; }
 .units { color: #94a3b8; font-size: 12px; }
-.plot { width: 100%; }
+.plot { width: 100%; min-height: 180px; }
 .err { color: #f87171; font-size: 12px; margin-top: 4px; }
 :deep(.u-legend) { font-size: 11px; color: #cbd5e1; }
 :deep(.u-legend .u-value) { font-family: ui-monospace, monospace; }

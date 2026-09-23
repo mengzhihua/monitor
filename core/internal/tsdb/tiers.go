@@ -612,10 +612,17 @@ func AggregateBuckets(series [][]Bucket, every int64, after, before int64, point
 	res := Result{After: after, Before: before, Step: step, Times: times, Values: make([][]float64, len(series))}
 	for si, bs := range series {
 		out := make([]float64, n)
-		for i := range out {
-			out[i] = math.NaN()
+		var seen []bool
+		var counts []int64
+		if fn != GroupMedian && fn != GroupMin && fn != GroupMax && fn != GroupSum && fn != GroupLast {
+			counts = make([]int64, n)
 		}
-		groups := make([][]Bucket, n)
+		var groups [][]Bucket
+		if fn == GroupMedian {
+			groups = make([][]Bucket, n)
+		} else {
+			seen = make([]bool, n)
+		}
 		for _, b := range bs {
 			key := b.TS + every - 1 // last instant the bucket may cover
 			if key > before && b.TS <= before {
@@ -628,13 +635,55 @@ func AggregateBuckets(series [][]Bucket, every int64, after, before int64, point
 			if bi < 0 || bi >= n {
 				continue
 			}
-			groups[bi] = append(groups[bi], b)
-		}
-		for i, g := range groups {
-			if len(g) == 0 {
+			if fn == GroupMedian {
+				groups[bi] = append(groups[bi], b)
 				continue
 			}
-			out[i] = reduceBuckets(g, fn)
+			if !seen[bi] {
+				seen[bi] = true
+				switch fn {
+				case GroupMin:
+					out[bi] = b.Min
+				case GroupMax:
+					out[bi] = b.Max
+				}
+			}
+			switch fn {
+			case GroupMin:
+				if b.Min < out[bi] {
+					out[bi] = b.Min
+				}
+			case GroupMax:
+				if b.Max > out[bi] {
+					out[bi] = b.Max
+				}
+			case GroupLast:
+				out[bi] = b.Last
+			case GroupSum:
+				out[bi] += b.Sum
+			default: // sample-weighted average
+				out[bi] += b.Sum
+				counts[bi] += b.Count
+			}
+		}
+		for i := range out {
+			if fn == GroupMedian {
+				if len(groups[i]) == 0 {
+					out[i] = math.NaN()
+				} else {
+					out[i] = reduceBuckets(groups[i], fn)
+				}
+				continue
+			}
+			if !seen[i] {
+				out[i] = math.NaN()
+			} else if counts != nil {
+				if counts[i] == 0 {
+					out[i] = math.NaN()
+				} else {
+					out[i] /= float64(counts[i])
+				}
+			}
 		}
 		res.Values[si] = out
 	}

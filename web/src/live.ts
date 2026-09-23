@@ -22,11 +22,15 @@ class Live {
     window.addEventListener('online', () => { if (this.enabled) this.start() })
   }
 
+  // The server interprets [] as "all charts". One blank ID maps to an empty
+  // subscription while leaving the socket open for alarm events.
+  private subscriptions() { return this.wanted.size ? [...this.wanted] : [' '] }
+
   start() {
     this.enabled = true
     if (this.ws || !navigator.onLine) return
     clearTimeout(this.retryTimer)
-    const ws = new WebSocket(api.liveURL([...this.wanted]), api.liveProtocols())
+    const ws = new WebSocket(api.liveURL(this.subscriptions()), api.liveProtocols())
     this.ws = ws
     ws.onopen = () => {
       if (this.ws !== ws) return
@@ -82,7 +86,7 @@ class Live {
     // Debounce subscription updates: many charts mount at once.
     clearTimeout(this.sendTimer)
     this.sendTimer = window.setTimeout(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ charts: [...this.wanted] }))
+      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ charts: this.subscriptions() }))
     }, 50)
   }
 }

@@ -83,7 +83,7 @@ web:
 | 应用/服务采集器 | `apps`：进程按应用分组 → `apps.cpu/mem/processes/threads/io_*`；`systemd`：cgroup v2 每服务 CPU/内存/IO；`docker`：每容器 cpu/mem/net/blkio；`nginx`（stub_status）；`apache`（server-status?auto）；`phpfpm`；`redis`（内置 RESP）；`memcached`（STATS）。目标不可达时自动禁用 |
 | Functions | `GET /api/v1/functions` / `function`；内置 `processes`（top）、`network-connections`、`services`、`logs`、`containers`、`disks`、`mounts`、`network-interfaces`；采集忙碌时仍保持函数入口可用，手动禁用后撤销；Hub 上 `streaming` |
 | API | `/api/v1/info` `/charts` `/chart` `/data` `/allmetrics` `/contexts` `/collectors` `/functions` `/function` `/weights` `/logs`；`POST /api/v1/ingest/openmetrics` `/otlp`；`/api/v1/alarms` `/alarm_log` `/alarm_rules` `/alarm_variables` `/alarms/silence`；`/metrics` Prometheus 格式；`/api/v1/live` WebSocket 每秒推送；默认密码认证与可选 `allow_from` CIDR 访问控制 |
-| Dashboard | Vue3 + uPlot，按 family 分组，1m/5m/15m/1h 时间窗，WebSocket 实时增量刷新，采集器状态面板，告警面板，Functions 面板（进程/连接/服务表） |
+| Dashboard | Vue3 + uPlot，按 family 分组，历史图表随视口加载、滚出后暂停请求、周期刷新错峰且复用画布，WebSocket 实时增量刷新；采集器状态、告警、Functions 面板 |
 
 ### 已实现能力（M1：健康/告警）
 

@@ -2,6 +2,26 @@ import { test, expect } from '@playwright/test'
 
 const token = 'browser-test-token'
 
+test('visible charts load on demand and reuse their canvas after scrolling', async ({page}) => {
+  let historyRequests = 0
+  page.on('request', request => {
+    if (request.url().includes('/api/v1/data?')) historyRequests++
+  })
+  await page.goto('/?token=' + token)
+  const cards = page.locator('.card')
+  await expect(cards.first().locator('canvas').first()).toBeVisible()
+  const total = await cards.count()
+  expect(total).toBeGreaterThan(4)
+  expect(await page.locator('.card canvas').count()).toBeLessThan(total)
+  expect(historyRequests).toBeLessThan(total)
+  const firstCanvas = await cards.first().locator('canvas').first().elementHandle()
+  await cards.last().scrollIntoViewIfNeeded()
+  await expect(cards.last().locator('canvas').first()).toBeVisible()
+  await cards.first().scrollIntoViewIfNeeded()
+  await expect(cards.first().locator('canvas').first()).toBeVisible()
+  expect(await page.evaluate((canvas) => canvas === document.querySelector('.card canvas'), firstCanvas)).toBe(true)
+})
+
 test('login, real chart, long history, layout and logout', async ({page, request}, info) => {
   const errors: string[]=[]
   page.on('pageerror',error=>errors.push(error.message))
