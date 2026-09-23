@@ -17,6 +17,9 @@ type procM19 struct {
 	extfrag                string
 	audit                  func() (auditStatus, bool)
 	extSeen                map[string]bool
+	extAt                  time.Time
+	extZones               []extfragZone
+	auditAt                time.Time
 }
 
 func (m procM19) any() bool { return m.haveExtfrag || m.haveAudit }
@@ -62,9 +65,11 @@ func (p *procCollector) initM19(reg *registry.Registry) {
 
 func (p *procCollector) collectM19(reg *registry.Registry, now time.Time) {
 	m := &p.m19
-	if m.haveExtfrag {
+	if m.haveExtfrag && (m.extAt.IsZero() || now.Sub(m.extAt) >= slowSampleEvery) {
 		if raw, err := readTrim(m.extfrag); err == nil {
-			for _, z := range parseExtfrag(raw) {
+			m.extZones = parseExtfrag(raw)
+			m.extAt = now
+			for _, z := range m.extZones {
 				id := "mem.extfrag." + sanitizeID(z.ID)
 				if !m.extSeen[id] {
 					m.extSeen[id] = true
@@ -78,10 +83,14 @@ func (p *procCollector) collectM19(reg *registry.Registry, now time.Time) {
 		}
 	}
 	if m.haveAudit {
+		if !m.auditAt.IsZero() && now.Sub(m.auditAt) < slowSampleEvery {
+			return
+		}
 		st, ok := m.audit()
 		if !ok {
 			return
 		}
+		m.auditAt = now
 		free := st.BacklogLimit - st.Backlog
 		if free < 0 {
 			free = 0

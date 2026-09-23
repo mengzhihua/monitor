@@ -224,6 +224,29 @@ func TestMLDiffRingStaysBounded(t *testing.T) {
 	}
 }
 
+func TestMLDiffRingGrows(t *testing.T) {
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "demo.x", Dimensions: []*registry.Dimension{{ID: "v"}}})
+	m := &mlCollector{}
+	if err := m.Configure(func(any) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 40; i++ {
+		_ = reg.Collect("demo.x", now.Add(time.Duration(i)*time.Second), map[string]float64{"v": float64(i)})
+	}
+	st := m.dims[registry.SeriesID("demo.x", "v")]
+	if st == nil || st.diffN != 39 || len(st.diffRing) > 128 || len(st.diffRing) < st.diffN {
+		t.Fatalf("ring len=%d n=%d cap-max=%d", len(st.diffRing), st.diffN, m.cfg.MaxTrain)
+	}
+	if len(st.diffRing) == m.cfg.MaxTrain {
+		t.Fatal("diff ring allocated MaxTrain before it was full")
+	}
+}
+
 func TestKMeans2Separates(t *testing.T) {
 	var pts [][]float64
 	for i := 0; i < 20; i++ {

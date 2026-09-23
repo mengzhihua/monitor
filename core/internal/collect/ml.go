@@ -41,7 +41,7 @@ type anomBit struct {
 
 type dimML struct {
 	values    []float64 // ring of last Window values
-	diffRing  []float64 // fixed first-diff ring (len == MaxTrain)
+	diffRing  []float64 // first-diff ring; grows to MaxTrain, not allocated up front
 	diffI     int
 	diffN     int
 	i, n      int
@@ -49,6 +49,7 @@ type dimML struct {
 	hasPrev   bool
 	models    []kmModel
 	lastTrain int64
+	lastSeen  int64
 	anom      bool
 	votes     float64 // 0..1 fraction of models calling anomalous
 	chart     string
@@ -64,6 +65,7 @@ type mlCollector struct {
 	unsub       func()
 	trainSecond int64 // collection timestamp that owns trainLeft
 	trainLeft   int   // k-means jobs still allowed in trainSecond
+	gcTick      int64 // last ts/60 that dropped silent series
 }
 
 func init() {
@@ -147,6 +149,7 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 			st = &dimML{values: make([]float64, m.cfg.Window), chart: chartID}
 			m.dims[id] = st
 		}
+		st.lastSeen = ts
 		st.values[st.i] = v
 		st.i = (st.i + 1) % len(st.values)
 		if st.n < len(st.values) {
@@ -169,6 +172,18 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 		}
 		st.pushBit(anomBit{ts: ts, rate: rate}, m.cfg.Window)
 	}
+	// Series that disappear (dead units, old IRQs) keep a MaxTrain ring until
+	// dropped. Once a minute of collection time is enough; scanning every
+	// sample would cost more than it saves.
+	if tick := ts / 60; m.gcTick != tick {
+		m.gcTick = tick
+		cutoff := ts - 15*60
+		for id, st := range m.dims {
+			if st.lastSeen < cutoff {
+				delete(m.dims, id)
+			}
+		}
+	}
 	m.mu.Unlock()
 	if trainSt == nil {
 		return
@@ -179,13 +194,31 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 	m.mu.Unlock()
 }
 
-func (st *dimML) pushDiff(d float64, cap int) {
-	if cap < 1 {
-		cap = 1
+func (st *dimML) pushDiff(d float64, max int) {
+	if max < 1 {
+		max = 1
 	}
-	if len(st.diffRing) != cap {
-		st.diffRing = make([]float64, cap)
-		st.diffI, st.diffN = 0, 0
+	if len(st.diffRing) == 0 {
+		n := 32
+		if n > max {
+			n = max
+		}
+		st.diffRing = make([]float64, n)
+	} else if st.diffN == len(st.diffRing) && len(st.diffRing) < max {
+		n := len(st.diffRing) * 2
+		if n > max || n < len(st.diffRing) {
+			n = max
+		}
+		next := make([]float64, n)
+		start := st.diffI - st.diffN
+		if start < 0 {
+			start += len(st.diffRing)
+		}
+		for i := 0; i < st.diffN; i++ {
+			next[i] = st.diffRing[(start+i)%len(st.diffRing)]
+		}
+		st.diffRing = next
+		st.diffI = st.diffN
 	}
 	st.diffRing[st.diffI] = d
 	st.diffI++
