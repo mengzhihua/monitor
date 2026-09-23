@@ -35,6 +35,7 @@ class _Client extends ApiClient {
   bool deferFunctions = false;
   bool failCatalog = false;
   bool failAlarms = false;
+  int chartCalls = 0;
   int catalogCalls = 0;
   int logCalls = 0;
   List<FunctionInfo> catalog = const [
@@ -45,7 +46,10 @@ class _Client extends ApiClient {
   final functionRequests = <_FunctionRequest>[];
 
   @override
-  Future<List<Chart>> charts({String? node}) async => [];
+  Future<List<Chart>> charts({String? node}) async {
+    chartCalls++;
+    return [];
+  }
 
   @override
   Future<List<Alarm>> alarms({String? node, bool all = false}) {
@@ -118,6 +122,55 @@ Future<void> _flush(WidgetTester tester) async {
 }
 
 void main() {
+  for (final tab in ['Charts', 'Alarms', 'Functions']) {
+    testWidgets('hidden app pauses $tab and resumes only its selected panel', (
+      tester,
+    ) async {
+      final client = _Client();
+      final state = _State(client);
+      addTearDown(client.close);
+      addTearDown(state.dispose);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpWidget(MaterialApp(home: HomeScreen(state: state)));
+      await _flush(tester);
+      await tester.tap(find.text(tab));
+      await _flush(tester);
+      // Losing keyboard focus alone leaves a desktop window visible.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump(const Duration(seconds: 30));
+      await _flush(tester);
+      final before = [
+        client.chartCalls,
+        client.alarmsPending.length,
+        client.functionRequests.length,
+      ];
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await tester.pump();
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(seconds: 30));
+        await _flush(tester);
+      }
+      expect([
+        client.chartCalls,
+        client.alarmsPending.length,
+        client.functionRequests.length,
+      ], before);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _flush(tester);
+      final selected = ['Charts', 'Alarms', 'Functions'].indexOf(tab);
+      final after = [
+        client.chartCalls,
+        client.alarmsPending.length,
+        client.functionRequests.length,
+      ];
+      for (var i = 0; i < after.length; i++) {
+        expect(after[i], before[i] + (i == selected ? 1 : 0));
+      }
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets(
     'home loads only the selected tab and pauses the previous panel',
     (tester) async {

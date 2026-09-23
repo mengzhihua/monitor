@@ -90,20 +90,20 @@ func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64)
 
 func (h *liveHub) broadcastNode(node, chartID string, ts int64, values map[string]float64) {
 	h.mu.RLock()
-	n := len(h.conns)
-	h.mu.RUnlock()
-	if n == 0 {
-		return
-	}
-	b, err := json.Marshal(liveMsg{Node: node, Chart: chartID, T: ts, Values: values})
-	if err != nil {
-		return
-	}
-	h.mu.RLock()
 	defer h.mu.RUnlock()
+	var b []byte
 	for c := range h.conns {
 		if !c.wants(node, chartID) {
 			continue
+		}
+		// Most dashboards watch only a small subset of available charts. Encode
+		// once, on demand, rather than allocating JSON for every collected chart.
+		if b == nil {
+			var err error
+			b, err = json.Marshal(liveMsg{Node: node, Chart: chartID, T: ts, Values: values})
+			if err != nil {
+				return
+			}
 		}
 		select {
 		case c.send <- b:

@@ -148,7 +148,7 @@ collectors:
       files: []              # extra files; defaults /var/log/syslog, /var/log/messages
       channels: []           # Windows ETW / Event Log channels, e.g. [System, Application]
       top: 200
-      follow: true           # journalctl -f; false keeps one-shot queries
+      follow: true           # journalctl -f / macOS log stream; false keeps one-shot queries
     macos:                   # Darwin memory pressure / swap / thermal / battery; other OS auto-disable
       command: sysctl
       timeout: 3s

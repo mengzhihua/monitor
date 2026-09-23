@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
+import { usePolling } from '../polling'
 import type { FunctionInfo, FunctionTable } from '../api'
 import { api } from '../api'
 
@@ -9,17 +10,16 @@ const emit = defineEmits<{ close: [] }>()
 const selected = ref(props.functions[0]?.name ?? '')
 const sort = ref('cpu')
 const filter = ref('')
-const table = ref<FunctionTable | null>(null)
+const table = shallowRef<FunctionTable | null>(null)
 const raw = ref('')
 const error = ref('')
 const updated = ref(0)
-let timer: ReturnType<typeof setInterval> | undefined
 
 function isTable(v: unknown): v is FunctionTable {
   return !!v && typeof v === 'object' && Array.isArray((v as FunctionTable).columns) && Array.isArray((v as FunctionTable).rows)
 }
 
-async function load() {
+async function load(signal: AbortSignal) {
   if (!selected.value) return
   try {
     const args: Record<string, string> = {}
@@ -27,7 +27,8 @@ async function load() {
     if (selected.value === 'services' || selected.value === 'network-connections') {
       if (sort.value) args.sort = sort.value
     }
-    const r = await api.function(selected.value, args)
+    const r = await api.function(selected.value, args, signal)
+    if (signal.aborted) return
     if (isTable(r.result)) {
       table.value = r.result
       raw.value = ''
@@ -38,11 +39,12 @@ async function load() {
     updated.value = r.time
     error.value = ''
   } catch (e) {
+    if (signal.aborted) return
     error.value = (e as Error).message
   }
 }
 
-function rows() {
+const rows = computed(() => {
   if (!table.value) return []
   const q = filter.value.trim().toLowerCase()
   let list = table.value.rows
@@ -52,7 +54,7 @@ function rows() {
     list = [...list].sort((a, b) => Number(b[col] ?? 0) - Number(a[col] ?? 0))
   }
   return list
-}
+})
 
 function fmt(col: string, v: unknown): string {
   if (v === null || v === undefined) return ''
@@ -68,12 +70,8 @@ function sortable(col: string) {
   return !!row && typeof row[col] === 'number'
 }
 
-watch([selected, sort], load)
-onMounted(() => {
-  load()
-  timer = setInterval(load, 2000)
-})
-onBeforeUnmount(() => clearInterval(timer))
+const refresh = usePolling(load, 2000)
+watch([selected, sort], () => { void refresh() })
 </script>
 
 <template>
@@ -84,7 +82,7 @@ onBeforeUnmount(() => clearInterval(timer))
         <select v-model="selected">
           <option v-for="f in functions" :key="f.name" :value="f.name" :title="f.help">{{ f.name }}</option>
         </select>
-        <small v-if="table">{{ rows().length }} / {{ table.total }}</small>
+        <small v-if="table">{{ rows.length }} / {{ table.total }}</small>
         <small v-if="updated"> · {{ new Date(updated * 1000).toLocaleTimeString() }}</small>
       </h3>
       <input v-model="filter" placeholder="筛选…" />
@@ -100,12 +98,12 @@ onBeforeUnmount(() => clearInterval(timer))
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(r, i) in rows()" :key="(r.pid as number) ?? i">
+          <tr v-for="(r, i) in rows" :key="(r.pid as number) ?? i">
             <td v-for="c in table.columns" :key="c" :class="{ num: typeof r[c] === 'number', cmd: c === 'cmdline' }" :title="String(r[c] ?? '')">
               {{ fmt(c, r[c]) }}
             </td>
           </tr>
-          <tr v-if="!rows().length"><td :colspan="table.columns.length" class="dim">无数据</td></tr>
+          <tr v-if="!rows.length"><td :colspan="table.columns.length" class="dim">无数据</td></tr>
         </tbody>
       </table>
     </div>
