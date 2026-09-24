@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,32 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
+
+func TestClusterFetchReadsPeerWithHop(t *testing.T) {
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/alarms" || r.URL.Query().Get("node") != "agent-1" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get(clusterHopHeader) != "1" || r.Header.Get("Authorization") != "Bearer ptok" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"alarms":{}}`))
+	}))
+	t.Cleanup(peer.Close)
+	c := NewCluster([]string{peer.URL}, "ptok", nil)
+	body, code, err := c.Fetch(context.Background(), peer.URL+"/", "/api/v1/alarms?node=agent-1")
+	if err != nil || code != 200 || string(body) != `{"alarms":{}}` {
+		t.Fatalf("body=%s code=%d err=%v", body, code, err)
+	}
+	if _, _, err := c.Fetch(context.Background(), peer.URL, "alarms"); err == nil {
+		t.Fatal("relative path must be rejected")
+	}
+	if _, _, err := NewCluster(nil, "", nil).Fetch(context.Background(), peer.URL, "/api/v1/alarms"); err == nil {
+		t.Fatal("empty cluster must be rejected")
+	}
+}
 
 func TestClusterDiscoversPeerNodes(t *testing.T) {
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

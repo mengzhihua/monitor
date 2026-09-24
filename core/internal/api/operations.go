@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -209,6 +211,11 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 					alarms = append(alarms, alarmFromEntry(e))
 				}
 			}
+		} else if inf.Peer != "" && inf.ID != "" {
+			if list, err := s.peerAlarms(r.Context(), inf.Peer, inf.ID); err == nil {
+				alarms = list
+				n.AlarmCoverage = "peer"
+			}
 		}
 		if n.AlarmCoverage == "unknown" || n.AlarmCoverage == "disabled" || n.AlarmCoverage == "empty" {
 			out.Summary["coverage_unknown"]++
@@ -254,6 +261,30 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 	})
 	out.Activity = s.operations.Recent()
 	return out
+}
+
+func (s *Server) peerAlarms(ctx context.Context, peer, id string) ([]health.Alarm, error) {
+	if s.opt.Cluster == nil {
+		return nil, fmt.Errorf("no cluster")
+	}
+	body, code, err := s.opt.Cluster.Fetch(ctx, peer, "/api/v1/alarms?node="+url.QueryEscape(id))
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("peer alarms status %d", code)
+	}
+	var payload struct {
+		Alarms map[string]health.Alarm `json:"alarms"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	out := make([]health.Alarm, 0, len(payload.Alarms))
+	for _, a := range payload.Alarms {
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {

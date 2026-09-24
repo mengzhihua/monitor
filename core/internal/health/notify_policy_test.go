@@ -78,6 +78,75 @@ func TestCriticalRepeatEscalatesRecipient(t *testing.T) {
 	}
 }
 
+func TestOnCallWindowRoutesBeforeEscalation(t *testing.T) {
+	inside := time.Date(2024, 1, 8, 10, 30, 0, 0, time.Local) // Monday
+	window := OnCallWindow{Start: "09:00", End: "18:00", Weekdays: []string{"mon"}, To: "oncall"}
+	var mu sync.Mutex
+	var got []string
+	e := diagnosticsEngine(t, Options{
+		OnCall:    []OnCallWindow{window},
+		Roles:     map[string][]string{"oncall": {"pager"}, "sysadmin": {"slack"}},
+		Notifiers: []Notifier{namedNotifier{name: "pager", seen: &got, mu: &mu}, namedNotifier{name: "slack", seen: &got, mu: &mu}},
+	})
+	e.startDispatch()
+	e.notifyAt(LogEntry{Name: "warm", Chart: "disk.space", Status: StatusWarning, Recipient: "sysadmin", When: inside.Unix()}, inside.Unix())
+	waitNotify(t, &mu, &got)
+	mu.Lock()
+	if len(got) != 1 || got[0] != "pager" {
+		t.Fatalf("inside window channels=%v", got)
+	}
+	got = nil
+	mu.Unlock()
+
+	outside := time.Date(2024, 1, 8, 19, 0, 0, 0, time.Local)
+	e.notifyAt(LogEntry{Name: "warm", Chart: "disk.space", Status: StatusWarning, Recipient: "sysadmin", When: outside.Unix()}, outside.Unix())
+	waitNotify(t, &mu, &got)
+	mu.Lock()
+	if len(got) != 1 || got[0] != "slack" {
+		t.Fatalf("outside window channels=%v", got)
+	}
+	mu.Unlock()
+
+	e.notifyAt(LogEntry{Name: "quiet", Chart: "disk.space", Status: StatusWarning, Recipient: "silent", When: inside.Unix()}, inside.Unix())
+	recent := e.NotificationDiagnostics().Recent
+	if len(recent) == 0 || recent[0].Reason != "silent_recipient" {
+		t.Fatal(recent)
+	}
+
+	late := diagnosticsEngine(t, Options{
+		OnCall: []OnCallWindow{window}, EscalateAfter: time.Second, EscalateTo: "pager",
+		Roles:     map[string][]string{"oncall": {"slack"}, "pager": {"pager"}},
+		Notifiers: []Notifier{namedNotifier{name: "pager", seen: &got, mu: &mu}, namedNotifier{name: "slack", seen: &got, mu: &mu}},
+	})
+	late.alarms["hot|system.cpu"] = &Alarm{ID: 9, Name: "hot", Chart: "system.cpu", Status: StatusCritical, LastStatusChange: inside.Unix() - 5}
+	late.startDispatch()
+	mu.Lock()
+	got = nil
+	mu.Unlock()
+	late.notifyAt(LogEntry{AlarmID: 9, Name: "hot", Chart: "system.cpu", Status: StatusCritical, Repeat: true, Recipient: "sysadmin", When: inside.Unix()}, inside.Unix())
+	waitNotify(t, &mu, &got)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "pager" {
+		t.Fatalf("escalated channels=%v", got)
+	}
+}
+
+func waitNotify(t *testing.T, mu *sync.Mutex, got *[]string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(*got)
+		mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("notification was not delivered")
+}
+
 type recordingNotifier struct {
 	name  string
 	infos *[]string

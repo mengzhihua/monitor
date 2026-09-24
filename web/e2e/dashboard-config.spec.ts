@@ -121,6 +121,21 @@ test('unavailable groups can be hidden while missing pinned IDs survive editing'
   expect(decodeBoards((await page.evaluate(key => localStorage.getItem(key), storageKey))!)[0]?.chartIds).toEqual(['not-collected.cpu'])
 })
 
+test('dragging a selected group reorders it and the saved board keeps that order', async ({ page }) => {
+  const panel = await open(page)
+  await panel.getByRole('button', { name: '新建看板', exact: true }).click()
+  const editor = panel.getByRole('form', { name: '个人看板编辑器' })
+  await editor.getByLabel('看板名称', { exact: true }).fill('拖拽顺序')
+  await editor.getByLabel('CPU 与负载', { exact: true }).check()
+  await editor.getByLabel('内存与交换', { exact: true }).check()
+  const groups = editor.getByRole('list', { name: '已选分组顺序' }).locator('li')
+  await expect(groups).toHaveCount(2)
+  await groups.nth(1).dragTo(groups.nth(0))
+  await expect(groups.nth(0)).toContainText('内存与交换')
+  await editor.getByRole('button', { name: '保存看板', exact: true }).click()
+  expect(decodeBoards((await page.evaluate(key => localStorage.getItem(key), storageKey))!)[0]?.groupIds).toEqual(['memory', 'compute'])
+})
+
 test('corrupt stored configuration does not prevent built-in dashboards from loading', async ({ page }) => {
   await page.addInitScript(key => localStorage.setItem(key, '{invalid'), storageKey)
   const panel = await open(page)

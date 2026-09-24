@@ -14,6 +14,22 @@ function move(list: string[], index: number, delta: number) {
   const next = index + delta
   if (next >= 0 && next < list.length) [list[index], list[next]] = [list[next]!, list[index]!]
 }
+const dragging = ref<{ kind: 'group' | 'chart'; index: number } | null>(null)
+function onDragStart(kind: 'group' | 'chart', index: number, event: DragEvent) {
+  dragging.value = { kind, index }
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', `${kind}:${index}`)
+  }
+}
+function onDrop(kind: 'group' | 'chart', index: number) {
+  const from = dragging.value
+  dragging.value = null
+  if (!from || from.kind !== kind || from.index === index) return
+  const list = kind === 'group' ? draft.value.groupIds : draft.value.chartIds
+  const [item] = list.splice(from.index, 1)
+  if (item !== undefined) list.splice(index, 0, item)
+}
 </script>
 <template>
   <form class="editor" aria-label="个人看板编辑器" @submit.prevent="emit('save', draft)">
@@ -30,13 +46,13 @@ function move(list: string[], index: number, delta: number) {
     <fieldset><legend>自动匹配指标分组（{{ draft.groupIds.length }}/30）</legend>
       <input v-model="groupSearch" aria-label="搜索可选分组" placeholder="搜索分组" type="search" />
       <div class="choices"><label v-for="g in matchingGroups" :key="g.id" class="check"><input v-model="draft.groupIds" type="checkbox" :value="g.id" />{{ g.title }}</label></div>
-      <ol aria-label="已选分组顺序"><li v-for="(id, i) in draft.groupIds" :key="id"><span>{{ groupOptions.find(g => g.id === id)?.title }}</span><button type="button" :disabled="i === 0" :aria-label="`上移分组 ${id}`" @click="move(draft.groupIds, i, -1)">↑</button><button type="button" :disabled="i === draft.groupIds.length-1" :aria-label="`下移分组 ${id}`" @click="move(draft.groupIds, i, 1)">↓</button><button type="button" :aria-label="`移除分组 ${id}`" @click="draft.groupIds.splice(i, 1)">移除</button></li></ol>
+      <ol aria-label="已选分组顺序"><li v-for="(id, i) in draft.groupIds" :key="id" draggable="true" @dragstart="onDragStart('group', i, $event)" @dragover.prevent @drop="onDrop('group', i)"><span>{{ groupOptions.find(g => g.id === id)?.title }}</span><button type="button" :disabled="i === 0" :aria-label="`上移分组 ${id}`" @click="move(draft.groupIds, i, -1)">↑</button><button type="button" :disabled="i === draft.groupIds.length-1" :aria-label="`下移分组 ${id}`" @click="move(draft.groupIds, i, 1)">↓</button><button type="button" :aria-label="`移除分组 ${id}`" @click="draft.groupIds.splice(i, 1)">移除</button></li></ol>
     </fieldset>
     <fieldset><legend>指定图表（{{ draft.chartIds.length }}/100）</legend>
       <input v-model="chartSearch" aria-label="搜索可选图表" placeholder="搜索当前节点的图表 ID 或名称" type="search" />
       <p>{{ matchingCharts.length }} 张匹配，最多展示前 50 张，可搜索缩小范围。切换节点后按相同 ID 匹配。</p>
       <div class="choices"><label v-for="c in matchingCharts.slice(0,50)" :key="c.id" class="check"><input v-model="draft.chartIds" type="checkbox" :value="c.id" />{{ c.id }} · {{ c.title }}</label></div>
-      <ol aria-label="已选图表顺序"><li v-for="(id,i) in draft.chartIds" :key="id"><span>{{ id }}{{ charts.some(c => c.id === id) ? '' : '（当前节点未采集）' }}</span><button type="button" :disabled="i === 0" :aria-label="`上移图表 ${id}`" @click="move(draft.chartIds, i, -1)">↑</button><button type="button" :disabled="i === draft.chartIds.length-1" :aria-label="`下移图表 ${id}`" @click="move(draft.chartIds, i, 1)">↓</button><button type="button" :aria-label="`移除图表 ${id}`" @click="draft.chartIds.splice(i,1)">移除</button></li></ol>
+      <ol aria-label="已选图表顺序"><li v-for="(id,i) in draft.chartIds" :key="id" draggable="true" @dragstart="onDragStart('chart', i, $event)" @dragover.prevent @drop="onDrop('chart', i)"><span>{{ id }}{{ charts.some(c => c.id === id) ? '' : '（当前节点未采集）' }}</span><button type="button" :disabled="i === 0" :aria-label="`上移图表 ${id}`" @click="move(draft.chartIds, i, -1)">↑</button><button type="button" :disabled="i === draft.chartIds.length-1" :aria-label="`下移图表 ${id}`" @click="move(draft.chartIds, i, 1)">↓</button><button type="button" :aria-label="`移除图表 ${id}`" @click="draft.chartIds.splice(i,1)">移除</button></li></ol>
     </fieldset>
     <p v-if="draftStatus" aria-live="polite">{{ draftStatus }}</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
@@ -52,7 +68,7 @@ button { cursor:pointer; } button:disabled { opacity:.35; cursor:default; } :foc
 .settings { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
 .check { flex-direction:row; align-items:center; overflow-wrap:anywhere; } input[type=checkbox] { flex-shrink:0; }
 fieldset { min-width:0; border:1px solid #334155; border-radius:8px; margin:16px 0; } fieldset > input { box-sizing:border-box; width:100%; }
-.choices { max-height:180px; overflow:auto; } ol { padding-left:22px; } li { margin:8px 0; overflow-wrap:anywhere; } li span { margin-right:8px; } li button { margin:2px; }
+.choices { max-height:180px; overflow:auto; } ol { padding-left:22px; } li { margin:8px 0; overflow-wrap:anywhere; cursor:grab; } li span { margin-right:8px; } li button { margin:2px; cursor:pointer; }
 .error { color:#fda4af; overflow-wrap:anywhere; }
 .actions { display:flex; gap:12px; flex-wrap:wrap; }
 </style>

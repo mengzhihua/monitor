@@ -160,7 +160,8 @@ type Options struct {
 	GroupWait        time.Duration // hold same-chart notifications and send one
 	EscalateAfter    time.Duration // critical repeats use EscalateTo after this long
 	EscalateTo       string
-	Enabled          *bool // nil/true = evaluate; false = pause the engine
+	OnCall           []OnCallWindow // local clock windows that set the notify role; empty = off
+	Enabled          *bool          // nil/true = evaluate; false = pause the engine
 	Windows          []MaintenanceWindow
 	// Anomaly supplies per-dimension 0–100 rates for lookup `anomaly-bit`.
 	Anomaly AnomalySource
@@ -725,6 +726,11 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 		e.diagnostics.Suppressed++
 		e.addNotificationResultLocked(entry, "", "suppressed", reason, 0, 0)
 		return
+	}
+	if strings.TrimSpace(entry.Recipient) != "silent" {
+		if to := e.onCallRecipientLocked(time.Unix(at, 0)); to != "" {
+			entry.Recipient = to
+		}
 	}
 	if e.opt.EscalateAfter > 0 && e.opt.EscalateTo != "" && entry.Repeat && entry.Status == StatusCritical {
 		if a := e.alarms[entry.Name+"|"+entry.Chart]; a != nil && at-a.LastStatusChange >= int64(e.opt.EscalateAfter/time.Second) {

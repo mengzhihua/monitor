@@ -265,6 +265,28 @@ func (c *Cluster) pushRing() {
 	}
 }
 
+// Fetch reads one peer URL with the cluster token and hop header so the peer does not fan out again.
+func (c *Cluster) Fetch(ctx context.Context, peer, path string) ([]byte, int, error) {
+	if c.Empty() || peer == "" || !strings.HasPrefix(path, "/") {
+		return nil, 0, fmt.Errorf("cluster fetch unavailable")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(peer, "/")+path, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set(clusterHopHeader, "1")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	return body, resp.StatusCode, err
+}
+
 func ringHistory(node *Node, chart *registry.Chart, after, before int64) ([]ReplicaSample, error) {
 	byTime := map[int64]map[string]float64{}
 	for _, dim := range chart.Dims() {

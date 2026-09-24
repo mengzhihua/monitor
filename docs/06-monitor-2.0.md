@@ -6,10 +6,10 @@
 
 | 官方参考 | 借鉴的能力 | 本轮落地 | 后续范围 |
 | --- | --- | --- | --- |
-| [Netdata 节点状态](https://learn.netdata.cloud/docs/netdata-cloud/node-states-and-transitions) | 集中观察主机在线、过期、离线及数据可用性 | 单机/Hub 总览、节点资源卡片、采样时间、缺失值和过期提示、跨节点问题列表；`limit` 服务端窗口（概况数字仍是全局） | 跨 Hub 告警联合查询 |
+| [Netdata 节点状态](https://learn.netdata.cloud/docs/netdata-cloud/node-states-and-transitions) | 集中观察主机在线、过期、离线及数据可用性 | 单机/Hub 总览、节点资源卡片、采样时间、缺失值和过期提示、跨节点问题列表；`limit` 服务端窗口（概况数字仍是全局）；集群目录中的对端节点读取 `/api/v1/alarms`，成功时覆盖范围为 `peer` | 多级 Hub 逐跳告警汇总 |
 | [Grafana 告警分组](https://grafana.com/docs/grafana/latest/alerting/monitor-status/view-active-notifications/) | 按条件筛选与聚合问题，降低处置负担 | 严重级别、连接状态、待确认筛选；按 family 统计；保存个人视图；同图表严重告警抑制警告；`group_wait` 合并同图表通知；严重重复提醒可改投 `escalate_to` | 通知送达追踪 |
-| [Zabbix 问题确认](https://www.zabbix.com/documentation/7.4/en/manual/acknowledgment) | 确认、备注与处理历史 | 多用户确认/撤销/备注、责任人指派、处理进度、操作者记录、并发冲突检测、重启读取持久记录 | 升级值班表、工单系统集成 |
-| [Datadog Dashboard](https://docs.datadoghq.com/dashboards/) | 汇总关键指标、筛选并进入细节 | CPU/内存资源视图、节点/图表跳转、JSON 快照导出、个人看板分组/顺序/列数配置、历史时段对比 | 自由拖拽布局、SLO/错误预算、分布式追踪与服务依赖图 |
+| [Zabbix 问题确认](https://www.zabbix.com/documentation/7.4/en/manual/acknowledgment) | 确认、备注与处理历史 | 多用户确认/撤销/备注、责任人指派、处理进度、操作者记录、并发冲突检测、重启读取持久记录；`health.oncall` 按本地时钟窗口改投通知角色 | 工单系统集成 |
+| [Datadog Dashboard](https://docs.datadoghq.com/dashboards/) | 汇总关键指标、筛选并进入细节 | CPU/内存资源视图、节点/图表跳转、JSON 快照导出、个人看板分组/顺序/列数配置、历史时段对比；已选分组和指定图表可拖拽排序 | SLO/错误预算、分布式追踪与服务依赖图 |
 
 这里对比具体工作流，不把本轮描述为上述平台的完整替代。2.0 工作台本轮集成在内嵌 Web Dashboard；Flutter 客户端仍使用已有功能和接口，没有宣称新增的处置界面已在五端原生客户端全部落地。
 
@@ -19,7 +19,7 @@
 
 「指标图表 → 常用聚合看板」已整合 54 个样板，支持按场景分类、搜索、收藏及已采集覆盖数量提示。可复制和配置个人看板，恢复编辑草稿，预览并选择导入配置，查看统一历史时段及相邻时段对比，详见[聚合看板说明](07-preset-dashboards.md)与 [Web 看板更新说明](09-dashboard-final-update.md)。个人看板保存在当前浏览器，与问题中心的服务端个人视图相互独立。
 
-- 总计包括本机及当前 Hub 已知的节点。远端 Hub 只有元数据而没有本地告警快照时，显示覆盖范围未知。
+- 总计包括本机、当前 Hub 已知节点，以及集群目录里只在对端出现的节点。对端节点向宣告它的 Hub 读取 `/api/v1/alarms`，成功时覆盖范围为 `peer` 并进入问题列表。请求失败、非成功状态或没有集群时仍显示覆盖范围未知，不编造问题。已经在本地流式接入的节点继续用本地快照。
 - CPU、内存卡片读取已有采集器的最近样本，不新增系统采样任务，也不读取整段历史。CPU 为非 idle 维度之和；内存为 used / (used + free + cached + buffers)。缺少必要维度、非有限值、尚无样本都显示「暂无数据」。
 - 超过 `max(15 秒, 3 × 图表采样周期)` 的资源样本，或节点已离线/过期，显示「数据过期」，不继续展示旧百分比。卡片分别保留 CPU、内存的采样时间。
 - 问题中心汇集 WARNING / CRITICAL，严重优先、待确认优先。同名告警按节点区分，不会把两台机器的确认记录混用。

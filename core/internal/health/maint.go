@@ -54,6 +54,30 @@ func (e *Engine) inMaintenanceLocked(now time.Time) bool {
 	return e.plans.Matches("", "", now.Unix()) // global plans only
 }
 
+// OnCallWindow sends notifications to To while the local clock is inside the window.
+// The first matching window wins. Recipient "silent" is left unchanged, and a later
+// escalation can still replace To.
+type OnCallWindow struct {
+	Start    string   `yaml:"start" json:"start"`
+	End      string   `yaml:"end" json:"end"`
+	Weekdays []string `yaml:"weekdays" json:"weekdays,omitempty"`
+	To       string   `yaml:"to" json:"to"`
+}
+
+func (w OnCallWindow) covers(now time.Time) bool {
+	return (MaintenanceWindow{Start: w.Start, End: w.End, Weekdays: w.Weekdays}).covers(now)
+}
+
+func (e *Engine) onCallRecipientLocked(now time.Time) string {
+	for _, w := range e.opt.OnCall {
+		to := strings.TrimSpace(w.To)
+		if to != "" && w.covers(now) {
+			return to
+		}
+	}
+	return ""
+}
+
 func (w MaintenanceWindow) covers(now time.Time) bool {
 	if w.Start == "" || w.End == "" {
 		return false

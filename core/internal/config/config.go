@@ -150,6 +150,7 @@ type Health struct {
 	GroupWait        string                     `yaml:"group_wait"`         // hold same-chart notifications, e.g. 10s; empty = off
 	EscalateAfter    string                     `yaml:"escalate_after"`     // critical repeats change recipient after this, e.g. 15m
 	EscalateTo       string                     `yaml:"escalate_to"`
+	OnCall           []health.OnCallWindow      `yaml:"oncall"` // local clock windows that set the notify role; empty = off
 	Notify           Notify                     `yaml:"notify"`
 	Alarms           []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
 	Windows          []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
