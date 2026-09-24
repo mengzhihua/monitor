@@ -119,7 +119,11 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 		kthread: kthread,
 		ok:      true,
 	}
-	if skipIO || kthread {
+	// /proc/<pid>/io and cmdline go through mm_access (the target's mmap lock):
+	// a D-state process may hold that lock for a long unwind (exit_mmap of a
+	// huge address space) and reading would block uninterruptibly. The io
+	// charts are incremental and tolerate the gap. Zombies have no mm at all.
+	if skipIO || kthread || state == 'D' || state == 'Z' {
 		return out
 	}
 	ib, err := readInto("/proc/"+id+"/io", buf)
