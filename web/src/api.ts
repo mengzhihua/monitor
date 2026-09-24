@@ -38,6 +38,40 @@ export interface Space { id: string; name: string; created: number }
 export interface Room { id: string; name: string; space_id: string; nodes?: string[] }
 export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
+export interface AgentUser { name: string; token: string; role: string }
+export interface AgentVisual {
+  mode: 'agent' | 'hub'
+  hostname: string
+  update_every: number
+  data_dir: string
+  web_enabled: 'default' | 'on' | 'off'
+  listen: string
+  allow_from: string[]
+  ticket_webhook: string
+  users: AgentUser[]
+  collectors_enabled: string[]
+  collectors_disabled: string[]
+  health_enabled: 'default' | 'on' | 'off'
+  health_silent: boolean
+  stream_enabled: boolean
+  stream_destinations: string[]
+  stream_api_key: string
+  stream_protocol: string
+  hub_api_keys: string[]
+  hub_peers: string[]
+  hub_storage: string
+  hub_space: string
+  hub_room: string
+}
+export interface AgentConfigFile {
+  path: string
+  yaml: string
+  writable: boolean
+  restart_required: boolean
+  backup: boolean
+  form?: AgentVisual
+  form_error?: string
+}
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface ResourceMetric { value: number | null; at: number; state: 'fresh' | 'stale' | 'unavailable' }
 export interface OperationsNode extends NodeInfo {
@@ -287,9 +321,10 @@ export const api = {
   alarmSummary: () => get<{ status: Record<string, number>; classes?: Record<string, number> }>(`/api/v1/alarm_summary${q({})}`),
   manageHealth: () => get<{ enabled: boolean; silent: boolean; maintenance: boolean; maint_until?: number }>('/api/v1/manage/health'),
   setHealth: (body: Record<string, unknown>) => send<unknown>('PUT', '/api/v1/manage/health', body),
-  agentConfig: () => get<{ path: string; yaml: string; writable: boolean; restart_required: boolean; backup: boolean }>('/api/v1/manage/config'),
-  saveAgentConfig: (yaml: string) => send<{ path: string; yaml: string; writable: boolean; restart_required: boolean; backup: boolean }>('PUT', '/api/v1/manage/config', { yaml }),
-  rollbackAgentConfig: () => post<{ path: string; yaml: string; writable: boolean; restart_required: boolean; backup: boolean }>('/api/v1/manage/config/rollback', {}),
+  agentConfig: () => get<AgentConfigFile>('/api/v1/manage/config'),
+  saveAgentConfig: (yaml: string) => send<AgentConfigFile>('PUT', '/api/v1/manage/config', { yaml }),
+  saveAgentForm: (form: AgentVisual) => send<AgentConfigFile>('PUT', '/api/v1/manage/config', { form }),
+  rollbackAgentConfig: () => post<AgentConfigFile>('/api/v1/manage/config/rollback', {}),
   restartAgent: () => post<{ status: string }>('/api/v1/manage/restart', {}),
   share: (ttl = '24h') => post<{ token: string; url: string; until: number }>('/api/v1/share', { ttl }),
   ldapLogin: (user: string, password: string) => post<{ token: string; role: string }>('/api/v1/auth/ldap', { user, password }),

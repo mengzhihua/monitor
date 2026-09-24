@@ -123,6 +123,20 @@ class ApiClient {
 
   Future<Map<String, dynamic>> agentConfig() async => _get('/manage/config');
 
+  Future<Map<String, dynamic>> saveAgentForm(Map<String, dynamic> form) async {
+    final res = await _http
+        .put(
+          config.uri('/api/v1/manage/config'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: jsonEncode({'form': form}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   Future<void> saveAgentConfig(String yaml) async {
     final res = await _http
         .put(

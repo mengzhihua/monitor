@@ -16,11 +16,13 @@ import (
 const agentConfigMax = 1 << 20
 
 type agentConfigResponse struct {
-	Path            string `json:"path"`
-	YAML            string `json:"yaml"`
-	Writable        bool   `json:"writable"`
-	RestartRequired bool   `json:"restart_required"`
-	Backup          bool   `json:"backup"`
+	Path            string         `json:"path"`
+	YAML            string         `json:"yaml"`
+	Writable        bool           `json:"writable"`
+	RestartRequired bool           `json:"restart_required"`
+	Backup          bool           `json:"backup"`
+	Form            *config.Visual `json:"form,omitempty"`
+	FormError       string         `json:"form_error,omitempty"`
 }
 
 func (s *Server) allowLocalAgentManage(w http.ResponseWriter, r *http.Request) bool {
@@ -59,7 +61,8 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		YAML string `json:"yaml"`
+		YAML string         `json:"yaml"`
+		Form *config.Visual `json:"form"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, agentConfigMax+4096))
 	dec.DisallowUnknownFields()
@@ -67,7 +70,25 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid config request", http.StatusBadRequest)
 		return
 	}
-	if err := writeAgentConfig(s.opt.ConfigPath, body.YAML); err != nil {
+	next := body.YAML
+	if body.Form != nil && strings.TrimSpace(body.YAML) != "" {
+		http.Error(w, "send yaml or form, not both", http.StatusBadRequest)
+		return
+	}
+	if body.Form != nil {
+		current, err := readAgentConfig(s.opt.ConfigPath)
+		if err != nil {
+			http.Error(w, "read agent config failed", http.StatusInternalServerError)
+			return
+		}
+		merged, err := config.ApplyVisual(current, *body.Form)
+		if err != nil {
+			http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		next = merged
+	}
+	if err := writeAgentConfig(s.opt.ConfigPath, next); err != nil {
 		var ve *configValidateError
 		if errors.As(err, &ve) {
 			http.Error(w, ve.Error(), http.StatusBadRequest)
@@ -77,7 +98,7 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "write agent config failed", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, s.agentConfigView(body.YAML))
+	writeJSON(w, s.agentConfigView(next))
 }
 
 func (s *Server) handleManageConfigRollback(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +166,11 @@ func (s *Server) agentConfigView(yaml string) agentConfigResponse {
 	out.RestartRequired = yaml != s.opt.ConfigLoaded
 	_, err := os.Stat(s.opt.ConfigPath + ".bak")
 	out.Backup = err == nil
+	if form, err := config.VisualFrom(yaml); err != nil {
+		out.FormError = "配置里有表单无法展示的内容，请用 YAML 修改"
+	} else {
+		out.Form = &form
+	}
 	return out
 }
 

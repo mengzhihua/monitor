@@ -13,6 +13,9 @@ class AgentConfigView extends StatefulWidget {
 
 class _AgentConfigViewState extends State<AgentConfigView> {
   final _yaml = TextEditingController();
+  final _host = TextEditingController();
+  final _listen = TextEditingController();
+  Map<String, dynamic>? _form;
   String _path = '';
   String _notice = '';
   String _error = '';
@@ -30,6 +33,8 @@ class _AgentConfigViewState extends State<AgentConfigView> {
   @override
   void dispose() {
     _yaml.dispose();
+    _host.dispose();
+    _listen.dispose();
     super.dispose();
   }
 
@@ -43,7 +48,36 @@ class _AgentConfigViewState extends State<AgentConfigView> {
       if (!mounted) return;
       _path = (cfg['path'] as String?) ?? '';
       _yaml.text = (cfg['yaml'] as String?) ?? '';
+      final rawForm = cfg['form'];
+      _form = rawForm is Map ? Map<String, dynamic>.from(rawForm) : null;
+      _host.text = (_form?['hostname'] as String?) ?? '';
+      _listen.text = (_form?['listen'] as String?) ?? '';
       _writable = cfg['writable'] == true;
+      _restartRequired = cfg['restart_required'] == true;
+      _backup = cfg['backup'] == true;
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _error = e.message;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _saveForm() async {
+    final form = _form;
+    if (form == null || !_writable || _busy) return;
+    form['hostname'] = _host.text;
+    form['listen'] = _listen.text;
+    setState(() {
+      _busy = true;
+      _error = '';
+      _notice = '';
+    });
+    try {
+      final cfg = await widget.client.saveAgentForm(form);
+      if (!mounted) return;
+      _yaml.text = (cfg['yaml'] as String?) ?? _yaml.text;
+      _notice = '已写入表单配置。重启本机服务后才会生效。';
       _restartRequired = cfg['restart_required'] == true;
       _backup = cfg['backup'] == true;
     } on ApiException catch (e) {
@@ -146,7 +180,28 @@ class _AgentConfigViewState extends State<AgentConfigView> {
       children: [
         Text(_path.isEmpty ? '未绑定配置文件' : _path),
         const SizedBox(height: 8),
-        const Text('这里修改的是当前连接的这台 monitord。查看远端节点时不提供此页。'),
+        const Text('表单只改常用项。告警规则、采集器参数和 web.token 会保留。'),
+        if (_form != null) ...[
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: (_form!['mode'] as String?) ?? 'agent',
+            decoration: const InputDecoration(labelText: '运行模式'),
+            items: const [
+              DropdownMenuItem(value: 'agent', child: Text('Agent')),
+              DropdownMenuItem(value: 'hub', child: Text('Hub')),
+            ],
+            onChanged: _writable ? (v) => _form!['mode'] = v : null,
+          ),
+          TextField(controller: _host, decoration: const InputDecoration(labelText: '主机名'), readOnly: !_writable),
+          TextField(controller: _listen, decoration: const InputDecoration(labelText: '监听地址'), readOnly: !_writable),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('只评估，不发送通知'),
+            value: _form!['health_silent'] == true,
+            onChanged: _writable ? (v) => setState(() => _form!['health_silent'] = v) : null,
+          ),
+          FilledButton(onPressed: _writable && !_busy ? _saveForm : null, child: const Text('保存表单')),
+        ],
         if (_error.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(_error, style: TextStyle(color: Theme.of(context).colorScheme.error)),

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ApiError, api } from '../api'
+import { ApiError, api, type AgentConfigFile, type AgentVisual } from '../api'
+import AgentConfigForm from './AgentConfigForm.vue'
 
 const emit = defineEmits<{ close: [] }>()
 const path = ref('')
@@ -8,19 +9,27 @@ const yaml = ref('')
 const writable = ref(false)
 const restartRequired = ref(false)
 const backup = ref(false)
+const editor = ref<'form' | 'yaml'>('form')
+const form = ref<AgentVisual | null>(null)
+const formError = ref('')
 const error = ref('')
 const notice = ref('')
 const busy = ref(false)
 
+function apply(cfg: AgentConfigFile) {
+  path.value = cfg.path
+  yaml.value = cfg.yaml
+  writable.value = cfg.writable
+  restartRequired.value = cfg.restart_required
+  backup.value = cfg.backup
+  form.value = cfg.form ? structuredClone(cfg.form) : null
+  formError.value = cfg.form_error || ''
+}
+
 async function load() {
   error.value = ''
   try {
-    const cfg = await api.agentConfig()
-    path.value = cfg.path
-    yaml.value = cfg.yaml
-    writable.value = cfg.writable
-    restartRequired.value = cfg.restart_required
-    backup.value = cfg.backup
+    apply(await api.agentConfig())
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '读取配置失败'
   }
@@ -32,10 +41,8 @@ async function save() {
   error.value = ''
   notice.value = ''
   try {
-    const cfg = await api.saveAgentConfig(yaml.value)
-    yaml.value = cfg.yaml
-    restartRequired.value = cfg.restart_required
-    backup.value = cfg.backup
+    const cfg = editor.value === 'form' && form.value ? await api.saveAgentForm(form.value) : await api.saveAgentConfig(yaml.value)
+    apply(cfg)
     notice.value = cfg.restart_required ? '已写入配置文件。重启本机服务后才会生效。' : '配置文件与当前进程一致。'
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '保存失败，配置文件未替换'
@@ -51,10 +58,7 @@ async function rollback() {
   error.value = ''
   notice.value = ''
   try {
-    const cfg = await api.rollbackAgentConfig()
-    yaml.value = cfg.yaml
-    restartRequired.value = cfg.restart_required
-    backup.value = cfg.backup
+    apply(await api.rollbackAgentConfig())
     notice.value = '已恢复上一份配置。与当前进程不一致时仍需重启。'
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '恢复失败，当前文件未替换'
@@ -91,9 +95,15 @@ onMounted(() => { void load() })
     <p v-if="restartRequired" class="pending" role="status">磁盘上的配置与当前进程不一致，重启后才会生效。</p>
     <div v-if="error" class="err" role="alert">{{ error }}</div>
     <p v-if="notice" class="ok" role="status">{{ notice }}</p>
-    <textarea v-model="yaml" :readonly="!writable" aria-label="本机配置 YAML" spellcheck="false" />
+    <div class="tabs" role="tablist" aria-label="配置编辑方式">
+      <button type="button" :class="{ on: editor === 'form' }" @click="editor = 'form'">表单</button>
+      <button type="button" :class="{ on: editor === 'yaml' }" @click="editor = 'yaml'">YAML</button>
+    </div>
+    <p v-if="editor === 'form' && formError" class="err" role="alert">{{ formError }}</p>
+    <AgentConfigForm v-else-if="editor === 'form' && form" :form="form" :disabled="!writable" />
+    <textarea v-else v-model="yaml" :readonly="!writable" aria-label="本机配置 YAML" spellcheck="false" />
     <div class="row">
-      <button type="button" :disabled="!writable || busy" @click="save">保存配置</button>
+      <button type="button" :disabled="!writable || busy || (editor === 'form' && !form)" @click="save">保存配置</button>
       <button type="button" :disabled="!backup || busy" @click="rollback">恢复上一份</button>
       <button type="button" class="danger" :disabled="busy" @click="restart">重启服务</button>
     </div>
@@ -111,7 +121,9 @@ h3 small { color: #64748b; font-weight: 400; margin-left: 6px; text-transform: n
 .pending { color: #fcd34d; }
 .err { color: #fecaca; background: #7f1d1d; padding: 6px 8px; border-radius: 6px; margin-bottom: 8px; overflow-wrap: anywhere; }
 textarea { width: 100%; min-height: 240px; box-sizing: border-box; background: #020617; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 8px; font: 12px/1.45 ui-monospace, monospace; }
-.row { display: flex; gap: 8px; margin-top: 8px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.tabs button.on { color: #5eead4; border-color: #0d9488; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 13px; cursor: pointer; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .danger { color: #fecaca; border-color: #7f1d1d; }
