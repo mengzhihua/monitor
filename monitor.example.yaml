@@ -696,6 +696,8 @@ health:
   group_wait: ""       # e.g. 10s holds same-chart notifications and sends one
   escalate_after: ""   # e.g. 15m; critical repeats then use escalate_to
   escalate_to: ""      # notify role from notify.roles
+  oncall: []           # local clock windows set the notify role before escalation; empty = off
+  # - { start: "09:00", end: "18:00", weekdays: [mon, tue, wed, thu, fri], to: oncall }
   windows: []          # recurring maintenance calendar, e.g. [{ start: "22:00", end: "06:00", weekdays: [sat, sun] }]
   alarms: []           # inline rules, e.g.
   # - name: ram_in_use

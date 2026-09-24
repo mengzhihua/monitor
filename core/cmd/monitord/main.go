@@ -598,6 +598,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		GroupWait:        groupWait,
 		EscalateAfter:    escalateAfter,
 		EscalateTo:       cfg.Health.EscalateTo,
+		OnCall:           cfg.Health.OnCall,
 		Windows:          cfg.Health.Windows,
 	})
 }

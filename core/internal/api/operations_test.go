@@ -61,6 +61,61 @@ func TestOperationsMetricsAndCoverage(t *testing.T) {
 	}
 }
 
+func TestOperationsIncludesPeerAlarms(t *testing.T) {
+	now := time.Now().Unix()
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Monitor-Cluster-Hop") != "1" {
+			http.Error(w, "missing hop", http.StatusBadRequest)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/nodes":
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": []hub.Info{
+				{ID: "agent-1", Hostname: "box", Status: hub.StatusLive},
+				{ID: "agent-2", Hostname: "down", Status: hub.StatusLive},
+			}})
+		case "/api/v1/alarms":
+			if r.URL.Query().Get("node") == "agent-2" {
+				http.Error(w, "unavailable", http.StatusBadGateway)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"alarms": map[string]health.Alarm{
+				"disk|disk.space": {Name: "disk", Chart: "disk.space", Family: "disk", Status: health.StatusCritical, Info: "full", LastStatusChange: now, LastUpdated: now, Every: 10},
+				"ok|system.cpu":   {Name: "ok", Chart: "system.cpu", Status: health.StatusClear, LastUpdated: now},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(peer.Close)
+	cluster := hub.NewCluster([]string{peer.URL}, "", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go cluster.Run(ctx)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !cluster.Has("agent-1") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	ts, _ := newTestServer(t, Options{Cluster: cluster})
+	var snap operationsSnapshot
+	getJSON(t, ts.URL+"/api/v1/operations", &snap)
+	var box, down *operationsNode
+	for i := range snap.Nodes {
+		switch snap.Nodes[i].ID {
+		case "agent-1":
+			box = &snap.Nodes[i]
+		case "agent-2":
+			down = &snap.Nodes[i]
+		}
+	}
+	if box == nil || box.AlarmCoverage != "peer" || down == nil || down.AlarmCoverage != "unknown" {
+		t.Fatalf("nodes=%+v", snap.Nodes)
+	}
+	if snap.Summary["critical"] != 1 || snap.Summary["coverage_unknown"] < 1 || len(snap.Problems) != 1 || snap.Problems[0].Hostname != "box" || snap.Problems[0].Name != "disk" {
+		t.Fatalf("summary=%v problems=%+v", snap.Summary, snap.Problems)
+	}
+}
+
 func TestOperationsAcknowledgementLifecycleAndRBAC(t *testing.T) {
 	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
 	if err != nil {

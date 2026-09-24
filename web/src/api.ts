@@ -41,7 +41,7 @@ export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: strin
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface ResourceMetric { value: number | null; at: number; state: 'fresh' | 'stale' | 'unavailable' }
 export interface OperationsNode extends NodeInfo {
-  cpu: ResourceMetric; memory: ResourceMetric; alarm_coverage: 'local' | 'mirrored' | 'disabled' | 'unknown' | 'empty'
+  cpu: ResourceMetric; memory: ResourceMetric; alarm_coverage: 'local' | 'mirrored' | 'peer' | 'disabled' | 'unknown' | 'empty'
 }
 export type HandlingStatus = 'open' | 'investigating' | 'watching'
 export interface HandlingAction {
