@@ -104,6 +104,7 @@ func (f *freeradiusCollector) status(ctx context.Context) (map[string]float64, e
 			cctx, cancel := context.WithTimeout(ctx, f.cfg.Timeout)
 			defer cancel()
 			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
 			cmd.Stdin = strings.NewReader("Message-Authenticator = 0x00\n")
 			return cmd.Output()
 		}

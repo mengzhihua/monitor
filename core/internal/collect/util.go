@@ -53,14 +53,22 @@ func readInto(path string, buf *[]byte) ([]byte, error) {
 	return b, nil
 }
 
+// execWaitDelay bounds how long a killed command may still hold Output. When
+// the context deadline SIGKILLs the child but a grandchild inherited the
+// pipes — or the child sits in uninterruptible kernel state and never honors
+// the kill — Wait gives up after this delay instead of wedging the collector
+// goroutine (and the TryLock it holds) forever.
+const execWaitDelay = 2 * time.Second
+
 func execRun(timeout time.Duration) func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		return exec.CommandContext(cctx, name, args...).Output()
+		cmd := exec.CommandContext(cctx, name, args...)
+		cmd.WaitDelay = execWaitDelay
+		return cmd.Output()
 	}
 }
-
 type fileCursor struct {
 	path string
 	off  int64

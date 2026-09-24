@@ -120,6 +120,7 @@ func (n *nvidiaCollector) query(ctx context.Context) ([]nvGPU, error) {
 	cmd := exec.CommandContext(cctx, n.cfg.Command,
 		"--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw",
 		"--format=csv,noheader,nounits")
+	cmd.WaitDelay = execWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("nvidia-smi: %w", err)

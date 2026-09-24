@@ -147,7 +147,9 @@ func (m *macosCollector) exec(ctx context.Context, name string, args ...string) 
 	}
 	cctx, cancel := context.WithTimeout(ctx, m.cfg.Timeout)
 	defer cancel()
-	return exec.CommandContext(cctx, name, args...).Output()
+	cmd := exec.CommandContext(cctx, name, args...)
+	cmd.WaitDelay = execWaitDelay
+	return cmd.Output()
 }
 
 func parseMacosSysctl(s string, out *macosSample) {

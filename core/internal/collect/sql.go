@@ -116,6 +116,7 @@ func (s *sqlCollector) execQuery(ctx context.Context) (map[string]float64, float
 			cctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 			defer cancel()
 			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
 			if strings.EqualFold(s.cfg.Driver, "oracle") || strings.EqualFold(s.cfg.Driver, "godror") {
 				cmd.Stdin = strings.NewReader(s.cfg.Query + "\nEXIT\n")
 			}

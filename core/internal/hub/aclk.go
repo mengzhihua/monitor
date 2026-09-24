@@ -145,10 +145,8 @@ func (s *session) sendWelcome(node *Node, now time.Time) {
 		}
 	}
 	_ = s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())})
-	if s.n.opt.NodeConfig != nil {
-		if disabled := s.n.opt.NodeConfig(node.ID); len(disabled) > 0 {
-			_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: disabled})
-		}
+	if c := s.n.opt.configFor(node.ID); c != nil && (len(c.Disabled) > 0 || c.YAML != "") {
+		_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: c.Disabled, ConfigYAML: c.YAML, ConfigRev: c.Updated})
 	}
 	s.n.log.Info("hub: aclk connected", "node", node.ID, "hostname", node.Host.Hostname, "from", s.remote)
 }

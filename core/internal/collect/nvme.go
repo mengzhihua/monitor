@@ -104,7 +104,9 @@ func (n *nvmeCollector) exec(ctx context.Context, args ...string) ([]byte, error
 		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			cctx, cancel := context.WithTimeout(ctx, n.cfg.Timeout)
 			defer cancel()
-			return exec.CommandContext(cctx, name, args...).Output()
+			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
+			return cmd.Output()
 		}
 	}
 	return run(ctx, n.cfg.Command, args...)

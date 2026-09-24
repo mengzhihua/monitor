@@ -498,7 +498,9 @@ func (s *systemdCollector) exec(ctx context.Context, name string, args ...string
 	}
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	return exec.CommandContext(cctx, name, args...).Output()
+	cmd := exec.CommandContext(cctx, name, args...)
+	cmd.WaitDelay = execWaitDelay
+	return cmd.Output()
 }
 
 func parseSystemctlShow(b []byte) []ServiceRow {

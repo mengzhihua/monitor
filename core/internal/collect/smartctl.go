@@ -114,7 +114,9 @@ func (s *smartctlCollector) exec(ctx context.Context, args ...string) ([]byte, e
 		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			cctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 			defer cancel()
-			return exec.CommandContext(cctx, name, args...).Output()
+			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
+			return cmd.Output()
 		}
 	}
 	return run(ctx, s.cfg.Command, args...)

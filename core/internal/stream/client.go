@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,7 +33,14 @@ type ClientOptions struct {
 	Destinations       []string
 	APIKey             string
 	InsecureSkipVerify bool
-	Timeout            time.Duration // dial / handshake / write timeout
+	// ConfigPath is this agent's monitor.yaml; when set the client reports
+	// the file content to the hub after every (re)connect.
+	ConfigPath string
+	// OnConfigFile validates and applies a hub-pushed full config
+	// replacement. A nil error means the file was written and the process
+	// should restart into it.
+	OnConfigFile func(yamlText string, rev int64) error
+	Timeout      time.Duration // dial / handshake / write timeout
 	// Replicate bounds how much history is re-sent after a (re)connect.
 	Replicate time.Duration
 	Version   string
@@ -320,8 +328,11 @@ func (c *Client) redeemClaim(ctx context.Context, dest string) error {
 	return nil
 }
 
-func (c *Client) fetchConfig(ctx context.Context, dest string) {
-	if c.opt.OnConfig == nil || c.opt.APIKey == "" {
+// fetchConfig pulls the hub's desired node config over HTTP and applies it:
+// a non-empty yaml is a full replacement handled by OnConfigFile (acked with a
+// config_state frame over sess), otherwise Disabled is the hot overlay.
+func (c *Client) fetchConfig(ctx context.Context, dest string, sess *clientSession) {
+	if (c.opt.OnConfig == nil && c.opt.OnConfigFile == nil) || c.opt.APIKey == "" {
 		return
 	}
 	base, err := httpOrigin(dest)
@@ -344,11 +355,67 @@ func (c *Client) fetchConfig(ctx context.Context, dest string) {
 	}
 	var cfg struct {
 		Disabled []string `json:"disabled"`
+		YAML     string   `json:"yaml"`
+		Updated  int64    `json:"updated"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&cfg) != nil {
 		return
 	}
-	c.opt.OnConfig(cfg.Disabled)
+	if cfg.YAML != "" && c.opt.OnConfigFile != nil {
+		c.applyPushed(sess, cfg.YAML, cfg.Updated)
+		return
+	}
+	if c.opt.OnConfig != nil {
+		c.opt.OnConfig(cfg.Disabled)
+	}
+}
+
+// applyPushed applies a hub-pushed full config replacement through
+// OnConfigFile and acks the outcome with a config_state frame. A failed ack
+// send is only logged: the hub re-pushes on the next connect anyway.
+func (c *Client) applyPushed(sess *clientSession, yamlText string, rev int64) {
+	if c.opt.OnConfigFile == nil {
+		return
+	}
+	state, msg := "applied", ""
+	if err := c.opt.OnConfigFile(yamlText, rev); err != nil {
+		state, msg = "rejected", err.Error()
+		// The stream package cannot import cmd/monitord (where
+		// ErrApplyDeferred lives), so deferral is signalled by convention:
+		// an error whose message contains "deferred" means the new config
+		// was staged and takes effect on the next restart, not rejected.
+		if strings.Contains(msg, "deferred") {
+			state = "deferred"
+		}
+	}
+	if err := sess.send(Frame{Type: TypeConfigState, ConfigRev: rev, ApplyState: state, ApplyError: msg}); err != nil {
+		c.log.Debug("stream: config apply ack failed", "err", err, "rev", rev)
+	}
+}
+
+// maxConfigReportSize bounds the monitor.yaml content reported to the hub; a
+// file larger than this is almost certainly not a config file.
+const maxConfigReportSize = 256 * 1024
+
+// reportConfig sends the agent's live monitor.yaml to the hub right after a
+// successful connect so the hub can display and diff it against the desired
+// state.
+func (c *Client) reportConfig(sess *clientSession) {
+	if c.opt.ConfigPath == "" {
+		return
+	}
+	b, err := os.ReadFile(c.opt.ConfigPath)
+	if err != nil {
+		c.log.Debug("stream: config report read failed", "err", err, "path", c.opt.ConfigPath)
+		return
+	}
+	if len(b) > maxConfigReportSize {
+		c.log.Warn("stream: config file too large to report", "path", c.opt.ConfigPath, "size", len(b))
+		return
+	}
+	if err := sess.send(Frame{Type: TypeConfigState, ConfigYAML: string(b), ConfigPath: c.opt.ConfigPath}); err != nil {
+		c.log.Debug("stream: config report send failed", "err", err)
+	}
 }
 
 func (c *Client) functions() []FunctionInfo {
@@ -420,7 +487,8 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 	c.st.NextConnection = 0
 	c.mu.Unlock()
 	c.log.Info("stream: connected", "hub", dest)
-	c.fetchConfig(ctx, dest)
+	c.fetchConfig(ctx, dest, sess)
+	c.reportConfig(sess)
 
 	go sess.reader(ctx)
 
@@ -666,7 +734,9 @@ func (s *clientSession) reader(ctx context.Context) {
 		case TypeQuery:
 			go s.runQuery(f)
 		case TypeConfig:
-			if s.c.opt.OnConfig != nil {
+			if f.ConfigYAML != "" && s.c.opt.OnConfigFile != nil {
+				s.c.applyPushed(s, f.ConfigYAML, f.ConfigRev)
+			} else if s.c.opt.OnConfig != nil {
 				s.c.opt.OnConfig(f.Disabled)
 			}
 		case TypeError:

@@ -260,6 +260,7 @@ func (m *mqCollector) queueStatus(ctx context.Context, qm string) ([]mqQueue, er
 			cctx, cancel := context.WithTimeout(ctx, m.cfg.Timeout)
 			defer cancel()
 			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
 			cmd.Stdin = strings.NewReader(mqRunmqsc)
 			return cmd.Output()
 		}

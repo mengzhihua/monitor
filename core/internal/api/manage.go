@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// maxConfigYAML caps the yaml payload accepted by the config edit APIs.
+const maxConfigYAML = 256 << 10
+
 func (s *Server) handleManageHealth(w http.ResponseWriter, r *http.Request) {
 	if s.opt.Health == nil {
 		http.Error(w, "health engine disabled", http.StatusNotFound)

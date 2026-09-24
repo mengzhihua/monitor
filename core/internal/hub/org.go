@@ -39,12 +39,24 @@ type Claim struct {
 	UsedAt  int64  `json:"used_at,omitempty"`
 }
 
-// NodeConfig is a hub-pushed overlay (disabled collectors + optional YAML).
+// NodeConfig is a hub-pushed overlay (disabled collectors + optional full
+// YAML replacement) plus the agent's last reported file and apply outcome.
 type NodeConfig struct {
 	NodeID   string   `json:"node_id"`
 	Disabled []string `json:"disabled,omitempty"`
-	YAML     string   `json:"yaml,omitempty"`
-	Updated  int64    `json:"updated"`
+	YAML     string   `json:"yaml,omitempty"`     // desired full config (admin-edited)
+	Updated  int64    `json:"updated"`            // desired revision (unix seconds)
+	Reported string   `json:"reported,omitempty"` // agent's actual file text
+	ReportAt int64    `json:"report_at,omitempty"`
+	Apply    *ApplyState `json:"apply,omitempty"` // outcome acked by the agent
+}
+
+// ApplyState mirrors an agent's outcome for one pushed config revision.
+type ApplyState struct {
+	Rev   int64  `json:"rev"`
+	State string `json:"state"` // applied | rejected | deferred
+	Error string `json:"error,omitempty"`
+	At    int64  `json:"at"`
 }
 
 // Org persists Spaces, Rooms, claim tokens and per-node config next to nodes.json.
@@ -310,17 +322,66 @@ func (o *Org) RedeemClaim(token, nodeID string) (Claim, error) {
 	return out, o.saveLocked()
 }
 
+// SetConfig stores the desired overlay, preserving the agent-reported file
+// state and last apply outcome.
 func (o *Org) SetConfig(cfg NodeConfig) (NodeConfig, error) {
 	if cfg.NodeID == "" {
 		return NodeConfig{}, errors.New("node_id required")
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	cfg.Updated = o.now().Unix()
-	cp := cfg
+	cp := o.configs[cfg.NodeID]
+	if cp == nil {
+		cp = &NodeConfig{NodeID: cfg.NodeID}
+		o.configs[cfg.NodeID] = cp
+	}
 	cp.Disabled = append([]string(nil), cfg.Disabled...)
-	o.configs[cfg.NodeID] = &cp
-	return cp, o.saveLocked()
+	cp.YAML = cfg.YAML
+	cp.Updated = o.now().Unix()
+	return *copyConfig(cp), o.saveLocked()
+}
+
+// SetReport records the agent-reported config file, preserving desired state.
+func (o *Org) SetReport(nodeID, yaml string, at int64) error {
+	if nodeID == "" {
+		return errors.New("node_id required")
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	cp := o.configs[nodeID]
+	if cp == nil {
+		cp = &NodeConfig{NodeID: nodeID}
+		o.configs[nodeID] = cp
+	}
+	cp.Reported, cp.ReportAt = yaml, at
+	return o.saveLocked()
+}
+
+// SetApply records an agent apply outcome, preserving desired state.
+func (o *Org) SetApply(nodeID string, st ApplyState) error {
+	if nodeID == "" {
+		return errors.New("node_id required")
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	cp := o.configs[nodeID]
+	if cp == nil {
+		cp = &NodeConfig{NodeID: nodeID}
+		o.configs[nodeID] = cp
+	}
+	ap := st
+	cp.Apply = &ap
+	return o.saveLocked()
+}
+
+func copyConfig(c *NodeConfig) *NodeConfig {
+	out := *c
+	out.Disabled = append([]string(nil), c.Disabled...)
+	if c.Apply != nil {
+		ap := *c.Apply
+		out.Apply = &ap
+	}
+	return &out
 }
 
 func (o *Org) GetConfig(nodeID string) (NodeConfig, bool) {
@@ -330,9 +391,7 @@ func (o *Org) GetConfig(nodeID string) (NodeConfig, bool) {
 	if !ok {
 		return NodeConfig{}, false
 	}
-	out := *c
-	out.Disabled = append([]string(nil), c.Disabled...)
-	return out, true
+	return *copyConfig(c), true
 }
 
 func (o *Org) ConfigByKey(apiKey string) (NodeConfig, bool) {
@@ -341,9 +400,7 @@ func (o *Org) ConfigByKey(apiKey string) (NodeConfig, bool) {
 	for _, c := range o.claims {
 		if c.APIKey != "" && c.APIKey == apiKey && c.NodeID != "" {
 			if cfg, ok := o.configs[c.NodeID]; ok {
-				out := *cfg
-				out.Disabled = append([]string(nil), cfg.Disabled...)
-				return out, true
+				return *copyConfig(cfg), true
 			}
 			return NodeConfig{NodeID: c.NodeID}, true
 		}

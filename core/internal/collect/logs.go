@@ -303,6 +303,7 @@ func queryLogcat(q LogQuery) []LogRow {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "logcat", args...)
+	cmd.WaitDelay = execWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -425,6 +426,7 @@ func queryJournal(q LogQuery) []LogRow {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "journalctl", journalArgs(q)...)
+	cmd.WaitDelay = execWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -450,6 +452,7 @@ func queryEventLog(q LogQuery) []LogRow {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "wevtutil", args...)
+	cmd.WaitDelay = execWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

@@ -29,10 +29,18 @@ type resourceMetric struct {
 	State string   `json:"state"`
 }
 
+type diskMetric struct {
+	Mount string   `json:"mount"`
+	Value *float64 `json:"value"`
+	At    int64    `json:"at"`
+	State string   `json:"state"`
+}
+
 type operationsNode struct {
 	hub.Info
 	CPU           resourceMetric `json:"cpu"`
 	Memory        resourceMetric `json:"memory"`
+	Disks         []diskMetric   `json:"disks"`
 	AlarmCoverage string         `json:"alarm_coverage"`
 }
 
@@ -178,6 +186,57 @@ func metricFor(reg *registry.Registry, id, status string, now int64) resourceMet
 	return m
 }
 
+func diskMetricsFor(reg *registry.Registry, status string, now int64) []diskMetric {
+	out := []diskMetric{}
+	for _, c := range reg.Charts() {
+		if c.Context != "disk.space" {
+			continue
+		}
+		m := diskMetric{Mount: c.Family, State: "unavailable"}
+		at, values := c.LatestValues()
+		m.At = at
+		if at <= 0 {
+			out = append(out, m)
+			continue
+		}
+		// Disks sample every ~15s but inherit the host update frequency, so they
+		// age on a wider window than CPU/memory charts.
+		if status != hub.StatusLive || now-at > int64(max(60, c.UpdateEvery*3)) || at > now+5 {
+			m.State = "stale"
+			out = append(out, m)
+			continue
+		}
+		used, ok := values["used"]
+		total := 0.0
+		for _, d := range c.Dims() {
+			v, present := values[d.ID]
+			if !present || finiteValue(v) == nil || v < 0 {
+				ok = false
+				break
+			}
+			total += v
+		}
+		if ok && total > 0 {
+			// Linux reports used+avail, FreeBSD adds reserved; both sum to total.
+			if value := used / total * 100; finiteValue(value) != nil && value >= 0 && value <= 100.01 {
+				m.Value, m.State = finiteValue(math.Min(value, 100)), "fresh"
+			}
+		}
+		out = append(out, m)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if (a.Value == nil) != (b.Value == nil) {
+			return a.Value != nil
+		}
+		if a.Value != nil && *a.Value != *b.Value {
+			return *a.Value > *b.Value
+		}
+		return a.Mount < b.Mount
+	})
+	return out
+}
+
 func problemID(node string, a health.Alarm) string {
 	// Confirmation belongs to one severity transition, never the name forever.
 	// Recovery/retrigger and escalation demand a new acknowledgement.
@@ -197,12 +256,13 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 	request.URL = &u
 	infos := s.nodesPayload(request, 1)["nodes"].([]hub.Info)
 	for _, inf := range infos {
-		n := operationsNode{Info: inf, CPU: resourceMetric{State: "unavailable"}, Memory: resourceMetric{State: "unavailable"}, AlarmCoverage: "unknown"}
+		n := operationsNode{Info: inf, CPU: resourceMetric{State: "unavailable"}, Memory: resourceMetric{State: "unavailable"}, Disks: []diskMetric{}, AlarmCoverage: "unknown"}
 		var alarms []health.Alarm
 		v, ok := s.resolve(inf.ID)
 		if ok {
 			n.CPU = metricFor(v.reg, "system.cpu", inf.Status, now)
 			n.Memory = metricFor(v.reg, "system.ram", inf.Status, now)
+			n.Disks = diskMetricsFor(v.reg, inf.Status, now)
 			if inf.Local {
 				n.LastData = max(n.CPU.At, n.Memory.At)
 				if s.opt.Health != nil {

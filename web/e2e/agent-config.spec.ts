@@ -12,19 +12,19 @@ test('admin edits the local config file and keeps invalid yaml off disk', async 
 
   await page.goto('/?token=' + token)
   await page.getByRole('button', { name: '配置' }).click()
-  const editor = page.getByRole('textbox', { name: '本机配置 YAML' })
+  const editor = page.getByRole('textbox', { name: '本机配置内容' })
   await expect(editor).toBeVisible()
   const original = await editor.inputValue()
   await editor.fill('web: [')
-  await page.getByRole('button', { name: '保存配置' }).click()
+  await page.getByRole('button', { name: '保存本机配置' }).click()
   await expect(page.getByRole('alert')).toContainText('invalid config')
   const unchanged = await (await request.get('/api/v1/manage/config', { headers })).json()
   expect(unchanged.yaml).toBe(original)
 
   const next = original.endsWith('\n') ? `${original}# e2e-agent-config\n` : `${original}\n# e2e-agent-config\n`
   await editor.fill(next)
-  await page.getByRole('button', { name: '保存配置' }).click()
-  await expect(page.getByText('已写入配置文件')).toBeVisible()
+  await page.getByRole('button', { name: '保存本机配置' }).click()
+  await expect(page.getByText('配置已保存并校验通过。重启服务后生效。')).toBeVisible()
   const saved = await (await request.get('/api/v1/manage/config', { headers })).json()
   expect(saved.yaml).toContain('# e2e-agent-config')
   await request.put('/api/v1/manage/config', { headers, data: { yaml: original } })

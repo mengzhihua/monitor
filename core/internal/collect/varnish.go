@@ -104,7 +104,9 @@ func (v *varnishCollector) stats(ctx context.Context) (map[string]float64, error
 		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			cctx, cancel := context.WithTimeout(ctx, v.cfg.Timeout)
 			defer cancel()
-			return exec.CommandContext(cctx, name, args...).Output()
+			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
+			return cmd.Output()
 		}
 	}
 	out, err := run(ctx, v.cfg.Command, "-j")

@@ -236,10 +236,8 @@ func (s *session) serve() {
 	if err := s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())}); err != nil {
 		return
 	}
-	if s.n.opt.NodeConfig != nil {
-		if disabled := s.n.opt.NodeConfig(node.ID); len(disabled) > 0 {
-			_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: disabled})
-		}
+	if c := s.n.opt.configFor(node.ID); c != nil && (len(c.Disabled) > 0 || c.YAML != "") {
+		_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: c.Disabled, ConfigYAML: c.YAML, ConfigRev: c.Updated})
 	}
 	s.n.log.Info("hub: node connected", "node", node.ID, "hostname", node.Host.Hostname, "from", s.remote, "charts", len(last))
 
@@ -398,6 +396,10 @@ func (s *session) handle(node *Node, f stream.Frame) {
 		}
 	case stream.TypeFuncResult, stream.TypeQueryResult:
 		node.deliverResult(f)
+	case stream.TypeConfigState:
+		if s.n.opt.OnConfigState != nil {
+			s.n.opt.OnConfigState(node.ID, f)
+		}
 	default:
 		s.n.log.Debug("hub: unknown frame", "node", node.ID, "type", f.Type)
 	}

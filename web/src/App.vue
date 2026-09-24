@@ -11,8 +11,8 @@ import FunctionsPanel from './components/FunctionsPanel.vue'
 import LogsPanel from './components/LogsPanel.vue'
 import WeightsPanel from './components/WeightsPanel.vue'
 import HubPanel from './components/HubPanel.vue'
-import AgentConfigPanel from './components/AgentConfigPanel.vue'
 import CloudPanel from './components/CloudPanel.vue'
+import ConfigPanel from './components/ConfigPanel.vue'
 import ContextsPanel from './components/ContextsPanel.vue'
 import DashboardsPanel from './components/DashboardsPanel.vue'
 import ChartTimeline from './components/ChartTimeline.vue'
@@ -57,8 +57,8 @@ const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
 const showHub = ref(false)
-const showAgentConfig = ref(false)
 const showCloud = ref(false)
+const showConfig = ref(false)
 const showContexts = ref(false)
 const dashboardView = ref('all')
 const oidcAvailable = ref(false)
@@ -79,6 +79,9 @@ function toggleNodeMenu() { nodeMenuOpen.value = !nodeMenuOpen.value }
 function closeNodeMenu() { nodeMenuOpen.value = false }
 function pickNode(id: string) { closeNodeMenu(); void selectNode(id) }
 const isHub = computed(() => info.value?.mode === 'hub')
+// The log panel needs the node's `logs` function; the local host always has
+// the standalone query fallback, and an empty list just means "still loading".
+const logsAvailable = computed(() => !selectedNode.value || !functions.value.length || functions.value.some((f) => f.name === 'logs'))
 const currentNode = computed(() => nodes.value.find((n) => n.id === selectedNode.value) ?? null)
 /** Remote nodes have no local health engine; their alarms are mirrored from the agent. */
 const healthOn = computed(() => (selectedNode.value ? true : info.value?.alarms != null))
@@ -123,6 +126,18 @@ async function refreshNodes(signal: AbortSignal) {
     nodes.value = result.nodes
     if (selectedNode.value && !nodes.value.some((n) => n.id === selectedNode.value)) await selectNode('')
   } catch { /* transient */ }
+}
+
+/** Forget an offline node on the hub: metadata and history are dropped server-side. */
+async function forgetNode(n: NodeInfo) {
+  if (!confirm(`确定删除离线节点「${n.hostname}」吗？该节点的图表与历史数据将一并删除，且不可恢复。`)) return
+  try {
+    await api.forgetNode(n.id)
+    error.value = ''
+    await refreshNodes(new AbortController().signal)
+  } catch (e) {
+    error.value = `删除节点失败：${e instanceof Error ? e.message : String(e)}`
+  }
 }
 
 /** Switch the whole dashboard (charts, alarms, functions, live socket) to another node. */
@@ -175,7 +190,7 @@ async function load(signal: AbortSignal) {
       alarms.value = []
       alarmLog.value = []
       functions.value = []
-      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showAgentConfig.value = false
+      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = false
       error.value = ''
       return
     }
@@ -301,10 +316,10 @@ onBeforeUnmount(() => {
       </button>
       <button v-if="functions.length" class="alarms-btn" :class="{ open: showFunctions }" @click="showFunctions = !showFunctions"
         title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
-      <button class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
-      <button v-if="info?.user?.role === 'admin' && !selectedNode" class="alarms-btn" :class="{ open: showAgentConfig }" @click="showAgentConfig = !showAgentConfig" title="本机配置与重启">配置</button>
+      <button v-if="logsAvailable" class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showCloud }" @click="showCloud = !showCloud" title="Cloud 控制台">Cloud</button>
+      <button v-if="info?.user?.role === 'admin'" class="alarms-btn" :class="{ open: showConfig }" @click="showConfig = !showConfig" title="配置：本机与节点">配置</button>
       <button class="alarms-btn" :class="{ open: showWeights }" @click="showWeights = !showWeights" title="异常顾问 / 关联分析">Σ</button>
       <button class="alarms-btn" :class="{ open: showContexts }" @click="showContexts = !showContexts" title="Context 总览">Ctx</button>
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
@@ -345,11 +360,13 @@ onBeforeUnmount(() => {
 
     <main>
       <div v-if="isHub && workspace === 'charts'" class="node-overview" aria-label="节点健康总览">
-        <button v-for="n in nodes" :key="n.id" @click="selectNode(n.id)" :class="['node-card', n.status]">
+        <div v-for="n in nodes" :key="n.id" :class="['node-card', n.status]" role="button" tabindex="0"
+          @click="selectNode(n.id)" @keydown.enter.prevent="selectNode(n.id)" @keydown.space.prevent="selectNode(n.id)">
           <b>{{ n.hostname }}</b><span>{{ n.status === 'live' ? '在线' : n.status === 'stale' ? '数据过期' : '离线' }}</span>
           <small>{{ n.charts_count }} 图表 · {{ n.alarms?.critical || 0 }} 严重告警{{ n.replica ? ' · 副本' : '' }}</small>
           <small v-if="n.last_data">最后数据：{{ new Date(n.last_data * 1000).toLocaleString() }}</small>
-        </button>
+          <button v-if="n.status === 'offline' && !n.local" class="node-del" @click.stop="forgetNode(n)">删除节点</button>
+        </div>
       </div>
       <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
@@ -360,8 +377,8 @@ onBeforeUnmount(() => {
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
-      <AgentConfigPanel v-if="showAgentConfig && info?.user?.role === 'admin' && !selectedNode" @close="showAgentConfig = false" />
       <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showCloud = false }" />
+      <ConfigPanel v-if="showConfig && info?.user?.role === 'admin'" :can-manage="info?.user?.role === 'admin'" :is-hub="isHub" @close="showConfig = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>请输入登录密码或访问令牌。</p>
         <p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>
@@ -404,6 +421,9 @@ onBeforeUnmount(() => {
 .node-overview { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
 .node-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px; background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:12px; cursor:pointer; }
 .node-card.stale, .node-card.offline { border-color:#f59e0b; }
+.node-card:focus-visible { outline: 2px solid #2dd4bf; }
+.node-del { background:#7f1d1d; color:#fecaca; border:1px solid #b91c1c; border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+.node-del:hover { background:#991b1b; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 16px; background: #0b1120; border-bottom: 1px solid #1e293b; position: sticky; top: 0; z-index: 10; }
 .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
 .logo { color: #22c55e; }

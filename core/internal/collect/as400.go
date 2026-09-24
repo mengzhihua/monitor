@@ -149,6 +149,7 @@ func (a *as400Collector) execSQL(ctx context.Context, sql string) ([]byte, error
 	cctx, cancel := context.WithTimeout(ctx, a.cfg.Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, a.cfg.Command, a.isqlArgs()...)
+	cmd.WaitDelay = execWaitDelay
 	cmd.Stdin = strings.NewReader(sql)
 	return cmd.Output()
 }

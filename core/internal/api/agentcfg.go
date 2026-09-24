@@ -13,12 +13,15 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/config"
 )
 
-const agentConfigMax = 1 << 20
+const agentConfigMax = maxConfigYAML
 
 type agentConfigResponse struct {
 	Path     string `json:"path"`
 	YAML     string `json:"yaml"`
 	Writable bool   `json:"writable"`
+	Updated  int64  `json:"updated"`
+	Size     int    `json:"size"`
+	Backup   string `json:"backup,omitempty"`
 }
 
 func (s *Server) allowLocalAgentManage(w http.ResponseWriter, r *http.Request) bool {
@@ -39,6 +42,8 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.allowLocalAgentManage(w, r) {
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	if s.opt.ConfigPath == "" {
 		if r.Method == http.MethodGet {
 			writeJSON(w, agentConfigResponse{})
@@ -53,16 +58,21 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "read agent config failed", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: yaml, Writable: true})
+		writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: yaml, Writable: true, Updated: configFileMTime(s.opt.ConfigPath), Size: len(yaml)})
 		return
 	}
 	var body struct {
-		YAML string `json:"yaml"`
+		YAML      string `json:"yaml"`
+		IfUpdated *int64 `json:"if_updated"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, agentConfigMax+4096))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil || dec.Decode(new(any)) != io.EOF {
 		http.Error(w, "invalid config request", http.StatusBadRequest)
+		return
+	}
+	if body.IfUpdated != nil && *body.IfUpdated != configFileMTime(s.opt.ConfigPath) {
+		http.Error(w, "config changed since read", http.StatusConflict)
 		return
 	}
 	if err := writeAgentConfig(s.opt.ConfigPath, body.YAML); err != nil {
@@ -75,7 +85,7 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "write agent config failed", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: body.YAML, Writable: true})
+	writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: body.YAML, Writable: true, Updated: configFileMTime(s.opt.ConfigPath), Size: len(body.YAML), Backup: s.opt.ConfigPath + ".bak"})
 }
 
 func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +98,7 @@ func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, map[string]string{"status": "restarting"})
+	writeJSON(w, map[string]any{"status": "restarting", "ok": true})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -128,6 +138,29 @@ func writeAgentConfig(path, yaml string) error {
 	if len(yaml) > agentConfigMax {
 		return &configValidateError{err: errors.New("yaml is too large")}
 	}
+	if _, err := config.Parse([]byte(yaml)); err != nil {
+		return &configValidateError{err: err}
+	}
+	if old, err := os.ReadFile(path); err == nil {
+		if err := writePrivateConfig(path+".bak", string(old)); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writePrivateConfig(path, yaml)
+}
+
+// configFileMTime returns Unix microseconds: detect edits within the same second
+// while retaining exact integer precision in browser clients. Zero means absent.
+func configFileMTime(path string) int64 {
+	if info, err := os.Stat(path); err == nil {
+		return info.ModTime().UnixMicro()
+	}
+	return 0
+}
+
+func writePrivateConfig(path, yaml string) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".monitor-config-*")
 	if err != nil {
@@ -154,9 +187,6 @@ func writeAgentConfig(path, yaml string) error {
 	}
 	if err := f.Close(); err != nil {
 		return err
-	}
-	if _, err := config.Load(tmp); err != nil {
-		return &configValidateError{err: err}
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return err
