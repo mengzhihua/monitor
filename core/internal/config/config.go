@@ -141,14 +141,18 @@ type Plugins struct {
 
 // Health configures the alarm engine and notification channels.
 type Health struct {
-	Enabled *bool                      `yaml:"enabled"`  // default true
-	Dir     string                     `yaml:"dir"`      // extra rule files (*.yaml), relative to the config file
-	Builtin *bool                      `yaml:"builtin"`  // load the rules shipped with the agent (default true)
-	LogKeep int                        `yaml:"log_keep"` // alarm log entries kept in memory
-	Silent  bool                       `yaml:"silent"`   // evaluate but never notify
-	Notify  Notify                     `yaml:"notify"`
-	Alarms  []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
-	Windows []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
+	Enabled          *bool                      `yaml:"enabled"`            // default true
+	Dir              string                     `yaml:"dir"`                // extra rule files (*.yaml), relative to the config file
+	Builtin          *bool                      `yaml:"builtin"`            // load the rules shipped with the agent (default true)
+	LogKeep          int                        `yaml:"log_keep"`           // alarm log entries kept in memory
+	Silent           bool                       `yaml:"silent"`             // evaluate but never notify
+	InhibitSameChart *bool                      `yaml:"inhibit_same_chart"` // nil = suppress warnings while the same chart is critical
+	GroupWait        string                     `yaml:"group_wait"`         // hold same-chart notifications, e.g. 10s; empty = off
+	EscalateAfter    string                     `yaml:"escalate_after"`     // critical repeats change recipient after this, e.g. 15m
+	EscalateTo       string                     `yaml:"escalate_to"`
+	Notify           Notify                     `yaml:"notify"`
+	Alarms           []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
+	Windows          []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
 }
 
 // Notify holds the notification channels; a channel is active when its

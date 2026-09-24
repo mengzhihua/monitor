@@ -6,8 +6,8 @@
 
 | 官方参考 | 借鉴的能力 | 本轮落地 | 后续范围 |
 | --- | --- | --- | --- |
-| [Netdata 节点状态](https://learn.netdata.cloud/docs/netdata-cloud/node-states-and-transitions) | 集中观察主机在线、过期、离线及数据可用性 | 单机/Hub 总览、节点资源卡片、采样时间、缺失值和过期提示、跨节点问题列表 | 更大规模节点的服务端分页、跨 Hub 告警联合查询 |
-| [Grafana 告警分组](https://grafana.com/docs/grafana/latest/alerting/monitor-status/view-active-notifications/) | 按条件筛选与聚合问题，降低处置负担 | 严重级别、连接状态、待确认筛选；按 family 统计；保存个人视图 | 通知抑制依赖、分组通知策略、通知送达追踪 |
+| [Netdata 节点状态](https://learn.netdata.cloud/docs/netdata-cloud/node-states-and-transitions) | 集中观察主机在线、过期、离线及数据可用性 | 单机/Hub 总览、节点资源卡片、采样时间、缺失值和过期提示、跨节点问题列表；`limit` 服务端窗口（概况数字仍是全局） | 跨 Hub 告警联合查询 |
+| [Grafana 告警分组](https://grafana.com/docs/grafana/latest/alerting/monitor-status/view-active-notifications/) | 按条件筛选与聚合问题，降低处置负担 | 严重级别、连接状态、待确认筛选；按 family 统计；保存个人视图；同图表严重告警抑制警告；`group_wait` 合并同图表通知；严重重复提醒可改投 `escalate_to` | 通知送达追踪 |
 | [Zabbix 问题确认](https://www.zabbix.com/documentation/7.4/en/manual/acknowledgment) | 确认、备注与处理历史 | 多用户确认/撤销/备注、责任人指派、处理进度、操作者记录、并发冲突检测、重启读取持久记录 | 升级值班表、工单系统集成 |
 | [Datadog Dashboard](https://docs.datadoghq.com/dashboards/) | 汇总关键指标、筛选并进入细节 | CPU/内存资源视图、节点/图表跳转、JSON 快照导出、个人看板分组/顺序/列数配置、历史时段对比 | 自由拖拽布局、SLO/错误预算、分布式追踪与服务依赖图 |
 

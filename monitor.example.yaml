@@ -692,6 +692,10 @@ health:
   dir: health.d        # extra *.yaml rule files, relative to this config file; same name overrides a built-in
   log_keep: 1000       # alarm log entries kept in memory (full history in <data_dir>/health/alarm-log.jsonl)
   silent: false        # true = evaluate and log, but never notify
+  inhibit_same_chart: true # warnings on a chart stay quiet while that chart has a critical alarm
+  group_wait: ""       # e.g. 10s holds same-chart notifications and sends one
+  escalate_after: ""   # e.g. 15m; critical repeats then use escalate_to
+  escalate_to: ""      # notify role from notify.roles
   windows: []          # recurring maintenance calendar, e.g. [{ start: "22:00", end: "06:00", weekdays: [sat, sun] }]
   alarms: []           # inline rules, e.g.
   # - name: ram_in_use

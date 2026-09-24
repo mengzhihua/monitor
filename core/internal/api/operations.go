@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,19 @@ type problem struct {
 	Handling   operations.Record `json:"handling"`
 }
 
+type operationsFamily struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// operationsPage is set when the client asks for a window. Summary stays global.
+type operationsPage struct {
+	Limit           int                `json:"limit"`
+	NodesMatched    int                `json:"nodes_matched"`
+	ProblemsMatched int                `json:"problems_matched"`
+	Families        []operationsFamily `json:"families"`
+}
+
 type operationsSnapshot struct {
 	CurrentUser User                `json:"current_user"`
 	Assignees   []User              `json:"assignees"`
@@ -59,6 +73,7 @@ type operationsSnapshot struct {
 	Problems    []problem           `json:"problems"`
 	Summary     map[string]int      `json:"summary"`
 	Persistent  bool                `json:"persistent"`
+	Page        *operationsPage     `json:"page,omitempty"`
 }
 
 // Static operators plus the caller's federated identity. Never expose tokens
@@ -218,6 +233,9 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 			if p.Handling.Assignee == "" {
 				out.Summary["unassigned"]++
 			}
+			if p.Handling.Assignee != "" && p.Handling.Assignee == out.CurrentUser.Name {
+				out.Summary["mine"]++
+			}
 			out.Summary[p.Handling.Status]++
 		}
 	}
@@ -240,7 +258,127 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 
 func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, s.operationsSnapshot(r))
+	snap := s.operationsSnapshot(r)
+	limit, ok := operationsLimit(r)
+	if !ok {
+		http.Error(w, "invalid limit", 400)
+		return
+	}
+	if limit > 0 {
+		snap = pageOperations(snap, r, limit)
+	}
+	writeJSON(w, snap)
+}
+
+func operationsLimit(r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 200 {
+		return 0, false
+	}
+	return n, true
+}
+
+func pageOperations(snap operationsSnapshot, r *http.Request, limit int) operationsSnapshot {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	nodeStatus := r.URL.Query().Get("node_status")
+	if nodeStatus == "" {
+		nodeStatus = "all"
+	}
+	severity := r.URL.Query().Get("severity")
+	if severity == "" {
+		severity = "all"
+	}
+	owner := r.URL.Query().Get("owner")
+	if owner == "" {
+		owner = "all"
+	}
+	progress := r.URL.Query().Get("progress")
+	if progress == "" {
+		progress = "all"
+	}
+	pending := r.URL.Query().Get("pending") == "1"
+	me := snap.CurrentUser.Name
+	nodes := make([]operationsNode, 0, len(snap.Nodes))
+	for _, n := range snap.Nodes {
+		if nodeStatus != "all" && n.Status != nodeStatus {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(n.Hostname+" "+n.ID+" "+n.OS+" "+fmt.Sprint(n.Labels)), q) {
+			continue
+		}
+		nodes = append(nodes, n)
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		ci, cj := nodes[i].Alarms["critical"], nodes[j].Alarms["critical"]
+		if ci != cj {
+			return ci > cj
+		}
+		return nodes[i].Hostname < nodes[j].Hostname
+	})
+	problems := make([]problem, 0, len(snap.Problems))
+	families := map[string]int{}
+	for _, p := range snap.Problems {
+		if severity != "all" && p.Severity != severity {
+			continue
+		}
+		if nodeStatus != "all" && p.NodeStatus != nodeStatus {
+			continue
+		}
+		if pending && p.Handling.Acknowledged {
+			continue
+		}
+		switch owner {
+		case "mine":
+			if p.Handling.Assignee == "" || p.Handling.Assignee != me {
+				continue
+			}
+		case "unassigned":
+			if p.Handling.Assignee != "" {
+				continue
+			}
+		case "assigned":
+			if p.Handling.Assignee == "" {
+				continue
+			}
+		}
+		if progress != "all" && p.Handling.Status != progress {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(p.Hostname+" "+p.Node+" "+p.Name+" "+p.Chart+" "+p.Family+" "+p.Info+" "+p.Handling.Assignee), q) {
+			continue
+		}
+		problems = append(problems, p)
+		family := p.Family
+		if family == "" {
+			family = "其他"
+		}
+		families[family]++
+	}
+	page := &operationsPage{Limit: limit, NodesMatched: len(nodes), ProblemsMatched: len(problems), Families: []operationsFamily{}}
+	for name, count := range families {
+		page.Families = append(page.Families, operationsFamily{Name: name, Count: count})
+	}
+	sort.Slice(page.Families, func(i, j int) bool {
+		if page.Families[i].Count != page.Families[j].Count {
+			return page.Families[i].Count > page.Families[j].Count
+		}
+		return page.Families[i].Name < page.Families[j].Name
+	})
+	if len(page.Families) > 8 {
+		page.Families = page.Families[:8]
+	}
+	if len(nodes) > limit {
+		nodes = nodes[:limit]
+	}
+	if len(problems) > limit {
+		problems = problems[:limit]
+	}
+	snap.Nodes, snap.Problems, snap.Page = nodes, problems, page
+	return snap
 }
 
 func (s *Server) handleAcknowledgement(w http.ResponseWriter, r *http.Request) {

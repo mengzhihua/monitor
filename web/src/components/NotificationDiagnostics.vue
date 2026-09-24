@@ -34,6 +34,7 @@ const limit = ref(20)
 const outcomes: Record<string, string> = { accepted: '通道接受', failed: '发送失败', suppressed: '已抑制', unrouted: '无匹配通道', dropped: '队列已满' }
 const reasons: Record<string, string> = {
   maintenance: '维护窗口', planned_maintenance: '计划维护窗口', global_silence: '全局静默', alarm_silence: '单条告警静默', silent_recipient: '规则指定静默',
+  inhibited: '同图表的严重告警已抑制这条警告', grouped: '已并入同图表的一条通知',
   no_channel: '没有配置通道或路由未匹配', queue_full: '队列已满，本次未发送', http_status: 'HTTP 拒绝',
   timeout: '请求超时', canceled: '请求取消', network: '网络或 TLS 连接失败', provider_error: '通道配置或协议错误',
 }
