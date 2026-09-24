@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../state/app_state.dart';
+import '../widgets/agent_config_view.dart';
 import '../widgets/alarms_view.dart';
 import '../widgets/charts_view.dart';
 import '../widgets/functions_view.dart';
@@ -56,6 +57,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final info = st.info!;
     final node = st.currentNode;
     final title = node?.hostname ?? info.hostname;
+    final showConfig = info.role == 'admin' && (st.selectedNode == 'local' || st.selectedNode.isEmpty);
+    final tab = showConfig || _tab < 4 ? _tab : 3;
     final pages = [
       ChartsView(
           key: ValueKey('charts:${st.selectedNode}'),
@@ -76,7 +79,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           key: ValueKey('ops:${st.selectedNode}'),
           client: st.client!,
           canHandle: info.role == 'admin' || info.role == 'troubleshooter',
-          active: _visible && _tab == 3),
+          active: _visible && tab == 3),
+      if (showConfig)
+        AgentConfigView(key: const ValueKey('agent-config'), client: st.client!),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -102,11 +107,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
-          Expanded(child: IndexedStack(index: _tab, children: pages)),
+          Expanded(child: IndexedStack(index: tab, children: pages)),
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
+        selectedIndex: tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: [
           const NavigationDestination(
@@ -119,6 +124,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               icon: Icon(Icons.table_rows), label: 'Functions'),
           const NavigationDestination(
               icon: Icon(Icons.assignment_outlined), label: 'Ops'),
+          if (showConfig)
+            const NavigationDestination(icon: Icon(Icons.tune), label: 'Config'),
         ],
       ),
     );

@@ -290,6 +290,19 @@ func run() error {
 		apiOpt.LDAP = &api.LDAPConfig{URL: cfg.Web.LDAP.URL, UserDN: cfg.Web.LDAP.UserDN,
 			BindDN: cfg.Web.LDAP.BindDN, BindPass: cfg.Web.LDAP.BindPass, Role: cfg.Web.LDAP.Role}
 	}
+	cfgAbs, err := filepath.Abs(*cfgPath)
+	if err != nil {
+		return err
+	}
+	restartReq := make(chan struct{}, 1)
+	apiOpt.ConfigPath = cfgAbs
+	apiOpt.RequestRestart = func() error {
+		select {
+		case restartReq <- struct{}{}:
+		default:
+		}
+		return nil
+	}
 	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {
 		return err
@@ -372,9 +385,14 @@ func run() error {
 	}()
 
 	var runErr error
+	restarting := false
 	select {
 	case <-ctx.Done():
 		log.Info("shutting down")
+	case <-restartReq:
+		restarting = true
+		stop()
+		log.Info("restart requested")
 	case runErr = <-errc:
 		stop()
 		log.Error("web server failed", "err", runErr)
@@ -405,6 +423,16 @@ func run() error {
 	}
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)
+	}
+	if restarting && runErr == nil {
+		if err := lock.Close(); err != nil {
+			log.Error("release data lock", "err", err)
+		}
+		log.Info("re-executing monitord")
+		if err := reexec(); err != nil {
+			return err
+		}
+		return nil
 	}
 	return runErr
 }

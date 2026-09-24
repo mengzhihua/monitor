@@ -164,6 +164,12 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 
 结果包含 `id`、`event_id`、`at`、`name`、`chart`、`severity`、`repeat`、`channel`、`outcome`、`reason`、可选 `http_status` 及 `duration_ms`（仅通道调用耗时，不包含排队等待）。`id` 只在当前进程内递增；`in_flight` 还没有结果 ID。HTTP 错误为 `http_status`，其他错误为 `timeout / canceled / network / provider_error`；抑制原因为 `maintenance / global_silence / alarm_silence / silent_recipient`。健康引擎不存在时 `available=false` 且列表为空，不从零计数推断健康状态。
 
+## 本机配置与重启
+
+已登录的管理员可以在 Web 顶栏「配置」，或在 Flutter 客户端查看本机且角色为 admin 时打开 Config，读取并修改**当前连接的这台 monitord** 的配置文件，然后请求重启。只读、排障和匿名身份不能读取或写入。配置里有令牌和通知密钥，接口不向其他角色返回正文。
+
+`GET /api/v1/manage/config` 返回 `{path, yaml, writable}`。`PUT` 的正文是 `{yaml}`，最大约 1 MiB。服务端先把内容写到同目录临时文件并用配置加载器校验，通过后才以 0600 权限原子替换原文件；校验失败返回 400，原文件保持不变。空配置和未绑定配置文件不能写。`POST /api/v1/manage/restart` 在确认管理员身份后返回 202，进程先按原有路径关闭采集、健康引擎和数据库并释放数据目录锁，再重新执行当前程序。保存不会立刻改运行中的配置，重启后才会加载。这两条接口只作用于本机：带非 local 的 `node` 返回 400。Hub 上的「配置」改的是 Hub 自己的文件，不会下发到远端 Agent。原有 `GET /api/v1/agent/config` 仍是 Hub 下发给流式 Agent 的采集覆盖，不是这个文件编辑器。
+
 ## 计划维护窗口
 
 「运维总览 → 计划维护窗口」支持为**本机**预安排变更。只有已登录的管理员能创建和取消；只读、排障账号可以查看，匿名 API 和临时分享身份不能管理。本机健康引擎未启用时明确显示不可用。Hub 上的计划只影响 Hub 自身，不会向 Agent 下发或随图表节点选择切换。
