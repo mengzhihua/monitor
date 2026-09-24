@@ -88,3 +88,26 @@ func TestPushServiceEnvironmentReferences(t *testing.T) {
 		t.Setenv(key, "private-fixture")
 	}
 }
+
+func TestLoadStartupRestoresBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "monitor.yaml")
+	good := "global:\n  hostname: good\n"
+	if err := os.WriteFile(path+".bak", []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("web: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, raw, restored, err := LoadStartup(path)
+	if err != nil || !restored || raw != good || cfg.Global.Hostname != "good" {
+		t.Fatalf("restored=%v raw=%q host=%q err=%v", restored, raw, cfg.Global.Hostname, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != good {
+		t.Fatalf("file = %q %v", got, err)
+	}
+	if _, _, restored, err = LoadStartup(path); err != nil || restored {
+		t.Fatalf("second start restored=%v err=%v", restored, err)
+	}
+}

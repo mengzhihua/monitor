@@ -71,9 +71,12 @@ func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 	slog.SetDefault(log)
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, loadedYAML, restored, err := config.LoadStartup(*cfgPath)
 	if err != nil {
 		return err
+	}
+	if restored {
+		log.Warn("config file failed to load; restored the previous file", "path", *cfgPath)
 	}
 	if *listen != "" {
 		cfg.Web.Listen = *listen
@@ -296,6 +299,7 @@ func run() error {
 	}
 	restartReq := make(chan struct{}, 1)
 	apiOpt.ConfigPath = cfgAbs
+	apiOpt.ConfigLoaded = loadedYAML
 	apiOpt.RequestRestart = func() error {
 		select {
 		case restartReq <- struct{}{}:

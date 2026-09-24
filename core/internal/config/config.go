@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -336,6 +337,75 @@ func Load(path string) (*Config, error) {
 		c.Global.UpdateEvery = 3600
 	}
 	return c, nil
+}
+
+// LoadStartup reads path for process start. A missing file still returns defaults.
+// If path exists but cannot be loaded, and path.bak can, the backup is copied
+// back onto path and that config is used. The bad file is left only when no
+// backup loads. raw is the file content the process actually started from.
+func LoadStartup(path string) (c *Config, raw string, restored bool, err error) {
+	b, readErr := os.ReadFile(path)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			c, err = Load(path)
+			return c, "", false, err
+		}
+		return nil, "", false, readErr
+	}
+	c, err = Load(path)
+	if err == nil {
+		return c, string(b), false, nil
+	}
+	bak := path + ".bak"
+	if _, berr := Load(bak); berr != nil {
+		return nil, "", false, err
+	}
+	bb, rerr := os.ReadFile(bak)
+	if rerr != nil {
+		return nil, "", false, err
+	}
+	if rerr = replaceFile(path, bb); rerr != nil {
+		return nil, "", false, err
+	}
+	c, err = Load(path)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return c, string(bb), true, nil
+}
+
+func replaceFile(path string, body []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".monitor-config-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 // ParseSize parses "512MiB", "1GiB", "100MB", "1024" (bytes).

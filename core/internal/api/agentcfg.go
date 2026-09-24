@@ -16,9 +16,11 @@ import (
 const agentConfigMax = 1 << 20
 
 type agentConfigResponse struct {
-	Path     string `json:"path"`
-	YAML     string `json:"yaml"`
-	Writable bool   `json:"writable"`
+	Path            string `json:"path"`
+	YAML            string `json:"yaml"`
+	Writable        bool   `json:"writable"`
+	RestartRequired bool   `json:"restart_required"`
+	Backup          bool   `json:"backup"`
 }
 
 func (s *Server) allowLocalAgentManage(w http.ResponseWriter, r *http.Request) bool {
@@ -53,7 +55,7 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "read agent config failed", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: yaml, Writable: true})
+		writeJSON(w, s.agentConfigView(yaml))
 		return
 	}
 	var body struct {
@@ -75,7 +77,34 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "write agent config failed", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: body.YAML, Writable: true})
+	writeJSON(w, s.agentConfigView(body.YAML))
+}
+
+func (s *Server) handleManageConfigRollback(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.allowLocalAgentManage(w, r) {
+		return
+	}
+	if s.opt.ConfigPath == "" {
+		http.Error(w, "agent config file is not configured", http.StatusNotFound)
+		return
+	}
+	yaml, err := rollbackAgentConfig(s.opt.ConfigPath)
+	if err != nil {
+		var ve *configValidateError
+		if errors.As(err, &ve) {
+			http.Error(w, ve.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "no previous config", http.StatusNotFound)
+			return
+		}
+		s.log.Error("rollback agent config", "err", err)
+		http.Error(w, "rollback agent config failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, s.agentConfigView(yaml))
 }
 
 func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +115,12 @@ func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
 	if s.opt.RequestRestart == nil {
 		http.Error(w, "restart is not available", http.StatusNotFound)
 		return
+	}
+	if s.opt.ConfigPath != "" {
+		if _, err := config.Load(s.opt.ConfigPath); err != nil {
+			http.Error(w, "config on disk is not loadable", http.StatusConflict)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, map[string]string{"status": "restarting"})
@@ -100,6 +135,17 @@ func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
 			log.Error("agent restart", "err", err)
 		}
 	}()
+}
+
+func (s *Server) agentConfigView(yaml string) agentConfigResponse {
+	out := agentConfigResponse{Path: s.opt.ConfigPath, YAML: yaml, Writable: s.opt.ConfigPath != ""}
+	if s.opt.ConfigPath == "" {
+		return out
+	}
+	out.RestartRequired = yaml != s.opt.ConfigLoaded
+	_, err := os.Stat(s.opt.ConfigPath + ".bak")
+	out.Backup = err == nil
+	return out
 }
 
 func readAgentConfig(path string) (string, error) {
@@ -158,7 +204,66 @@ func writeAgentConfig(path, yaml string) error {
 	if _, err := config.Load(tmp); err != nil {
 		return &configValidateError{err: err}
 	}
+	if current, err := os.ReadFile(path); err == nil && string(current) != yaml {
+		if err := copyConfigFile(path+".bak", path); err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
+func rollbackAgentConfig(path string) (string, error) {
+	b, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		return "", err
+	}
+	if err := writeAgentConfig(path, string(b)); err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func copyConfigFile(dst, src string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if len(b) > agentConfigMax {
+		return errors.New("config file is too large")
+	}
+	f, err := os.CreateTemp(filepath.Dir(dst), ".monitor-config-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
 		return err
 	}
 	ok = true

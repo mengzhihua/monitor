@@ -174,3 +174,83 @@ func TestManageRestartCallsHook(t *testing.T) {
 		t.Fatalf("nil hook status %d", resp.StatusCode)
 	}
 }
+
+func TestManageConfigBackupRollbackAndRestartGuard(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "monitor.yaml")
+	original := "global:\n  hostname: before\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{}, 1)
+	ts, _ := newTestServer(t, Options{
+		ConfigPath:   path,
+		ConfigLoaded: original,
+		Token:        "admin-token",
+		RequestRestart: func() error {
+			called <- struct{}{}
+			return nil
+		},
+	})
+	put := func(body string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/manage/config", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer admin-token")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := put(`{"yaml":"global:\n  hostname: after\n"}`)
+	var out agentConfigResponse
+	if resp.StatusCode != 200 {
+		t.Fatalf("put %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !out.RestartRequired || !out.Backup {
+		t.Fatalf("after save: %+v", out)
+	}
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil || string(bak) != original {
+		t.Fatalf("backup = %q %v", bak, err)
+	}
+
+	if err := os.WriteFile(path, []byte("web: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/manage/restart", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("corrupt restart %d", resp.StatusCode)
+	}
+	select {
+	case <-called:
+		t.Fatal("restart ran for a config that does not load")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api/v1/manage/config/rollback", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("rollback %d", resp.StatusCode)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != original {
+		t.Fatalf("restored = %q %v", got, err)
+	}
+}

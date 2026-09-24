@@ -39,6 +39,8 @@ type Options struct {
 	TicketWebhook string // POST handling JSON after a successful save; empty = off
 	// ConfigPath is this process's monitor.yaml. Empty means the file API is read-only/unavailable.
 	ConfigPath string
+	// ConfigLoaded is the file body this process started with. It is compared to the file on disk.
+	ConfigLoaded string
 	// RequestRestart asks monitord to shut down and re-exec. Nil means restart is unavailable.
 	RequestRestart func() error
 	Version        string
@@ -251,6 +253,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/manage/health", s.handleManageHealth)
 	m.HandleFunc("GET /api/v1/manage/config", s.handleManageConfig)
 	m.HandleFunc("PUT /api/v1/manage/config", s.handleManageConfig)
+	m.HandleFunc("POST /api/v1/manage/config/rollback", s.handleManageConfigRollback)
 	m.HandleFunc("POST /api/v1/manage/restart", s.handleManageRestart)
 	m.HandleFunc("GET /api/v1/alarm_summary", s.handleAlarmSummary)
 	m.HandleFunc("POST /api/v1/share", s.handleShare)

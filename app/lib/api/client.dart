@@ -136,6 +136,20 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> rollbackAgentConfig() async {
+    final res = await _http
+        .post(
+          config.uri('/api/v1/manage/config/rollback'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: '{}',
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   Future<void> restartAgent() async {
     final res = await _http
         .post(

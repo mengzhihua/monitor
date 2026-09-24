@@ -17,6 +17,8 @@ class _AgentConfigViewState extends State<AgentConfigView> {
   String _notice = '';
   String _error = '';
   bool _writable = false;
+  bool _restartRequired = false;
+  bool _backup = false;
   bool _busy = false;
 
   @override
@@ -42,6 +44,8 @@ class _AgentConfigViewState extends State<AgentConfigView> {
       _path = (cfg['path'] as String?) ?? '';
       _yaml.text = (cfg['yaml'] as String?) ?? '';
       _writable = cfg['writable'] == true;
+      _restartRequired = cfg['restart_required'] == true;
+      _backup = cfg['backup'] == true;
     } on ApiException catch (e) {
       if (!mounted) return;
       _error = e.message;
@@ -60,7 +64,43 @@ class _AgentConfigViewState extends State<AgentConfigView> {
     try {
       await widget.client.saveAgentConfig(_yaml.text);
       if (!mounted) return;
+      _restartRequired = true;
+      _backup = true;
       _notice = '已写入配置文件。重启本机服务后才会生效。';
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _error = e.message;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _rollback() async {
+    if (!_backup || _busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('恢复上一份'),
+        content: const Text('用上一份配置覆盖当前文件。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('恢复')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = '';
+      _notice = '';
+    });
+    try {
+      final cfg = await widget.client.rollbackAgentConfig();
+      if (!mounted) return;
+      _yaml.text = (cfg['yaml'] as String?) ?? '';
+      _restartRequired = cfg['restart_required'] == true;
+      _backup = cfg['backup'] == true;
+      _notice = '已恢复上一份配置。';
     } on ApiException catch (e) {
       if (!mounted) return;
       _error = e.message;
@@ -111,6 +151,10 @@ class _AgentConfigViewState extends State<AgentConfigView> {
           const SizedBox(height: 8),
           Text(_error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
         ],
+        if (_restartRequired) ...[
+          const SizedBox(height: 8),
+          const Text('磁盘上的配置与当前进程不一致，重启后才会生效。'),
+        ],
         if (_notice.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(_notice),
@@ -126,6 +170,8 @@ class _AgentConfigViewState extends State<AgentConfigView> {
         Row(
           children: [
             FilledButton(onPressed: _writable && !_busy ? _save : null, child: const Text('保存配置')),
+            const SizedBox(width: 8),
+            OutlinedButton(onPressed: _backup && !_busy ? _rollback : null, child: const Text('恢复上一份')),
             const SizedBox(width: 8),
             OutlinedButton(onPressed: _busy ? null : _restart, child: const Text('重启服务')),
           ],
