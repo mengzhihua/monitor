@@ -70,7 +70,7 @@ type NotificationSnapshot struct {
 // Names are internal channel types, not arbitrary URLs or custom identifiers.
 func diagnosticChannel(name string) string {
 	switch name {
-	case "webhook", "slack", "email", "dingtalk", "wecom", "feishu", "telegram", "discord", "pagerduty", "push", "apns", "fcm", "huawei", "xiaomi", "sms":
+	case "webhook", "slack", "email", "dingtalk", "wecom", "feishu", "telegram", "discord", "pagerduty", "push", "apns", "fcm", "huawei", "xiaomi", "sms", "ntfy", "gotify", "bark":
 		return name
 	default:
 		return "custom"

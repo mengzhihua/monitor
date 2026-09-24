@@ -185,6 +185,24 @@ type Notify struct {
 		Secret        string `yaml:"secret"`
 		SecretEnv     string `yaml:"secret_env"`
 	} `yaml:"feishu"`
+	Ntfy struct {
+		URL      string `yaml:"url"`
+		Topic    string `yaml:"topic"`
+		TopicEnv string `yaml:"topic_env"`
+		Token    string `yaml:"token"`
+		TokenEnv string `yaml:"token_env"`
+	} `yaml:"ntfy"`
+	Gotify struct {
+		URL      string `yaml:"url"`
+		Token    string `yaml:"token"`
+		TokenEnv string `yaml:"token_env"`
+	} `yaml:"gotify"`
+	Bark struct {
+		URL          string `yaml:"url"`
+		DeviceKey    string `yaml:"device_key"`
+		DeviceKeyEnv string `yaml:"device_key_env"`
+		Group        string `yaml:"group"`
+	} `yaml:"bark"`
 	Telegram struct {
 		Token  string `yaml:"token"`
 		ChatID string `yaml:"chat_id"`
@@ -291,6 +309,10 @@ func Load(path string) (*Config, error) {
 		{"health.notify.email.password", &c.Health.Notify.Email.Password, c.Health.Notify.Email.PasswordEnv},
 		{"health.notify.feishu.webhook_url", &c.Health.Notify.Feishu.WebhookURL, c.Health.Notify.Feishu.WebhookURLEnv},
 		{"health.notify.feishu.secret", &c.Health.Notify.Feishu.Secret, c.Health.Notify.Feishu.SecretEnv},
+		{"health.notify.ntfy.topic", &c.Health.Notify.Ntfy.Topic, c.Health.Notify.Ntfy.TopicEnv},
+		{"health.notify.ntfy.token", &c.Health.Notify.Ntfy.Token, c.Health.Notify.Ntfy.TokenEnv},
+		{"health.notify.gotify.token", &c.Health.Notify.Gotify.Token, c.Health.Notify.Gotify.TokenEnv},
+		{"health.notify.bark.device_key", &c.Health.Notify.Bark.DeviceKey, c.Health.Notify.Bark.DeviceKeyEnv},
 	} {
 		if field.env == "" {
 			continue

@@ -45,6 +45,40 @@ health:
 
 飞书只将明确的 `code: 0`（兼容旧 `StatusCode: 0`）作为成功；空正文、缺少业务码、非法或超限 JSON 均为失败。钉钉、企业微信同样要求 `errcode: 0`。错误正文不进入诊断与分发日志，故障时请检查服务端配置及机器人平台设置。
 
+## ntfy、Gotify、Bark
+
+三种新增通道均支持自建服务。填写完整发送地址：ntfy 用服务根地址（不含主题），Gotify 用 `/message`，Bark 用 `/push`；反向代理前缀也需包含在地址中。它们默认不连接任何公共服务，不自动跟随重定向，地址中不能包含用户名、密码、查询参数或片段。接口必须直接返回成功 JSON，登录页面、空响应、缺少确认字段等均视为失败。
+
+```yaml
+health:
+  notify:
+    ntfy:
+      url: https://ntfy.example.com/
+      topic_env: MONITOR_NTFY_TOPIC
+      token_env: MONITOR_NTFY_TOKEN
+    gotify:
+      url: https://gotify.example.com/message
+      token_env: MONITOR_GOTIFY_TOKEN
+    bark:
+      url: https://bark.example.com/push
+      device_key_env: MONITOR_BARK_KEY
+      group: 运维告警
+    roles:
+      oncall: [email, feishu, ntfy, gotify, bark]
+```
+
+以上域名和环境变量名均为占位示例；在服务管理器中注入实际值并重启 monitord。也可用本机私有配置的 `topic`、`token`、`device_key` 字段，环境变量引用优先，引用不存在或为空时拒绝加载。部分填写的通道不会被静默忽略：缺少发送地址、主题、必需令牌或设备 Key 会阻止服务启动。
+
+| 通道 | 准备与认证 | 严重级别与成功条件 |
+| --- | --- | --- |
+| ntfy | 在客户端订阅相同服务和主题；需要认证时使用 Bearer token，无认证的自建服务可省略 `token_env`。主题限制为 1–64 个英文字母、数字、`_`、`-`。 | CRITICAL/WARNING/其他状态的优先级为 5/4/3；要求响应有消息 ID、`event: message` 且主题一致。 |
+| Gotify | 创建应用并使用应用令牌（不是客户端令牌），通过 `X-Gotify-Key` 请求头认证。 | CRITICAL/WARNING/其他状态优先级为 8/5/2；要求响应返回正整数消息 ID。 |
+| Bark | 从 Bark 客户端取得 Device Key，使用 JSON `/push`，Key 放在正文中；消息可按 `group` 分组，默认 Monitor。 | 严重级别与主机写入标题，不额外启用强提醒；要求响应 `code: 200`。 |
+
+普通告警、恢复通知和管理员测试都会使用同一发送器，配置的规则路由、静默、维护与重复提醒机制继续有效。手动测试仍会绕过静默/维护/规则路由，并遵守全局每 30 秒一次的限制。三种通道在网页中独立显示，支持筛选和管理员测试；主题、地址、令牌、设备 Key 与供应商响应正文均不暴露到诊断中。通道接受仅表示服务端确认，手机最终展示还取决于订阅、权限和客户端连接。
+
+协议依据：[ntfy JSON 发布说明](https://docs.ntfy.sh/publish/#publish-as-json)、[Gotify 推送说明](https://gotify.net/docs/pushmsg)、[Bark 官方 API](https://github.com/Finb/bark-server/blob/master/docs/API_V2.md)。
+
 ## 规则路由、恢复与重复提醒
 
 ```yaml
@@ -82,3 +116,5 @@ health:
 ## 本地验收
 
 执行 `make all` 后运行 `python3 scripts/verify-notification-services.py`。脚本只使用随机端口的本机 SMTP/HTTP 模拟服务、临时配置和数据，检查真实内存告警的邮件与飞书发送、签名、业务码失败、管理员测试、限流和秘密信息脱敏。它不连接真实邮箱或飞书，不代表真实账号、机器人权限或最终收件已经验收。
+
+运行 `python3 scripts/verify-push-services.py` 可验收 ntfy、Gotify、Bark：隔离的真实内存告警触发、环境变量认证、三个独立测试入口、HTTP 200 中的拒绝响应、权限/限流与日志脱敏。全部流量只到本机随机端口，不证明手机已真实收件。

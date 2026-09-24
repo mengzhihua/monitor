@@ -117,3 +117,23 @@ test('notification test controls require admin and confirm the destination', asy
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await panel.screenshot({ path: info.outputPath('notification-test-controls.png') })
 })
+
+
+test('new push channels expose distinct cards, filters and test destinations', async ({ page }) => {
+  await page.goto('/?token=browser-test-token')
+  const panel = page.getByRole('region', { name: '通知诊断' })
+  for (const [channel, label] of [['ntfy', 'ntfy'], ['gotify', 'Gotify'], ['bark', 'Bark']]) {
+    const card = panel.locator(`[data-notification-channel="${channel}"]`)
+    await expect(card).toContainText(label!)
+    await card.getByRole('button', { name: `测试 ${label}`, exact: true }).click()
+    const confirm = panel.getByRole('group', { name: '确认通知测试' })
+    await expect(confirm).toContainText(label!)
+    await confirm.getByRole('button', { name: '取消', exact: true }).click()
+  }
+  await panel.locator('.activity summary').click()
+  await panel.getByLabel('通知通道', { exact: true }).selectOption('bark')
+  await expect(panel).toContainText('当前筛选没有匹配结果')
+  await panel.locator('.setup summary').click()
+  await expect(panel).toContainText('device_key_env')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

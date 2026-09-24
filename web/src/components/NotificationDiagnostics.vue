@@ -12,7 +12,7 @@ const query = ref('')
 const testChannel = ref('')
 const testing = ref(false)
 const testMessage = ref('')
-const channelNames: Record<string, string> = { email: '邮件 SMTP', feishu: '飞书', wecom: '企业微信', dingtalk: '钉钉' }
+const channelNames: Record<string, string> = { email: '邮件 SMTP', feishu: '飞书', wecom: '企业微信', dingtalk: '钉钉', ntfy: 'ntfy', gotify: 'Gotify', bark: 'Bark' }
 async function sendTest() {
   if (!testChannel.value || testing.value) return
   testing.value = true
@@ -99,6 +99,7 @@ const refresh = usePolling(async signal => {
           <p>在服务端 monitor.yaml 的 health.notify 中配置并重启服务。配置成功后通道卡片会显示；只有管理员能发送测试消息。</p>
           <p>邮件：填写 email.server（SMTP 主机:端口）、from、to 收件人列表、username 和 password_env。587 端口推荐 tls_mode: starttls；465 端口使用 tls_mode: tls。</p>
           <p>飞书：创建群自定义机器人，设置 feishu.webhook_url_env；开启签名校验时同时设置 secret_env。对应环境变量需注入 monitord 进程。若设置关键词，须保证告警名称/说明和测试消息能匹配。</p>
+          <p>ntfy：设置 ntfy.url（服务根地址）、topic_env 和可选 token_env。Gotify：设置 gotify.url（以 /message 结尾）和 token_env。Bark：设置 bark.url（以 /push 结尾）和 device_key_env，可用 group 设置消息分组。三种通道均支持自建服务。</p>
           <p>也支持钉钉、企业微信、Slack 和通用 Webhook 等。通过 health.notify.roles 将告警规则的 to 角色映射到 email、feishu 等通道；不设置路由时发送至所有已配置通道。</p>
         </details>
         <details class="activity">
@@ -119,7 +120,7 @@ const refresh = usePolling(async signal => {
           </ol>
           <button v-if="rows.length > limit" @click="limit += 20">再显示 20 条通知结果</button>
         </details>
-        <p class="muted footer">失败通知不会自动重试。飞书、钉钉和企业微信同时校验 HTTP 与业务结果；其他 HTTP 通道以现有发送器的成功条件为准。通道接受不等于用户收件；接口和日志只提供安全错误分类。</p>
+        <p class="muted footer">失败通知不会自动重试。飞书、钉钉、企业微信、ntfy、Gotify 和 Bark 同时校验 HTTP 与接口确认结果；其他 HTTP 通道以现有发送器的成功条件为准。通道接受不等于用户收件；接口和日志只提供安全错误分类。</p>
       </template>
     </template>
   </section>

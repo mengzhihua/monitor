@@ -518,6 +518,27 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	if n.Feishu.WebhookURL != "" {
 		notifiers = append(notifiers, &health.ChatNotifier{Kind: "feishu", WebhookURL: n.Feishu.WebhookURL, Secret: n.Feishu.Secret})
 	}
+	if n.Ntfy.URL != "" || n.Ntfy.Topic != "" || n.Ntfy.Token != "" {
+		notifier := &health.NtfyNotifier{URL: n.Ntfy.URL, Topic: n.Ntfy.Topic, Token: n.Ntfy.Token}
+		if err := notifier.Validate(); err != nil {
+			return nil, fmt.Errorf("ntfy: %w", err)
+		}
+		notifiers = append(notifiers, notifier)
+	}
+	if n.Gotify.URL != "" || n.Gotify.Token != "" {
+		notifier := &health.GotifyNotifier{URL: n.Gotify.URL, Token: n.Gotify.Token}
+		if err := notifier.Validate(); err != nil {
+			return nil, fmt.Errorf("gotify: %w", err)
+		}
+		notifiers = append(notifiers, notifier)
+	}
+	if n.Bark.URL != "" || n.Bark.DeviceKey != "" {
+		notifier := &health.BarkNotifier{URL: n.Bark.URL, DeviceKey: n.Bark.DeviceKey, Group: n.Bark.Group}
+		if err := notifier.Validate(); err != nil {
+			return nil, fmt.Errorf("bark: %w", err)
+		}
+		notifiers = append(notifiers, notifier)
+	}
 	if n.Telegram.Token != "" && n.Telegram.ChatID != "" {
 		notifiers = append(notifiers, &health.TelegramNotifier{Token: n.Telegram.Token, ChatID: n.Telegram.ChatID})
 	}

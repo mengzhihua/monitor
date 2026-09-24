@@ -75,6 +75,7 @@ acceptance:
 	python3 scripts/verify-operations.py
 	python3 scripts/verify-notifications.py
 	python3 scripts/verify-notification-services.py
+	python3 scripts/verify-push-services.py
 	python3 scripts/verify-maintenance.py
 	python3 scripts/verify-durability.py
 	@if [ "$$(uname -s)" = "Darwin" ]; then \

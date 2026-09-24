@@ -732,6 +732,21 @@ health:
       webhook_url_env: "" # optional environment variable name, overrides webhook_url
       secret: ""         # optional robot signing secret
       secret_env: ""     # optional environment variable name, overrides secret
+    ntfy:
+      url: ""            # exact JSON publish URL: https://ntfy.example.com/ (server root, not topic URL)
+      topic: ""          # 1-64 ASCII letters/digits/_/-; may be a secret on public servers
+      topic_env: ""      # optional environment variable name, overrides topic
+      token: ""
+      token_env: ""      # optional bearer token environment variable name
+    gotify:
+      url: ""            # exact publish URL: https://gotify.example.com/message
+      token: ""          # application token
+      token_env: ""
+    bark:
+      url: ""            # exact publish URL: https://bark.example.com/push
+      device_key: ""
+      device_key_env: ""
+      group: Monitor
     telegram:
       token: ""          # Bot token from @BotFather
       chat_id: ""

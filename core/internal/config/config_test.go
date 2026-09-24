@@ -62,3 +62,29 @@ func TestNotificationSecretEnvironmentReferences(t *testing.T) {
 		t.Fatal("empty secret environment accepted")
 	}
 }
+
+func TestPushServiceEnvironmentReferences(t *testing.T) {
+	for _, key := range []string{"PUSH_TOPIC", "PUSH_TOKEN", "GOTIFY_TOKEN", "BARK_KEY"} {
+		t.Setenv(key, "private-fixture")
+	}
+	path := filepath.Join(t.TempDir(), "notify.yaml")
+	body := "health:\n  notify:\n    ntfy:\n      topic_env: PUSH_TOPIC\n      token_env: PUSH_TOKEN\n    gotify:\n      token_env: GOTIFY_TOKEN\n    bark:\n      device_key_env: BARK_KEY\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := c.Health.Notify
+	if n.Ntfy.Topic != "private-fixture" || n.Ntfy.Token != "private-fixture" || n.Gotify.Token != "private-fixture" || n.Bark.DeviceKey != "private-fixture" {
+		t.Fatal("push secret references not resolved")
+	}
+	for _, key := range []string{"PUSH_TOPIC", "PUSH_TOKEN", "GOTIFY_TOKEN", "BARK_KEY"} {
+		t.Setenv(key, "")
+		if _, err := Load(path); err == nil {
+			t.Fatal("empty referenced variable accepted")
+		}
+		t.Setenv(key, "private-fixture")
+	}
+}
