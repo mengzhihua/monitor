@@ -105,6 +105,7 @@ func (o *oracledbCollector) status(ctx context.Context) (map[string]float64, err
 			cctx, cancel := context.WithTimeout(ctx, o.cfg.Timeout)
 			defer cancel()
 			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
 			cmd.Stdin = strings.NewReader(oracledbSQL)
 			return cmd.Output()
 		}

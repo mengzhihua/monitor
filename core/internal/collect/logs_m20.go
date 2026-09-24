@@ -268,6 +268,7 @@ func queryUnified(q LogQuery) []LogRow {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "log", args...)
+	cmd.WaitDelay = execWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

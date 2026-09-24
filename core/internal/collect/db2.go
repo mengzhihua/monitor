@@ -141,6 +141,7 @@ func (d *db2Collector) status(ctx context.Context) (map[string]float64, error) {
 			cctx, cancel := context.WithTimeout(ctx, d.cfg.Timeout)
 			defer cancel()
 			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
 			cmd.Stdin = strings.NewReader(db2SQL)
 			return cmd.Output()
 		}

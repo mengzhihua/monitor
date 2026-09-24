@@ -95,7 +95,9 @@ func (l *lvmCollector) list(ctx context.Context) ([]lvmLV, error) {
 		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			cctx, cancel := context.WithTimeout(ctx, l.cfg.Timeout)
 			defer cancel()
-			return exec.CommandContext(cctx, name, args...).Output()
+			cmd := exec.CommandContext(cctx, name, args...)
+			cmd.WaitDelay = execWaitDelay
+			return cmd.Output()
 		}
 	}
 	out, err := run(ctx, l.cfg.Command, "--noheadings", "--units", "b", "--nosuffix",
