@@ -2,11 +2,13 @@ package collect
 
 import (
 	"context"
+	"math"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
@@ -36,6 +38,28 @@ func TestCPURawGuest(t *testing.T) {
 	}
 	if raw["user"] != wantUser || raw["nice"] != wantNice {
 		t.Fatalf("user/nice = %v/%v, want %v/%v", raw["user"], raw["nice"], wantUser, wantNice)
+	}
+}
+
+func TestLinuxRAMSamplesMovesShmemToUsed(t *testing.T) {
+	// Cached here is gopsutil's value: meminfo Cached plus SReclaimable.
+	vm := &mem.VirtualMemoryStat{Total: 1000, Free: 100, Buffers: 50, Cached: 400, Shared: 80}
+	free, used, cached, buffers := linuxRAMSamples(vm, 0)
+	if free != 100 || buffers != 50 || cached != 320 || used != 530 {
+		t.Fatalf("free=%v used=%v cached=%v buffers=%v", free, used, cached, buffers)
+	}
+	if math.Abs(free+used+cached+buffers-float64(vm.Total)) > 0.01 {
+		t.Fatal("ram parts do not add up to total")
+	}
+	// When shared memory is the entire cache, those bytes sit in used.
+	free, used, cached, buffers = linuxRAMSamples(&mem.VirtualMemoryStat{Total: 1000, Free: 100, Buffers: 50, Cached: 80, Shared: 80}, 0)
+	if cached != 0 || used != 850 || free != 100 || buffers != 50 {
+		t.Fatalf("full shmem cache: free=%v used=%v cached=%v buffers=%v", free, used, cached, buffers)
+	}
+	// KReclaimable beyond SReclaimable stays in cache.
+	free, used, cached, buffers = linuxRAMSamples(vm, 40)
+	if cached != 360 || used != 490 {
+		t.Fatalf("extra reclaim: used=%v cached=%v", used, cached)
 	}
 }
 
