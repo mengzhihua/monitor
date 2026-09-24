@@ -9,6 +9,25 @@ const error = ref('')
 const loading = ref(false)
 const loadedAt = ref(0)
 const query = ref('')
+const testChannel = ref('')
+const testing = ref(false)
+const testMessage = ref('')
+const channelNames: Record<string, string> = { email: '邮件 SMTP', feishu: '飞书', wecom: '企业微信', dingtalk: '钉钉' }
+async function sendTest() {
+  if (!testChannel.value || testing.value) return
+  testing.value = true
+  testMessage.value = ''
+  try {
+    await api.testNotification(testChannel.value)
+    testMessage.value = '测试已排队，请刷新最近通知结果查看发送结果。30 秒内不能重复测试。'
+    testChannel.value = ''
+    await refresh()
+  } catch (e) {
+    testMessage.value = e instanceof ApiError && e.status === 429 ? '测试过于频繁，请等待 30 秒后重试。'
+      : e instanceof ApiError && [401, 403].includes(e.status) ? '只有已登录的管理员可以发送测试消息。'
+      : '测试未能排队，请检查通道配置和服务状态。'
+  } finally { testing.value = false }
+}
 const outcome = ref('')
 const channel = ref('')
 const limit = ref(20)
@@ -63,12 +82,25 @@ const refresh = usePolling(async signal => {
         <p v-if="snapshot.in_flight" class="sending" role="status">正在调用 {{ snapshot.in_flight.channel }}：{{ snapshot.in_flight.name }} · {{ time(snapshot.in_flight.at) }} 开始</p>
         <div class="channels" v-if="snapshot.channels.length">
           <article v-for="c in snapshot.channels" :key="c.name" :data-notification-channel="c.name">
-            <div class="heading"><strong>{{ c.name }}</strong><span class="muted">{{ c.configured_count }} 个配置</span></div>
+            <div class="heading"><strong>{{ channelNames[c.name] || c.name }}</strong><span class="muted">{{ c.configured_count }} 个配置</span></div>
             <p>尝试 {{ c.attempts }} · 接受 {{ c.accepted }} · <span :class="{ bad: c.failed }">失败 {{ c.failed }}</span></p>
             <small>最近接受：{{ time(c.last_accepted) }}<br />最近失败：{{ time(c.last_failed) }}</small>
+            <button v-if="snapshot.can_test && !snapshot.closed" :disabled="testing" @click="testChannel = c.name; testMessage = ''">测试 {{ channelNames[c.name] || c.name }}</button>
           </article>
         </div>
         <p v-else class="notice">未配置通知通道。请在服务端 health.notify 中配置；规则静默、维护及路由也会影响发送。</p>
+        <div v-if="testChannel && snapshot.can_test" class="notice" role="group" aria-label="确认通知测试">
+          <p>将向本机 {{ channelNames[testChannel] || testChannel }} 的已配置收件人发送测试消息。此操作绕过静默、维护和规则路由，不改变真实告警；每 30 秒最多一次。</p>
+          <button :disabled="testing" @click="sendTest">{{ testing ? '排队中…' : '发送测试消息' }}</button>
+          <button :disabled="testing" @click="testChannel = ''">取消</button>
+        </div>
+        <p v-if="testMessage" role="status" class="notice">{{ testMessage }}</p>
+        <details class="setup"><summary>配置邮件、飞书等预警通道</summary>
+          <p>在服务端 monitor.yaml 的 health.notify 中配置并重启服务。配置成功后通道卡片会显示；只有管理员能发送测试消息。</p>
+          <p>邮件：填写 email.server（SMTP 主机:端口）、from、to 收件人列表、username 和 password_env。587 端口推荐 tls_mode: starttls；465 端口使用 tls_mode: tls。</p>
+          <p>飞书：创建群自定义机器人，设置 feishu.webhook_url_env；开启签名校验时同时设置 secret_env。对应环境变量需注入 monitord 进程。若设置关键词，须保证告警名称/说明和测试消息能匹配。</p>
+          <p>也支持钉钉、企业微信、Slack 和通用 Webhook 等。通过 health.notify.roles 将告警规则的 to 角色映射到 email、feishu 等通道；不设置路由时发送至所有已配置通道。</p>
+        </details>
         <details class="activity">
           <summary>最近通知结果 · {{ snapshot.recent.length }} 条</summary>
           <p class="muted">本次启动累计 {{ snapshot.total }} 条结果，保留最近 {{ snapshot.retention }} 条，重启后清空。一次事件可能产生多个通道结果；排队中及进行中的调用不在结果列表。延迟等待与被防抖消除的状态变化不计入这里。</p>
@@ -80,14 +112,14 @@ const refresh = usePolling(async signal => {
           <p v-if="!rows.length" class="muted">{{ snapshot.recent.length ? '当前筛选没有匹配结果。' : '本次启动暂无已完成的通知结果。' }}</p>
           <ol>
             <li v-for="r in rows.slice(0, limit)" :key="r.id" :data-notification-outcome="r.outcome">
-              <div class="heading"><strong>{{ r.name }}</strong><span class="badge" :class="r.outcome">{{ outcomes[r.outcome] || r.outcome }}</span></div>
+              <div class="heading"><strong>{{ r.test ? '[测试] ' : '' }}{{ r.name }}</strong><span class="badge" :class="r.outcome">{{ outcomes[r.outcome] || r.outcome }}</span></div>
               <p>{{ r.chart }} · {{ r.severity }} · {{ r.channel || '分发前' }}<span v-if="r.repeat"> · 重复提醒</span></p>
-              <p>{{ detail(r) }}</p><small>{{ time(r.at) }} · 告警事件 #{{ r.event_id }}<span v-if="r.channel"> · 耗时 {{ r.duration_ms }} ms</span></small>
+              <p>{{ detail(r) }}</p><small>{{ time(r.at) }}<span v-if="!r.test"> · 告警事件 #{{ r.event_id }}</span><span v-else> · 手动通道测试</span><span v-if="r.channel"> · 耗时 {{ r.duration_ms }} ms</span></small>
             </li>
           </ol>
           <button v-if="rows.length > limit" @click="limit += 20">再显示 20 条通知结果</button>
         </details>
-        <p class="muted footer">诊断不会自动重试失败通知，也不会发送测试消息。HTTP 通道成功仅表示请求返回 2xx，不验证响应中的业务码或最终收件状态；接口和日志只提供安全错误分类。</p>
+        <p class="muted footer">失败通知不会自动重试。飞书、钉钉和企业微信同时校验 HTTP 与业务结果；其他 HTTP 通道以现有发送器的成功条件为准。通道接受不等于用户收件；接口和日志只提供安全错误分类。</p>
       </template>
     </template>
   </section>
@@ -106,6 +138,7 @@ p { line-height:1.6; margin:8px 0; } .muted,small { color:#94a3b8; font-size:12p
 button,input,select { font:inherit; color:#e2e8f0; background:#1e293b; border:1px solid #475569; border-radius:6px; padding:8px 11px; max-width:100%; min-width:0; }
 button,summary { cursor:pointer; } button:disabled { opacity:.5; cursor:wait; }
 .filters { justify-content:flex-start; margin:12px 0; } .filters input { flex:1 1 190px; }.filters select { flex:1 1 130px; }
+.setup { margin:14px 0; } .channels article button { display:block; margin-top:12px; }
 .activity { border:1px solid #334155; border-radius:9px; padding:14px; }.activity summary { font-size:14px; }
 ol { padding:0; margin:0; list-style:none; } li { border-top:1px solid #29384f; padding:14px 0; overflow-wrap:anywhere; font-size:13px; }
 .badge { border-radius:4px; padding:3px 7px; background:#334155; font-size:12px; }.badge.accepted { color:#5eead4; background:#134e4a; }.badge.failed,.badge.dropped { color:#fda4af; background:#4c1d2b; }.badge.suppressed,.badge.unrouted { color:#fde68a; background:#422f19; }

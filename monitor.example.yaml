@@ -719,6 +719,8 @@ health:
       to: []
       username: ""
       password: ""
+      password_env: "" # optional environment variable name; overrides password, required nonempty when set
+      tls_mode: auto   # auto: implicit TLS on 465; starttls: require STARTTLS; tls: implicit TLS on any port
       # skip TLS verification and allow AUTH over plaintext (not recommended)
       insecure_skip_verify: false
     dingtalk:
@@ -727,6 +729,9 @@ health:
       webhook_url: ""    # 企业微信群机器人
     feishu:
       webhook_url: ""    # 飞书自定义机器人
+      webhook_url_env: "" # optional environment variable name, overrides webhook_url
+      secret: ""         # optional robot signing secret
+      secret_env: ""     # optional environment variable name, overrides secret
     telegram:
       token: ""          # Bot token from @BotFather
       chat_id: ""

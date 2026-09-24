@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"time"
 )
 
 const notificationRetention = 500
@@ -26,6 +27,7 @@ type NotificationResult struct {
 	Reason     string `json:"reason"`
 	HTTPStatus int    `json:"http_status,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
+	Test       bool   `json:"test,omitempty"`
 }
 
 type NotificationChannel struct {
@@ -109,7 +111,7 @@ func (e *Engine) NotificationDiagnostics() NotificationSnapshot {
 
 func notificationResult(entry LogEntry, channel, outcome, reason string, at int64) NotificationResult {
 	return NotificationResult{EventID: entry.UniqueID, At: at, Name: entry.Name, Chart: entry.Chart,
-		Severity: entry.Status, Repeat: entry.Repeat, Channel: channel, Outcome: outcome, Reason: reason}
+		Severity: entry.Status, Repeat: entry.Repeat, Channel: channel, Outcome: outcome, Reason: reason, Test: entry.testChannel != ""}
 }
 
 func (e *Engine) addNotificationResultLocked(entry LogEntry, channel, outcome, reason string, status int, duration int64) {
@@ -195,4 +197,45 @@ func notificationError(err error) (string, int) {
 		return "network", 0
 	}
 	return "provider_error", 0
+}
+
+var (
+	ErrNotificationChannel     = errors.New("notification channel is not configured")
+	ErrNotificationTestLimit   = errors.New("notification test limited to once per 30 seconds")
+	ErrNotificationUnavailable = errors.New("notification queue is unavailable")
+)
+
+// QueueNotificationTest uses only server-side destinations and a fixed message.
+// An explicit test bypasses silence/maintenance and role routing, but never
+// creates, resolves or changes a real alarm. All sends use the bounded dispatcher.
+func (e *Engine) QueueNotificationTest(channel string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return ErrNotificationUnavailable
+	}
+	found := false
+	for _, n := range e.opt.Notifiers {
+		if diagnosticChannel(n.Name()) == channel {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ErrNotificationChannel
+	}
+	if !e.lastNotificationTest.IsZero() && time.Since(e.lastNotificationTest) < 30*time.Second {
+		return ErrNotificationTestLimit
+	}
+	entry := LogEntry{Name: "Monitor 通知测试", Chart: "monitor.notification_test", Hostname: e.opt.Hostname,
+		When: e.now().Unix(), Status: StatusClear, OldStatus: StatusClear,
+		Info: "管理员手动发送的通道测试消息，不代表真实告警或恢复。", testChannel: channel}
+	select {
+	case e.notifyCh <- entry:
+		e.lastNotificationTest = time.Now()
+		e.diagnostics.Enqueued++
+		return nil
+	default:
+		return ErrNotificationUnavailable
+	}
 }

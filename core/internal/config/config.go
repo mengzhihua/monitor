@@ -164,12 +164,14 @@ type Notify struct {
 		Channel    string `yaml:"channel"`
 	} `yaml:"slack"`
 	Email struct {
-		Server   string   `yaml:"server"` // host:port
-		From     string   `yaml:"from"`
-		To       []string `yaml:"to"`
-		Username string   `yaml:"username"`
-		Password string   `yaml:"password"`
-		Insecure bool     `yaml:"insecure_skip_verify"`
+		Server      string   `yaml:"server"` // host:port
+		From        string   `yaml:"from"`
+		To          []string `yaml:"to"`
+		Username    string   `yaml:"username"`
+		Password    string   `yaml:"password"`
+		PasswordEnv string   `yaml:"password_env"`
+		TLSMode     string   `yaml:"tls_mode"`
+		Insecure    bool     `yaml:"insecure_skip_verify"`
 	} `yaml:"email"`
 	DingTalk struct {
 		WebhookURL string `yaml:"webhook_url"`
@@ -178,7 +180,10 @@ type Notify struct {
 		WebhookURL string `yaml:"webhook_url"`
 	} `yaml:"wecom"`
 	Feishu struct {
-		WebhookURL string `yaml:"webhook_url"`
+		WebhookURL    string `yaml:"webhook_url"`
+		WebhookURLEnv string `yaml:"webhook_url_env"`
+		Secret        string `yaml:"secret"`
+		SecretEnv     string `yaml:"secret_env"`
 	} `yaml:"feishu"`
 	Telegram struct {
 		Token  string `yaml:"token"`
@@ -276,6 +281,25 @@ func Load(path string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
+	// Resolve only explicit secret references, never expand arbitrary YAML.
+	for _, field := range []struct {
+		name  string
+		value *string
+		env   string
+	}{
+		{"health.notify.email.password", &c.Health.Notify.Email.Password, c.Health.Notify.Email.PasswordEnv},
+		{"health.notify.feishu.webhook_url", &c.Health.Notify.Feishu.WebhookURL, c.Health.Notify.Feishu.WebhookURLEnv},
+		{"health.notify.feishu.secret", &c.Health.Notify.Feishu.Secret, c.Health.Notify.Feishu.SecretEnv},
+	} {
+		if field.env == "" {
+			continue
+		}
+		value, ok := os.LookupEnv(field.env)
+		if !ok || value == "" {
+			return nil, fmt.Errorf("%s: referenced environment variable is missing or empty", field.name)
+		}
+		*field.value = value
 	}
 	if c.Global.UpdateEvery < 1 {
 		c.Global.UpdateEvery = 1

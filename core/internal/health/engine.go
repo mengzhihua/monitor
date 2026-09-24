@@ -133,6 +133,8 @@ type LogEntry struct {
 	Repeat     bool    `json:"repeat,omitempty"`
 	Notified   bool    `json:"notified"`
 	NotifiedAt int64   `json:"notified_at,omitempty"`
+
+	testChannel string // explicit admin test; never serialized or persisted as an alarm
 }
 
 // Notifier delivers alarm transitions somewhere (Slack, email, webhook...).
@@ -190,6 +192,8 @@ type Engine struct {
 	closed      bool                 // notifyCh closed; guarded by mu
 	diagnostics NotificationSnapshot // guarded by mu; current process only
 	plans       *MaintenancePlanStore
+
+	lastNotificationTest time.Time // guarded by mu; global test rate limit
 
 	// runtime silence (health.silent seeds silenceAll). until=0 means forever.
 	silenceAll   bool
@@ -733,7 +737,16 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 
 func (e *Engine) dispatch() {
 	for entry := range e.notifyCh {
-		for _, n := range e.notifiersFor(entry.Recipient) {
+		notifiers := e.notifiersFor(entry.Recipient)
+		if entry.testChannel != "" {
+			notifiers = nil
+			for _, n := range e.opt.Notifiers {
+				if diagnosticChannel(n.Name()) == entry.testChannel {
+					notifiers = append(notifiers, n)
+				}
+			}
+		}
+		for _, n := range notifiers {
 			channel := diagnosticChannel(n.Name())
 			e.beginNotification(entry, channel)
 			started := time.Now()
@@ -747,8 +760,10 @@ func (e *Engine) dispatch() {
 				e.log.Error("notify failed", "via", channel, "alarm", entry.Name, "reason", code, "http_status", httpStatus)
 				continue
 			}
-			e.markNotified(entry)
-			e.notified.Add(1)
+			if entry.testChannel == "" {
+				e.markNotified(entry)
+				e.notified.Add(1)
+			}
 		}
 	}
 }

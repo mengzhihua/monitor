@@ -567,6 +567,9 @@ func TestWebhookAndSlackNotifiers(t *testing.T) {
 		if r.URL.Path == "/fail" {
 			w.WriteHeader(500)
 		}
+		if r.URL.Path == "/ding" {
+			fmt.Fprint(w, `{"errcode":0}`)
+		}
 	}))
 	defer srv.Close()
 	entry := LogEntry{Name: "ram_in_use", Chart: "system.ram", Status: StatusWarning, OldStatus: StatusClear, Value: 91.5, Units: "%", Hostname: "h"}

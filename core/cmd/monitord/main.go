@@ -501,9 +501,13 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	if n.Slack.WebhookURL != "" {
 		notifiers = append(notifiers, &health.SlackNotifier{WebhookURL: n.Slack.WebhookURL, Channel: n.Slack.Channel})
 	}
-	if n.Email.Server != "" && len(n.Email.To) > 0 {
-		notifiers = append(notifiers, &health.EmailNotifier{Server: n.Email.Server, From: n.Email.From, To: n.Email.To,
-			Username: n.Email.Username, Password: n.Email.Password, Insecure: n.Email.Insecure})
+	if n.Email.Server != "" || n.Email.From != "" || len(n.Email.To) > 0 || n.Email.Username != "" || n.Email.Password != "" {
+		email := &health.EmailNotifier{Server: n.Email.Server, From: n.Email.From, To: n.Email.To,
+			Username: n.Email.Username, Password: n.Email.Password, Insecure: n.Email.Insecure, TLSMode: n.Email.TLSMode}
+		if err := email.Validate(); err != nil {
+			return nil, err
+		}
+		notifiers = append(notifiers, email)
 	}
 	if n.DingTalk.WebhookURL != "" {
 		notifiers = append(notifiers, &health.ChatNotifier{Kind: "dingtalk", WebhookURL: n.DingTalk.WebhookURL})
@@ -512,7 +516,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		notifiers = append(notifiers, &health.ChatNotifier{Kind: "wecom", WebhookURL: n.WeCom.WebhookURL})
 	}
 	if n.Feishu.WebhookURL != "" {
-		notifiers = append(notifiers, &health.ChatNotifier{Kind: "feishu", WebhookURL: n.Feishu.WebhookURL})
+		notifiers = append(notifiers, &health.ChatNotifier{Kind: "feishu", WebhookURL: n.Feishu.WebhookURL, Secret: n.Feishu.Secret})
 	}
 	if n.Telegram.Token != "" && n.Telegram.ChatID != "" {
 		notifiers = append(notifiers, &health.TelegramNotifier{Token: n.Telegram.Token, ChatID: n.Telegram.ChatID})

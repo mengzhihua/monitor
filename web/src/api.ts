@@ -70,10 +70,10 @@ export interface OperationsSnapshot {
 }
 export interface NotificationResult {
   id: number; event_id: number; at: number; name: string; chart: string; severity: string; repeat: boolean
-  channel: string; outcome: string; reason: string; http_status?: number; duration_ms: number
+  channel: string; outcome: string; reason: string; http_status?: number; duration_ms: number; test?: boolean
 }
 export interface NotificationSnapshot {
-  available: boolean; scope: 'local'; hostname: string; since: number; now: number; enabled: boolean; closed: boolean
+  available: boolean; can_test?: boolean; scope: 'local'; hostname: string; since: number; now: number; enabled: boolean; closed: boolean
   queue_size: number; queue_limit: number; retention: number; enqueued: number; suppressed: number; unrouted: number
   dropped: number; accepted: number; failed: number; total: number; in_flight: NotificationResult | null
   channels: { name: string; configured_count: number; attempts: number; accepted: number; failed: number; last_attempt: number; last_accepted: number; last_failed: number }[]
@@ -242,6 +242,7 @@ export const api = {
   operationsViews: (signal?: AbortSignal) => get<OperationsViews>('/api/v1/operations/views', signal),
   saveOperationsViews: (revision: number, views: OperationsView[]) => post<OperationsViews>('/api/v1/operations/views', { revision, views }),
   operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
+  testNotification: (channel: string) => post<{ queued: boolean }>('/api/v1/operations/notifications/test', { channel }),
   notifications: (signal?: AbortSignal) => get<NotificationSnapshot>('/api/v1/operations/notifications', signal),
   maintenance: (signal?: AbortSignal) => get<MaintenanceSnapshot>('/api/v1/operations/maintenance', signal),
   changeMaintenance: (body: MaintenanceChange) => post<MaintenanceSnapshot>('/api/v1/operations/maintenance', body),

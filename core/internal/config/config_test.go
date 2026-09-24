@@ -40,3 +40,25 @@ func TestWebEnabledDefaultAndOverride(t *testing.T) {
 		t.Fatal("explicit web.enabled=true must keep the server on")
 	}
 }
+
+func TestNotificationSecretEnvironmentReferences(t *testing.T) {
+	t.Setenv("MONITOR_TEST_MAIL_PASSWORD", "smtp-private-fixture")
+	t.Setenv("MONITOR_TEST_FEISHU_URL", "https://example.invalid/private-fixture")
+	t.Setenv("MONITOR_TEST_FEISHU_SECRET", "signing-private-fixture")
+	path := filepath.Join(t.TempDir(), "notify.yaml")
+	body := "health:\n  notify:\n    email:\n      password: old\n      password_env: MONITOR_TEST_MAIL_PASSWORD\n      tls_mode: starttls\n    feishu:\n      webhook_url_env: MONITOR_TEST_FEISHU_URL\n      secret_env: MONITOR_TEST_FEISHU_SECRET\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Health.Notify.Email.Password != "smtp-private-fixture" || c.Health.Notify.Feishu.Secret != "signing-private-fixture" || c.Health.Notify.Feishu.WebhookURL != "https://example.invalid/private-fixture" || c.Health.Notify.Email.TLSMode != "starttls" {
+		t.Fatal("environment fields not resolved")
+	}
+	t.Setenv("MONITOR_TEST_FEISHU_SECRET", "")
+	if _, err := Load(path); err == nil {
+		t.Fatal("empty secret environment accepted")
+	}
+}

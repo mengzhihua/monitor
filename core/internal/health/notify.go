@@ -3,13 +3,20 @@ package health
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -138,16 +145,39 @@ func postJSON(ctx context.Context, c *http.Client, url string, body []byte, head
 	return nil
 }
 
-// EmailNotifier sends plain-text mail via SMTP (STARTTLS when the server
-// offers it, implicit TLS on port 465). Credentials are only sent over TLS
-// unless Insecure is set.
+// EmailNotifier sends MIME text mail via SMTP. Auto mode negotiates STARTTLS
+// or implicit TLS on port 465; explicit modes require TLS. Credentials are only
+// sent over TLS unless Insecure is set.
 type EmailNotifier struct {
 	Server   string // host:port
 	From     string
 	To       []string
 	Username string
 	Password string
-	Insecure bool // skip certificate verification and allow plaintext auth
+	Insecure bool   // skip certificate verification and allow plaintext auth
+	TLSMode  string // auto (465 implicit TLS, otherwise opportunistic STARTTLS), starttls, tls
+}
+
+// Validate rejects incomplete SMTP settings before any connection is opened.
+func (n *EmailNotifier) Validate() error {
+	host, port, err := net.SplitHostPort(n.Server)
+	p, portErr := strconv.Atoi(port)
+	if err != nil || host == "" || portErr != nil || p < 1 || p > 65535 {
+		return fmt.Errorf("email: server must be host:port")
+	}
+	if n.TLSMode != "" && n.TLSMode != "auto" && n.TLSMode != "starttls" && n.TLSMode != "tls" {
+		return fmt.Errorf("email: tls_mode must be auto, starttls or tls")
+	}
+	if len(n.To) == 0 {
+		return fmt.Errorf("email: at least one recipient is required")
+	}
+	for _, addr := range append([]string{n.From}, n.To...) {
+		parsed, err := mail.ParseAddress(addr)
+		if err != nil || strings.ContainsAny(addr, "\r\n") || parsed.Address != addr {
+			return fmt.Errorf("email: from and to must contain plain mailbox addresses")
+		}
+	}
+	return nil
 }
 
 // headerSafe strips CR/LF so values interpolated into mail headers cannot
@@ -159,27 +189,25 @@ func headerSafe(s string) string {
 func (n *EmailNotifier) Name() string { return "email" }
 
 func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
-	host, port, err := net.SplitHostPort(n.Server)
-	if err != nil {
-		return fmt.Errorf("email server %q: %w", n.Server, err)
+	if err := n.Validate(); err != nil {
+		return err
 	}
-	for _, addr := range append([]string{n.From}, n.To...) {
-		if strings.ContainsAny(addr, "\r\n") {
-			return fmt.Errorf("email address %q contains a line break", addr)
-		}
-	}
+	host, port, _ := net.SplitHostPort(n.Server)
+	var err error
 	subject := fmt.Sprintf("[%s] %s: %s is %s", e.Hostname, e.Status, e.Name, formatValue(e.Value)+" "+e.Units)
 	var msg bytes.Buffer
-	fmt.Fprintf(&msg, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nDate: %s\r\n\r\n",
-		n.From, strings.Join(n.To, ", "), headerSafe(subject), time.Unix(e.When, 0).Format(time.RFC1123Z))
-	msg.WriteString(strings.NewReplacer("*", "", "`", "").Replace(Summarize(e)))
-	msg.WriteString("\r\n")
+	fmt.Fprintf(&msg, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\nDate: %s\r\n\r\n",
+		n.From, strings.Join(n.To, ", "), mime.QEncoding.Encode("UTF-8", headerSafe(subject)), time.Unix(e.When, 0).Format(time.RFC1123Z))
+	writer := quotedprintable.NewWriter(&msg)
+	_, _ = writer.Write([]byte(strings.NewReplacer("*", "", "`", "").Replace(Summarize(e)) + "\r\n"))
+	_ = writer.Close()
 
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	tlsCfg := &tls.Config{ServerName: host, InsecureSkipVerify: n.Insecure}
+	tlsCfg := &tls.Config{ServerName: host, InsecureSkipVerify: n.Insecure, MinVersion: tls.VersionTLS12}
 	var conn net.Conn
-	if port == "465" {
-		conn, err = tls.DialWithDialer(dialer, "tcp", n.Server, tlsCfg)
+	implicitTLS := n.TLSMode == "tls" || ((n.TLSMode == "" || n.TLSMode == "auto") && port == "465")
+	if implicitTLS {
+		conn, err = (&tls.Dialer{NetDialer: dialer, Config: tlsCfg}).DialContext(ctx, "tcp", n.Server)
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", n.Server)
 	}
@@ -207,7 +235,7 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 		return err
 	}
 	defer c.Close()
-	encrypted := port == "465"
+	encrypted := implicitTLS
 	if !encrypted {
 		if ok, _ := c.Extension("STARTTLS"); ok {
 			if err := c.StartTLS(tlsCfg); err != nil {
@@ -216,8 +244,11 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 			encrypted = true
 		}
 	}
+	if n.TLSMode == "starttls" && !encrypted {
+		return fmt.Errorf("email: server does not offer required STARTTLS")
+	}
 	if n.Username != "" && !encrypted && !n.Insecure {
-		return fmt.Errorf("smtp %s: server does not offer STARTTLS; refusing to send credentials in plaintext (set insecure: true to override)", n.Server)
+		return fmt.Errorf("smtp %s: server does not offer STARTTLS; refusing to send credentials in plaintext (insecure_skip_verify permits plaintext credentials)", n.Server)
 	}
 	if n.Username != "" {
 		if err := c.Auth(smtp.PlainAuth("", n.Username, n.Password, host)); err != nil {
@@ -242,13 +273,17 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 	if err := w.Close(); err != nil {
 		return err
 	}
-	return c.Quit()
+	// DATA's final 250 is the acceptance boundary. A disconnect during QUIT
+	// must not turn an accepted message into a failed delivery/repeat.
+	_ = c.Quit()
+	return nil
 }
 
 // ChatNotifier posts a markdown payload understood by DingTalk, WeCom or Feishu.
 type ChatNotifier struct {
 	Kind       string // dingtalk | wecom | feishu
 	WebhookURL string
+	Secret     string // optional Feishu custom-bot signing key
 	Client     *http.Client
 }
 
@@ -272,14 +307,65 @@ func (n *ChatNotifier) Notify(ctx context.Context, e LogEntry) error {
 	case "wecom":
 		body, err = json.Marshal(map[string]any{"msgtype": "markdown", "markdown": map[string]string{"content": title + "\n" + text}})
 	case "feishu":
-		body, err = json.Marshal(map[string]any{"msg_type": "text", "content": map[string]string{"text": title + "\n" + strings.NewReplacer("*", "", "`", "").Replace(Summarize(e))}})
+		payload := map[string]any{"msg_type": "text", "content": map[string]string{"text": title + "\n" + strings.NewReplacer("*", "", "`", "").Replace(Summarize(e))}}
+		if n.Secret != "" {
+			ts := strconv.FormatInt(time.Now().Unix(), 10)
+			mac := hmac.New(sha256.New, []byte(ts+"\n"+n.Secret))
+			payload["timestamp"], payload["sign"] = ts, base64.StdEncoding.EncodeToString(mac.Sum(nil))
+		}
+		body, err = json.Marshal(payload)
 	default: // dingtalk
 		body, err = json.Marshal(map[string]any{"msgtype": "markdown", "markdown": map[string]string{"title": title, "text": title + "\n\n" + text}})
 	}
 	if err != nil {
 		return err
 	}
-	return postJSON(ctx, c, n.WebhookURL, body, nil)
+	return postChatJSON(ctx, c, n.WebhookURL, body, n.Kind)
+}
+
+// Chat APIs may reject a message with HTTP 200. Never retain their response
+// text, which can echo private URLs, tokens, recipients or message content.
+func postChatJSON(ctx context.Context, c *http.Client, url string, body []byte, kind string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "monitor-health/1")
+	resp, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return &notificationHTTPError{status: resp.StatusCode}
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 16385))
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Code       *int `json:"code"`
+		LegacyCode *int `json:"StatusCode"`
+		ErrCode    *int `json:"errcode"`
+	}
+	if len(b) > 16384 || json.Unmarshal(b, &result) != nil {
+		return fmt.Errorf("chat: invalid response")
+	}
+	code := result.ErrCode
+	if kind == "feishu" {
+		code = result.Code
+		if code == nil {
+			code = result.LegacyCode
+		}
+	}
+	if code == nil {
+		return fmt.Errorf("chat: missing response code")
+	}
+	if *code != 0 {
+		return fmt.Errorf("chat: provider rejected message (code %d)", *code)
+	}
+	return nil
 }
 
 // TelegramNotifier sends a Markdown message via Bot API sendMessage.
