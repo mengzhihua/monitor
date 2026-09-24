@@ -388,33 +388,30 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 		if !ready && !retry {
 			continue
 		}
+		// Lock before spawning: a collector wedged in an uninterruptible
+		// syscall from an earlier round never releases opMu, and re-spawning
+		// goroutines for it every tick would leak them. Later ticks skip it
+		// here until it unwinds (or dies with the process).
+		if !r.opMu.TryLock() {
+			continue
+		}
+		if !ready {
+			// Probe dependencies without holding up healthy collectors' next tick.
+			s.initWG.Add(1)
+			go func() {
+				defer s.initWG.Done()
+				defer r.opMu.Unlock()
+				if ctx.Err() == nil {
+					s.prepare(r, now)
+				}
+			}()
+			continue
+		}
 		wg.Add(1)
 		go func(r *running) {
 			defer wg.Done()
-			if !r.opMu.TryLock() {
-				return
-			}
 			defer r.opMu.Unlock()
 			if ctx.Err() != nil {
-				return
-			}
-			r.mu.Lock()
-			ready := r.desired && r.initialized
-			retry := r.desired && !r.initialized && !r.configFailed && !now.Before(r.retryAt)
-			r.mu.Unlock()
-			if !ready {
-				if retry {
-					// Probe dependencies without holding up healthy collectors' next tick.
-					s.initWG.Add(1)
-					go func() {
-						defer s.initWG.Done()
-						r.opMu.Lock()
-						defer r.opMu.Unlock()
-						if ctx.Err() == nil {
-							s.prepare(r, now)
-						}
-					}()
-				}
 				return
 			}
 			cctx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -436,5 +433,28 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 			r.mu.Unlock()
 		}(r)
 	}
-	wg.Wait()
+	s.waitTick(&wg)
+}
+
+// waitTick bounds how long a tick waits for its collectors. Collect calls are
+// context-bounded, but one wedged in an uninterruptible kernel operation (for
+// example reading /proc/<pid>/cmdline of a D-state process) never honors the
+// context; waiting for it would freeze the scheduler and every chart with it.
+// The stuck collector keeps its opMu, so subsequent ticks skip it.
+func (s *Scheduler) waitTick(wg *sync.WaitGroup) {
+	limit := s.timeout
+	if limit <= 0 {
+		limit = 30 * time.Second
+	}
+	limit += time.Second
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(limit):
+		s.log.Warn("collector: tick ended with a stuck collector", "waited", limit.String())
+	}
 }
