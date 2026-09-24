@@ -123,6 +123,18 @@ async function refreshNodes(signal: AbortSignal) {
   } catch { /* transient */ }
 }
 
+/** Forget an offline node on the hub: metadata and history are dropped server-side. */
+async function forgetNode(n: NodeInfo) {
+  if (!confirm(`确定删除离线节点「${n.hostname}」吗？该节点的图表与历史数据将一并删除，且不可恢复。`)) return
+  try {
+    await api.forgetNode(n.id)
+    error.value = ''
+    await refreshNodes(new AbortController().signal)
+  } catch (e) {
+    error.value = `删除节点失败：${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
 /** Switch the whole dashboard (charts, alarms, functions, live socket) to another node. */
 async function selectNode(id: string) {
   if (id === selectedNode.value) return
@@ -342,11 +354,13 @@ onBeforeUnmount(() => {
 
     <main>
       <div v-if="isHub && workspace === 'charts'" class="node-overview" aria-label="节点健康总览">
-        <button v-for="n in nodes" :key="n.id" @click="selectNode(n.id)" :class="['node-card', n.status]">
+        <div v-for="n in nodes" :key="n.id" :class="['node-card', n.status]" role="button" tabindex="0"
+          @click="selectNode(n.id)" @keydown.enter.prevent="selectNode(n.id)" @keydown.space.prevent="selectNode(n.id)">
           <b>{{ n.hostname }}</b><span>{{ n.status === 'live' ? '在线' : n.status === 'stale' ? '数据过期' : '离线' }}</span>
           <small>{{ n.charts_count }} 图表 · {{ n.alarms?.critical || 0 }} 严重告警{{ n.replica ? ' · 副本' : '' }}</small>
           <small v-if="n.last_data">最后数据：{{ new Date(n.last_data * 1000).toLocaleString() }}</small>
-        </button>
+          <button v-if="n.status === 'offline' && !n.local" class="node-del" @click.stop="forgetNode(n)">删除节点</button>
+        </div>
       </div>
       <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
@@ -400,6 +414,9 @@ onBeforeUnmount(() => {
 .node-overview { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
 .node-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px; background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:12px; cursor:pointer; }
 .node-card.stale, .node-card.offline { border-color:#f59e0b; }
+.node-card:focus-visible { outline: 2px solid #2dd4bf; }
+.node-del { background:#7f1d1d; color:#fecaca; border:1px solid #b91c1c; border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+.node-del:hover { background:#991b1b; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 10px 16px; background: #0b1120; border-bottom: 1px solid #1e293b; position: sticky; top: 0; z-index: 10; }
 .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
 .logo { color: #22c55e; }

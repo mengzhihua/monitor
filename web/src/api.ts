@@ -262,6 +262,7 @@ export const api = {
     post<HandlingRecord>('/api/v1/operations/handling', body),
   info: (signal?: AbortSignal) => get<Info>('/api/v1/info', signal),
   nodes: (signal?: AbortSignal) => get<NodesResponse>('/api/v1/nodes', signal),
+  forgetNode: (id: string) => send<void>('DELETE', `/api/v1/nodes?node=${encodeURIComponent(id)}`),
   charts: (signal?: AbortSignal) => get<ChartsResponse>(`/api/v1/charts${q({})}`, signal),
   alarms: (signal?: AbortSignal) => get<AlarmsResponse>(`/api/v1/alarms${q({ all: 'true' })}`, signal),
   alarmLog: (after = 0, signal?: AbortSignal) => get<AlarmLogEntry[]>(`/api/v1/alarm_log${q({ after })}`, signal),
