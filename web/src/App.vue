@@ -79,6 +79,9 @@ function toggleNodeMenu() { nodeMenuOpen.value = !nodeMenuOpen.value }
 function closeNodeMenu() { nodeMenuOpen.value = false }
 function pickNode(id: string) { closeNodeMenu(); void selectNode(id) }
 const isHub = computed(() => info.value?.mode === 'hub')
+// The log panel needs the node's `logs` function; the local host always has
+// the standalone query fallback, and an empty list just means "still loading".
+const logsAvailable = computed(() => !selectedNode.value || !functions.value.length || functions.value.some((f) => f.name === 'logs'))
 const currentNode = computed(() => nodes.value.find((n) => n.id === selectedNode.value) ?? null)
 /** Remote nodes have no local health engine; their alarms are mirrored from the agent. */
 const healthOn = computed(() => (selectedNode.value ? true : info.value?.alarms != null))
@@ -313,7 +316,7 @@ onBeforeUnmount(() => {
       </button>
       <button v-if="functions.length" class="alarms-btn" :class="{ open: showFunctions }" @click="showFunctions = !showFunctions"
         title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
-      <button class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
+      <button v-if="logsAvailable" class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showCloud }" @click="showCloud = !showCloud" title="Cloud 控制台">Cloud</button>
       <button class="alarms-btn" :class="{ open: showConfig }" @click="showConfig = !showConfig" title="配置：本机与节点">配置</button>

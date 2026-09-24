@@ -939,6 +939,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		res, err := v.node.Call(ctx, "logs", args)
 		if err != nil {
+			if err.Error() == "unknown function" {
+				// The agent's logs collector is disabled (trimmed deployments):
+				// surface that instead of a bare gateway error.
+				http.Error(w, "node has no logs function (logs collector disabled on the agent)", http.StatusNotFound)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}

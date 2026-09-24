@@ -2,7 +2,7 @@
 import { ref, shallowRef } from 'vue'
 import { usePolling } from '../polling'
 import type { FunctionTable, LogRow } from '../api'
-import { api } from '../api'
+import { ApiError, api } from '../api'
 
 const emit = defineEmits<{ close: [] }>()
 const query = ref('')
@@ -24,6 +24,11 @@ async function load(signal: AbortSignal) {
     error.value = ''
   } catch (e) {
     if (signal.aborted) return
+    if (e instanceof ApiError && e.status === 404) {
+      error.value = '该节点未启用日志采集（logs 采集器已禁用）。可在「配置 → 节点配置」中编辑该节点的 agent 配置，移除 collectors.disabled 里的 logs 后保存，节点会自动重启生效。'
+      table.value = null
+      return
+    }
     error.value = (e as Error).message
   }
 }
