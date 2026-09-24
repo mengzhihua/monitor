@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 // clkTicks is Linux USER_HZ. /proc stat times are always in these ticks,
@@ -137,9 +138,34 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 	return out
 }
 
+// readProcCmdline reads /proc/<pid>/cmdline. The read goes through the
+// target's mmap lock, which a process tearing down a huge address space
+// (Electron, ZGC — state R during exit_mmap, so the D/Z pre-checks cannot
+// catch it) may hold for a long time; procfs ignores O_NONBLOCK, so the only
+// escape is to give up. Identity reads cmdline once per pid, so a wedged read
+// would otherwise pin the apps collector forever. The orphaned goroutine (and
+// its fd) leak is bounded by the number of pids that hit the lock.
 func readProcCmdline(pid int32) string {
-	b, err := os.ReadFile("/proc/" + strconv.FormatInt(int64(pid), 10) + "/cmdline")
-	if err != nil || len(b) == 0 {
+	type readResult struct {
+		b   []byte
+		err error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		b, err := os.ReadFile("/proc/" + strconv.FormatInt(int64(pid), 10) + "/cmdline")
+		done <- readResult{b, err}
+	}()
+	var b []byte
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return ""
+		}
+		b = r.b
+	case <-time.After(500 * time.Millisecond):
+		return ""
+	}
+	if len(b) == 0 {
 		return ""
 	}
 	for len(b) > 0 && b[len(b)-1] == 0 {
