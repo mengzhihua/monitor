@@ -213,6 +213,7 @@ func run() error {
 
 	apiOpt := api.Options{
 		OperationsDir: filepath.Join(cfg.Global.DataDir, "operations"),
+		TicketWebhook: cfg.Web.TicketWebhook,
 		Version:       version,
 		Mode:          cfg.Mode,
 		StartedAt:     time.Now(),

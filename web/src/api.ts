@@ -61,6 +61,7 @@ export interface Problem {
   id: string; node: string; hostname: string; node_status: string; chart: string; name: string
   severity: 'WARNING' | 'CRITICAL'; family: string; info: string; value: number | null; units: string
   since: number; updated: number; stale: boolean; handling: HandlingRecord
+  delivery?: { at: number; channel: string; outcome: string; reason?: string }
 }
 export interface OperationsSnapshot {
   current_user: { name: string; role: string }

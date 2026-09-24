@@ -30,6 +30,7 @@ web:
     client_secret: ""
     redirect_url: ""     # e.g. http://hub:19999/api/v1/auth/oidc/callback
     role: viewer         # minted session role: admin | troubleshooter | viewer
+  ticket_webhook: ""     # POST {"event":"handling","records":[...]} after a saved acknowledgement; empty = off. A failed POST does not undo the save. Channel HTTP success is not a read receipt.
   ldap:                  # optional LDAP simple bind; POST /api/v1/auth/ldap {user,password}
     url: ""              # ldaps://dc.example.com:636 (verified TLS); ldap:// is plaintext
     user_dn: ""          # uid=%s,ou=people,dc=example,dc=com

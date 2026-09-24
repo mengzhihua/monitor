@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -51,6 +52,16 @@ type problem struct {
 	Updated    int64             `json:"updated"`
 	Stale      bool              `json:"stale"`
 	Handling   operations.Record `json:"handling"`
+	Delivery   *problemDelivery  `json:"delivery,omitempty"`
+}
+
+// problemDelivery is the latest local channel outcome for this alarm.
+// Accepted means the channel accepted the request, not that a person read it.
+type problemDelivery struct {
+	At      int64  `json:"at"`
+	Channel string `json:"channel"`
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 type operationsFamily struct {
@@ -232,6 +243,11 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 				Value: finiteValue(a.Value), Units: a.Units, Since: a.LastStatusChange, Updated: a.LastUpdated,
 				Stale: n.AlarmCoverage == "disabled" || inf.Status != hub.StatusLive || a.LastUpdated <= 0 || now-a.LastUpdated > max(30, 3*a.Every)}
 			p.Handling = s.operations.Get(p.ID)
+			if n.AlarmCoverage == "local" && s.opt.Health != nil {
+				if d, ok := s.opt.Health.LatestDelivery(a.Chart, a.Name); ok {
+					p.Delivery = &problemDelivery{At: d.At, Channel: d.Channel, Outcome: d.Outcome, Reason: d.Reason}
+				}
+			}
 			out.Problems = append(out.Problems, p)
 			out.Summary[strings.ToLower(p.Severity)]++
 			if !p.Handling.Acknowledged {
@@ -267,7 +283,7 @@ func (s *Server) peerAlarms(ctx context.Context, peer, id string) ([]health.Alar
 	if s.opt.Cluster == nil {
 		return nil, fmt.Errorf("no cluster")
 	}
-	body, code, err := s.opt.Cluster.Fetch(ctx, peer, "/api/v1/alarms?node="+url.QueryEscape(id))
+	body, code, err := s.opt.Cluster.FetchRelay(ctx, peer, "/api/v1/alarms?node="+url.QueryEscape(id))
 	if err != nil {
 		return nil, err
 	}
@@ -482,5 +498,40 @@ func (s *Server) handleProblemChange(w http.ResponseWriter, r *http.Request, wor
 		http.Error(w, fmt.Sprintf("could not save handling record: %v", err), 503)
 		return
 	}
+	s.postTicket(record)
 	writeJSON(w, record)
+}
+
+func (s *Server) postTicket(records ...operations.Record) {
+	raw := strings.TrimSpace(s.opt.TicketWebhook)
+	if raw == "" || len(records) == 0 {
+		return
+	}
+	if !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "http://") {
+		s.log.Warn("ticket webhook skipped", "reason", "unsupported scheme")
+		return
+	}
+	body, err := json.Marshal(map[string]any{"event": "handling", "records": records})
+	if err != nil {
+		s.log.Warn("ticket webhook skipped", "err", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, raw, bytes.NewReader(body))
+	if err != nil {
+		s.log.Warn("ticket webhook skipped", "err", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.log.Warn("ticket webhook failed", "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.log.Warn("ticket webhook rejected", "status", resp.StatusCode)
+	}
 }
