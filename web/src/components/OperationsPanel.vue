@@ -33,20 +33,28 @@ const selectedProblems = ref<Problem[]>([])
 const batchError = ref('')
 const batchMessage = ref('')
 const batchCompleted = ref(0)
+function listQuery(limit = visibleCount.value) {
+  return {
+    limit: String(limit), q: query.value.trim(), node_status: nodeStatus.value, severity: severity.value,
+    owner: ownerFilter.value, progress: progressFilter.value, ...(pendingOnly.value ? { pending: '1' } : {}),
+  }
+}
 watch([query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter], () => {
+  visibleCount.value = 50
   if (selectedProblems.value.length) {
     selectedProblems.value = []
     batchMessage.value = '筛选条件已改变，已清空原选择，请重新选择问题。'
   }
+  void refresh()
 })
 let disposed = false
 onBeforeUnmount(() => { disposed = true })
 const canHandle = computed(() => ['admin', 'troubleshooter'].includes(props.role))
 const canSelfAssign = computed(() => snapshot.value?.assignees.some(u => u.name === snapshot.value?.current_user.name))
-const mineCount = computed(() => snapshot.value?.problems.filter(p => !!p.handling.assignee && p.handling.assignee === snapshot.value?.current_user.name).length || 0)
+const mineCount = computed(() => snapshot.value?.summary.mine || 0)
 const refresh = usePolling(async signal => {
   try {
-    const next = await api.operations(signal)
+    const next = await api.operations(signal, listQuery())
     if (signal.aborted) return
     snapshot.value = next
     error.value = ''
@@ -74,12 +82,15 @@ const problems = computed(() => {
     && (!q || `${p.hostname} ${p.node} ${p.name} ${p.chart} ${p.family} ${p.info} ${p.handling.assignee}`.toLowerCase().includes(q)))
 })
 const families = computed(() => {
+  if (snapshot.value?.page) return snapshot.value.page.families.map(f => [f.name, f.count] as [string, number])
   const counts = new Map<string, number>()
   for (const p of problems.value) counts.set(p.family || '其他', (counts.get(p.family || '其他') || 0) + 1)
   return [...counts].sort((a,b) => b[1] - a[1]).slice(0, 8)
 })
-const nodesVisible = computed(() => filteredNodes.value.slice(0, visibleCount.value))
-const problemsVisible = computed(() => problems.value.slice(0, visibleCount.value))
+const nodesVisible = computed(() => snapshot.value?.page ? filteredNodes.value : filteredNodes.value.slice(0, visibleCount.value))
+const problemsVisible = computed(() => snapshot.value?.page ? problems.value : problems.value.slice(0, visibleCount.value))
+const nodeTotal = computed(() => snapshot.value?.page?.nodes_matched ?? filteredNodes.value.length)
+const problemTotal = computed(() => snapshot.value?.page?.problems_matched ?? problems.value.length)
 const activeIDs = computed(() => new Set(snapshot.value?.problems.map(p => p.id) || []))
 const activity = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -177,11 +188,13 @@ function applyView(v: OperationsView) {
   query.value = v.query; severity.value = v.severity; nodeStatus.value = v.nodeStatus; pendingOnly.value = v.pendingOnly; visibleCount.value = 50
   ownerFilter.value = v.ownerFilter; progressFilter.value = v.progressFilter
 }
-function exportSnapshot() {
+async function exportSnapshot() {
   if (!snapshot.value) return
+  const full = await api.operations(undefined, { ...listQuery(200), limit: '200' }).catch(() => snapshot.value)
   const data = { captured_at: snapshot.value.now, stale: !!error.value, scope: 'filtered',
     filters: { query: query.value, severity: severity.value, node_status: nodeStatus.value, pending_only: pendingOnly.value, owner: ownerFilter.value, progress: progressFilter.value },
-    nodes: filteredNodes.value, problems: problems.value, activity: activity.value }
+    nodes: full?.nodes || filteredNodes.value, problems: full?.problems || problems.value, activity: activity.value,
+    matched: full?.page }
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
   const a = document.createElement('a'); a.href = url; a.download = `monitor-operations-${snapshot.value.now}.json`; a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
@@ -221,7 +234,7 @@ function exportSnapshot() {
       </div>
       <OperationsViews :filters="{ query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter }" @apply="applyView" />
 
-      <h2>主机资源 <small>{{ filteredNodes.length }} 个节点</small></h2>
+      <h2>主机资源 <small>{{ nodeTotal }} 个节点</small></h2>
       <div class="node-grid">
         <article v-for="n in nodesVisible" :key="n.id" class="node-tile">
           <div class="row"><h3>{{ n.hostname }}</h3><span class="badge" :class="n.status">{{ statusName[n.status] }}</span></div>
@@ -233,7 +246,7 @@ function exportSnapshot() {
       </div>
       <p v-if="!filteredNodes.length" class="empty">没有匹配的节点，可调整搜索条件。</p>
 
-      <div class="row section-title"><h2>问题中心 <small>{{ problems.length }} 条</small></h2><span class="muted">严重优先，待确认优先</span></div>
+      <div class="row section-title"><h2>问题中心 <small>{{ problemTotal }} 条</small></h2><span class="muted">严重优先，待确认优先</span></div>
       <div class="families"><span v-for="[family, count] in families" :key="family">{{ family }} <b>{{ count }}</b></span></div>
       <p v-if="actionError" class="notice error" role="alert">{{ actionError }}</p>
       <p v-if="!canHandle" class="muted">当前账号只读；管理员和排障人员可以确认问题、指派责任人、更新进度及添加备注。</p>
@@ -269,7 +282,7 @@ function exportSnapshot() {
         <div class="problem-actions"><button @click="emit('drill', p.node, p.chart)">定位图表</button><template v-if="canHandle"><input v-model="notes[p.id]" @input="edit(p)" :disabled="busy === p.id" :aria-label="p.name + ' 处理备注'" placeholder="处理备注（可选）" maxlength="512" /><button :disabled="!!busy" @click="update(p, { action: p.handling.acknowledged ? 'unacknowledge' : 'acknowledge' })">{{ busy === p.id ? '正在保存…' : p.handling.acknowledged ? '撤销确认' : '确认问题' }}</button><button :disabled="!!busy || !notes[p.id]?.trim()" @click="update(p, { action: 'comment' })">添加备注</button></template></div>
         <details v-if="p.handling.history.length"><summary>处理记录 · 最近 {{ p.handling.history.length }} 条</summary><ol><li v-for="(h,i) in [...p.handling.history].reverse()" :key="i"><span>{{ formatTime(h.at) }} · {{ h.actor }} · {{ describeAction(h) }}</span><p v-if="h.note">{{ h.note }}</p></li></ol></details>
       </article>
-      <button v-if="filteredNodes.length > visibleCount || problems.length > visibleCount" @click="visibleCount += 50">再显示 50 条</button>
+      <button v-if="nodeTotal > nodesVisible.length || problemTotal > problemsVisible.length" @click="visibleCount = Math.min(visibleCount + 50, 200); refresh()">再显示 50 条</button>
       <MaintenancePlans />
       <NotificationDiagnostics />
       <OperationsHistory :active-ids="activeIDs" :refresh-key="historyRefreshKey" />

@@ -145,19 +145,23 @@ type Notifier interface {
 
 // Options configures the engine.
 type Options struct {
-	Rules      []*Rule
-	Hostname   string
-	LogDir     string // alarm-log.jsonl lives here; empty = memory only
-	LogKeep    int    // entries kept in memory (default 1000)
-	Notifiers  []Notifier
-	HostVars   map[string]float64  // e.g. cpus, ram_total (MiB); referenced as $cpus
-	Roles      map[string][]string // recipient role -> notifier names; "" role = all
-	Logger     *slog.Logger
-	OnEvent    func(e LogEntry) // called on every transition (for the live WS)
-	Now        func() time.Time
-	SilenceAll bool
-	Enabled    *bool // nil/true = evaluate; false = pause the engine
-	Windows    []MaintenanceWindow
+	Rules            []*Rule
+	Hostname         string
+	LogDir           string // alarm-log.jsonl lives here; empty = memory only
+	LogKeep          int    // entries kept in memory (default 1000)
+	Notifiers        []Notifier
+	HostVars         map[string]float64  // e.g. cpus, ram_total (MiB); referenced as $cpus
+	Roles            map[string][]string // recipient role -> notifier names; "" role = all
+	Logger           *slog.Logger
+	OnEvent          func(e LogEntry) // called on every transition (for the live WS)
+	Now              func() time.Time
+	SilenceAll       bool
+	InhibitSameChart bool          // a critical alarm suppresses warnings on the same chart
+	GroupWait        time.Duration // hold same-chart notifications and send one
+	EscalateAfter    time.Duration // critical repeats use EscalateTo after this long
+	EscalateTo       string
+	Enabled          *bool // nil/true = evaluate; false = pause the engine
+	Windows          []MaintenanceWindow
 	// Anomaly supplies per-dimension 0–100 rates for lookup `anomaly-bit`.
 	Anomaly AnomalySource
 }
@@ -203,6 +207,12 @@ type Engine struct {
 	maintUntil   int64
 	windows      []MaintenanceWindow
 	anomaly      AnomalySource
+	groups       map[string]*notifyGroup
+}
+
+type notifyGroup struct {
+	ready   time.Time
+	entries []LogEntry
 }
 
 // logUpdate is appended to alarm-log.jsonl when a previously written entry
@@ -414,6 +424,7 @@ func (e *Engine) Close() {
 
 // Tick binds rules to any new charts and evaluates alarms that are due.
 func (e *Engine) Tick(now time.Time) {
+	e.flushNotifyGroups(now)
 	if !e.Enabled() {
 		return
 	}
@@ -715,11 +726,43 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 		e.addNotificationResultLocked(entry, "", "suppressed", reason, 0, 0)
 		return
 	}
+	if e.opt.EscalateAfter > 0 && e.opt.EscalateTo != "" && entry.Repeat && entry.Status == StatusCritical {
+		if a := e.alarms[entry.Name+"|"+entry.Chart]; a != nil && at-a.LastStatusChange >= int64(e.opt.EscalateAfter/time.Second) {
+			entry.Recipient = e.opt.EscalateTo
+		}
+	}
+	if e.opt.InhibitSameChart && entry.Status == StatusWarning {
+		for _, a := range e.alarms {
+			if a.Chart == entry.Chart && a.Name != entry.Name && a.Status == StatusCritical {
+				e.diagnostics.Suppressed++
+				e.addNotificationResultLocked(entry, "", "suppressed", "inhibited", 0, 0)
+				return
+			}
+		}
+	}
 	if strings.TrimSpace(entry.Recipient) == "silent" {
 		e.diagnostics.Suppressed++
 		e.addNotificationResultLocked(entry, "", "suppressed", "silent_recipient", 0, 0)
 		return
 	}
+	if e.opt.GroupWait > 0 && entry.testChannel == "" {
+		if e.groups == nil {
+			e.groups = map[string]*notifyGroup{}
+		}
+		key := entry.Chart + "\n" + strings.TrimSpace(entry.Recipient)
+		if g := e.groups[key]; g != nil {
+			g.entries = append(g.entries, entry)
+			e.diagnostics.Suppressed++
+			e.addNotificationResultLocked(entry, "", "suppressed", "grouped", 0, 0)
+			return
+		}
+		e.groups[key] = &notifyGroup{ready: time.Unix(at, 0).Add(e.opt.GroupWait), entries: []LogEntry{entry}}
+		return
+	}
+	e.enqueueNotifyLocked(entry)
+}
+
+func (e *Engine) enqueueNotifyLocked(entry LogEntry) {
 	if len(e.notifiersFor(entry.Recipient)) == 0 {
 		e.diagnostics.Unrouted++
 		e.addNotificationResultLocked(entry, "", "unrouted", "no_channel", 0, 0)
@@ -732,6 +775,26 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 		e.diagnostics.Dropped++
 		e.addNotificationResultLocked(entry, "", "dropped", "queue_full", 0, 0)
 		e.log.Warn("notification queue full, dropping", "alarm", entry.Name)
+	}
+}
+
+func (e *Engine) flushNotifyGroups(now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for key, g := range e.groups {
+		if now.Before(g.ready) || len(g.entries) == 0 {
+			continue
+		}
+		first := g.entries[0]
+		if len(g.entries) > 1 {
+			names := make([]string, len(g.entries))
+			for i, en := range g.entries {
+				names[i] = en.Name
+			}
+			first.Info = strings.TrimSpace(first.Info + " also " + strings.Join(names, ", "))
+		}
+		delete(e.groups, key)
+		e.enqueueNotifyLocked(first)
 	}
 }
 

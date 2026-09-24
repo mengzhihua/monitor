@@ -5,6 +5,7 @@ import '../state/app_state.dart';
 import '../widgets/alarms_view.dart';
 import '../widgets/charts_view.dart';
 import '../widgets/functions_view.dart';
+import '../widgets/operations_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.state});
@@ -71,6 +72,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           client: st.client!,
           node: _nodeParam,
           active: _visible && _tab == 2),
+      OperationsView(
+          key: ValueKey('ops:${st.selectedNode}'),
+          client: st.client!,
+          canHandle: info.role == 'admin' || info.role == 'troubleshooter',
+          active: _visible && _tab == 3),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -111,6 +117,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           const NavigationDestination(
               icon: Icon(Icons.table_rows), label: 'Functions'),
+          const NavigationDestination(
+              icon: Icon(Icons.assignment_outlined), label: 'Ops'),
         ],
       ),
     );

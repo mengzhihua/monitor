@@ -9,6 +9,7 @@ class ServerInfo {
     required this.chartsCount,
     required this.alarms,
     this.user,
+    this.role = '',
   });
 
   final String mode;
@@ -17,6 +18,7 @@ class ServerInfo {
   final int chartsCount;
   final AlarmCounts alarms;
   final String? user;
+  final String role;
 
   bool get isHub => mode == 'hub';
 
@@ -30,6 +32,7 @@ class ServerInfo {
       chartsCount: (j['charts_count'] as num?)?.toInt() ?? 0,
       alarms: AlarmCounts.fromJson(j['alarms'] as Map<String, dynamic>?),
       user: user?['name'] as String?,
+      role: (user?['role'] as String?) ?? '',
     );
   }
 }

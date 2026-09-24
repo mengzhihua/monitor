@@ -572,16 +572,40 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		vars["ram_total"] = float64(vm.Total) / (1024 * 1024)
 	}
 	log.Info("health engine", "rules", len(rules), "notifiers", len(notifiers), "silent", cfg.Health.Silent)
+	inhibit := true
+	if cfg.Health.InhibitSameChart != nil {
+		inhibit = *cfg.Health.InhibitSameChart
+	}
+	groupWait, err := optionalDuration(cfg.Health.GroupWait)
+	if err != nil {
+		return nil, fmt.Errorf("health.group_wait: %w", err)
+	}
+	escalateAfter, err := optionalDuration(cfg.Health.EscalateAfter)
+	if err != nil {
+		return nil, fmt.Errorf("health.escalate_after: %w", err)
+	}
 	return health.New(reg, db, health.Options{
-		Rules:      rules,
-		Hostname:   reg.Host.Hostname,
-		LogDir:     filepath.Join(cfg.Global.DataDir, "health"),
-		LogKeep:    cfg.Health.LogKeep,
-		Notifiers:  notifiers,
-		Roles:      n.Roles,
-		HostVars:   vars,
-		Logger:     log,
-		SilenceAll: cfg.Health.Silent,
-		Windows:    cfg.Health.Windows,
+		Rules:            rules,
+		Hostname:         reg.Host.Hostname,
+		LogDir:           filepath.Join(cfg.Global.DataDir, "health"),
+		LogKeep:          cfg.Health.LogKeep,
+		Notifiers:        notifiers,
+		Roles:            n.Roles,
+		HostVars:         vars,
+		Logger:           log,
+		SilenceAll:       cfg.Health.Silent,
+		InhibitSameChart: inhibit,
+		GroupWait:        groupWait,
+		EscalateAfter:    escalateAfter,
+		EscalateTo:       cfg.Health.EscalateTo,
+		Windows:          cfg.Health.Windows,
 	})
+}
+
+func optionalDuration(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(raw)
 }

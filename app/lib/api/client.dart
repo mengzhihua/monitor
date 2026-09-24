@@ -118,6 +118,22 @@ class ApiClient {
     return ChartData.fromJson(j);
   }
 
+  Future<Map<String, dynamic>> operations({int limit = 50}) async =>
+      _get('/operations', {'limit': '$limit'});
+
+  Future<void> acknowledgeProblem(String id, int revision) async {
+    final res = await _http
+        .post(
+          config.uri('/api/v1/operations/acknowledgements'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: jsonEncode({'id': id, 'action': 'acknowledge', 'revision': revision, 'note': ''}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+  }
+
   Future<List<Alarm>> alarms({String? node, bool all = false}) async {
     final j = await _get('/alarms', _q(node, {if (all) 'all': 'true'}));
     final m = (j['alarms'] as Map<String, dynamic>?) ?? const {};

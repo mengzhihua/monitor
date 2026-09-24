@@ -14,6 +14,7 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/operations"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
@@ -229,5 +230,33 @@ func TestOperationsHubOfflineProblemsRemainVisible(t *testing.T) {
 	getJSON(t, hubTS.URL+"/api/v1/operations", &snap)
 	if len(snap.Nodes) != 2 || len(snap.Problems) != 1 || !snap.Problems[0].Stale || snap.Problems[0].Node != "remote-ops" || snap.Summary["offline"] != 1 {
 		t.Fatalf("%+v", snap)
+	}
+}
+
+func TestOperationsPageKeepsGlobalSummary(t *testing.T) {
+	snap := operationsSnapshot{
+		CurrentUser: User{Name: "ada"},
+		Summary:     map[string]int{"nodes": 3, "critical": 2},
+		Nodes: []operationsNode{
+			{Info: hub.Info{ID: "b", Hostname: "b", Status: "live"}},
+			{Info: hub.Info{ID: "a", Hostname: "a", Status: "offline", Alarms: map[string]int{"critical": 2}}},
+			{Info: hub.Info{ID: "c", Hostname: "c", Status: "live"}},
+		},
+		Problems: []problem{
+			{ID: "1", Name: "cpu", Severity: "CRITICAL", NodeStatus: "live", Family: "cpu", Handling: operations.Record{Status: "open"}},
+			{ID: "2", Name: "ram", Severity: "WARNING", NodeStatus: "live", Family: "ram", Handling: operations.Record{Status: "open", Acknowledged: true}},
+			{ID: "3", Name: "disk", Severity: "WARNING", NodeStatus: "offline", Family: "disk", Handling: operations.Record{Assignee: "ada", Status: "investigating"}},
+		},
+	}
+	req := httptest.NewRequest("GET", "/api/v1/operations?limit=1&severity=WARNING&owner=mine", nil)
+	got := pageOperations(snap, req, 1)
+	if got.Summary["nodes"] != 3 || got.Page == nil || got.Page.ProblemsMatched != 1 || len(got.Problems) != 1 || got.Problems[0].Name != "disk" {
+		t.Fatalf("%+v page=%+v", got.Problems, got.Page)
+	}
+	if got.Page.NodesMatched != 3 || len(got.Nodes) != 1 || got.Nodes[0].ID != "a" {
+		t.Fatalf("nodes=%+v matched=%d", got.Nodes, got.Page.NodesMatched)
+	}
+	if _, ok := operationsLimit(httptest.NewRequest("GET", "/api/v1/operations?limit=0", nil)); ok {
+		t.Fatal("limit 0 is not a page size")
 	}
 }

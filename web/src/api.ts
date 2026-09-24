@@ -67,6 +67,7 @@ export interface OperationsSnapshot {
   assignees: { name: string; role: string }[]
   activity: HandlingRecord[]
   now: number; nodes: OperationsNode[]; problems: Problem[]; summary: Record<string, number>; persistent: boolean
+  page?: { limit: number; nodes_matched: number; problems_matched: number; families: { name: string; count: number }[] }
 }
 export interface NotificationResult {
   id: number; event_id: number; at: number; name: string; chart: string; severity: string; repeat: boolean
@@ -241,7 +242,11 @@ function q(params: Record<string, string | number>): string {
 export const api = {
   operationsViews: (signal?: AbortSignal) => get<OperationsViews>('/api/v1/operations/views', signal),
   saveOperationsViews: (revision: number, views: OperationsView[]) => post<OperationsViews>('/api/v1/operations/views', { revision, views }),
-  operations: (signal?: AbortSignal) => get<OperationsSnapshot>('/api/v1/operations', signal),
+  operations: (signal?: AbortSignal, query: Record<string, string> = {}) => {
+    const q = new URLSearchParams(query)
+    const s = q.toString()
+    return get<OperationsSnapshot>('/api/v1/operations' + (s ? '?' + s : ''), signal)
+  },
   testNotification: (channel: string) => post<{ queued: boolean }>('/api/v1/operations/notifications/test', { channel }),
   notifications: (signal?: AbortSignal) => get<NotificationSnapshot>('/api/v1/operations/notifications', signal),
   maintenance: (signal?: AbortSignal) => get<MaintenanceSnapshot>('/api/v1/operations/maintenance', signal),
