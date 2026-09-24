@@ -315,9 +315,15 @@ func (c *memCollector) Init(reg *registry.Registry) error {
 	if c.limitEnforced {
 		committed.MergeLabels(committedLabels)
 	}
+	// gopsutil reports PgFault/PgMajFault in bytes (pages × 4096, mirroring
+	// Sin/Sout); the chart is in faults/s (pages), so divide by the page size
+	// like mem.swapio divides bytes to KiB. Feeding bytes directly inflated
+	// rates 4096× and tripped 1m_major_page_faults on healthy hosts.
 	reg.AddChart(&registry.Chart{ID: "mem.pgfaults", Family: "ram", Title: "Memory page faults", Units: "faults/s",
 		Priority: 305, Plugin: "system", Module: "mem",
-		Dimensions: []*registry.Dimension{incDim("minor"), incDim("major")}})
+		Dimensions: []*registry.Dimension{
+			{ID: "minor", Algorithm: registry.Incremental, Divisor: 4096},
+			{ID: "major", Algorithm: registry.Incremental, Divisor: 4096}}})
 	if sw, err := mem.SwapMemory(); err == nil && sw.Total > 0 {
 		c.hasSwap = true
 		reg.AddChart(&registry.Chart{ID: "mem.swap", Family: "swap", Title: "System swap", Units: "MiB", Type: registry.Stacked,

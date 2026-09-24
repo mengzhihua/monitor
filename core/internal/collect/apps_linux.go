@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 // clkTicks is Linux USER_HZ. /proc stat times are always in these ticks,
@@ -105,20 +106,25 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 	if err != nil {
 		return procCounters{}
 	}
-	name, ppid, ut, st, rssPages, threads, kthread, ok := parseProcPIDStat(b)
+	name, ppid, state, ut, st, rssPages, threads, kthread, ok := parseProcPIDStat(b)
 	if !ok {
 		return procCounters{}
 	}
 	out := procCounters{
 		name:    name,
 		ppid:    ppid,
+		state:   state,
 		cpuSec:  float64(ut+st) / float64(clkTicks),
 		rss:     rssPages * pageSize,
 		threads: threads,
 		kthread: kthread,
 		ok:      true,
 	}
-	if skipIO || kthread {
+	// /proc/<pid>/io and cmdline go through mm_access (the target's mmap lock):
+	// a D-state process may hold that lock for a long unwind (exit_mmap of a
+	// huge address space) and reading would block uninterruptibly. The io
+	// charts are incremental and tolerate the gap. Zombies have no mm at all.
+	if skipIO || kthread || state == 'D' || state == 'Z' {
 		return out
 	}
 	ib, err := readInto("/proc/"+id+"/io", buf)
@@ -132,9 +138,34 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 	return out
 }
 
+// readProcCmdline reads /proc/<pid>/cmdline. The read goes through the
+// target's mmap lock, which a process tearing down a huge address space
+// (Electron, ZGC — state R during exit_mmap, so the D/Z pre-checks cannot
+// catch it) may hold for a long time; procfs ignores O_NONBLOCK, so the only
+// escape is to give up. Identity reads cmdline once per pid, so a wedged read
+// would otherwise pin the apps collector forever. The orphaned goroutine (and
+// its fd) leak is bounded by the number of pids that hit the lock.
 func readProcCmdline(pid int32) string {
-	b, err := os.ReadFile("/proc/" + strconv.FormatInt(int64(pid), 10) + "/cmdline")
-	if err != nil || len(b) == 0 {
+	type readResult struct {
+		b   []byte
+		err error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		b, err := os.ReadFile("/proc/" + strconv.FormatInt(int64(pid), 10) + "/cmdline")
+		done <- readResult{b, err}
+	}()
+	var b []byte
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return ""
+		}
+		b = r.b
+	case <-time.After(500 * time.Millisecond):
+		return ""
+	}
+	if len(b) == 0 {
 		return ""
 	}
 	for len(b) > 0 && b[len(b)-1] == 0 {
@@ -181,17 +212,20 @@ func readProcOwners(pid int32) (uid, gid uint32, haveUID, haveGID bool) {
 
 // parseProcPIDStat reads comm, ppid, utime, stime, rss (pages) and num_threads.
 // comm may contain spaces and parentheses, so fields are taken after the last ')'.
-func parseProcPIDStat(b []byte) (name string, ppid int32, utime, stime, rssPages uint64, threads int32, kthread, ok bool) {
+func parseProcPIDStat(b []byte) (name string, ppid int32, state byte, utime, stime, rssPages uint64, threads int32, kthread, ok bool) {
 	open := bytes.IndexByte(b, '(')
 	close := bytes.LastIndexByte(b, ')')
 	if open < 0 || close < open || close+2 >= len(b) {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	name = string(b[open+1 : close])
 	f := bytes.Fields(b[close+2:])
 	// utime is field 14, stime 15, num_threads 20, rss 24; index 0 here is field 3.
 	if len(f) < 18 {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
+	}
+	if len(f[0]) > 0 {
+		state = f[0][0]
 	}
 	if v, err := strconv.ParseInt(string(f[1]), 10, 32); err == nil {
 		ppid = int32(v)
@@ -201,19 +235,19 @@ func parseProcPIDStat(b []byte) (name string, ppid int32, utime, stime, rssPages
 	}
 	var err error
 	if utime, err = strconv.ParseUint(string(f[11]), 10, 64); err != nil {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	if stime, err = strconv.ParseUint(string(f[12]), 10, 64); err != nil {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	thr, err := strconv.ParseInt(string(f[17]), 10, 32)
 	if err != nil {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	if len(f) > 21 {
 		rssPages, _ = strconv.ParseUint(string(f[21]), 10, 64)
 	}
-	return name, ppid, utime, stime, rssPages, int32(thr), kthread, true
+	return name, ppid, state, utime, stime, rssPages, int32(thr), kthread, true
 }
 
 func parseProcIO(b []byte) (readB, writeB uint64, ok bool) {

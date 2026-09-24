@@ -105,6 +105,39 @@ func TestMemCommittedSkipsDecorativeLimit(t *testing.T) {
 	}
 }
 
+// gopsutil SwapMemoryStat.PgFault/PgMajFault are byte counts (pages × 4096),
+// while mem.pgfaults is in faults/s (pages). The dimensions must divide by
+// the page size, otherwise rates are inflated 4096× and 1m_major_page_faults
+// fires on healthy hosts (one real major fault → 4096/61s ≈ 67 faults/s).
+func TestMemPgfaultsRateInPages(t *testing.T) {
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	c := &memCollector{}
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	chart, ok := reg.Chart("mem.pgfaults")
+	if !ok {
+		t.Fatal("missing mem.pgfaults")
+	}
+	for _, id := range []string{"minor", "major"} {
+		if d := chart.Dimension(id); d == nil || d.Divisor != 4096 {
+			t.Fatalf("dim %s divisor = %v, want 4096 (bytes→pages)", id, d)
+		}
+	}
+	// Feed gopsutil-scale byte counters: +4096 bytes/s = 1 page/s.
+	now := time.Unix(1_700_000_000, 0)
+	_ = reg.Collect("mem.pgfaults", now, map[string]float64{"minor": 1 << 30, "major": 341878 * 4096})
+	_ = reg.Collect("mem.pgfaults", now.Add(time.Second),
+		map[string]float64{"minor": 1<<30 + 4096, "major": 341878*4096 + 4096})
+	_, last := chart.LastValues()
+	if last["major"] != 1 {
+		t.Fatalf("major rate = %v, want 1 fault/s (page semantics)", last["major"])
+	}
+	if last["minor"] != 1 {
+		t.Fatalf("minor rate = %v, want 1 fault/s (page semantics)", last["minor"])
+	}
+}
+
 func TestLoadEveryNeverBelowScheduler(t *testing.T) {
 	reg := registry.New(&registry.Host{UpdateEvery: 15}, nil)
 	if got := loadEvery(reg); got != 15 {

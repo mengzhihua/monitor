@@ -9,7 +9,7 @@ func (p *profileCollector) agentCPU() (user, sys float64, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	_, _, ut, st, _, _, _, ok := parseProcPIDStat(b)
+	_, _, _, ut, st, _, _, _, ok := parseProcPIDStat(b)
 	if !ok {
 		return 0, 0, false
 	}
