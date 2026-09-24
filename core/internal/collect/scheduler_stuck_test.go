@@ -14,9 +14,9 @@ import (
 // it never returns and never honors its context.
 type blockedCollector struct{ release chan struct{} }
 
-func (c *blockedCollector) Name() string                          { return "blocked" }
-func (*blockedCollector) Configure(func(any) error) error         { return nil }
-func (*blockedCollector) Init(*registry.Registry) error           { return nil }
+func (c *blockedCollector) Name() string                  { return "blocked" }
+func (*blockedCollector) Configure(func(any) error) error { return nil }
+func (*blockedCollector) Init(*registry.Registry) error   { return nil }
 func (c *blockedCollector) Collect(context.Context, *registry.Registry, time.Time) error {
 	<-c.release // never closed by the test
 	return nil
