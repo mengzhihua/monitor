@@ -12,6 +12,7 @@ import LogsPanel from './components/LogsPanel.vue'
 import WeightsPanel from './components/WeightsPanel.vue'
 import HubPanel from './components/HubPanel.vue'
 import CloudPanel from './components/CloudPanel.vue'
+import ConfigPanel from './components/ConfigPanel.vue'
 import ContextsPanel from './components/ContextsPanel.vue'
 import DashboardsPanel from './components/DashboardsPanel.vue'
 import ChartTimeline from './components/ChartTimeline.vue'
@@ -57,6 +58,7 @@ const showLogs = ref(false)
 const showWeights = ref(false)
 const showHub = ref(false)
 const showCloud = ref(false)
+const showConfig = ref(false)
 const showContexts = ref(false)
 const dashboardView = ref('all')
 const oidcAvailable = ref(false)
@@ -185,7 +187,7 @@ async function load(signal: AbortSignal) {
       alarms.value = []
       alarmLog.value = []
       functions.value = []
-      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = false
+      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = false
       error.value = ''
       return
     }
@@ -314,6 +316,7 @@ onBeforeUnmount(() => {
       <button class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showCloud }" @click="showCloud = !showCloud" title="Cloud 控制台">Cloud</button>
+      <button class="alarms-btn" :class="{ open: showConfig }" @click="showConfig = !showConfig" title="配置：本机与节点">配置</button>
       <button class="alarms-btn" :class="{ open: showWeights }" @click="showWeights = !showWeights" title="异常顾问 / 关联分析">Σ</button>
       <button class="alarms-btn" :class="{ open: showContexts }" @click="showContexts = !showContexts" title="Context 总览">Ctx</button>
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
@@ -372,6 +375,7 @@ onBeforeUnmount(() => {
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
       <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showCloud = false }" />
+      <ConfigPanel v-if="showConfig" :can-manage="info?.user?.role === 'admin'" :is-hub="isHub" @close="showConfig = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>请输入登录密码或访问令牌。</p>
         <p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>

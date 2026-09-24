@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/registry"
@@ -169,6 +171,10 @@ func (s *Server) handleClaimRedeem(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleHubConfig is GET/PUT /api/v1/hub/config?node=<id>: the desired
+// per-node config (disabled overlay + optional full yaml replacement) plus the
+// agent's reported file and apply outcome. The PUT body is decoded into a
+// narrow struct so a caller can never overwrite the agent-reported state.
 func (s *Server) handleHubConfig(w http.ResponseWriter, r *http.Request) {
 	org := s.requireOrg(w)
 	if org == nil {
@@ -181,23 +187,101 @@ func (s *Server) handleHubConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no config", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, cfg)
+		out := s.hubConfigPayload(cfg)
+		if userOf(r).Role != RoleAdmin {
+			// the desired and reported files carry credentials
+			out["yaml"], out["reported"] = "", ""
+		}
+		writeJSON(w, out)
 		return
 	}
-	var cfg hub.NodeConfig
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&cfg); err != nil {
+	if nodeID == "" {
+		http.Error(w, "node parameter required", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		YAML      string   `json:"yaml"`
+		Disabled  []string `json:"disabled"`
+		IfUpdated int64    `json:"if_updated"` // Updated observed by a previous GET; 0 = no check
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if cfg.NodeID == "" {
-		cfg.NodeID = nodeID
+	if len(body.YAML) > maxConfigYAML {
+		http.Error(w, "config exceeds 256KiB limit", http.StatusBadRequest)
+		return
 	}
-	out, err := org.SetConfig(cfg)
+	cur, _ := org.GetConfig(nodeID)
+	if body.IfUpdated != 0 && body.IfUpdated != cur.Updated {
+		http.Error(w, "config changed since read", http.StatusConflict)
+		return
+	}
+	if body.YAML != "" { // an empty yaml is the legacy disabled-only update
+		if _, err := config.Parse([]byte(body.YAML)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := checkAgentLocks(cur.Reported, body.YAML); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	in := hub.NodeConfig{NodeID: nodeID, Disabled: body.Disabled, YAML: body.YAML}
+	if in.YAML == "" {
+		in.YAML = cur.YAML // legacy disabled-only update keeps the stored yaml
+	}
+	out, err := org.SetConfig(in)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, out)
+	pushed := false
+	if s.opt.Nodes != nil {
+		if n, ok := s.opt.Nodes.Get(nodeID); ok {
+			pushed = n.PushConfig(out)
+		}
+	}
+	resp := s.hubConfigPayload(out)
+	resp["pushed"] = pushed
+	writeJSON(w, resp)
+}
+
+// checkAgentLocks rejects a yaml replacement that changes fields the agent
+// must keep: rewriting them remotely could cut the agent's path back to the
+// hub. The reference point is what the agent last reported on its file.
+func checkAgentLocks(reported, next string) error {
+	if reported == "" {
+		return nil
+	}
+	cur, err := config.Parse([]byte(reported))
+	if err != nil {
+		return nil // nothing reliable to compare against
+	}
+	nxt, err := config.Parse([]byte(next))
+	if err != nil {
+		return nil // already rejected by the caller's Parse check
+	}
+	if err := config.CheckLocked(cur, nxt); err != nil {
+		return fmt.Errorf("agent config locks mode/stream.destinations/stream.api_key: %w", err)
+	}
+	return nil
+}
+
+// hubConfigPayload renders a stored NodeConfig with its live connection state.
+func (s *Server) hubConfigPayload(cfg hub.NodeConfig) map[string]any {
+	online := false
+	if s.opt.Nodes != nil {
+		if n, ok := s.opt.Nodes.Get(cfg.NodeID); ok {
+			online = n.Online()
+		}
+	}
+	pending := cfg.Updated > 0 && (cfg.Apply == nil || cfg.Apply.Rev != cfg.Updated || cfg.Apply.State != "applied")
+	return map[string]any{
+		"node_id": cfg.NodeID, "disabled": cfg.Disabled, "yaml": cfg.YAML, "updated": cfg.Updated,
+		"reported": cfg.Reported, "report_at": cfg.ReportAt, "apply": cfg.Apply,
+		"online": online, "pending": pending,
+	}
 }
 
 func (s *Server) handleAgentConfig(w http.ResponseWriter, r *http.Request) {

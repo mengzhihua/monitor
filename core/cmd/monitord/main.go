@@ -183,6 +183,17 @@ func run() error {
 	}
 
 	var sc *stream.Client
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// requestExit triggers the graceful shutdown path once, after a short
+	// delay that lets pending WebSocket frames (e.g. a config apply ack)
+	// flush before the connection drops.
+	var exitOnce sync.Once
+	requestExit := func() {
+		exitOnce.Do(func() {
+			time.AfterFunc(2*time.Second, func() { stop() })
+		})
+	}
 	if cfg.Stream.Enabled {
 		if len(cfg.Stream.Destinations) == 0 {
 			return errors.New("stream.enabled requires stream.destinations")
@@ -203,10 +214,14 @@ func run() error {
 			Version:            version,
 			Functions:          sched.Functions,
 			Logger:             log.With("component", "stream"),
+			ConfigPath:         *cfgPath,
 			OnConfig: func(disabled []string) {
 				for _, n := range disabled {
 					sched.SetEnabled(n, false)
 				}
+			},
+			OnConfigFile: func(yamlText string, rev int64) error {
+				return applyAgentConfig(*cfgPath, cfg, yamlText, rev, log, requestExit)
 			},
 		})
 	}
@@ -222,6 +237,8 @@ func run() error {
 		Health:        eng,
 		Plugins:       pm,
 		Stream:        sc,
+		ConfigPath:    *cfgPath,
+		Restart:       stop,
 		Logger:        log.With("component", "api"),
 	}
 	var nodes *hub.Nodes
@@ -257,12 +274,28 @@ func run() error {
 			MaxChartsPerNode: cfg.Hub.MaxChartsPerNode,
 			MaxDimsPerChart:  cfg.Hub.MaxDimsPerChart,
 			Storage:          cfg.Hub.Storage,
-			NodeConfig: func(nodeID string) []string {
-				cfg, ok := org.GetConfig(nodeID)
+			NodeConfig: func(nodeID string) *hub.NodeConfig {
+				c, ok := org.GetConfig(nodeID)
 				if !ok {
 					return nil
 				}
-				return cfg.Disabled
+				return &c
+			},
+			OnConfigState: func(nodeID string, f stream.Frame) {
+				if f.ConfigYAML != "" {
+					if err := org.SetReport(nodeID, f.ConfigYAML, time.Now().Unix()); err != nil {
+						log.Warn("hub: save agent config report", "node", nodeID, "err", err)
+					}
+				}
+				if f.ApplyState != "" {
+					st := hub.ApplyState{Rev: f.ConfigRev, State: f.ApplyState, Error: f.ApplyError, At: time.Now().Unix()}
+					if err := org.SetApply(nodeID, st); err != nil {
+						log.Warn("hub: save agent apply state", "node", nodeID, "err", err)
+					}
+					if f.ApplyState == "rejected" {
+						log.Warn("hub: agent rejected config", "node", nodeID, "rev", f.ConfigRev, "reason", f.ApplyError)
+					}
+				}
 			},
 			Logger:   log.With("component", "hub"),
 			OnSample: func(n, c string, t int64, v map[string]float64) { srv.PublishNodeSample(n, c, t, v) },
@@ -306,9 +339,6 @@ func run() error {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	schedDone := make(chan struct{})
 	go func() {

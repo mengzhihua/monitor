@@ -3,16 +3,23 @@ package api
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mengzhihua/monitor/core/internal/config"
 )
+
+// maxConfigYAML caps the yaml payload accepted by the config edit APIs.
+const maxConfigYAML = 256 << 10
 
 func (s *Server) handleManageHealth(w http.ResponseWriter, r *http.Request) {
 	if s.opt.Health == nil {
@@ -86,6 +93,89 @@ func (s *Server) handleManageHealth(w http.ResponseWriter, r *http.Request) {
 		s.opt.Health.SetMaintenanceUntil(body.Maintenance)
 	}
 	writeJSON(w, s.opt.Health.ManageInfo())
+}
+
+// handleManageConfig is GET/PUT /api/v1/manage/config: read and replace this
+// monitor's own monitor.yaml. Both directions are admin-only because the file
+// carries credentials. PUT validates the yaml (config.Parse), rejects payloads
+// over 256KiB and honours an optional if_updated optimistic-concurrency check
+// against the file's mtime; config.Save writes the .bak backup atomically.
+func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
+	if userOf(r).Role != RoleAdmin {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	if s.opt.ConfigPath == "" {
+		http.Error(w, "config file not configured", http.StatusNotFound)
+		return
+	}
+	if r.Method == http.MethodGet {
+		b, err := os.ReadFile(s.opt.ConfigPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		updated := int64(0)
+		if info, err := os.Stat(s.opt.ConfigPath); err == nil {
+			updated = info.ModTime().Unix()
+		}
+		writeJSON(w, map[string]any{"path": s.opt.ConfigPath, "yaml": string(b), "updated": updated, "size": len(b)})
+		return
+	}
+	var body struct {
+		YAML      string `json:"yaml"`
+		IfUpdated int64  `json:"if_updated"` // mtime observed by a previous GET; 0 = no check
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body.YAML) > maxConfigYAML {
+		http.Error(w, "config exceeds 256KiB limit", http.StatusBadRequest)
+		return
+	}
+	if _, err := config.Parse([]byte(body.YAML)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.IfUpdated != 0 && body.IfUpdated != configFileMTime(s.opt.ConfigPath) {
+		http.Error(w, "config changed since read", http.StatusConflict)
+		return
+	}
+	if err := config.Save(s.opt.ConfigPath, []byte(body.YAML)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"path": s.opt.ConfigPath, "updated": configFileMTime(s.opt.ConfigPath), "backup": s.opt.ConfigPath + ".bak",
+	})
+}
+
+func configFileMTime(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.ModTime().Unix()
+}
+
+// handleManageRestart is POST /api/v1/manage/restart: flush the response,
+// then trigger the graceful shutdown path after a short delay so the process
+// manager (systemd and friends) brings the service back with the new config.
+func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
+	if userOf(r).Role != RoleAdmin {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	if s.opt.Restart == nil {
+		http.Error(w, "restart not supported", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	time.AfterFunc(500*time.Millisecond, s.opt.Restart)
 }
 
 func (s *Server) handleAlarmSummary(w http.ResponseWriter, r *http.Request) {

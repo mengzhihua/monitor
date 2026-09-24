@@ -13,8 +13,6 @@ const spaceName = ref('')
 const roomName = ref('')
 const minted = ref('')
 const shareURL = ref('')
-const nodeID = ref('')
-const disabled = ref('')
 const error = ref('')
 const copied = ref(false)
 
@@ -96,14 +94,6 @@ async function mintShare() {
   copied.value = false
 }
 
-async function saveConfig() {
-  const id = nodeID.value.trim()
-  if (!id) return
-  const list = disabled.value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)
-  await api.putNodeConfig({ node_id: id, disabled: list })
-  error.value = ''
-}
-
 function when(t: number) {
   if (!t) return '—'
   return new Date(t * 1000).toLocaleString()
@@ -164,13 +154,6 @@ onMounted(() => { void load() })
         <tr v-if="!claims.length"><td colspan="4" class="dim">还没有 claim token</td></tr>
       </tbody>
     </table>
-
-    <h3>配置下发</h3>
-    <div class="row">
-      <input v-model="nodeID" placeholder="node id" />
-      <input v-model="disabled" placeholder="禁用采集器，逗号分隔，如 nvidia,ping" />
-      <button :disabled="!nodeID.trim()" @click="saveConfig">下发</button>
-    </div>
   </div>
 </template>
 

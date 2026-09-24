@@ -7,7 +7,7 @@
 // Frames are JSON objects with a "type" discriminator (one frame per
 // WebSocket text message):
 //
-//	agent → hub: hello, chart, chart_del, data, alarm, alarms, func_result, query_result
+//	agent → hub: hello, chart, chart_del, data, alarm, alarms, func_result, query_result, config_state
 //	hub → agent: welcome, func_call, query, config, error, ping
 package stream
 
@@ -35,7 +35,8 @@ const (
 	TypeFuncResult  = "func_result"
 	TypeQuery       = "query"        // hub → agent: live metric query (Cloud proxy storage)
 	TypeQueryResult = "query_result" // agent → hub
-	TypeConfig      = "config"       // hub → agent: disabled collectors overlay
+	TypeConfig      = "config"       // hub → agent: disabled collectors overlay, or a full config replacement
+	TypeConfigState = "config_state" // agent → hub: config file report / apply outcome
 	TypeError       = "error"
 )
 
@@ -55,8 +56,20 @@ type Frame struct {
 	Protocol     string         `json:"protocol,omitempty"` // "stream" | "mqtt"
 	Claimed      bool           `json:"claimed,omitempty"`
 
-	// config (hub → agent)
-	Disabled []string `json:"disabled,omitempty"`
+	// config (hub → agent): Disabled is the hot overlay; ConfigYAML (if set)
+	// is a full monitor.yaml replacement the agent validates, backs up,
+	// writes atomically and restarts into. ConfigRev identifies the revision
+	// (the desired state's Updated timestamp).
+	Disabled   []string `json:"disabled,omitempty"`
+	ConfigYAML string   `json:"config_yaml,omitempty"`
+	ConfigRev  int64    `json:"config_rev,omitempty"`
+
+	// config_state (agent → hub): ConfigYAML+ConfigPath report the agent's
+	// live config file after every (re)connect; ApplyState/ApplyError ack a
+	// pushed ConfigRev ("applied" | "rejected" | "deferred").
+	ConfigPath string `json:"config_path,omitempty"`
+	ApplyState string `json:"apply_state,omitempty"`
+	ApplyError string `json:"apply_error,omitempty"`
 
 	// welcome: last sample time the hub holds per chart, so the agent can
 	// replicate only what is missing. ReplicateFrom bounds how far back.

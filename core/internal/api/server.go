@@ -39,7 +39,12 @@ type Options struct {
 	Version       string
 	Mode          string // agent | hub (informational)
 	StartedAt     time.Time
-	AllowFrom     []string
+	// ConfigPath is the monitor.yaml the manage/config API reads and writes.
+	ConfigPath string
+	// Restart triggers the graceful shutdown path (manage/restart API); the
+	// process manager (e.g. systemd) brings the service back.
+	Restart   func()
+	AllowFrom []string
 	// Token is the legacy single admin credential; Users adds named
 	// credentials with roles. With neither set the API is anonymous (admin).
 	Token  string
@@ -244,6 +249,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/auth/ldap", s.handleLDAP)
 	m.HandleFunc("GET /api/v1/manage/health", s.handleManageHealth)
 	m.HandleFunc("PUT /api/v1/manage/health", s.handleManageHealth)
+	m.HandleFunc("GET /api/v1/manage/config", s.handleManageConfig)
+	m.HandleFunc("PUT /api/v1/manage/config", s.handleManageConfig)
+	m.HandleFunc("POST /api/v1/manage/restart", s.handleManageRestart)
 	m.HandleFunc("GET /api/v1/alarm_summary", s.handleAlarmSummary)
 	m.HandleFunc("POST /api/v1/share", s.handleShare)
 	m.HandleFunc("GET /api/v1/share", s.handleShare)

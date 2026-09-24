@@ -46,8 +46,12 @@ type Options struct {
 	Logger           *slog.Logger
 	// ExtraKeys are stream credentials minted at runtime (claim tokens).
 	ExtraKeys func() []string
-	// NodeConfig returns disabled collectors for a node (hub → agent TypeConfig).
-	NodeConfig func(nodeID string) []string
+	// NodeConfig returns the desired overlay for a node (hub → agent
+	// TypeConfig); nil means nothing to push.
+	NodeConfig func(nodeID string) *NodeConfig
+	// OnConfigState receives agent config reports and apply acks
+	// (TypeConfigState).
+	OnConfigState func(nodeID string, f stream.Frame)
 	// Storage is "full" (default, hub keeps samples) or "proxy" (query live agent).
 	Storage string
 	// OnSample/OnAlarm mirror node activity to the live WebSocket feed.
@@ -55,6 +59,15 @@ type Options struct {
 	OnAlarm  func(nodeID string, e health.LogEntry)
 	// Now is overridable for tests.
 	Now func() time.Time
+}
+
+// configFor returns the desired overlay for a node, or nil when no callback
+// is set or the node has none.
+func (o *Options) configFor(nodeID string) *NodeConfig {
+	if o.NodeConfig == nil {
+		return nil
+	}
+	return o.NodeConfig(nodeID)
 }
 
 // Node is one remote agent.
@@ -568,6 +581,19 @@ func (nd *Node) replaceAlarms(snapshot []health.LogEntry) []health.LogEntry {
 		}
 	}
 	return changed
+}
+
+// PushConfig sends the desired config overlay to the node's live connection.
+// It reports whether a frame was queued (node online).
+func (nd *Node) PushConfig(cfg NodeConfig) bool {
+	nd.mu.Lock()
+	s := nd.conn
+	nd.mu.Unlock()
+	if s == nil {
+		return false
+	}
+	return s.send(stream.Frame{Type: stream.TypeConfig,
+		Disabled: cfg.Disabled, ConfigYAML: cfg.YAML, ConfigRev: cfg.Updated}) == nil
 }
 
 // Call runs a function on the agent over the stream and returns its raw JSON

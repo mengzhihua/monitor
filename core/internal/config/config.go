@@ -289,15 +289,15 @@ func (c *Config) WebEnabled() bool { return c.Web.Enabled == nil || *c.Web.Enabl
 
 // Load reads path (if it exists) on top of Default().
 func Load(path string) (*Config, error) {
-	c := Default()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return c, nil
+			return Default(), nil
 		}
 		return nil, err
 	}
-	if err := yaml.Unmarshal(b, c); err != nil {
+	c, err := Parse(b)
+	if err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	// Resolve only explicit secret references, never expand arbitrary YAML.

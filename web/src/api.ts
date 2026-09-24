@@ -38,6 +38,11 @@ export interface Space { id: string; name: string; created: number }
 export interface Room { id: string; name: string; space_id: string; nodes?: string[] }
 export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
+export interface ManageConfig { path: string; yaml: string; updated: number; size?: number }
+export interface NodeApplyState { rev: number; state: 'applied' | 'rejected' | 'deferred'; error?: string; at: number }
+export interface NodeConfigFull extends NodeConfig {
+  reported?: string; report_at?: number; apply?: NodeApplyState; online?: boolean; pending?: boolean; pushed?: boolean
+}
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface ResourceMetric { value: number | null; at: number; state: 'fresh' | 'stale' | 'unavailable' }
 export interface OperationsNode extends NodeInfo {
@@ -282,6 +287,9 @@ export const api = {
   alarmSummary: () => get<{ status: Record<string, number>; classes?: Record<string, number> }>(`/api/v1/alarm_summary${q({})}`),
   manageHealth: () => get<{ enabled: boolean; silent: boolean; maintenance: boolean; maint_until?: number }>('/api/v1/manage/health'),
   setHealth: (body: Record<string, unknown>) => send<unknown>('PUT', '/api/v1/manage/health', body),
+  manageConfig: () => get<ManageConfig>('/api/v1/manage/config'),
+  putManageConfig: (yaml: string, ifUpdated?: number) => send<ManageConfig>('PUT', '/api/v1/manage/config', { yaml, if_updated: ifUpdated }),
+  restartService: () => post<{ ok: boolean }>('/api/v1/manage/restart', {}),
   share: (ttl = '24h') => post<{ token: string; url: string; until: number }>('/api/v1/share', { ttl }),
   ldapLogin: (user: string, password: string) => post<{ token: string; role: string }>('/api/v1/auth/ldap', { user, password }),
   spaces: () => get<{ spaces: Space[] }>('/api/v1/hub/spaces'),
@@ -293,7 +301,9 @@ export const api = {
   claims: () => get<{ claims: Claim[] }>('/api/v1/hub/claim-tokens'),
   issueClaim: (spaceID: string, roomID: string, ttl = '24h') =>
     post<Claim>('/api/v1/hub/claim-tokens', { space_id: spaceID, room_id: roomID, ttl }),
-  putNodeConfig: (cfg: NodeConfig) => send<NodeConfig>('PUT', `/api/v1/hub/config?node=${encodeURIComponent(cfg.node_id)}`, cfg),
+  nodeConfig: (node: string) => get<NodeConfigFull>(`/api/v1/hub/config?node=${encodeURIComponent(node)}`),
+  putNodeConfig: (cfg: { node_id: string; yaml?: string; disabled?: string[]; if_updated?: number }) =>
+    send<NodeConfigFull>('PUT', `/api/v1/hub/config?node=${encodeURIComponent(cfg.node_id)}`, cfg),
   console: () => get<ConsoleResponse>('/api/v1/hub/console'),
   oidcLoginURL: () => '/api/v1/auth/oidc/login',
   liveURL(charts: string[] = []) {
