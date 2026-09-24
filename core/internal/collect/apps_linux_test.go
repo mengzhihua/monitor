@@ -9,12 +9,12 @@ import (
 
 func TestParseProcPIDStat(t *testing.T) {
 	raw := []byte("12 (kworker/0:1) S 2 0 0 0 -1 0 0 0 0 0 10 20 0 0 20 0 4 0 0 0 7 0\n")
-	name, ppid, ut, st, rss, thr, kthread, ok := parseProcPIDStat(raw)
-	if !ok || name != "kworker/0:1" || ppid != 2 || ut != 10 || st != 20 || thr != 4 || rss != 7 || kthread {
-		t.Fatalf("got name=%q ppid=%d ut=%d st=%d rss=%d thr=%d kthread=%v ok=%v", name, ppid, ut, st, rss, thr, kthread, ok)
+	name, ppid, state, ut, st, rss, thr, kthread, ok := parseProcPIDStat(raw)
+	if !ok || name != "kworker/0:1" || state != 'S' || ppid != 2 || ut != 10 || st != 20 || thr != 4 || rss != 7 || kthread {
+		t.Fatalf("got name=%q state=%q ppid=%d ut=%d st=%d rss=%d thr=%d kthread=%v ok=%v", name, state, ppid, ut, st, rss, thr, kthread, ok)
 	}
 	kraw := []byte("3 (ksoftirqd/0) S 2 0 0 0 -1 2097152 0 0 0 0 1 2 0 0 20 0 1 0 0 0 0 0\n")
-	_, _, _, _, _, _, kthread, ok = parseProcPIDStat(kraw)
+	_, _, _, _, _, _, _, kthread, ok = parseProcPIDStat(kraw)
 	if !ok || !kthread {
 		t.Fatalf("kthread ok=%v flag=%v", ok, kthread)
 	}

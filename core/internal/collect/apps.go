@@ -114,6 +114,7 @@ const appsIOEvery = 5 * time.Second
 type procCounters struct {
 	name            string
 	ppid            int32
+	state           byte // process state from /proc/<pid>/stat ('R','S','D','Z',…)
 	cpuSec          float64
 	rss             uint64
 	threads         int32
@@ -345,6 +346,13 @@ func (a *appsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 		if st == nil {
 			if native {
 				if !sample.ok || sample.name == "" {
+					continue
+				}
+				// A process in D state may hold its mmap lock (e.g. exit_mmap
+				// of a huge address space) and reading its /proc/<pid>/cmdline
+				// can then block uninterruptibly; zombies have no cmdline at
+				// all. Defer identity to a later tick instead.
+				if sample.state == 'D' || sample.state == 'Z' {
 					continue
 				}
 				st = &pidState{name: sample.name, ppid: sample.ppid}

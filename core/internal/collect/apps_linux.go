@@ -105,13 +105,14 @@ func readProcSample(pid int32, skipIO bool, buf *[]byte) procCounters {
 	if err != nil {
 		return procCounters{}
 	}
-	name, ppid, ut, st, rssPages, threads, kthread, ok := parseProcPIDStat(b)
+	name, ppid, state, ut, st, rssPages, threads, kthread, ok := parseProcPIDStat(b)
 	if !ok {
 		return procCounters{}
 	}
 	out := procCounters{
 		name:    name,
 		ppid:    ppid,
+		state:   state,
 		cpuSec:  float64(ut+st) / float64(clkTicks),
 		rss:     rssPages * pageSize,
 		threads: threads,
@@ -181,17 +182,20 @@ func readProcOwners(pid int32) (uid, gid uint32, haveUID, haveGID bool) {
 
 // parseProcPIDStat reads comm, ppid, utime, stime, rss (pages) and num_threads.
 // comm may contain spaces and parentheses, so fields are taken after the last ')'.
-func parseProcPIDStat(b []byte) (name string, ppid int32, utime, stime, rssPages uint64, threads int32, kthread, ok bool) {
+func parseProcPIDStat(b []byte) (name string, ppid int32, state byte, utime, stime, rssPages uint64, threads int32, kthread, ok bool) {
 	open := bytes.IndexByte(b, '(')
 	close := bytes.LastIndexByte(b, ')')
 	if open < 0 || close < open || close+2 >= len(b) {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	name = string(b[open+1 : close])
 	f := bytes.Fields(b[close+2:])
 	// utime is field 14, stime 15, num_threads 20, rss 24; index 0 here is field 3.
 	if len(f) < 18 {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
+	}
+	if len(f[0]) > 0 {
+		state = f[0][0]
 	}
 	if v, err := strconv.ParseInt(string(f[1]), 10, 32); err == nil {
 		ppid = int32(v)
@@ -201,19 +205,19 @@ func parseProcPIDStat(b []byte) (name string, ppid int32, utime, stime, rssPages
 	}
 	var err error
 	if utime, err = strconv.ParseUint(string(f[11]), 10, 64); err != nil {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	if stime, err = strconv.ParseUint(string(f[12]), 10, 64); err != nil {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	thr, err := strconv.ParseInt(string(f[17]), 10, 32)
 	if err != nil {
-		return "", 0, 0, 0, 0, 0, false, false
+		return "", 0, 0, 0, 0, 0, 0, false, false
 	}
 	if len(f) > 21 {
 		rssPages, _ = strconv.ParseUint(string(f[21]), 10, 64)
 	}
-	return name, ppid, utime, stime, rssPages, int32(thr), kthread, true
+	return name, ppid, state, utime, stime, rssPages, int32(thr), kthread, true
 }
 
 func parseProcIO(b []byte) (readB, writeB uint64, ok bool) {
