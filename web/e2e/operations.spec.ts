@@ -21,6 +21,11 @@ test('operations uses real metrics, persists handling and drills into the right 
   } })).ok()).toBe(true)
   await page.goto('/?token=' + token)
   await expect(page.getByRole('heading', { name: '运维总览' })).toBeVisible()
+  // Host resource tile always renders a disk section; row count stays capped at
+  // the panel's MAX_DISK_ROWS (6) even when the node reports many mounts.
+  const tile = page.locator('.node-tile').first()
+  await expect(tile.locator('.disks')).toBeVisible()
+  expect(await tile.locator('.disk-row').count()).toBeLessThanOrEqual(6)
   const problem = page.locator(`[data-problem-id="${p.id}"]`)
   await expect(problem).toBeVisible()
   await problem.getByRole('textbox', { name: 'browser_ram_notice 处理备注' }).fill('已检查进程内存，继续观察。')

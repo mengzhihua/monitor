@@ -60,6 +60,96 @@ func TestOperationsMetricsAndCoverage(t *testing.T) {
 	}
 }
 
+func TestOperationsDiskMetrics(t *testing.T) {
+	ts, reg := newTestServer(t, Options{Token: "secret"})
+	// A node without disk charts must expose an empty array, not JSON null.
+	resp, err := http.Get(ts.URL + "/api/v1/operations?token=secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), `"disks":[]`) {
+		t.Fatalf("expected empty disks array, got %s", body)
+	}
+	now := time.Now().Truncate(time.Second)
+	add := func(id, mp string, dims ...string) {
+		ds := make([]*registry.Dimension, 0, len(dims))
+		for _, d := range dims {
+			ds = append(ds, &registry.Dimension{ID: d})
+		}
+		reg.AddChart(&registry.Chart{ID: id, Context: "disk.space", Family: mp, Dimensions: ds})
+	}
+	add("disk_space.root", "/", "used", "avail")
+	add("disk_space.data", "/data", "used", "avail")
+	add("disk_space.backup", "/backup", "used", "avail", "reserved") // FreeBSD layout
+	_ = reg.Collect("disk_space.root", now, map[string]float64{"used": 90, "avail": 10})
+	_ = reg.Collect("disk_space.data", now, map[string]float64{"used": 25, "avail": 75})
+	_ = reg.Collect("disk_space.backup", now, map[string]float64{"used": 40, "avail": 40, "reserved": 20})
+	var snap operationsSnapshot
+	getJSON(t, ts.URL+"/api/v1/operations?token=secret", &snap)
+	disks := snap.Nodes[0].Disks
+	if len(disks) != 3 {
+		t.Fatalf("%+v", disks)
+	}
+	for i, w := range []struct {
+		mount string
+		value float64
+	}{{"/", 90}, {"/backup", 40}, {"/data", 25}} {
+		d := disks[i]
+		if d.Mount != w.mount || d.Value == nil || *d.Value != w.value || d.State != "fresh" || d.At != now.Unix() {
+			t.Fatalf("disk %d = %+v, want %s=%.0f fresh", i, d, w.mount, w.value)
+		}
+	}
+	// Disks age on a 60s window: a 20s-old sample is still fresh (CPU would be stale at 15s).
+	_ = reg.Collect("disk_space.data", now.Add(-20*time.Second), map[string]float64{"used": 25, "avail": 75})
+	disks = diskMetricsFor(reg, "live", now.Unix())
+	if d := disks[len(disks)-1]; d.Mount != "/data" || d.State != "fresh" || d.Value == nil || *d.Value != 25 {
+		t.Fatalf("20s-old sample must stay fresh: %+v", d)
+	}
+	// 120s-old samples go stale, lose their value and sort behind fresh mounts by mount point.
+	_ = reg.Collect("disk_space.data", now.Add(-120*time.Second), map[string]float64{"used": 25, "avail": 75})
+	_ = reg.Collect("disk_space.backup", now.Add(-120*time.Second), map[string]float64{"used": 40, "avail": 40, "reserved": 20})
+	disks = diskMetricsFor(reg, "live", now.Unix())
+	if len(disks) != 3 || disks[0].Mount != "/" || disks[0].State != "fresh" || disks[1].Mount != "/backup" || disks[2].Mount != "/data" {
+		t.Fatalf("%+v", disks)
+	}
+	for _, d := range disks[1:] {
+		if d.State != "stale" || d.Value != nil {
+			t.Fatalf("expected stale disk without value: %+v", d)
+		}
+	}
+	if d := diskMetricsFor(reg, "offline", now.Unix())[0]; d.State != "stale" || d.Value != nil {
+		t.Fatalf("offline node must report stale disks: %+v", d)
+	}
+	_ = reg.Collect("disk_space.root", now.Add(10*time.Second), map[string]float64{"used": 90, "avail": 10})
+	if d := diskMetricsFor(reg, "live", now.Unix())[0]; d.State != "stale" || d.Value != nil {
+		t.Fatalf("future sample must be stale: %+v", d)
+	}
+	_ = reg.Collect("disk_space.root", now, map[string]float64{"used": 90, "avail": 10})
+	// Missing, negative or zero-sum dimensions leave the disk unavailable.
+	add("disk_space.partial", "/partial", "used", "avail")
+	_ = reg.Collect("disk_space.partial", now, map[string]float64{"avail": 50}) // used never reported
+	add("disk_space.negative", "/negative", "used", "avail")
+	_ = reg.Collect("disk_space.negative", now, map[string]float64{"used": 50, "avail": -10})
+	add("disk_space.empty", "/empty", "used", "avail")
+	_ = reg.Collect("disk_space.empty", now, map[string]float64{"used": 0, "avail": 0})
+	disks = diskMetricsFor(reg, "live", now.Unix())
+	if len(disks) != 6 || disks[0].Mount != "/" || disks[0].Value == nil || *disks[0].Value != 90 {
+		t.Fatalf("%+v", disks)
+	}
+	for i, mount := range []string{"/backup", "/data", "/empty", "/negative", "/partial"} {
+		if disks[i+1].Mount != mount || disks[i+1].Value != nil {
+			t.Fatalf("unexpected order at %d: %+v", i+1, disks)
+		}
+	}
+	for _, d := range disks[3:] {
+		if d.State != "unavailable" {
+			t.Fatalf("bad dimensions must be unavailable: %+v", d)
+		}
+	}
+}
+
 func TestOperationsAcknowledgementLifecycleAndRBAC(t *testing.T) {
 	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
 	if err != nil {

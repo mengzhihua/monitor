@@ -96,6 +96,8 @@ function describeAction(h: HandlingAction) {
 }
 const formatTime = (t: number) => t > 0 ? new Date(t * 1000).toLocaleString() : '暂无样本'
 const formatMetric = (m: ResourceMetric) => m.value === null ? (m.state === 'stale' ? '数据过期' : '暂无数据') : `${m.value.toFixed(1)}%`
+/** 磁盘区块最多展示的挂载点行数；后端已按使用率降序返回，超出部分汇总为一行。 */
+const MAX_DISK_ROWS = 6
 const age = (t: number) => {
   if (!t) return '时间未知'
   const s = Math.max(0, (snapshot.value?.now || Date.now() / 1000) - t)
@@ -228,6 +230,17 @@ function exportSnapshot() {
           <p class="muted">{{ n.local ? '本机' : n.replica ? '副本' : n.peer ? '其他 Hub' : 'Agent' }} · {{ n.os }}/{{ n.arch }} · {{ n.charts_count }} 图表</p>
           <div class="resources"><div><span>CPU</span><b :class="{ muted: n.cpu.value === null }">{{ formatMetric(n.cpu) }}</b><progress v-if="n.cpu.value !== null" :value="n.cpu.value" max="100" aria-label="CPU 使用率" /></div><div><span>内存</span><b :class="{ muted: n.memory.value === null }">{{ formatMetric(n.memory) }}</b><progress v-if="n.memory.value !== null" :value="n.memory.value" max="100" aria-label="内存使用率" /></div></div>
           <small class="muted">CPU 样本 {{ formatTime(n.cpu.at) }}<br />内存样本 {{ formatTime(n.memory.at) }}</small>
+          <div class="disks" aria-label="磁盘使用率">
+            <template v-if="n.disks?.length">
+              <div v-for="d in n.disks.slice(0, MAX_DISK_ROWS)" :key="d.mount" class="disk-row">
+                <span class="disk-mount">{{ d.mount }}</span>
+                <b :class="{ muted: d.value === null }">{{ formatMetric(d) }}</b>
+                <progress v-if="d.value !== null" :value="d.value" max="100" :aria-label="d.mount + ' 磁盘使用率'" />
+              </div>
+              <small v-if="n.disks.length > MAX_DISK_ROWS" class="disk-more">+{{ n.disks.length - MAX_DISK_ROWS }} 个挂载点</small>
+            </template>
+            <p v-else class="disk-empty">暂无数据</p>
+          </div>
           <div class="row tile-bottom"><span>{{ n.alarms?.critical || 0 }} 严重 · {{ n.alarms?.warning || 0 }} 警告</span><button @click="emit('drill', n.id, '')">查看主机</button></div>
         </article>
       </div>
@@ -297,6 +310,7 @@ button,input,select { font:inherit; font-size:12px; border:1px solid #334155; bo
 .filters { padding:14px; background:#0c1526; border:1px solid #23334b; border-radius:10px; margin:20px 0 10px; } .filters>input:first-child { flex:1; min-width:min(250px,100%); } .filters label { font-size:12px; white-space:nowrap; } .view-name { width:120px; } .saved-views { font-size:12px; }
 .row { display:flex; gap:12px; justify-content:space-between; align-items:center; flex-wrap:wrap; }.node-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(290px,100%),1fr)); gap:12px; } .node-tile { background:#0f1a2d; border:1px solid #27364c; border-radius:10px; padding:16px; min-width:0; } .badge { font-size:11px; padding:3px 7px; border-radius:5px; background:#26334a; color:#cbd5e1; white-space:nowrap; } .badge.live,.ack { color:#6ee7b7; }.badge.offline,.badge.critical { color:#fda4af; background:#4c1d2a; } .badge.stale,.badge.warning { color:#fde68a; background:#46361c; }
 .resources { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin:18px 0; } .resources>div { display:flex; flex-direction:column; gap:7px; } .resources span { font-size:11px; color:#94a3b8; } .resources b { font-size:21px; font-weight:500; } .resources progress { height:5px; width:100%; accent-color:#2dd4bf; } .tile-bottom { margin-top:16px; font-size:12px; } .tile-bottom span { color:#cbd5e1; }
+.disks { display:flex; flex-direction:column; gap:8px; margin:12px 0 0; } .disk-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px; } .disk-mount { font-size:11px; color:#94a3b8; overflow-wrap:anywhere; min-width:0; } .disk-row b { font-size:16px; font-weight:600; margin-left:auto; } .disk-row progress { flex-basis:100%; height:5px; width:100%; accent-color:#2dd4bf; } .disk-more, .disk-empty { font-size:11px; color:#94a3b8; } .disk-empty { margin:0; }
 .section-title h2 { margin-bottom:12px; } .section-title>span { font-size:12px; } .families { margin:0 0 12px; font-size:12px; }.families>span { padding:5px 9px; background:#1e293b; border-radius:5px; } .families b { margin-left:6px; color:#5eead4; }
 .problem { background:#0f1a2d; border:1px solid #27364c; border-left:3px solid #fbbf24; border-radius:8px; padding:16px; margin:12px 0; overflow-wrap:anywhere; } .problem.critical { border-left-color:#fb7185; } .problem-title { flex:1; } .ack { font-size:11px; }.problem-actions { margin-top:14px; }.problem-actions input { flex:1; min-width:min(200px,100%); }.stale-text { color:#fcd34d; }.problem details { margin-top:12px; border-top:1px solid #27364c; padding-top:12px; font-size:12px; } summary { cursor:pointer; color:#94a3b8; } ol { padding-left:20px; color:#94a3b8; } li { margin:10px 0; } li p { color:#e2e8f0; white-space:pre-wrap; } .empty { padding:20px; border:1px dashed #334155; border-radius:8px; color:#94a3b8; } .footnote { margin:24px 0; font-size:12px; }
 .activity { border:1px solid #27364c; border-radius:7px; padding:12px; margin:8px 0; font-size:12px; overflow-wrap:anywhere; }

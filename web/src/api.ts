@@ -45,8 +45,9 @@ export interface NodeConfigFull extends NodeConfig {
 }
 export interface NodesResponse { now: number; nodes: NodeInfo[] }
 export interface ResourceMetric { value: number | null; at: number; state: 'fresh' | 'stale' | 'unavailable' }
+export interface DiskMetric { mount: string; value: number | null; at: number; state: 'fresh' | 'stale' | 'unavailable' }
 export interface OperationsNode extends NodeInfo {
-  cpu: ResourceMetric; memory: ResourceMetric; alarm_coverage: 'local' | 'mirrored' | 'disabled' | 'unknown' | 'empty'
+  cpu: ResourceMetric; memory: ResourceMetric; disks: DiskMetric[]; alarm_coverage: 'local' | 'mirrored' | 'disabled' | 'unknown' | 'empty'
 }
 export type HandlingStatus = 'open' | 'investigating' | 'watching'
 export interface HandlingAction {
