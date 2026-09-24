@@ -121,6 +121,34 @@ class ApiClient {
   Future<Map<String, dynamic>> operations({int limit = 50}) async =>
       _get('/operations', {'limit': '$limit'});
 
+  Future<Map<String, dynamic>> agentConfig() async => _get('/manage/config');
+
+  Future<void> saveAgentConfig(String yaml) async {
+    final res = await _http
+        .put(
+          config.uri('/api/v1/manage/config'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: jsonEncode({'yaml': yaml}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+  }
+
+  Future<void> restartAgent() async {
+    final res = await _http
+        .post(
+          config.uri('/api/v1/manage/restart'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: '{}',
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 202 && res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+  }
+
   Future<void> acknowledgeProblem(String id, int revision) async {
     final res = await _http
         .post(
