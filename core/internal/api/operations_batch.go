@@ -80,6 +80,7 @@ func (s *Server) handleHandlingBatch(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("persist batch handling", "error", err)
 		http.Error(w, "could not save batch; no batch changes saved", http.StatusServiceUnavailable)
 	default:
+		s.postTicket(records...)
 		writeJSON(w, map[string]any{"records": records, "count": len(records)})
 	}
 }

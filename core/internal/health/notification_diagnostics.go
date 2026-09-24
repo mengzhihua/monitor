@@ -92,6 +92,21 @@ func (e *Engine) initNotificationDiagnostics() {
 	sort.Slice(d.Channels, func(i, j int) bool { return d.Channels[i].Name < d.Channels[j].Name })
 }
 
+// LatestDelivery is the newest non-test channel outcome for one alarm.
+// The outcome records what this process observed from the channel.
+func (e *Engine) LatestDelivery(chart, name string) (NotificationResult, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for i := len(e.diagnostics.Recent) - 1; i >= 0; i-- {
+		r := e.diagnostics.Recent[i]
+		if r.Test || r.Name != name || r.Chart != chart {
+			continue
+		}
+		return r, true
+	}
+	return NotificationResult{}, false
+}
+
 func (e *Engine) NotificationDiagnostics() NotificationSnapshot {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

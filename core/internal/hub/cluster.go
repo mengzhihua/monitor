@@ -267,6 +267,16 @@ func (c *Cluster) pushRing() {
 
 // Fetch reads one peer URL with the cluster token and hop header so the peer does not fan out again.
 func (c *Cluster) Fetch(ctx context.Context, peer, path string) ([]byte, int, error) {
+	return c.fetch(ctx, peer, path, true)
+}
+
+// FetchRelay reads one peer URL without the hop header. That peer may proxy the
+// request once; its proxy sets the hop header so the next hub does not continue.
+func (c *Cluster) FetchRelay(ctx context.Context, peer, path string) ([]byte, int, error) {
+	return c.fetch(ctx, peer, path, false)
+}
+
+func (c *Cluster) fetch(ctx context.Context, peer, path string, hop bool) ([]byte, int, error) {
 	if c.Empty() || peer == "" || !strings.HasPrefix(path, "/") {
 		return nil, 0, fmt.Errorf("cluster fetch unavailable")
 	}
@@ -274,7 +284,9 @@ func (c *Cluster) Fetch(ctx context.Context, peer, path string) ([]byte, int, er
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set(clusterHopHeader, "1")
+	if hop {
+		req.Header.Set(clusterHopHeader, "1")
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

@@ -82,6 +82,16 @@ class _OperationsViewState extends State<OperationsView> {
     }
   }
 
+  String _subtitle(Map<String, dynamic> problem) {
+    final delivery = problem['delivery'];
+    final base = '${problem['severity'] ?? ''} · ${problem['chart'] ?? ''}';
+    if (delivery is! Map) return base;
+    final channel = delivery['channel'] ?? '';
+    final outcome = delivery['outcome'] ?? '';
+    if (channel == '' && outcome == '') return base;
+    return '$base · $channel $outcome';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading && _problems.isEmpty) return const Center(child: CircularProgressIndicator());
@@ -94,7 +104,7 @@ class _OperationsViewState extends State<OperationsView> {
           Card(
             child: ListTile(
               title: Text('${p['hostname'] ?? ''} · ${p['name'] ?? ''}'),
-              subtitle: Text('${p['severity'] ?? ''} · ${p['chart'] ?? ''}'),
+              subtitle: Text(_subtitle(p)),
               trailing: widget.canHandle && ((p['handling'] as Map?)?['acknowledged'] != true)
                   ? TextButton(onPressed: () => _ack(p), child: const Text('确认'))
                   : null,

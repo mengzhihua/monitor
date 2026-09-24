@@ -132,6 +132,22 @@ func TestOnCallWindowRoutesBeforeEscalation(t *testing.T) {
 	}
 }
 
+func TestLatestDeliveryKeepsNewestRealOutcome(t *testing.T) {
+	e := diagnosticsEngine(t, Options{Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}}})
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusWarning, When: 1, testChannel: "slack"}, 1)
+	if _, ok := e.LatestDelivery("system.cpu", "hot"); ok {
+		t.Fatal("test notifications are not delivery")
+	}
+	e.mu.Lock()
+	e.addNotificationResultLocked(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusWarning}, "slack", "failed", "timeout", 0, 1)
+	e.addNotificationResultLocked(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical}, "slack", "accepted", "", 0, 2)
+	e.mu.Unlock()
+	got, ok := e.LatestDelivery("system.cpu", "hot")
+	if !ok || got.Outcome != "accepted" || got.Channel != "slack" {
+		t.Fatalf("%+v %v", got, ok)
+	}
+}
+
 func waitNotify(t *testing.T, mu *sync.Mutex, got *[]string) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
