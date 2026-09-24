@@ -64,8 +64,8 @@ func TestOperationsMetricsAndCoverage(t *testing.T) {
 func TestOperationsIncludesPeerAlarms(t *testing.T) {
 	now := time.Now().Unix()
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Monitor-Cluster-Hop") != "1" {
-			http.Error(w, "missing hop", http.StatusBadRequest)
+		if r.URL.Path == "/api/v1/alarms" && r.Header.Get("X-Monitor-Cluster-Hop") != "" {
+			http.Error(w, "direct peer must be allowed to proxy once", http.StatusBadRequest)
 			return
 		}
 		switch r.URL.Path {
@@ -113,6 +113,117 @@ func TestOperationsIncludesPeerAlarms(t *testing.T) {
 	}
 	if snap.Summary["critical"] != 1 || snap.Summary["coverage_unknown"] < 1 || len(snap.Problems) != 1 || snap.Problems[0].Hostname != "box" || snap.Problems[0].Name != "disk" {
 		t.Fatalf("summary=%v problems=%+v", snap.Summary, snap.Problems)
+	}
+}
+
+func TestOperationsRelaysPeerAlarmsOneHop(t *testing.T) {
+	now := time.Now().Unix()
+	leaf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Monitor-Cluster-Hop") != "1" || r.URL.Query().Get("node") != "agent-9" {
+			http.Error(w, "leaf expects one hop", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"alarms": map[string]health.Alarm{
+			"disk|disk.space": {Name: "disk", Chart: "disk.space", Status: health.StatusCritical, LastStatusChange: now, LastUpdated: now, Every: 10},
+		}})
+	}))
+	t.Cleanup(leaf.Close)
+	mid := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/nodes":
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": []hub.Info{{ID: "agent-9", Hostname: "far", Status: hub.StatusLive}}})
+		case "/api/v1/alarms":
+			if r.Header.Get("X-Monitor-Cluster-Hop") != "" {
+				http.Error(w, "middle hop must stay open", http.StatusBadRequest)
+				return
+			}
+			req, err := http.NewRequest(http.MethodGet, leaf.URL+r.URL.RequestURI(), nil)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			req.Header.Set("X-Monitor-Cluster-Hop", "1")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close()
+			w.WriteHeader(resp.StatusCode)
+			_, _ = io.Copy(w, resp.Body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(mid.Close)
+	cluster := hub.NewCluster([]string{mid.URL}, "", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go cluster.Run(ctx)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !cluster.Has("agent-9") {
+		time.Sleep(10 * time.Millisecond)
+	}
+	ts, _ := newTestServer(t, Options{Cluster: cluster})
+	var snap operationsSnapshot
+	getJSON(t, ts.URL+"/api/v1/operations", &snap)
+	var found bool
+	for _, p := range snap.Problems {
+		if p.Hostname == "far" && p.Name == "disk" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("problems=%+v", snap.Problems)
+	}
+}
+
+func TestOperationsShowsLocalDeliveryAndPostsTicket(t *testing.T) {
+	var got []byte
+	ticket := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method", http.StatusMethodNotAllowed)
+			return
+		}
+		got, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(ticket.Close)
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "local", Hostname: "ops-test", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Family: "ram", Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	rules, err := health.ParseRules([]byte("alarms:\n  - name: ram_high\n    on: system.ram\n    calc: '$used'\n    every: 1s\n    warn: '$this > 50'\n"), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := health.New(reg, db, health.Options{Rules: rules, SilenceAll: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(eng.Close)
+	now := time.Now().Truncate(time.Second)
+	_ = reg.Collect("system.ram", now, map[string]float64{"used": 80, "free": 20})
+	eng.Tick(now)
+	ts, _ := newTestServer(t, Options{Health: eng, TicketWebhook: ticket.URL, Token: "secret"})
+	var snap operationsSnapshot
+	getJSON(t, ts.URL+"/api/v1/operations?token=secret", &snap)
+	if len(snap.Problems) != 1 || snap.Problems[0].Delivery == nil || snap.Problems[0].Delivery.Outcome != "suppressed" {
+		t.Fatalf("%+v", snap.Problems)
+	}
+	p := snap.Problems[0]
+	b, _ := json.Marshal(map[string]any{"id": p.ID, "action": "acknowledge", "revision": p.Handling.Revision, "note": "ticket"})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/operations/acknowledgements?token=secret", bytes.NewReader(b))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !bytes.Contains(got, []byte(`"event":"handling"`)) || !bytes.Contains(got, []byte(p.ID)) {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, got)
 	}
 }
 

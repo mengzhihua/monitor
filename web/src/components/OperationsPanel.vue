@@ -106,6 +106,10 @@ function describeAction(h: HandlingAction) {
   return label
 }
 const formatTime = (t: number) => t > 0 ? new Date(t * 1000).toLocaleString() : '暂无样本'
+const deliveryText = (d: NonNullable<Problem['delivery']>) => {
+  const outcome = d.outcome === 'accepted' ? '通道已接受' : d.outcome === 'failed' ? '通道失败' : d.outcome === 'suppressed' ? '已抑制' : d.outcome
+  return outcome + (d.reason ? `（${d.reason}）` : '')
+}
 const formatMetric = (m: ResourceMetric) => m.value === null ? (m.state === 'stale' ? '数据过期' : '暂无数据') : `${m.value.toFixed(1)}%`
 const age = (t: number) => {
   if (!t) return '时间未知'
@@ -260,6 +264,7 @@ async function exportSnapshot() {
         <div class="row"><div class="problem-title"><span class="badge" :class="p.severity.toLowerCase()">{{ p.severity === 'CRITICAL' ? '严重' : '警告' }}</span><h3>{{ p.name }}</h3><span class="ack" v-if="p.handling.acknowledged">已确认</span><span class="muted" v-else>待确认</span></div><span class="muted">{{ age(p.since) }}</span></div>
         <p>{{ p.info || '暂无规则说明' }}</p>
         <p class="muted">{{ p.hostname }} · {{ p.chart }} · {{ p.value === null ? '暂无数值' : p.value.toFixed(2) + ' ' + p.units }}</p>
+        <p v-if="p.delivery" class="muted">通知 {{ p.delivery.channel }} {{ deliveryText(p.delivery) }}。通道结果不代表用户已收件。</p>
         <div class="workflow-state"><span class="owner">责任人：{{ p.handling.assignee || '未分配' }}</span><span class="badge progress-state" :class="p.handling.status">{{ progressName[p.handling.status] }}</span></div>
         <p v-if="p.stale" class="stale-text">历史告警状态，最近观测 {{ formatTime(p.updated) }}；节点恢复更新前不视为当前健康结论。</p>
         <div v-if="canHandle" class="workflow-actions">

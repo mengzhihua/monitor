@@ -36,6 +36,7 @@ var uiFS embed.FS
 
 type Options struct {
 	OperationsDir string // persistent handling and personal views; empty only for ephemeral tests
+	TicketWebhook string // POST handling JSON after a successful save; empty = off
 	Version       string
 	Mode          string // agent | hub (informational)
 	StartedAt     time.Time

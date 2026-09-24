@@ -36,13 +36,14 @@ type Config struct {
 		// Enabled turns off the embedded HTTP server entirely (agent-only
 		// deployments reporting to a Hub). nil (unset) keeps it on, so existing
 		// configs behave unchanged.
-		Enabled   *bool    `yaml:"enabled"`
-		Listen    string   `yaml:"listen"`
-		AllowFrom []string `yaml:"allow_from"` // CIDRs; empty = all
-		Token     string   `yaml:"token"`      // admin password/bearer token; generated when no auth is configured
-		Users     []User   `yaml:"users"`      // named credentials with roles
-		OIDC      OIDC     `yaml:"oidc"`
-		LDAP      LDAP     `yaml:"ldap"`
+		Enabled       *bool    `yaml:"enabled"`
+		Listen        string   `yaml:"listen"`
+		AllowFrom     []string `yaml:"allow_from"` // CIDRs; empty = all
+		Token         string   `yaml:"token"`      // admin password/bearer token; generated when no auth is configured
+		Users         []User   `yaml:"users"`      // named credentials with roles
+		OIDC          OIDC     `yaml:"oidc"`
+		LDAP          LDAP     `yaml:"ldap"`
+		TicketWebhook string   `yaml:"ticket_webhook"` // POST handling JSON after a successful save; empty = off
 	} `yaml:"web"`
 	Stream     Stream `yaml:"stream"`
 	Hub        Hub    `yaml:"hub"`
