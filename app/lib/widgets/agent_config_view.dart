@@ -15,6 +15,7 @@ class _AgentConfigViewState extends State<AgentConfigView> {
   final _yaml = TextEditingController();
   final _host = TextEditingController();
   final _listen = TextEditingController();
+  final _slack = TextEditingController();
   Map<String, dynamic>? _form;
   String _path = '';
   String _notice = '';
@@ -35,6 +36,7 @@ class _AgentConfigViewState extends State<AgentConfigView> {
     _yaml.dispose();
     _host.dispose();
     _listen.dispose();
+    _slack.dispose();
     super.dispose();
   }
 
@@ -52,6 +54,8 @@ class _AgentConfigViewState extends State<AgentConfigView> {
       _form = rawForm is Map ? Map<String, dynamic>.from(rawForm) : null;
       _host.text = (_form?['hostname'] as String?) ?? '';
       _listen.text = (_form?['listen'] as String?) ?? '';
+      final notify = _form?['notify'];
+      _slack.text = notify is Map ? (notify['slack_webhook_url'] as String?) ?? '' : '';
       _writable = cfg['writable'] == true;
       _restartRequired = cfg['restart_required'] == true;
       _backup = cfg['backup'] == true;
@@ -68,6 +72,8 @@ class _AgentConfigViewState extends State<AgentConfigView> {
     if (form == null || !_writable || _busy) return;
     form['hostname'] = _host.text;
     form['listen'] = _listen.text;
+    final notify = form['notify'];
+    if (notify is Map) notify['slack_webhook_url'] = _slack.text;
     setState(() {
       _busy = true;
       _error = '';
@@ -194,6 +200,7 @@ class _AgentConfigViewState extends State<AgentConfigView> {
           ),
           TextField(controller: _host, decoration: const InputDecoration(labelText: '主机名'), readOnly: !_writable),
           TextField(controller: _listen, decoration: const InputDecoration(labelText: '监听地址'), readOnly: !_writable),
+          TextField(controller: _slack, decoration: const InputDecoration(labelText: 'Slack Webhook'), readOnly: !_writable, obscureText: true),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('只评估，不发送通知'),

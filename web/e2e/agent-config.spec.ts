@@ -21,6 +21,7 @@ test('admin edits the local config file and keeps invalid yaml off disk', async 
   expect(formed.yaml).toContain('browser-visual')
   expect(formed.yaml).toContain('browser-test-token')
   expect(formed.yaml).toContain('browser_ram_notice')
+  expect(formed.yaml).toContain('browser-topic')
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: '恢复上一份' }).click()
   await expect(host).toHaveValue('browser-test')

@@ -39,6 +39,34 @@ export interface Room { id: string; name: string; space_id: string; nodes?: stri
 export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
 export interface AgentUser { name: string; token: string; role: string }
+export interface AgentRole { name: string; channels: string[] }
+export interface AgentNotify {
+  webhook_url: string
+  slack_webhook_url: string
+  slack_channel: string
+  dingtalk_webhook_url: string
+  wecom_webhook_url: string
+  feishu_webhook_url: string
+  feishu_webhook_url_env: string
+  feishu_secret: string
+  feishu_secret_env: string
+  email_server: string
+  email_from: string
+  email_to: string[]
+  telegram_token: string
+  telegram_chat_id: string
+  discord_webhook_url: string
+  ntfy_url: string
+  ntfy_topic: string
+  ntfy_topic_env: string
+  gotify_url: string
+  gotify_token: string
+  gotify_token_env: string
+  bark_url: string
+  bark_device_key: string
+  bark_device_key_env: string
+  roles: AgentRole[]
+}
 export interface AgentVisual {
   mode: 'agent' | 'hub'
   hostname: string
@@ -62,6 +90,7 @@ export interface AgentVisual {
   hub_storage: string
   hub_space: string
   hub_room: string
+  notify: AgentNotify
 }
 export interface AgentConfigFile {
   path: string

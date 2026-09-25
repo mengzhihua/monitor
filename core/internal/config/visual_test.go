@@ -40,6 +40,27 @@ func TestApplyVisualKeepsUntouchedConfig(t *testing.T) {
 	}
 }
 
+func TestApplyVisualKeepsNotifySecretsOutsideTheForm(t *testing.T) {
+	raw := "health:\n  notify:\n    webhook:\n      url: http://127.0.0.1/hook\n      headers:\n        X-Token: keep-me\n    feishu:\n      webhook_url_env: MONITOR_FEISHU_WEBHOOK\n      secret_env: MONITOR_FEISHU_SECRET\n    email:\n      password_env: MAIL_PASSWORD\n    roles:\n      sysadmin: [slack, webhook]\n"
+	v, err := VisualFrom(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Notify.FeishuWebhookURLEnv != "MONITOR_FEISHU_WEBHOOK" || len(v.Notify.Roles) != 1 || v.Notify.Roles[0].Name != "sysadmin" {
+		t.Fatalf("notify = %+v", v.Notify)
+	}
+	v.Notify.SlackWebhookURL = "https://hooks.example/slack"
+	next, err := ApplyVisual(raw, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{"keep-me", "MONITOR_FEISHU_WEBHOOK", "MONITOR_FEISHU_SECRET", "MAIL_PASSWORD", "sysadmin", "https://hooks.example/slack"} {
+		if !strings.Contains(next, keep) {
+			t.Fatalf("missing %s\n%s", keep, next)
+		}
+	}
+}
+
 func LoadString(raw string) (*Config, error) {
 	c := Default()
 	if err := yaml.Unmarshal([]byte(raw), c); err != nil {

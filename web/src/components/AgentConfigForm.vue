@@ -6,6 +6,9 @@ defineProps<{ form: AgentVisual; disabled: boolean }>()
 function addUser(form: AgentVisual) {
   form.users.push({ name: '', token: '', role: 'viewer' })
 }
+function addRole(form: AgentVisual) {
+  form.notify.roles.push({ name: '', channels: [] })
+}
 function removeAt(list: string[], i: number) {
   list.splice(i, 1)
 }
@@ -92,6 +95,53 @@ function addItem(list: string[], input: HTMLInputElement) {
       </select>
     </label>
     <label class="check"><input v-model="form.health_silent" type="checkbox" aria-label="只评估不通知" /> 只评估，不发送通知</label>
+  </fieldset>
+
+  <fieldset class="block" :disabled="disabled">
+    <legend>通知通道</legend>
+    <p class="hint">留空表示不使用该地址。环境变量名只保存变量名，不把密钥写进文件。邮件密码和 Webhook 请求头仍留在 YAML 里。</p>
+    <label>Webhook <input v-model="form.notify.webhook_url" aria-label="Webhook 地址" placeholder="https://example/hook" /></label>
+    <label>Slack <input v-model="form.notify.slack_webhook_url" aria-label="Slack 地址" type="password" autocomplete="off" /></label>
+    <label>Slack 频道 <input v-model="form.notify.slack_channel" aria-label="Slack 频道" /></label>
+    <label>钉钉 <input v-model="form.notify.dingtalk_webhook_url" aria-label="钉钉地址" type="password" autocomplete="off" /></label>
+    <label>企业微信 <input v-model="form.notify.wecom_webhook_url" aria-label="企业微信地址" type="password" autocomplete="off" /></label>
+    <label>飞书地址 <input v-model="form.notify.feishu_webhook_url" aria-label="飞书地址" type="password" autocomplete="off" /></label>
+    <label>飞书地址变量 <input v-model="form.notify.feishu_webhook_url_env" aria-label="飞书地址变量" placeholder="MONITOR_FEISHU_WEBHOOK" /></label>
+    <label>飞书签名 <input v-model="form.notify.feishu_secret" aria-label="飞书签名" type="password" autocomplete="off" /></label>
+    <label>飞书签名变量 <input v-model="form.notify.feishu_secret_env" aria-label="飞书签名变量" /></label>
+    <label>Discord <input v-model="form.notify.discord_webhook_url" aria-label="Discord 地址" type="password" autocomplete="off" /></label>
+    <label>Telegram Token <input v-model="form.notify.telegram_token" aria-label="Telegram Token" type="password" autocomplete="off" /></label>
+    <label>Telegram Chat <input v-model="form.notify.telegram_chat_id" aria-label="Telegram Chat" /></label>
+    <label>邮件服务器 <input v-model="form.notify.email_server" aria-label="邮件服务器" placeholder="smtp.example.com:587" /></label>
+    <label>发件人 <input v-model="form.notify.email_from" aria-label="发件人" /></label>
+    <div class="chips">
+      <span>收件人</span>
+      <button v-for="(item, i) in form.notify.email_to" :key="item + i" type="button" @click="removeAt(form.notify.email_to, i)">{{ item }} ×</button>
+      <input aria-label="添加收件人" placeholder="回车添加" @keydown.enter.prevent="addItem(form.notify.email_to, $event.target as HTMLInputElement)" />
+    </div>
+    <label>ntfy 地址 <input v-model="form.notify.ntfy_url" aria-label="ntfy 地址" /></label>
+    <label>ntfy 主题 <input v-model="form.notify.ntfy_topic" aria-label="ntfy 主题" /></label>
+    <label>ntfy 主题变量 <input v-model="form.notify.ntfy_topic_env" aria-label="ntfy 主题变量" /></label>
+    <label>Gotify 地址 <input v-model="form.notify.gotify_url" aria-label="Gotify 地址" /></label>
+    <label>Gotify Token <input v-model="form.notify.gotify_token" aria-label="Gotify Token" type="password" autocomplete="off" /></label>
+    <label>Gotify Token 变量 <input v-model="form.notify.gotify_token_env" aria-label="Gotify Token 变量" /></label>
+    <label>Bark 地址 <input v-model="form.notify.bark_url" aria-label="Bark 地址" /></label>
+    <label>Bark Device Key <input v-model="form.notify.bark_device_key" aria-label="Bark Device Key" type="password" autocomplete="off" /></label>
+    <label>Bark Key 变量 <input v-model="form.notify.bark_device_key_env" aria-label="Bark Key 变量" /></label>
+    <table>
+      <thead><tr><th>通知角色</th><th>通道</th><th></th></tr></thead>
+      <tbody>
+        <tr v-for="(role, i) in form.notify.roles" :key="i">
+          <td><input v-model="role.name" aria-label="通知角色" /></td>
+          <td>
+            <button v-for="(item, j) in role.channels" :key="item + j" type="button" @click="removeAt(role.channels, j)">{{ item }} ×</button>
+            <input aria-label="添加通知通道" placeholder="通道名，回车添加" @keydown.enter.prevent="addItem(role.channels, $event.target as HTMLInputElement)" />
+          </td>
+          <td><button type="button" @click="form.notify.roles.splice(i, 1)">移除</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" @click="addRole(form)">添加通知角色</button>
   </fieldset>
 
   <fieldset class="block" :disabled="disabled">

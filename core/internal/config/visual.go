@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,42 @@ type Visual struct {
 	HubStorage         string       `json:"hub_storage"`
 	HubSpace           string       `json:"hub_space"`
 	HubRoom            string       `json:"hub_room"`
+	Notify             VisualNotify `json:"notify"`
+}
+
+// VisualNotify is the channel section of health.notify edited from the form.
+// Fields that are not listed here, including webhook headers and email passwords, stay in the file.
+type VisualNotify struct {
+	WebhookURL          string       `json:"webhook_url"`
+	SlackWebhookURL     string       `json:"slack_webhook_url"`
+	SlackChannel        string       `json:"slack_channel"`
+	DingTalkWebhookURL  string       `json:"dingtalk_webhook_url"`
+	WeComWebhookURL     string       `json:"wecom_webhook_url"`
+	FeishuWebhookURL    string       `json:"feishu_webhook_url"`
+	FeishuWebhookURLEnv string       `json:"feishu_webhook_url_env"`
+	FeishuSecret        string       `json:"feishu_secret"`
+	FeishuSecretEnv     string       `json:"feishu_secret_env"`
+	EmailServer         string       `json:"email_server"`
+	EmailFrom           string       `json:"email_from"`
+	EmailTo             []string     `json:"email_to"`
+	TelegramToken       string       `json:"telegram_token"`
+	TelegramChatID      string       `json:"telegram_chat_id"`
+	DiscordWebhookURL   string       `json:"discord_webhook_url"`
+	NtfyURL             string       `json:"ntfy_url"`
+	NtfyTopic           string       `json:"ntfy_topic"`
+	NtfyTopicEnv        string       `json:"ntfy_topic_env"`
+	GotifyURL           string       `json:"gotify_url"`
+	GotifyToken         string       `json:"gotify_token"`
+	GotifyTokenEnv      string       `json:"gotify_token_env"`
+	BarkURL             string       `json:"bark_url"`
+	BarkDeviceKey       string       `json:"bark_device_key"`
+	BarkDeviceKeyEnv    string       `json:"bark_device_key_env"`
+	Roles               []VisualRole `json:"roles"`
+}
+
+type VisualRole struct {
+	Name     string   `json:"name"`
+	Channels []string `json:"channels"`
 }
 
 type VisualUser struct {
@@ -50,6 +87,7 @@ func emptyVisual() Visual {
 		Mode: "agent", UpdateEvery: 1, WebEnabled: "default", HealthEnabled: "default",
 		AllowFrom: []string{}, Users: []VisualUser{}, CollectorsEnabled: []string{}, CollectorsDisabled: []string{},
 		StreamDestinations: []string{}, HubAPIKeys: []string{}, HubPeers: []string{},
+		Notify: VisualNotify{EmailTo: []string{}, Roles: []VisualRole{}},
 	}
 }
 
@@ -105,6 +143,23 @@ func VisualFrom(raw string) (Visual, error) {
 	v.HubStorage = c.Hub.Storage
 	v.HubSpace = c.Hub.Space
 	v.HubRoom = c.Hub.Room
+	n := c.Health.Notify
+	v.Notify = VisualNotify{
+		WebhookURL: n.Webhook.URL, SlackWebhookURL: n.Slack.WebhookURL, SlackChannel: n.Slack.Channel,
+		DingTalkWebhookURL: n.DingTalk.WebhookURL, WeComWebhookURL: n.WeCom.WebhookURL,
+		FeishuWebhookURL: n.Feishu.WebhookURL, FeishuWebhookURLEnv: n.Feishu.WebhookURLEnv,
+		FeishuSecret: n.Feishu.Secret, FeishuSecretEnv: n.Feishu.SecretEnv,
+		EmailServer: n.Email.Server, EmailFrom: n.Email.From, EmailTo: append([]string{}, n.Email.To...),
+		TelegramToken: n.Telegram.Token, TelegramChatID: n.Telegram.ChatID,
+		DiscordWebhookURL: n.Discord.WebhookURL,
+		NtfyURL:           n.Ntfy.URL, NtfyTopic: n.Ntfy.Topic, NtfyTopicEnv: n.Ntfy.TopicEnv,
+		GotifyURL: n.Gotify.URL, GotifyToken: n.Gotify.Token, GotifyTokenEnv: n.Gotify.TokenEnv,
+		BarkURL: n.Bark.URL, BarkDeviceKey: n.Bark.DeviceKey, BarkDeviceKeyEnv: n.Bark.DeviceKeyEnv,
+		Roles: rolesFrom(n.Roles),
+	}
+	if v.Notify.EmailTo == nil {
+		v.Notify.EmailTo = []string{}
+	}
 	if err := v.normalize(); err != nil {
 		return Visual{}, err
 	}
@@ -157,6 +212,7 @@ func ApplyVisual(raw string, v Visual) (string, error) {
 		setBool(health, "enabled", false)
 	}
 	setBool(health, "silent", v.HealthSilent)
+	applyNotify(health, v.Notify)
 	stream := ensureMap(root, "stream")
 	setBool(stream, "enabled", v.StreamEnabled)
 	setStrings(stream, "destinations", v.StreamDestinations)
@@ -262,7 +318,131 @@ func (v *Visual) normalize() error {
 	if v.StreamEnabled && len(v.StreamDestinations) == 0 {
 		return fmt.Errorf("stream destinations are required when streaming is on")
 	}
+	return v.Notify.normalize()
+}
+
+func (n *VisualNotify) normalize() error {
+	urls := []*string{&n.WebhookURL, &n.SlackWebhookURL, &n.DingTalkWebhookURL, &n.WeComWebhookURL, &n.FeishuWebhookURL, &n.DiscordWebhookURL, &n.NtfyURL, &n.GotifyURL, &n.BarkURL}
+	for _, p := range urls {
+		*p = strings.TrimSpace(*p)
+		if *p == "" {
+			continue
+		}
+		u, err := url.Parse(*p)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("notification URL must be http(s)")
+		}
+	}
+	envs := []*string{&n.FeishuWebhookURLEnv, &n.FeishuSecretEnv, &n.NtfyTopicEnv, &n.GotifyTokenEnv, &n.BarkDeviceKeyEnv}
+	for _, p := range envs {
+		*p = strings.TrimSpace(*p)
+		if *p != "" && !envName(*p) {
+			return fmt.Errorf("environment variable name %q", *p)
+		}
+	}
+	n.SlackChannel = strings.TrimSpace(n.SlackChannel)
+	n.EmailServer = strings.TrimSpace(n.EmailServer)
+	n.EmailFrom = strings.TrimSpace(n.EmailFrom)
+	n.TelegramToken = strings.TrimSpace(n.TelegramToken)
+	n.TelegramChatID = strings.TrimSpace(n.TelegramChatID)
+	n.NtfyTopic = strings.TrimSpace(n.NtfyTopic)
+	n.GotifyToken = strings.TrimSpace(n.GotifyToken)
+	n.FeishuSecret = strings.TrimSpace(n.FeishuSecret)
+	n.BarkDeviceKey = strings.TrimSpace(n.BarkDeviceKey)
+	n.EmailTo = cleanList(n.EmailTo)
+	if n.Roles == nil {
+		n.Roles = []VisualRole{}
+	}
+	seen := map[string]bool{}
+	for i := range n.Roles {
+		r := &n.Roles[i]
+		r.Name = strings.TrimSpace(r.Name)
+		if r.Name == "" || seen[r.Name] {
+			return fmt.Errorf("notify role name must be unique")
+		}
+		seen[r.Name] = true
+		var err error
+		if r.Channels, err = names(r.Channels); err != nil {
+			return fmt.Errorf("notify role %s: %w", r.Name, err)
+		}
+		if len(r.Channels) == 0 {
+			return fmt.Errorf("notify role %s needs a channel", r.Name)
+		}
+	}
 	return nil
+}
+
+func envName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		ok := r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (i > 0 && r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func rolesFrom(m map[string][]string) []VisualRole {
+	if len(m) == 0 {
+		return []VisualRole{}
+	}
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]VisualRole, 0, len(names))
+	for _, name := range names {
+		out = append(out, VisualRole{Name: name, Channels: append([]string{}, m[name]...)})
+	}
+	return out
+}
+
+func applyNotify(health *yaml.Node, n VisualNotify) {
+	notify := ensureMap(health, "notify")
+	setOptionalString(ensureMap(notify, "webhook"), "url", n.WebhookURL)
+	slack := ensureMap(notify, "slack")
+	setOptionalString(slack, "webhook_url", n.SlackWebhookURL)
+	setOptionalString(slack, "channel", n.SlackChannel)
+	setOptionalString(ensureMap(notify, "dingtalk"), "webhook_url", n.DingTalkWebhookURL)
+	setOptionalString(ensureMap(notify, "wecom"), "webhook_url", n.WeComWebhookURL)
+	feishu := ensureMap(notify, "feishu")
+	setOptionalString(feishu, "webhook_url", n.FeishuWebhookURL)
+	setOptionalString(feishu, "webhook_url_env", n.FeishuWebhookURLEnv)
+	setOptionalString(feishu, "secret", n.FeishuSecret)
+	setOptionalString(feishu, "secret_env", n.FeishuSecretEnv)
+	email := ensureMap(notify, "email")
+	setOptionalString(email, "server", n.EmailServer)
+	setOptionalString(email, "from", n.EmailFrom)
+	setStrings(email, "to", n.EmailTo)
+	tg := ensureMap(notify, "telegram")
+	setOptionalString(tg, "token", n.TelegramToken)
+	setOptionalString(tg, "chat_id", n.TelegramChatID)
+	setOptionalString(ensureMap(notify, "discord"), "webhook_url", n.DiscordWebhookURL)
+	ntfy := ensureMap(notify, "ntfy")
+	setOptionalString(ntfy, "url", n.NtfyURL)
+	setOptionalString(ntfy, "topic", n.NtfyTopic)
+	setOptionalString(ntfy, "topic_env", n.NtfyTopicEnv)
+	gotify := ensureMap(notify, "gotify")
+	setOptionalString(gotify, "url", n.GotifyURL)
+	setOptionalString(gotify, "token", n.GotifyToken)
+	setOptionalString(gotify, "token_env", n.GotifyTokenEnv)
+	bark := ensureMap(notify, "bark")
+	setOptionalString(bark, "url", n.BarkURL)
+	setOptionalString(bark, "device_key", n.BarkDeviceKey)
+	setOptionalString(bark, "device_key_env", n.BarkDeviceKeyEnv)
+	if len(n.Roles) == 0 {
+		deleteKey(notify, "roles")
+		return
+	}
+	roles := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, r := range n.Roles {
+		setStrings(roles, r.Name, r.Channels)
+	}
+	replaceKey(notify, "roles", roles)
 }
 
 func validAllow(s string) bool {
