@@ -123,17 +123,50 @@ class ApiClient {
 
   Future<Map<String, dynamic>> agentConfig() async => _get('/manage/config');
 
-  Future<void> saveAgentConfig(String yaml) async {
+  Future<Map<String, dynamic>> saveAgentConfig(String yaml, {int? ifUpdated}) async {
+    final body = <String, dynamic>{'yaml': yaml};
+    if (ifUpdated != null) body['if_updated'] = ifUpdated;
     final res = await _http
         .put(
           config.uri('/api/v1/manage/config'),
           headers: {...config.headers, 'content-type': 'application/json'},
-          body: jsonEncode({'yaml': yaml}),
+          body: jsonEncode(body),
         )
         .timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) {
       throw ApiException(res.statusCode, res.body.trim());
     }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> saveAgentForm(Map<String, dynamic> form, {int? ifUpdated}) async {
+    final body = <String, dynamic>{'form': form};
+    if (ifUpdated != null) body['if_updated'] = ifUpdated;
+    final res = await _http
+        .put(
+          config.uri('/api/v1/manage/config'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> rollbackAgentConfig() async {
+    final res = await _http
+        .post(
+          config.uri('/api/v1/manage/config/rollback'),
+          headers: {...config.headers, 'content-type': 'application/json'},
+          body: '{}',
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw ApiException(res.statusCode, res.body.trim());
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   Future<void> restartAgent() async {

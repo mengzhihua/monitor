@@ -253,6 +253,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/manage/health", s.handleManageHealth)
 	m.HandleFunc("GET /api/v1/manage/config", s.handleManageConfig)
 	m.HandleFunc("PUT /api/v1/manage/config", s.handleManageConfig)
+	m.HandleFunc("POST /api/v1/manage/config/rollback", s.handleManageConfigRollback)
 	m.HandleFunc("POST /api/v1/manage/restart", s.handleManageRestart)
 	m.HandleFunc("GET /api/v1/alarm_summary", s.handleAlarmSummary)
 	m.HandleFunc("POST /api/v1/share", s.handleShare)

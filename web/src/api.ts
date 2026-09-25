@@ -38,7 +38,33 @@ export interface Space { id: string; name: string; created: number }
 export interface Room { id: string; name: string; space_id: string; nodes?: string[] }
 export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
-export interface ManageConfig { writable?: boolean; path: string; yaml: string; updated: number; size?: number }
+export interface AgentUser { name: string; token: string; role: string }
+export interface AgentTarget { name: string; fields: string; url: string; address: string; listen: string; user: string }
+export interface AgentRole { name: string; channels: string[] }
+export interface AgentNotify {
+  webhook_url: string; slack_webhook_url: string; slack_channel: string
+  dingtalk_webhook_url: string; wecom_webhook_url: string
+  feishu_webhook_url: string; feishu_webhook_url_env: string; feishu_secret: string; feishu_secret_env: string
+  email_server: string; email_from: string; email_to: string[]
+  telegram_token: string; telegram_chat_id: string; discord_webhook_url: string
+  ntfy_url: string; ntfy_topic: string; ntfy_topic_env: string
+  gotify_url: string; gotify_token: string; gotify_token_env: string
+  bark_url: string; bark_device_key: string; bark_device_key_env: string
+  roles: AgentRole[]
+}
+export interface AgentVisual {
+  mode: 'agent' | 'hub'; hostname: string; update_every: number; data_dir: string
+  web_enabled: 'default' | 'on' | 'off'; listen: string; allow_from: string[]; ticket_webhook: string
+  users: AgentUser[]; collectors_enabled: string[]; collectors_disabled: string[]
+  health_enabled: 'default' | 'on' | 'off'; health_silent: boolean
+  stream_enabled: boolean; stream_destinations: string[]; stream_api_key: string; stream_protocol: string
+  hub_api_keys: string[]; hub_peers: string[]; hub_storage: string; hub_space: string; hub_room: string
+  notify: AgentNotify; targets: AgentTarget[]
+}
+export interface ManageConfig {
+  writable?: boolean; path: string; yaml: string; updated: number; size?: number
+  backup?: string; form?: AgentVisual; form_error?: string
+}
 export interface NodeApplyState { rev: number; state: 'applied' | 'rejected' | 'deferred'; error?: string; at: number }
 export interface NodeConfigFull extends NodeConfig {
   reported?: string; report_at?: number; apply?: NodeApplyState; online?: boolean; pending?: boolean; pushed?: boolean
@@ -296,6 +322,8 @@ export const api = {
   setHealth: (body: Record<string, unknown>) => send<unknown>('PUT', '/api/v1/manage/health', body),
   manageConfig: () => get<ManageConfig>('/api/v1/manage/config'),
   putManageConfig: (yaml: string, ifUpdated?: number) => send<ManageConfig>('PUT', '/api/v1/manage/config', { yaml, if_updated: ifUpdated }),
+  putManageForm: (form: AgentVisual, ifUpdated?: number) => send<ManageConfig>('PUT', '/api/v1/manage/config', { form, if_updated: ifUpdated }),
+  rollbackManageConfig: () => post<ManageConfig>('/api/v1/manage/config/rollback', {}),
   restartService: () => post<{ ok: boolean }>('/api/v1/manage/restart', {}),
   share: (ttl = '24h') => post<{ token: string; url: string; until: number }>('/api/v1/share', { ttl }),
   ldapLogin: (user: string, password: string) => post<{ token: string; role: string }>('/api/v1/auth/ldap', { user, password }),

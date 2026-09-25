@@ -168,7 +168,7 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 
 已登录的管理员可以在 Web 顶栏「配置」，或在 Flutter 客户端查看本机且角色为 admin 时打开 Config，读取并修改**当前连接的这台 monitord** 的配置文件，然后请求重启。只读、排障和匿名身份不能读取或写入。配置里有令牌和通知密钥，接口不向其他角色返回正文。
 
-`GET /api/v1/manage/config` 返回 `{path, yaml, writable}`。`PUT` 的正文是 `{yaml}`，最大约 1 MiB。服务端先把内容写到同目录临时文件并用配置加载器校验，通过后才以 0600 权限原子替换原文件；校验失败返回 400，原文件保持不变。空配置和未绑定配置文件不能写。`POST /api/v1/manage/restart` 在确认管理员身份后返回 202，进程先按原有路径关闭采集、健康引擎和数据库并释放数据目录锁，再重新执行当前程序。保存不会立刻改运行中的配置，重启后才会加载。这两条接口只作用于本机：带非 local 的 `node` 返回 400。Hub 上的「配置」改的是 Hub 自己的文件，不会下发到远端 Agent。原有 `GET /api/v1/agent/config` 仍是 Hub 下发给流式 Agent 的采集覆盖，不是这个文件编辑器。
+`GET /api/v1/manage/config` 返回 `{path, yaml, writable, updated, size, form}`。`form` 是表单可编辑的子集：运行模式、主机名、采集间隔、数据目录、Web 开关与监听、允许来源、账号、采集器开关、nginx/apache/phpfpm/elasticsearch/rabbitmq/redis/memcached/mysql/postgres/docker/statsd/otlp 的地址、健康引擎开关、通知通道与角色、上报 Hub 和 Hub 接入。告警规则、采集器超时与密码、`web.token`、Webhook 请求头和邮件密码留在 YAML 里，表单保存不会删掉。表单读不出时返回 `form_error`，不附带原文片段。`PUT` 接受 `{yaml}` 或 `{form}` 其中之一，可带 `if_updated`（文件修改时间的微秒）。两边同时提交返回 400。正文最大约 1 MiB。服务端用配置加载器校验后，才以 0600 权限原子替换；内容有变化时先把当前文件复制为同目录 `.bak`。校验失败返回 400，原文件保持不变。`POST /api/v1/manage/config/rollback` 用 `.bak` 换回当前文件，并把被换下的内容写成新的备份；没有备份返回 404。`POST /api/v1/manage/restart` 在确认管理员身份后，先确认磁盘上的文件能加载，不能加载返回 409 且不重启；通过后返回 202，进程先按原有路径关闭采集、健康引擎和数据库并释放数据目录锁，再重新执行当前程序。保存不会立刻改运行中的配置，重启后才会加载。这些接口只作用于本机：带非 local 的 `node` 返回 400。Hub 上的「配置」改的是 Hub 自己的文件，节点配置仍走 Hub 下发，不会被本机表单覆盖。原有 `GET /api/v1/agent/config` 仍是 Hub 下发给流式 Agent 的采集覆盖，不是这个文件编辑器。
 
 ## 计划维护窗口
 

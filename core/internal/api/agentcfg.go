@@ -16,12 +16,14 @@ import (
 const agentConfigMax = maxConfigYAML
 
 type agentConfigResponse struct {
-	Path     string `json:"path"`
-	YAML     string `json:"yaml"`
-	Writable bool   `json:"writable"`
-	Updated  int64  `json:"updated"`
-	Size     int    `json:"size"`
-	Backup   string `json:"backup,omitempty"`
+	Path      string         `json:"path"`
+	YAML      string         `json:"yaml"`
+	Writable  bool           `json:"writable"`
+	Updated   int64          `json:"updated"`
+	Size      int            `json:"size"`
+	Backup    string         `json:"backup,omitempty"`
+	Form      *config.Visual `json:"form,omitempty"`
+	FormError string         `json:"form_error,omitempty"`
 }
 
 func (s *Server) allowLocalAgentManage(w http.ResponseWriter, r *http.Request) bool {
@@ -58,12 +60,13 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "read agent config failed", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: yaml, Writable: true, Updated: configFileMTime(s.opt.ConfigPath), Size: len(yaml)})
+		writeJSON(w, agentConfigView(s.opt.ConfigPath, yaml))
 		return
 	}
 	var body struct {
-		YAML      string `json:"yaml"`
-		IfUpdated *int64 `json:"if_updated"`
+		YAML      string         `json:"yaml"`
+		Form      *config.Visual `json:"form"`
+		IfUpdated *int64         `json:"if_updated"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, agentConfigMax+4096))
 	dec.DisallowUnknownFields()
@@ -71,11 +74,28 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid config request", http.StatusBadRequest)
 		return
 	}
+	if body.Form != nil && strings.TrimSpace(body.YAML) != "" {
+		http.Error(w, "send yaml or form, not both", http.StatusBadRequest)
+		return
+	}
 	if body.IfUpdated != nil && *body.IfUpdated != configFileMTime(s.opt.ConfigPath) {
 		http.Error(w, "config changed since read", http.StatusConflict)
 		return
 	}
-	if err := writeAgentConfig(s.opt.ConfigPath, body.YAML); err != nil {
+	yamlText := body.YAML
+	if body.Form != nil {
+		current, err := readAgentConfig(s.opt.ConfigPath)
+		if err != nil {
+			http.Error(w, "read agent config failed", http.StatusInternalServerError)
+			return
+		}
+		yamlText, err = config.ApplyVisual(current, *body.Form)
+		if err != nil {
+			http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if err := writeAgentConfig(s.opt.ConfigPath, yamlText); err != nil {
 		var ve *configValidateError
 		if errors.As(err, &ve) {
 			http.Error(w, ve.Error(), http.StatusBadRequest)
@@ -85,7 +105,51 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "write agent config failed", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, agentConfigResponse{Path: s.opt.ConfigPath, YAML: body.YAML, Writable: true, Updated: configFileMTime(s.opt.ConfigPath), Size: len(body.YAML), Backup: s.opt.ConfigPath + ".bak"})
+	written, err := readAgentConfig(s.opt.ConfigPath)
+	if err != nil {
+		http.Error(w, "read agent config failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, agentConfigView(s.opt.ConfigPath, written))
+}
+
+func (s *Server) handleManageConfigRollback(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.allowLocalAgentManage(w, r) {
+		return
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if s.opt.ConfigPath == "" {
+		http.Error(w, "agent config file is not configured", http.StatusNotFound)
+		return
+	}
+	bak, err := os.ReadFile(s.opt.ConfigPath + ".bak")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "config backup is missing", http.StatusNotFound)
+			return
+		}
+		s.log.Error("read agent config backup", "err", err)
+		http.Error(w, "read agent config backup failed", http.StatusInternalServerError)
+		return
+	}
+	if err := writeAgentConfig(s.opt.ConfigPath, string(bak)); err != nil {
+		var ve *configValidateError
+		if errors.As(err, &ve) {
+			http.Error(w, ve.Error(), http.StatusBadRequest)
+			return
+		}
+		s.log.Error("restore agent config", "err", err)
+		http.Error(w, "restore agent config failed", http.StatusInternalServerError)
+		return
+	}
+	written, err := readAgentConfig(s.opt.ConfigPath)
+	if err != nil {
+		http.Error(w, "read agent config failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, agentConfigView(s.opt.ConfigPath, written))
 }
 
 func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +160,20 @@ func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
 	if s.opt.RequestRestart == nil {
 		http.Error(w, "restart is not available", http.StatusNotFound)
 		return
+	}
+	if s.opt.ConfigPath != "" {
+		b, err := os.ReadFile(s.opt.ConfigPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.log.Error("read agent config before restart", "err", err)
+			http.Error(w, "read agent config failed", http.StatusInternalServerError)
+			return
+		}
+		if err == nil {
+			if _, err := config.Parse(b); err != nil {
+				http.Error(w, "config on disk will not load", http.StatusConflict)
+				return
+			}
+		}
 	}
 	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, map[string]any{"status": "restarting", "ok": true})
@@ -142,6 +220,9 @@ func writeAgentConfig(path, yaml string) error {
 		return &configValidateError{err: err}
 	}
 	if old, err := os.ReadFile(path); err == nil {
+		if string(old) == yaml {
+			return nil
+		}
 		if err := writePrivateConfig(path+".bak", string(old)); err != nil {
 			return err
 		}
@@ -158,6 +239,25 @@ func configFileMTime(path string) int64 {
 		return info.ModTime().UnixMicro()
 	}
 	return 0
+}
+
+func agentConfigView(path, yaml string) agentConfigResponse {
+	resp := agentConfigResponse{
+		Path: path, YAML: yaml, Writable: path != "",
+		Updated: configFileMTime(path), Size: len(yaml),
+	}
+	if path != "" {
+		if _, err := os.Stat(path + ".bak"); err == nil {
+			resp.Backup = path + ".bak"
+		}
+	}
+	form, err := config.VisualFrom(yaml)
+	if err != nil {
+		resp.FormError = "配置里有表单无法展示的内容，请用 YAML 修改"
+		return resp
+	}
+	resp.Form = &form
+	return resp
 }
 
 func writePrivateConfig(path, yaml string) error {

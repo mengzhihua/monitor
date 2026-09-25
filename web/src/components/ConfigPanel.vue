@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import type { ManageConfig, NodeConfigFull, NodeInfo } from '../api'
+import type { AgentVisual, ManageConfig, NodeConfigFull, NodeInfo } from '../api'
 import { ApiError, api } from '../api'
+import AgentConfigForm from './AgentConfigForm.vue'
 import { usePolling } from '../polling'
 
 const props = defineProps<{ canManage: boolean; isHub: boolean }>()
@@ -34,16 +35,39 @@ function authError(e: unknown): boolean {
 /* ---------- 本机配置 ---------- */
 const local = ref<ManageConfig | null>(null)
 const localDraft = ref('')
+const localEditor = ref<'yaml' | 'form'>('yaml')
+const localForm = ref<AgentVisual | null>(null)
+const formError = ref('')
 let localBase = ''
+let formSnapshot = ''
+let preferForm = true
+
+function formDirty() {
+  if (!localForm.value) return false
+  return JSON.stringify(localForm.value) !== formSnapshot
+}
+
+function applyLocal(cfg: ManageConfig, force = false) {
+  local.value = cfg
+  if (force || localDraft.value === localBase) localDraft.value = cfg.yaml
+  localBase = cfg.yaml
+  formError.value = cfg.form_error || ''
+  const incoming = cfg.form ? structuredClone(cfg.form) : null
+  if (force || !formDirty()) {
+    localForm.value = incoming
+    formSnapshot = incoming ? JSON.stringify(incoming) : ''
+  }
+  if (preferForm && incoming && !formError.value) {
+    localEditor.value = 'form'
+    preferForm = false
+  }
+}
 
 async function loadLocal(force = false) {
   loading.value = true
   try {
     const cfg = await api.manageConfig()
-    local.value = cfg
-    // 仅在用户未编辑（草稿仍是上次加载内容）或强制重读（409）时同步编辑器
-    if (force || localDraft.value === localBase) localDraft.value = cfg.yaml
-    localBase = cfg.yaml
+    applyLocal(cfg, force)
   } catch (e) {
     error.value = authError(e) ? '没有管理权限或登录已失效，请重新登录。' : `读取本机配置失败：${detail(e)}`
   } finally { loading.value = false }
@@ -53,15 +77,30 @@ async function saveLocal() {
   if (!props.canManage || busy.value || !local.value || local.value.writable === false) return
   busy.value = true; error.value = ''; message.value = ''
   try {
-    const next = await api.putManageConfig(localDraft.value, local.value.updated)
-    local.value = next
-    localBase = localDraft.value
+    const next = localEditor.value === 'form' && localForm.value
+      ? await api.putManageForm(localForm.value, local.value.updated)
+      : await api.putManageConfig(localDraft.value, local.value.updated)
+    applyLocal(next, true)
     message.value = '配置已保存并校验通过。重启服务后生效。'
   } catch (e) {
     if (e instanceof ApiError && e.status === 409) {
       await loadLocal(true)
       error.value = '配置已在别处被修改，已重新读取，请核对后再保存。'
     } else if (e instanceof ApiError && e.status === 400) error.value = `配置无效，未保存：${detail(e)}`
+    else if (authError(e)) error.value = '没有管理权限或登录已失效，请重新登录。'
+    else error.value = String(e)
+  } finally { busy.value = false }
+}
+
+async function rollback() {
+  if (!props.canManage || busy.value || !local.value?.backup) return
+  if (!confirm('恢复上一份已保存的配置？当前文件会变成新的备份。')) return
+  busy.value = true; error.value = ''; message.value = ''
+  try {
+    applyLocal(await api.rollbackManageConfig(), true)
+    message.value = '已恢复上一份配置。重启服务后生效。'
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) error.value = '没有可恢复的备份。'
     else if (authError(e)) error.value = '没有管理权限或登录已失效，请重新登录。'
     else error.value = String(e)
   } finally { busy.value = false }
@@ -191,10 +230,17 @@ onMounted(() => { void loadLocal() })
       <p v-if="loading && !local" role="status">正在读取本机配置…</p>
       <template v-if="local">
         <p class="meta">文件：<code>{{ local.path }}</code> 修改于 {{ time(local.updated / 1000000) }}</p>
-        <textarea v-model="localDraft" aria-label="本机配置内容" rows="18" spellcheck="false" :readonly="!canManage || local.writable === false" class="mono"></textarea>
+        <p v-if="formError" class="dim">{{ formError }}</p>
+        <div class="tabs" aria-label="本机编辑方式">
+          <button v-if="localForm" type="button" :class="{ sel: localEditor === 'form' }" :aria-pressed="localEditor === 'form'" @click="localEditor = 'form'">表单</button>
+          <button type="button" :class="{ sel: localEditor === 'yaml' }" :aria-pressed="localEditor === 'yaml'" @click="localEditor = 'yaml'">YAML</button>
+        </div>
+        <AgentConfigForm v-if="localEditor === 'form' && localForm" :form="localForm" :disabled="!canManage || local.writable === false || busy" />
+        <textarea v-else v-model="localDraft" aria-label="本机配置内容" rows="18" spellcheck="false" :readonly="!canManage || local.writable === false" class="mono"></textarea>
         <p v-if="!canManage" class="dim">只有管理员可以编辑配置。</p>
         <div class="row">
           <button :disabled="!canManage || local.writable === false || busy || loading" @click="saveLocal">保存本机配置</button>
+          <button v-if="local.backup" :disabled="!canManage || busy" @click="rollback">恢复上一份</button>
           <button class="danger" :disabled="!canManage || busy" @click="restart">重启服务</button>
         </div>
       </template>
