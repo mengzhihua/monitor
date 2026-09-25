@@ -39,6 +39,7 @@ export interface Room { id: string; name: string; space_id: string; nodes?: stri
 export interface Claim { token: string; space_id: string; room_id: string; node_id?: string; expires: number; used_at?: number }
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
 export interface AgentUser { name: string; token: string; role: string }
+export interface AgentTarget { name: string; fields: string; url: string; address: string; listen: string; user: string }
 export interface AgentRole { name: string; channels: string[] }
 export interface AgentNotify {
   webhook_url: string
@@ -91,6 +92,7 @@ export interface AgentVisual {
   hub_space: string
   hub_room: string
   notify: AgentNotify
+  targets: AgentTarget[]
 }
 export interface AgentConfigFile {
   path: string

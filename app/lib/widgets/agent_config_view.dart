@@ -16,6 +16,7 @@ class _AgentConfigViewState extends State<AgentConfigView> {
   final _host = TextEditingController();
   final _listen = TextEditingController();
   final _slack = TextEditingController();
+  final _nginx = TextEditingController();
   Map<String, dynamic>? _form;
   String _path = '';
   String _notice = '';
@@ -37,6 +38,7 @@ class _AgentConfigViewState extends State<AgentConfigView> {
     _host.dispose();
     _listen.dispose();
     _slack.dispose();
+    _nginx.dispose();
     super.dispose();
   }
 
@@ -56,6 +58,15 @@ class _AgentConfigViewState extends State<AgentConfigView> {
       _listen.text = (_form?['listen'] as String?) ?? '';
       final notify = _form?['notify'];
       _slack.text = notify is Map ? (notify['slack_webhook_url'] as String?) ?? '' : '';
+      _nginx.text = '';
+      final targets = _form?['targets'];
+      if (targets is List) {
+        for (final item in targets) {
+          if (item is Map && item['name'] == 'nginx') {
+            _nginx.text = (item['url'] as String?) ?? '';
+          }
+        }
+      }
       _writable = cfg['writable'] == true;
       _restartRequired = cfg['restart_required'] == true;
       _backup = cfg['backup'] == true;
@@ -74,6 +85,12 @@ class _AgentConfigViewState extends State<AgentConfigView> {
     form['listen'] = _listen.text;
     final notify = form['notify'];
     if (notify is Map) notify['slack_webhook_url'] = _slack.text;
+    final targets = form['targets'];
+    if (targets is List) {
+      for (final item in targets) {
+        if (item is Map && item['name'] == 'nginx') item['url'] = _nginx.text;
+      }
+    }
     setState(() {
       _busy = true;
       _error = '';
@@ -201,6 +218,7 @@ class _AgentConfigViewState extends State<AgentConfigView> {
           TextField(controller: _host, decoration: const InputDecoration(labelText: '主机名'), readOnly: !_writable),
           TextField(controller: _listen, decoration: const InputDecoration(labelText: '监听地址'), readOnly: !_writable),
           TextField(controller: _slack, decoration: const InputDecoration(labelText: 'Slack Webhook'), readOnly: !_writable, obscureText: true),
+          TextField(controller: _nginx, decoration: const InputDecoration(labelText: 'nginx 地址'), readOnly: !_writable),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('只评估，不发送通知'),

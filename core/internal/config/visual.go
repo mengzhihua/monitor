@@ -16,29 +16,40 @@ import (
 // Visual is the subset of monitor.yaml edited from the dashboard form.
 // ApplyVisual updates only these fields and leaves alarms, modules, tokens and other keys in place.
 type Visual struct {
-	Mode               string       `json:"mode"`
-	Hostname           string       `json:"hostname"`
-	UpdateEvery        int          `json:"update_every"`
-	DataDir            string       `json:"data_dir"`
-	WebEnabled         string       `json:"web_enabled"` // default | on | off
-	Listen             string       `json:"listen"`
-	AllowFrom          []string     `json:"allow_from"`
-	TicketWebhook      string       `json:"ticket_webhook"`
-	Users              []VisualUser `json:"users"`
-	CollectorsEnabled  []string     `json:"collectors_enabled"`
-	CollectorsDisabled []string     `json:"collectors_disabled"`
-	HealthEnabled      string       `json:"health_enabled"` // default | on | off
-	HealthSilent       bool         `json:"health_silent"`
-	StreamEnabled      bool         `json:"stream_enabled"`
-	StreamDestinations []string     `json:"stream_destinations"`
-	StreamAPIKey       string       `json:"stream_api_key"`
-	StreamProtocol     string       `json:"stream_protocol"`
-	HubAPIKeys         []string     `json:"hub_api_keys"`
-	HubPeers           []string     `json:"hub_peers"`
-	HubStorage         string       `json:"hub_storage"`
-	HubSpace           string       `json:"hub_space"`
-	HubRoom            string       `json:"hub_room"`
-	Notify             VisualNotify `json:"notify"`
+	Mode               string         `json:"mode"`
+	Hostname           string         `json:"hostname"`
+	UpdateEvery        int            `json:"update_every"`
+	DataDir            string         `json:"data_dir"`
+	WebEnabled         string         `json:"web_enabled"` // default | on | off
+	Listen             string         `json:"listen"`
+	AllowFrom          []string       `json:"allow_from"`
+	TicketWebhook      string         `json:"ticket_webhook"`
+	Users              []VisualUser   `json:"users"`
+	CollectorsEnabled  []string       `json:"collectors_enabled"`
+	CollectorsDisabled []string       `json:"collectors_disabled"`
+	HealthEnabled      string         `json:"health_enabled"` // default | on | off
+	HealthSilent       bool           `json:"health_silent"`
+	StreamEnabled      bool           `json:"stream_enabled"`
+	StreamDestinations []string       `json:"stream_destinations"`
+	StreamAPIKey       string         `json:"stream_api_key"`
+	StreamProtocol     string         `json:"stream_protocol"`
+	HubAPIKeys         []string       `json:"hub_api_keys"`
+	HubPeers           []string       `json:"hub_peers"`
+	HubStorage         string         `json:"hub_storage"`
+	HubSpace           string         `json:"hub_space"`
+	HubRoom            string         `json:"hub_room"`
+	Notify             VisualNotify   `json:"notify"`
+	Targets            []VisualTarget `json:"targets"`
+}
+
+// VisualTarget is one collector endpoint. Timeout, password and jobs stay in the YAML module.
+type VisualTarget struct {
+	Name    string `json:"name"`
+	Fields  string `json:"fields"`
+	URL     string `json:"url"`
+	Address string `json:"address"`
+	Listen  string `json:"listen"`
+	User    string `json:"user"`
 }
 
 // VisualNotify is the channel section of health.notify edited from the form.
@@ -87,8 +98,66 @@ func emptyVisual() Visual {
 		Mode: "agent", UpdateEvery: 1, WebEnabled: "default", HealthEnabled: "default",
 		AllowFrom: []string{}, Users: []VisualUser{}, CollectorsEnabled: []string{}, CollectorsDisabled: []string{},
 		StreamDestinations: []string{}, HubAPIKeys: []string{}, HubPeers: []string{},
-		Notify: VisualNotify{EmailTo: []string{}, Roles: []VisualRole{}},
+		Notify:  VisualNotify{EmailTo: []string{}, Roles: []VisualRole{}},
+		Targets: catalogTargets(),
 	}
+}
+
+type targetSpec struct {
+	name    string
+	url     bool
+	address bool
+	listen  bool
+	user    bool
+}
+
+var targetCatalog = []targetSpec{
+	{"nginx", true, false, false, false},
+	{"apache", true, false, false, false},
+	{"phpfpm", true, false, false, false},
+	{"elasticsearch", true, false, false, true},
+	{"rabbitmq", true, false, false, true},
+	{"redis", false, true, false, false},
+	{"memcached", false, true, false, false},
+	{"mysql", false, true, false, true},
+	{"postgres", false, true, false, true},
+	{"docker", false, true, false, false},
+	{"statsd", false, false, true, false},
+	{"otlp", false, false, true, false},
+}
+
+func (s targetSpec) fields() string {
+	var parts []string
+	if s.url {
+		parts = append(parts, "url")
+	}
+	if s.address {
+		parts = append(parts, "address")
+	}
+	if s.listen {
+		parts = append(parts, "listen")
+	}
+	if s.user {
+		parts = append(parts, "user")
+	}
+	return strings.Join(parts, ",")
+}
+
+func catalogTargets() []VisualTarget {
+	out := make([]VisualTarget, len(targetCatalog))
+	for i, s := range targetCatalog {
+		out[i] = VisualTarget{Name: s.name, Fields: s.fields()}
+	}
+	return out
+}
+
+func lookupTarget(name string) (targetSpec, bool) {
+	for _, s := range targetCatalog {
+		if s.name == name {
+			return s, true
+		}
+	}
+	return targetSpec{}, false
 }
 
 // VisualFrom reads the form fields from raw YAML. Missing keys stay at their display defaults.
@@ -125,6 +194,17 @@ func VisualFrom(raw string) (Visual, error) {
 	}
 	v.CollectorsEnabled = append([]string{}, c.Collectors.Enabled...)
 	v.CollectorsDisabled = append([]string{}, c.Collectors.Disabled...)
+	v.Targets = catalogTargets()
+	for i, t := range v.Targets {
+		node, ok := c.Collectors.Modules[t.Name]
+		if !ok {
+			continue
+		}
+		v.Targets[i].URL = nodeScalar(node, "url")
+		v.Targets[i].Address = nodeScalar(node, "address")
+		v.Targets[i].Listen = nodeScalar(node, "listen")
+		v.Targets[i].User = nodeScalar(node, "user")
+	}
 	switch {
 	case c.Health.Enabled == nil:
 		v.HealthEnabled = "default"
@@ -202,6 +282,9 @@ func ApplyVisual(raw string, v Visual) (string, error) {
 	cols := ensureMap(root, "collectors")
 	setStrings(cols, "enabled", v.CollectorsEnabled)
 	setStrings(cols, "disabled", v.CollectorsDisabled)
+	if err := applyTargets(cols, v.Targets); err != nil {
+		return "", err
+	}
 	health := ensureMap(root, "health")
 	switch v.HealthEnabled {
 	case "default":
@@ -318,7 +401,51 @@ func (v *Visual) normalize() error {
 	if v.StreamEnabled && len(v.StreamDestinations) == 0 {
 		return fmt.Errorf("stream destinations are required when streaming is on")
 	}
-	return v.Notify.normalize()
+	if err := v.Notify.normalize(); err != nil {
+		return err
+	}
+	return normalizeTargets(v.Targets)
+}
+
+func normalizeTargets(targets []VisualTarget) error {
+	seen := map[string]bool{}
+	for i := range targets {
+		t := &targets[i]
+		spec, ok := lookupTarget(t.Name)
+		if !ok {
+			return fmt.Errorf("unknown collector target %q", t.Name)
+		}
+		if seen[t.Name] {
+			return fmt.Errorf("collector target %s repeated", t.Name)
+		}
+		seen[t.Name] = true
+		t.Fields = spec.fields()
+		t.URL, t.Address, t.Listen, t.User = strings.TrimSpace(t.URL), strings.TrimSpace(t.Address), strings.TrimSpace(t.Listen), strings.TrimSpace(t.User)
+		if !spec.url {
+			t.URL = ""
+		}
+		if !spec.address {
+			t.Address = ""
+		}
+		if !spec.listen {
+			t.Listen = ""
+		}
+		if !spec.user {
+			t.User = ""
+		}
+		if t.URL != "" {
+			u, err := url.Parse(t.URL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("%s url must be http(s)", t.Name)
+			}
+		}
+		for _, value := range []string{t.Address, t.Listen, t.User} {
+			if strings.ContainsAny(value, " \r\n") {
+				return fmt.Errorf("%s endpoint must be a single token", t.Name)
+			}
+		}
+	}
+	return nil
 }
 
 func (n *VisualNotify) normalize() error {
@@ -399,6 +526,70 @@ func rolesFrom(m map[string][]string) []VisualRole {
 		out = append(out, VisualRole{Name: name, Channels: append([]string{}, m[name]...)})
 	}
 	return out
+}
+
+func nodeScalar(n yaml.Node, key string) string {
+	if n.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key && n.Content[i+1].Kind == yaml.ScalarNode {
+			return n.Content[i+1].Value
+		}
+	}
+	return ""
+}
+
+func applyTargets(cols *yaml.Node, targets []VisualTarget) error {
+	for _, t := range targets {
+		spec, ok := lookupTarget(t.Name)
+		if !ok {
+			return fmt.Errorf("unknown collector target %q", t.Name)
+		}
+		mods := get(cols, "modules")
+		if t.URL == "" && t.Address == "" && t.Listen == "" && t.User == "" {
+			if mods == nil {
+				continue
+			}
+			mod := get(mods, t.Name)
+			if mod == nil || mod.Kind != yaml.MappingNode {
+				continue
+			}
+			if spec.url {
+				deleteKey(mod, "url")
+			}
+			if spec.address {
+				deleteKey(mod, "address")
+			}
+			if spec.listen {
+				deleteKey(mod, "listen")
+			}
+			if spec.user {
+				deleteKey(mod, "user")
+			}
+			if len(mod.Content) == 0 {
+				deleteKey(mods, t.Name)
+			}
+			if len(mods.Content) == 0 {
+				deleteKey(cols, "modules")
+			}
+			continue
+		}
+		mod := ensureMap(ensureMap(cols, "modules"), t.Name)
+		if spec.url {
+			setOptionalString(mod, "url", t.URL)
+		}
+		if spec.address {
+			setOptionalString(mod, "address", t.Address)
+		}
+		if spec.listen {
+			setOptionalString(mod, "listen", t.Listen)
+		}
+		if spec.user {
+			setOptionalString(mod, "user", t.User)
+		}
+	}
+	return nil
 }
 
 func applyNotify(health *yaml.Node, n VisualNotify) {

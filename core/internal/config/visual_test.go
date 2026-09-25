@@ -40,6 +40,34 @@ func TestApplyVisualKeepsUntouchedConfig(t *testing.T) {
 	}
 }
 
+func TestApplyVisualUpdatesCollectorEndpointOnly(t *testing.T) {
+	raw := "collectors:\n  modules:\n    nginx:\n      url: http://old/stub_status\n      timeout: 2s\n    mysql:\n      address: 127.0.0.1:3306\n      password: secret\n"
+	v, err := VisualFrom(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nginx *VisualTarget
+	for i := range v.Targets {
+		if v.Targets[i].Name == "nginx" {
+			nginx = &v.Targets[i]
+		}
+		if v.Targets[i].Name == "mysql" && v.Targets[i].Address != "127.0.0.1:3306" {
+			t.Fatalf("mysql = %+v", v.Targets[i])
+		}
+	}
+	if nginx == nil || nginx.URL != "http://old/stub_status" {
+		t.Fatalf("nginx missing: %+v", v.Targets)
+	}
+	nginx.URL = "http://127.0.0.1/stub_status"
+	next, err := ApplyVisual(raw, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "http://127.0.0.1/stub_status") || !strings.Contains(next, "timeout: 2s") || !strings.Contains(next, "password: secret") {
+		t.Fatalf("module fields lost:\n%s", next)
+	}
+}
+
 func TestApplyVisualKeepsNotifySecretsOutsideTheForm(t *testing.T) {
 	raw := "health:\n  notify:\n    webhook:\n      url: http://127.0.0.1/hook\n      headers:\n        X-Token: keep-me\n    feishu:\n      webhook_url_env: MONITOR_FEISHU_WEBHOOK\n      secret_env: MONITOR_FEISHU_SECRET\n    email:\n      password_env: MAIL_PASSWORD\n    roles:\n      sysadmin: [slack, webhook]\n"
 	v, err := VisualFrom(raw)

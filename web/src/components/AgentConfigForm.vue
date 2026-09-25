@@ -72,7 +72,7 @@ function addItem(list: string[], input: HTMLInputElement) {
 
   <fieldset class="block" :disabled="disabled">
     <legend>采集器</legend>
-    <p class="hint">启用列表为空表示全部可用采集器。这里不改每个采集器自己的地址和参数。</p>
+    <p class="hint">启用列表为空表示全部可用采集器。下面只改常用采集地址；超时、密码和检查任务仍留在 YAML 里。</p>
     <div class="chips">
       <span>启用</span>
       <button v-for="(item, i) in form.collectors_enabled" :key="'e' + item + i" type="button" @click="removeAt(form.collectors_enabled, i)">{{ item }} ×</button>
@@ -82,6 +82,13 @@ function addItem(list: string[], input: HTMLInputElement) {
       <span>禁用</span>
       <button v-for="(item, i) in form.collectors_disabled" :key="'d' + item + i" type="button" @click="removeAt(form.collectors_disabled, i)">{{ item }} ×</button>
       <input aria-label="添加禁用采集器" placeholder="采集器名，回车添加" @keydown.enter.prevent="addItem(form.collectors_disabled, $event.target as HTMLInputElement)" />
+    </div>
+    <div v-for="target in form.targets" :key="target.name" class="target">
+      <b>{{ target.name }}</b>
+      <label v-if="target.fields.includes('url')">地址 <input v-model="target.url" :aria-label="target.name + ' 地址'" placeholder="http://127.0.0.1/" /></label>
+      <label v-if="target.fields.includes('address')">地址 <input v-model="target.address" :aria-label="target.name + ' 地址'" placeholder="127.0.0.1:6379" /></label>
+      <label v-if="target.fields.includes('listen')">监听 <input v-model="target.listen" :aria-label="target.name + ' 监听'" placeholder="127.0.0.1:8125" /></label>
+      <label v-if="target.fields.includes('user')">用户 <input v-model="target.user" :aria-label="target.name + ' 用户'" /></label>
     </div>
   </fieldset>
 
@@ -197,6 +204,8 @@ input { min-width: 0; flex: 1; }
 button { cursor: pointer; background: #1e293b; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; color: #94a3b8; }
 .chips input { flex: 1; min-width: 160px; }
+.target { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.target b { width: 7em; color: #cbd5e1; font-weight: 500; }
 .hint { color: #64748b; margin: 0 0 6px; font-size: 12px; }
 table { width: 100%; border-collapse: collapse; margin: 6px 0; }
 td, th { text-align: left; padding: 4px; border-bottom: 1px solid #1e293b; }
