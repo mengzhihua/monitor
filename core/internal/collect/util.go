@@ -69,6 +69,7 @@ func execRun(timeout time.Duration) func(ctx context.Context, name string, args 
 		return cmd.Output()
 	}
 }
+
 type fileCursor struct {
 	path string
 	off  int64

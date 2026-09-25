@@ -42,12 +42,12 @@ type Claim struct {
 // NodeConfig is a hub-pushed overlay (disabled collectors + optional full
 // YAML replacement) plus the agent's last reported file and apply outcome.
 type NodeConfig struct {
-	NodeID   string   `json:"node_id"`
-	Disabled []string `json:"disabled,omitempty"`
-	YAML     string   `json:"yaml,omitempty"`     // desired full config (admin-edited)
-	Updated  int64    `json:"updated"`            // desired revision (unix seconds)
-	Reported string   `json:"reported,omitempty"` // agent's actual file text
-	ReportAt int64    `json:"report_at,omitempty"`
+	NodeID   string      `json:"node_id"`
+	Disabled []string    `json:"disabled,omitempty"`
+	YAML     string      `json:"yaml,omitempty"`     // desired full config (admin-edited)
+	Updated  int64       `json:"updated"`            // desired revision (unix seconds)
+	Reported string      `json:"reported,omitempty"` // agent's actual file text
+	ReportAt int64       `json:"report_at,omitempty"`
 	Apply    *ApplyState `json:"apply,omitempty"` // outcome acked by the agent
 }
 
