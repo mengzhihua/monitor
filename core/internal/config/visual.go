@@ -593,47 +593,96 @@ func applyTargets(cols *yaml.Node, targets []VisualTarget) error {
 }
 
 func applyNotify(health *yaml.Node, n VisualNotify) {
-	notify := ensureMap(health, "notify")
-	setOptionalString(ensureMap(notify, "webhook"), "url", n.WebhookURL)
-	slack := ensureMap(notify, "slack")
-	setOptionalString(slack, "webhook_url", n.SlackWebhookURL)
-	setOptionalString(slack, "channel", n.SlackChannel)
-	setOptionalString(ensureMap(notify, "dingtalk"), "webhook_url", n.DingTalkWebhookURL)
-	setOptionalString(ensureMap(notify, "wecom"), "webhook_url", n.WeComWebhookURL)
-	feishu := ensureMap(notify, "feishu")
-	setOptionalString(feishu, "webhook_url", n.FeishuWebhookURL)
-	setOptionalString(feishu, "webhook_url_env", n.FeishuWebhookURLEnv)
-	setOptionalString(feishu, "secret", n.FeishuSecret)
-	setOptionalString(feishu, "secret_env", n.FeishuSecretEnv)
-	email := ensureMap(notify, "email")
-	setOptionalString(email, "server", n.EmailServer)
-	setOptionalString(email, "from", n.EmailFrom)
-	setStrings(email, "to", n.EmailTo)
-	tg := ensureMap(notify, "telegram")
-	setOptionalString(tg, "token", n.TelegramToken)
-	setOptionalString(tg, "chat_id", n.TelegramChatID)
-	setOptionalString(ensureMap(notify, "discord"), "webhook_url", n.DiscordWebhookURL)
-	ntfy := ensureMap(notify, "ntfy")
-	setOptionalString(ntfy, "url", n.NtfyURL)
-	setOptionalString(ntfy, "topic", n.NtfyTopic)
-	setOptionalString(ntfy, "topic_env", n.NtfyTopicEnv)
-	gotify := ensureMap(notify, "gotify")
-	setOptionalString(gotify, "url", n.GotifyURL)
-	setOptionalString(gotify, "token", n.GotifyToken)
-	setOptionalString(gotify, "token_env", n.GotifyTokenEnv)
-	bark := ensureMap(notify, "bark")
-	setOptionalString(bark, "url", n.BarkURL)
-	setOptionalString(bark, "device_key", n.BarkDeviceKey)
-	setOptionalString(bark, "device_key_env", n.BarkDeviceKeyEnv)
-	if len(n.Roles) == 0 {
-		deleteKey(notify, "roles")
+	if !notifyTouched(health, n) {
 		return
 	}
-	roles := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	for _, r := range n.Roles {
-		setStrings(roles, r.Name, r.Channels)
+	notify := ensureMap(health, "notify")
+	applyChannel(notify, "webhook", [][2]string{{"url", n.WebhookURL}})
+	applyChannel(notify, "slack", [][2]string{{"webhook_url", n.SlackWebhookURL}, {"channel", n.SlackChannel}})
+	applyChannel(notify, "dingtalk", [][2]string{{"webhook_url", n.DingTalkWebhookURL}})
+	applyChannel(notify, "wecom", [][2]string{{"webhook_url", n.WeComWebhookURL}})
+	applyChannel(notify, "feishu", [][2]string{
+		{"webhook_url", n.FeishuWebhookURL}, {"webhook_url_env", n.FeishuWebhookURLEnv},
+		{"secret", n.FeishuSecret}, {"secret_env", n.FeishuSecretEnv},
+	})
+	applyChannel(notify, "email", [][2]string{{"server", n.EmailServer}, {"from", n.EmailFrom}})
+	if email := get(notify, "email"); email != nil && email.Kind == yaml.MappingNode {
+		if len(n.EmailTo) == 0 {
+			deleteKey(email, "to")
+		} else {
+			setStrings(email, "to", n.EmailTo)
+		}
+		if len(email.Content) == 0 {
+			deleteKey(notify, "email")
+		}
+	} else if len(n.EmailTo) > 0 {
+		email = ensureMap(notify, "email")
+		setStrings(email, "to", n.EmailTo)
 	}
-	replaceKey(notify, "roles", roles)
+	applyChannel(notify, "telegram", [][2]string{{"token", n.TelegramToken}, {"chat_id", n.TelegramChatID}})
+	applyChannel(notify, "discord", [][2]string{{"webhook_url", n.DiscordWebhookURL}})
+	applyChannel(notify, "ntfy", [][2]string{{"url", n.NtfyURL}, {"topic", n.NtfyTopic}, {"topic_env", n.NtfyTopicEnv}})
+	applyChannel(notify, "gotify", [][2]string{{"url", n.GotifyURL}, {"token", n.GotifyToken}, {"token_env", n.GotifyTokenEnv}})
+	applyChannel(notify, "bark", [][2]string{{"url", n.BarkURL}, {"device_key", n.BarkDeviceKey}, {"device_key_env", n.BarkDeviceKeyEnv}})
+	if len(n.Roles) == 0 {
+		deleteKey(notify, "roles")
+	} else {
+		roles := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		for _, r := range n.Roles {
+			setStrings(roles, r.Name, r.Channels)
+		}
+		replaceKey(notify, "roles", roles)
+	}
+	if len(notify.Content) == 0 {
+		deleteKey(health, "notify")
+	}
+}
+
+// notifyTouched reports whether the form or the existing document has a notify section to merge.
+func notifyTouched(health *yaml.Node, n VisualNotify) bool {
+	if existing := get(health, "notify"); existing != nil {
+		return true
+	}
+	if len(n.Roles) > 0 || len(n.EmailTo) > 0 {
+		return true
+	}
+	for _, v := range []string{
+		n.WebhookURL, n.SlackWebhookURL, n.SlackChannel, n.DingTalkWebhookURL, n.WeComWebhookURL,
+		n.FeishuWebhookURL, n.FeishuWebhookURLEnv, n.FeishuSecret, n.FeishuSecretEnv,
+		n.EmailServer, n.EmailFrom, n.TelegramToken, n.TelegramChatID, n.DiscordWebhookURL,
+		n.NtfyURL, n.NtfyTopic, n.NtfyTopicEnv, n.GotifyURL, n.GotifyToken, n.GotifyTokenEnv,
+		n.BarkURL, n.BarkDeviceKey, n.BarkDeviceKeyEnv,
+	} {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// applyChannel updates form fields on one channel map. A channel that is not in the
+// file and has no form values is left absent. Keys the form does not own, such as
+// webhook headers and email passwords, stay. An empty map is removed.
+func applyChannel(parent *yaml.Node, key string, fields [][2]string) {
+	existing := get(parent, key)
+	had := existing != nil && existing.Kind == yaml.MappingNode
+	any := false
+	for _, f := range fields {
+		if strings.TrimSpace(f[1]) != "" {
+			any = true
+			break
+		}
+	}
+	if !any && !had {
+		return
+	}
+	m := ensureMap(parent, key)
+	for _, f := range fields {
+		setOptionalString(m, f[0], f[1])
+	}
+	if len(m.Content) == 0 {
+		deleteKey(parent, key)
+	}
 }
 
 func validAllow(s string) bool {

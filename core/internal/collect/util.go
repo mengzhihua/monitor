@@ -60,6 +60,26 @@ func readInto(path string, buf *[]byte) ([]byte, error) {
 // goroutine (and the TryLock it holds) forever.
 const execWaitDelay = 2 * time.Second
 
+// waitCommand reads until read returns or ctx ends, then waits for cmd.
+// Calling Wait only after read finishes leaves the goroutine stuck when a
+// killed child still has a grandchild holding the pipe. Wait on cancellation
+// reaps the child and closes that pipe. WaitDelay bounds the reap.
+func waitCommand(ctx context.Context, cmd *exec.Cmd, read func()) error {
+	if cmd.WaitDelay == 0 {
+		cmd.WaitDelay = execWaitDelay
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		read()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	return cmd.Wait()
+}
+
 func execRun(timeout time.Duration) func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		cctx, cancel := context.WithTimeout(ctx, timeout)

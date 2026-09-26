@@ -89,6 +89,27 @@ func TestApplyVisualKeepsNotifySecretsOutsideTheForm(t *testing.T) {
 	}
 }
 
+func TestApplyVisualOmitsEmptyNotifyChannels(t *testing.T) {
+	raw := "global:\n  hostname: old\n"
+	v, err := VisualFrom(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Hostname = "new-host"
+	next, err := ApplyVisual(raw, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"dingtalk:", "webhook:", "slack:", "notify:"} {
+		if strings.Contains(next, absent) {
+			t.Fatalf("empty notify channel %s written:\n%s", absent, next)
+		}
+	}
+	if !strings.Contains(next, "new-host") {
+		t.Fatalf("hostname missing:\n%s", next)
+	}
+}
+
 func LoadString(raw string) (*Config, error) {
 	c := Default()
 	if err := yaml.Unmarshal([]byte(raw), c); err != nil {

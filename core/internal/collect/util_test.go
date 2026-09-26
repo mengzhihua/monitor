@@ -2,6 +2,8 @@ package collect
 
 import (
 	"context"
+	"io"
+	"os/exec"
 	"runtime"
 	"testing"
 	"time"
@@ -47,5 +49,38 @@ func TestExecRunReturnsAfterKillWithPipeHolders(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("execRun never returned: killed child left the pipe held by a grandchild")
+	}
+}
+
+func TestWaitCommandClosesPipeHeldByGrandchild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix shell fixture")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `sleep 30 >/dev/null & exec sleep 30`)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+		done <- waitCommand(ctx, cmd, func() { _, _ = io.Copy(io.Discard, stdout) })
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error after cancellation")
+		}
+		if el := time.Since(start); el > 5*time.Second {
+			t.Fatalf("returned after %v", el)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("waitCommand never returned while a grandchild held the pipe")
 	}
 }

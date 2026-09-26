@@ -72,24 +72,25 @@ func (l *logsCollector) startFollow() {
 	l.followOn = true
 	go func() {
 		defer cancel()
-		sc := bufio.NewScanner(stdout)
-		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-		for sc.Scan() {
-			for _, r := range parseJournalJSON(sc.Text(), LogQuery{Limit: 1}) {
-				l.mu.Lock()
-				l.buf = append(l.buf, r)
-				if len(l.buf) > 2000 {
-					l.buf = l.buf[len(l.buf)-2000:]
+		_ = waitCommand(ctx, cmd, func() {
+			sc := bufio.NewScanner(stdout)
+			sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+			for sc.Scan() {
+				for _, r := range parseJournalJSON(sc.Text(), LogQuery{Limit: 1}) {
+					l.mu.Lock()
+					l.buf = append(l.buf, r)
+					if len(l.buf) > 2000 {
+						l.buf = l.buf[len(l.buf)-2000:]
+					}
+					l.pending++
+					if l.pendingSev == nil {
+						l.pendingSev = map[string]float64{}
+					}
+					l.pendingSev[normalizePri(r.Priority)]++
+					l.mu.Unlock()
 				}
-				l.pending++
-				if l.pendingSev == nil {
-					l.pendingSev = map[string]float64{}
-				}
-				l.pendingSev[normalizePri(r.Priority)]++
-				l.mu.Unlock()
 			}
-		}
-		_ = cmd.Wait()
+		})
 	}()
 }
 
