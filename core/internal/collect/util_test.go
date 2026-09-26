@@ -58,6 +58,7 @@ func TestWaitCommandClosesPipeHeldByGrandchild(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `sleep 30 >/dev/null & exec sleep 30`)
+	cmd.WaitDelay = execWaitDelay
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

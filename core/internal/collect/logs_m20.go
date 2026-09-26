@@ -59,6 +59,7 @@ func (l *logsCollector) startFollow() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "journalctl", "-f", "-o", "json", "--no-pager", "-n", "0")
+	cmd.WaitDelay = execWaitDelay
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
