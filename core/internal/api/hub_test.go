@@ -546,12 +546,18 @@ func TestHubChartDefinitionUpdate(t *testing.T) {
 		if !ok || hc.Title != "Memory" {
 			return false
 		}
+		renamed := false
 		for _, d := range hc.Dims() {
-			if d.ID == "free" {
-				return d.Name == "available" && d.Hidden
+			if d.ID == "free" && d.Name == "available" && d.Hidden {
+				renamed = true
 			}
 		}
-		return false
+		if !renamed {
+			return false
+		}
+		// The definition frame can land before the sample that follows it.
+		_, last := hc.LastValues()
+		return last["used"] == 3
 	})
 	hc, _ := node.Registry().Chart("system.ram")
 	if _, last := hc.LastValues(); last["used"] != 3 {
