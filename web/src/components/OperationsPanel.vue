@@ -33,37 +33,77 @@ const selectedProblems = ref<Problem[]>([])
 const batchError = ref('')
 const batchMessage = ref('')
 const batchCompleted = ref(0)
+const exporting = ref(false)
+const exportError = ref('')
+let overviewRequest: AbortController | undefined
+let exportRequest: AbortController | undefined
+let searchTimer: number | undefined
+function cancelExport() {
+  exportRequest?.abort()
+  exportRequest = undefined
+  exporting.value = false
+}
 function listQuery(limit = visibleCount.value) {
   return {
     limit: String(limit), q: query.value.trim(), node_status: nodeStatus.value, severity: severity.value,
     owner: ownerFilter.value, progress: progressFilter.value, ...(pendingOnly.value ? { pending: '1' } : {}),
   }
 }
-watch([query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter], () => {
+watch([query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter], (next, previous) => {
   visibleCount.value = 50
   if (selectedProblems.value.length) {
     selectedProblems.value = []
     batchMessage.value = '筛选条件已改变，已清空原选择，请重新选择问题。'
   }
-  void refresh()
+  overviewRequest?.abort()
+  cancelExport()
+  exportError.value = ''
+  loading.value = true
+  clearTimeout(searchTimer)
+  const textOnly = next[0] !== previous[0] && next.slice(1).every((value, index) => value === previous[index + 1])
+  if (textOnly) searchTimer = window.setTimeout(() => { void refresh() }, 250)
+  else void refresh()
 })
 let disposed = false
-onBeforeUnmount(() => { disposed = true })
+onBeforeUnmount(() => {
+  disposed = true
+  clearTimeout(searchTimer)
+  overviewRequest?.abort()
+  cancelExport()
+})
 const canHandle = computed(() => ['admin', 'troubleshooter'].includes(props.role))
 const canSelfAssign = computed(() => snapshot.value?.assignees.some(u => u.name === snapshot.value?.current_user.name))
 const mineCount = computed(() => snapshot.value?.summary.mine || 0)
-const refresh = usePolling(async signal => {
+const pollRefresh = usePolling(async signal => {
+  if (searchTimer !== undefined) return
+  overviewRequest?.abort()
+  const request = overviewRequest = new AbortController()
+  const cancel = () => request.abort()
+  signal.addEventListener('abort', cancel, { once: true })
+  if (signal.aborted) request.abort()
+  loading.value = true
   try {
-    const next = await api.operations(signal, listQuery())
-    if (signal.aborted) return
+    const next = await api.operations(request.signal, listQuery())
+    if (request.signal.aborted || disposed) return
     snapshot.value = next
     error.value = ''
   } catch (e) {
-    if (signal.aborted) return
-    if (e instanceof ApiError && [401, 403].includes(e.status)) { snapshot.value = null; selectedProblems.value = [] }
+    if (request.signal.aborted || disposed) return
+    if (e instanceof ApiError && [401, 403].includes(e.status)) {
+      snapshot.value = null; selectedProblems.value = []; cancelExport()
+    }
     error.value = e instanceof ApiError && e.status === 401 ? '登录已失效，请重新登录。' : '刷新失败，正在展示上次成功的数据；请检查连接并重试。'
-  } finally { if (!signal.aborted) loading.value = false }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    if (overviewRequest === request) overviewRequest = undefined
+    if (!request.signal.aborted && !disposed) loading.value = false
+  }
 }, 15000)
+function refresh() {
+  clearTimeout(searchTimer)
+  searchTimer = undefined
+  return pollRefresh()
+}
 
 const filteredNodes = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -92,10 +132,10 @@ const problemsVisible = computed(() => snapshot.value?.page ? problems.value : p
 const nodeTotal = computed(() => snapshot.value?.page?.nodes_matched ?? filteredNodes.value.length)
 const problemTotal = computed(() => snapshot.value?.page?.problems_matched ?? problems.value.length)
 const activeIDs = computed(() => new Set(snapshot.value?.problems.map(p => p.id) || []))
-const activity = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  return (snapshot.value?.activity || []).filter(r => !q || `${r.problem.hostname} ${r.problem.name} ${r.problem.chart} ${r.assignee} ${r.history.map(h => `${h.actor} ${h.assignee || ''} ${h.previous_assignee || ''} ${h.note}`).join(' ')}`.toLowerCase().includes(q))
-})
+function matchingActivity(records: OperationsSnapshot['activity'], search: string) {
+  const q = search.trim().toLowerCase()
+  return records.filter(r => !q || `${r.problem.hostname} ${r.problem.name} ${r.problem.chart} ${r.assignee} ${r.history.map(h => `${h.actor} ${h.assignee || ''} ${h.previous_assignee || ''} ${h.note}`).join(' ')}`.toLowerCase().includes(q))
+}
 const statusName: Record<string, string> = { live: '在线', stale: '数据过期', offline: '离线' }
 const actionName: Record<string, string> = { acknowledge: '确认问题', unacknowledge: '撤销确认', comment: '补充备注', assign: '指派责任人', unassign: '取消指派', progress: '更新进度' }
 const progressName: Record<HandlingStatus, string> = { open: '待处理', investigating: '排查中', watching: '观察中' }
@@ -195,15 +235,35 @@ function applyView(v: OperationsView) {
   ownerFilter.value = v.ownerFilter; progressFilter.value = v.progressFilter
 }
 async function exportSnapshot() {
-  if (!snapshot.value) return
-  const full = await api.operations(undefined, { ...listQuery(200), limit: '200' }).catch(() => snapshot.value)
-  const data = { captured_at: snapshot.value.now, stale: !!error.value, scope: 'filtered',
-    filters: { query: query.value, severity: severity.value, node_status: nodeStatus.value, pending_only: pendingOnly.value, owner: ownerFilter.value, progress: progressFilter.value },
-    nodes: full?.nodes || filteredNodes.value, problems: full?.problems || problems.value, activity: activity.value,
-    matched: full?.page }
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
-  const a = document.createElement('a'); a.href = url; a.download = `monitor-operations-${snapshot.value.now}.json`; a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  if (!snapshot.value || exporting.value || loading.value || disposed) return
+  const request = exportRequest = new AbortController()
+  const filters = { query: query.value, severity: severity.value, node_status: nodeStatus.value,
+    pending_only: pendingOnly.value, owner: ownerFilter.value, progress: progressFilter.value }
+  const params = listQuery(200)
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const full = await api.operations(request.signal, params)
+    if (disposed || request.signal.aborted || exportRequest !== request) return
+    const data = { captured_at: full.now, stale: false, scope: 'filtered', filters,
+      nodes: full.nodes, problems: full.problems, activity: matchingActivity(full.activity, filters.query), matched: full.page }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+    const a = document.createElement('a'); a.href = url; a.download = `monitor-operations-${full.now}.json`; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (e) {
+    if (disposed || request.signal.aborted || exportRequest !== request) return
+    if (e instanceof ApiError && [401, 403].includes(e.status)) {
+      overviewRequest?.abort()
+      snapshot.value = null; selectedProblems.value = []; loading.value = false
+      error.value = '登录已失效或没有读取权限，请重新登录。'
+      exportError.value = '当前登录无法导出快照，本次未生成文件。'
+    } else exportError.value = '快照导出失败，本次未生成文件。请检查连接后重试。'
+  } finally {
+    if (exportRequest === request) {
+      exportRequest = undefined
+      exporting.value = false
+    }
+  }
 }
 </script>
 
@@ -211,10 +271,11 @@ async function exportSnapshot() {
   <div class="operations" aria-label="运维总览">
     <div class="hero">
       <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。</p></div>
-      <div class="hero-actions"><button @click="refresh()">刷新总览</button><button :disabled="!snapshot" @click="exportSnapshot">导出当前快照</button></div>
+      <div class="hero-actions"><button @click="refresh()">刷新总览</button><button :disabled="!snapshot || loading || exporting" @click="exportSnapshot">{{ exporting ? '正在导出…' : '导出当前快照' }}</button></div>
     </div>
     <p v-if="loading" role="status">正在读取节点和问题…</p>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
+    <p v-if="exportError" class="notice error" role="alert">{{ exportError }}</p>
     <template v-if="snapshot">
       <div class="summary">
         <div><span>受监控节点</span><strong>{{ snapshot.summary.nodes }}</strong><small>{{ snapshot.summary.live }} 在线</small></div>

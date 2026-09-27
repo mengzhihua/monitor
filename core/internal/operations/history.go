@@ -186,20 +186,47 @@ func matchesHistory(r Record, q HistoryFilter) bool {
 		(q.Acknowledged != "" && r.Acknowledged != (q.Acknowledged == "true")) || at < q.From || (q.Until > 0 && at > q.Until) {
 		return false
 	}
-	actorMatches := q.Actor == ""
-	var texts []string
-	if q.Search != "" {
-		texts = []string{r.ID, r.Problem.Node, r.Problem.Hostname, r.Problem.Chart, r.Problem.Name, r.Assignee}
-	}
-	if q.Actor != "" || q.Search != "" {
+	if q.Actor != "" {
+		actorMatches := false
 		for _, h := range r.History {
-			actorMatches = actorMatches || h.Actor == q.Actor
-			if q.Search != "" {
-				texts = append(texts, h.Actor, h.Note, h.Assignee, h.PreviousAssignee)
-			} else if actorMatches {
+			if h.Actor == q.Actor {
+				actorMatches = true
 				break
 			}
 		}
+		if !actorMatches {
+			return false
+		}
 	}
-	return actorMatches && (q.Search == "" || strings.Contains(strings.ToLower(strings.Join(texts, "\n")), q.Search))
+	if q.Search == "" {
+		return true
+	}
+	metadata := [...]string{r.ID, r.Problem.Node, r.Problem.Hostname, r.Problem.Chart, r.Problem.Name, r.Assignee}
+	if strings.ContainsRune(q.Search, '\n') {
+		// Preserve queries spanning the separators between fields, including
+		// empty fields. A multiline query keeps the original joined semantics.
+		texts := make([]string, 0, len(metadata)+4*len(r.History))
+		texts = append(texts, metadata[:]...)
+		for _, h := range r.History {
+			texts = append(texts, h.Actor, h.Note, h.Assignee, h.PreviousAssignee)
+		}
+		return strings.Contains(strings.ToLower(strings.Join(texts, "\n")), q.Search)
+	}
+	// Without a newline, a match cannot cross a joined field boundary. Lower
+	// one field at a time and stop on the first hit instead of joining and
+	// lowercasing every retained note. Keep ToLower's Unicode mapping; folding
+	// with EqualFold would broaden the existing search semantics.
+	for _, text := range metadata {
+		if strings.Contains(strings.ToLower(text), q.Search) {
+			return true
+		}
+	}
+	for _, h := range r.History {
+		for _, text := range [...]string{h.Actor, h.Note, h.Assignee, h.PreviousAssignee} {
+			if strings.Contains(strings.ToLower(text), q.Search) {
+				return true
+			}
+		}
+	}
+	return false
 }

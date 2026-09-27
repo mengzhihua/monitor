@@ -31,8 +31,9 @@ type httpJob struct {
 }
 
 type httpcheckCollector struct {
-	cfg    httpcheckConfig
-	client *http.Client
+	cfg            httpcheckConfig
+	client         *http.Client
+	insecureClient *http.Client
 }
 
 func init() {
@@ -60,7 +61,6 @@ func (h *httpcheckCollector) Init(reg *registry.Registry) error {
 	if len(h.cfg.Jobs) == 0 {
 		return fmt.Errorf("no jobs configured")
 	}
-	h.client = &http.Client{Timeout: h.cfg.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}}
 	for i := range h.cfg.Jobs {
 		j := &h.cfg.Jobs[i]
 		if j.Name == "" {
@@ -80,7 +80,34 @@ func (h *httpcheckCollector) Init(reg *registry.Registry) error {
 		}
 		h.addCharts(reg, j.Name, strings.HasPrefix(j.URL, "https://"))
 	}
+	h.Stop()
+	h.client = newHTTPCheckClient(false)
+	h.insecureClient = newHTTPCheckClient(true)
 	return nil
+}
+
+func newHTTPCheckClient(insecure bool) *http.Client {
+	return &http.Client{
+		// Job deadlines are applied to each request's context. Keep separate
+		// pools so opting one job out of certificate verification cannot
+		// provide an unverified connection to a stricter job.
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure}, //nolint:gosec // operator opt-in
+			MaxIdleConns:        32,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     30 * time.Second,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+func (h *httpcheckCollector) Stop() {
+	if h.client != nil {
+		h.client.CloseIdleConnections()
+	}
+	if h.insecureClient != nil {
+		h.insecureClient.CloseIdleConnections()
+	}
 }
 
 func (h *httpcheckCollector) addCharts(reg *registry.Registry, name string, tls bool) {
@@ -144,19 +171,24 @@ func (h *httpcheckCollector) do(ctx context.Context, j httpJob) (ok bool, length
 	for k, v := range j.Headers {
 		req.Header.Set(k, v)
 	}
-	tr := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: j.TLS.Insecure}} //nolint:gosec // operator opt-in
-	client := &http.Client{Timeout: j.Timeout, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := h.client
+	if j.TLS.Insecure {
+		client = h.insecureClient
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, 0, 0, 0, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	code = resp.StatusCode
 	length = len(body)
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		exp := resp.TLS.PeerCertificates[0].NotAfter
 		expiryDays = exp.Sub(time.Now()).Hours() / 24
+	}
+	if readErr != nil {
+		return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: read response: %w", j.Name, readErr)
 	}
 	for _, s := range j.StatusOK {
 		if code == s {

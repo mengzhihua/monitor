@@ -75,22 +75,23 @@ type Options struct {
 }
 
 type Server struct {
-	configMu   sync.Mutex
-	operations *operations.Store
-	views      *operations.ViewStore
-	reg        *registry.Registry
-	db         *tsdb.Store
-	sched      *collect.Scheduler
-	opt        Options
-	log        *slog.Logger
-	live       *liveHub
-	nets       []*net.IPNet
-	mux        *http.ServeMux
-	ingest     *ingest.Mapper
-	otlp       *ingest.Mapper
-	oidc       *oidcState
-	ldap       *LDAPConfig
-	shares     *shareStore
+	operationPeerSlots chan struct{}
+	configMu           sync.Mutex
+	operations         *operations.Store
+	views              *operations.ViewStore
+	reg                *registry.Registry
+	db                 *tsdb.Store
+	sched              *collect.Scheduler
+	opt                Options
+	log                *slog.Logger
+	live               *liveHub
+	nets               []*net.IPNet
+	mux                *http.ServeMux
+	ingest             *ingest.Mapper
+	otlp               *ingest.Mapper
+	oidc               *oidcState
+	ldap               *LDAPConfig
+	shares             *shareStore
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -98,8 +99,9 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		opt.Logger = slog.Default()
 	}
 	s := &Server{reg: reg, db: db, sched: sched, opt: opt, log: opt.Logger, mux: http.NewServeMux(),
-		ingest: ingest.NewMapper(ingest.Options{Prefix: "om", Plugin: "ingest", Module: "openmetrics", Family: "openmetrics"}),
-		otlp:   ingest.NewMapper(ingest.Options{Prefix: "otlp", Plugin: "ingest", Module: "otlp", Family: "otlp"})}
+		operationPeerSlots: make(chan struct{}, operationPeerConcurrency),
+		ingest:             ingest.NewMapper(ingest.Options{Prefix: "om", Plugin: "ingest", Module: "openmetrics", Family: "openmetrics"}),
+		otlp:               ingest.NewMapper(ingest.Options{Prefix: "otlp", Plugin: "ingest", Module: "otlp", Family: "otlp"})}
 	for _, c := range opt.AllowFrom {
 		if !strings.Contains(c, "/") {
 			if strings.Contains(c, ":") {

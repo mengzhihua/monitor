@@ -252,11 +252,15 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 	u.RawQuery = ""
 	request.URL = &u
 	infos := s.nodesPayload(request, 1)["nodes"].([]hub.Info)
-	for _, inf := range infos {
+	views := make([]*view, len(infos))
+	for i, inf := range infos {
+		views[i], _ = s.resolve(inf.ID)
+	}
+	peers := s.operationPeerAlarms(r.Context(), infos, views)
+	for i, inf := range infos {
 		n := operationsNode{Info: inf, CPU: resourceMetric{State: "unavailable"}, Memory: resourceMetric{State: "unavailable"}, Disks: []diskMetric{}, AlarmCoverage: "unknown"}
 		var alarms []health.Alarm
-		v, ok := s.resolve(inf.ID)
-		if ok {
+		if v := views[i]; v != nil {
 			n.CPU = metricFor(v.reg, "system.cpu", inf.Status, now)
 			n.Memory = metricFor(v.reg, "system.ram", inf.Status, now)
 			n.Disks = diskMetricsFor(v.reg, inf.Status, now)
@@ -279,11 +283,9 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 					alarms = append(alarms, alarmFromEntry(e))
 				}
 			}
-		} else if inf.Peer != "" && inf.ID != "" {
-			if list, err := s.peerAlarms(r.Context(), inf.Peer, inf.ID); err == nil {
-				alarms = list
-				n.AlarmCoverage = "peer"
-			}
+		} else if peers[i].ok {
+			alarms = peers[i].alarms
+			n.AlarmCoverage = "peer"
 		}
 		if n.AlarmCoverage == "unknown" || n.AlarmCoverage == "disabled" || n.AlarmCoverage == "empty" {
 			out.Summary["coverage_unknown"]++
@@ -362,10 +364,13 @@ func (s *Server) peerAlarms(ctx context.Context, peer, id string) ([]health.Alar
 
 func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	snap := s.operationsSnapshot(r)
 	limit, ok := operationsLimit(r)
 	if !ok {
 		http.Error(w, "invalid limit", 400)
+		return
+	}
+	snap := s.operationsSnapshot(r)
+	if r.Context().Err() != nil {
 		return
 	}
 	if limit > 0 {
