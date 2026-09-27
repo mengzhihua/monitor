@@ -62,6 +62,7 @@ async function fixture(page: Page, opts: FixtureOpts = {}) {
   }
   return {
     managePuts, nodePuts, nodeQueries,
+    updateNode: (patch: Record<string, unknown>) => { node = { ...node, ...patch } },
     restarted: () => restarts,
     panel: page.getByRole('region', { name: '配置管理' }),
   }
@@ -87,14 +88,24 @@ test('local config loads, saves with concurrency token and hides the node tab on
   expect(f.managePuts).toEqual([{ yaml: 'hostname: edited\n', if_updated: 100 }])
 })
 
-test('a 409 rereads the server copy and asks for review', async ({ page }) => {
+test('a 409 preserves the draft until the user explicitly reloads', async ({ page }) => {
   const f = await open(page, { managePut: 409 })
   const area = f.panel.getByLabel('本机配置内容')
   await expect(area).toHaveValue('hostname: hub\n')
   await area.fill('hostname: mine\n')
   await f.panel.getByRole('button', { name: '保存本机配置' }).click()
-  await expect(f.panel.getByRole('alert')).toContainText('配置已在别处被修改，已重新读取')
+  await expect(f.panel.getByRole('alert')).toContainText('草稿已保留')
+  await expect(area).toHaveValue('hostname: mine\n')
+  await expect(f.panel.getByRole('button', { name: '保存本机配置' })).toBeDisabled()
+  await f.panel.getByText('查看最新已保存配置', { exact: true }).click()
+  await expect(f.panel.locator('pre')).toContainText('hostname: elsewhere')
+  page.once('dialog', d => d.dismiss())
+  await f.panel.getByRole('button', { name: '载入最新本机配置' }).click()
+  await expect(area).toHaveValue('hostname: mine\n')
+  page.once('dialog', d => d.accept())
+  await f.panel.getByRole('button', { name: '载入最新本机配置' }).click()
   await expect(area).toHaveValue('hostname: elsewhere\n')
+  await expect(f.panel.getByRole('button', { name: '保存本机配置' })).toBeEnabled()
 })
 
 test('a 400 keeps the draft and shows the server reason', async ({ page }) => {
@@ -129,7 +140,7 @@ test('node tab lists remote nodes only and pushes config to online agents', asyn
   await expect.poll(async () => await select.locator('option').allTextContents()).toEqual(['选择节点', 'agent-one'])
   await select.selectOption('agent-1')
   const area = f.panel.getByLabel('节点配置内容')
-  await expect(area).toHaveValue('hostname: agent-reported\n')
+  await expect(area).toHaveValue('hostname: agent\n')
   await expect(f.panel.getByRole('alert')).toContainText('节点拒绝应用：invalid stream key')
   await expect(f.panel).toContainText('在线')
   await area.fill('hostname: agent-new\n')
@@ -157,4 +168,110 @@ test('non-admin cannot open the credential-bearing config editor', async ({ page
   await expect(page.locator('header')).toBeVisible()
   await expect(page.locator(toolbarButton)).toHaveCount(0)
   await expect(f.panel).toHaveCount(0)
+})
+
+
+test('node polling preserves the draft revision and requires review after another admin saves', async ({ page }) => {
+  await page.clock.install()
+  const f = await open(page, { mode: 'hub' })
+  await f.panel.getByRole('button', { name: '节点配置' }).click()
+  await f.panel.getByLabel('选择节点').selectOption('agent-1')
+  const area = f.panel.getByLabel('节点配置内容')
+  await expect(area).toHaveValue('hostname: agent\n')
+  await area.fill('hostname: mine\n')
+  f.updateNode({ yaml: 'hostname: elsewhere\n', updated: 51 })
+  await page.clock.runFor(10050)
+  await expect(f.panel.getByRole('status')).toContainText('草稿已保留')
+  await expect(area).toHaveValue('hostname: mine\n')
+  await expect(f.panel.getByRole('button', { name: '保存并下发节点配置' })).toBeDisabled()
+  expect(f.nodePuts).toHaveLength(0)
+  page.once('dialog', d => d.accept())
+  await f.panel.getByRole('button', { name: '载入最新节点配置' }).click()
+  await expect(area).toHaveValue('hostname: elsewhere\n')
+  await area.fill('hostname: reviewed\n')
+  await f.panel.getByRole('button', { name: '保存并下发节点配置' }).click()
+  await expect.poll(() => f.nodePuts).toEqual([{ node_id: 'agent-1', yaml: 'hostname: reviewed\n', if_updated: 51 }])
+  await expect(area).toHaveValue('hostname: reviewed\n')
+})
+
+test('closing the panel aborts an unfinished node config read', async ({ page }) => {
+  const f = await open(page, { mode: 'hub' })
+  let started = false, aborted = false
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  page.on('requestfailed', request => { if (request.url().includes('/api/v1/hub/config')) aborted = true })
+  await page.route('**/api/v1/hub/config*', async route => {
+    started = true
+    await held
+    await route.fulfill({ json: { node_id: 'agent-1', yaml: 'hostname: late', updated: 50 } }).catch(() => {})
+  })
+  try {
+    await f.panel.getByRole('button', { name: '节点配置' }).click()
+    await f.panel.getByLabel('选择节点').selectOption('agent-1')
+    await expect.poll(() => started).toBe(true)
+    await f.panel.getByRole('button', { name: '关闭配置管理' }).click()
+    await expect(f.panel).toHaveCount(0)
+    await expect.poll(() => aborted).toBe(true)
+  } finally { release() }
+})
+
+test('node polling does not cancel an explicit reload in progress', async ({ page }) => {
+  await page.clock.install()
+  const f = await open(page, { mode: 'hub' })
+  await f.panel.getByRole('button', { name: '节点配置' }).click()
+  await f.panel.getByLabel('选择节点').selectOption('agent-1')
+  const area = f.panel.getByLabel('节点配置内容')
+  await expect(area).toHaveValue('hostname: agent\n')
+  let reads = 0
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/hub/config*', async route => {
+    reads++
+    await held
+    await route.fulfill({ json: { node_id: 'agent-1', yaml: 'hostname: latest\n', updated: 51 } }).catch(() => {})
+  })
+  try {
+    await f.panel.getByRole('button', { name: '载入最新节点配置' }).click()
+    await expect.poll(() => reads).toBe(1)
+    await expect(area).toHaveAttribute('readonly', '')
+    await page.clock.runFor(10050)
+    expect(reads).toBe(1)
+    await expect(area).toHaveAttribute('readonly', '')
+  } finally { release() }
+  await expect(area).toHaveValue('hostname: latest\n')
+  await expect(area).toBeEditable()
+})
+
+
+test('toolbar close keeps unsaved config unless the user confirms', async ({ page }) => {
+  const f = await open(page)
+  const area = f.panel.getByLabel('本机配置内容')
+  await area.fill('hostname: unsaved\n')
+  page.once('dialog', d => d.dismiss())
+  await page.locator(toolbarButton).click()
+  await expect(area).toHaveValue('hostname: unsaved\n')
+  page.once('dialog', d => d.accept())
+  await page.locator(toolbarButton).click()
+  await expect(f.panel).toHaveCount(0)
+  expect(f.managePuts).toHaveLength(0)
+})
+
+test('explicit reload locks the draft until the requested copy arrives', async ({ page }) => {
+  const f = await open(page)
+  const area = f.panel.getByLabel('本机配置内容')
+  await area.fill('hostname: old-draft\n')
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/manage/config', async route => {
+    await held
+    await route.fulfill({ json: { path: '/etc/monitor/monitor.yaml', yaml: 'hostname: latest\n', updated: 201, writable: true } })
+  })
+  try {
+    page.once('dialog', d => d.accept())
+    await f.panel.getByRole('button', { name: '载入最新本机配置' }).click()
+    await expect(area).toHaveAttribute('readonly', '')
+    await expect(f.panel.getByRole('button', { name: '保存本机配置' })).toBeDisabled()
+  } finally { release() }
+  await expect(area).toHaveValue('hostname: latest\n')
+  await expect(area).toBeEditable()
 })

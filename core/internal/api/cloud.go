@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,6 +162,10 @@ func (s *Server) handleClaimRedeem(w http.ResponseWriter, r *http.Request) {
 	if body.NodeID == "" {
 		body.NodeID = body.Host
 	}
+	if s.opt.Nodes != nil && s.opt.Nodes.HasKeyBinding(body.NodeID) {
+		http.Error(w, "node_id is already bound to a stream key", http.StatusConflict)
+		return
+	}
 	c, err := org.RedeemClaim(body.Token, body.NodeID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -176,6 +181,7 @@ func (s *Server) handleClaimRedeem(w http.ResponseWriter, r *http.Request) {
 // agent's reported file and apply outcome. The PUT body is decoded into a
 // narrow struct so a caller can never overwrite the agent-reported state.
 func (s *Server) handleHubConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	org := s.requireOrg(w)
 	if org == nil {
 		return
@@ -202,38 +208,42 @@ func (s *Server) handleHubConfig(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		YAML      string   `json:"yaml"`
 		Disabled  []string `json:"disabled"`
-		IfUpdated int64    `json:"if_updated"` // Updated observed by a previous GET; 0 = no check
+		IfUpdated *int64   `json:"if_updated"` // nil = no check; 0 = no desired config yet
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&body); err != nil || dec.Decode(new(any)) != io.EOF {
+		http.Error(w, "invalid config request", http.StatusBadRequest)
 		return
 	}
 	if len(body.YAML) > maxConfigYAML {
 		http.Error(w, "config exceeds 256KiB limit", http.StatusBadRequest)
 		return
 	}
-	cur, _ := org.GetConfig(nodeID)
-	if body.IfUpdated != 0 && body.IfUpdated != cur.Updated {
-		http.Error(w, "config changed since read", http.StatusConflict)
-		return
-	}
-	if body.YAML != "" { // an empty yaml is the legacy disabled-only update
+	if body.YAML != "" {
 		if _, err := config.Parse([]byte(body.YAML)); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := checkAgentLocks(cur.Reported, body.YAML); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+	}
+	// Serialize persistence and delivery so concurrent requests cannot queue an
+	// older config after a newer one on this server's agent connection.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	out, err := org.UpdateConfig(nodeID, body.IfUpdated, func(cur hub.NodeConfig) (hub.NodeConfig, error) {
+		in := hub.NodeConfig{NodeID: nodeID, Disabled: body.Disabled, YAML: body.YAML}
+		if in.YAML == "" {
+			in.YAML = cur.YAML // legacy disabled-only update keeps the latest YAML
+		} else if err := checkAgentLocks(cur.Reported, in.YAML); err != nil {
+			return hub.NodeConfig{}, err
 		}
-	}
-	in := hub.NodeConfig{NodeID: nodeID, Disabled: body.Disabled, YAML: body.YAML}
-	if in.YAML == "" {
-		in.YAML = cur.YAML // legacy disabled-only update keeps the stored yaml
-	}
-	out, err := org.SetConfig(in)
+		return in, nil
+	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if errors.Is(err, hub.ErrConfigConflict) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	pushed := false
@@ -285,6 +295,7 @@ func (s *Server) hubConfigPayload(cfg hub.NodeConfig) map[string]any {
 }
 
 func (s *Server) handleAgentConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if s.opt.Org == nil || s.opt.Nodes == nil {
 		http.Error(w, "hub org not enabled", http.StatusNotFound)
 		return
@@ -294,11 +305,19 @@ func (s *Server) handleAgentConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := hub.StreamKey(r)
+	nodeID := r.URL.Query().Get("node")
 	cfg, ok := s.opt.Org.ConfigByKey(key)
+	if ok && ((nodeID != "" && nodeID != cfg.NodeID) || !s.opt.Nodes.AuthorizedClaimNode(r, cfg.NodeID)) {
+		http.Error(w, "node config is not authorized for this key", http.StatusForbidden)
+		return
+	}
 	if !ok {
-		nodeID := r.URL.Query().Get("node")
 		if nodeID == "" {
 			writeJSON(w, hub.NodeConfig{})
+			return
+		}
+		if !s.opt.Nodes.AuthorizedNode(r, nodeID) {
+			http.Error(w, "node config is not authorized for this key", http.StatusForbidden)
 			return
 		}
 		cfg, ok = s.opt.Org.GetConfig(nodeID)

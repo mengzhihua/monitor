@@ -306,6 +306,7 @@ func (c *Client) redeemClaim(ctx context.Context, dest string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	cli := &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}}} //nolint:gosec
+	defer cli.CloseIdleConnections()
 	resp, err := cli.Do(req)
 	if err != nil {
 		return err
@@ -345,6 +346,7 @@ func (c *Client) fetchConfig(ctx context.Context, dest string, sess *clientSessi
 	}
 	req.Header.Set("Authorization", "Bearer "+c.opt.APIKey)
 	cli := &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}}} //nolint:gosec
+	defer cli.CloseIdleConnections()
 	resp, err := cli.Do(req)
 	if err != nil {
 		return

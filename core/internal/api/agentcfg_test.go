@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mengzhihua/monitor/core/internal/config"
 )
 
 func TestManageConfigRequiresAuthenticatedAdmin(t *testing.T) {
@@ -291,5 +294,42 @@ func TestManageConfigRollbackAndRestartGuard(t *testing.T) {
 	case <-called:
 		t.Fatal("restart hook ran for a file that will not load")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestManageConfigWriteChecksRemoteApplyRevision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "monitor.yaml")
+	initial := "global:\n  hostname: initial\n"
+	if err := writeAgentConfig(path, initial); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatal(err)
+	}
+	observed := configFileMTime(path)
+	remote := "global:\n  hostname: remote\n"
+	if err := config.Save(path, []byte(remote)); err != nil {
+		t.Fatal(err)
+	}
+	// The final helper must enforce CAS even if an earlier API check already
+	// passed before the remote apply committed its replacement.
+	if err := writeAgentConfigIfUpdated(path, "global:\n  hostname: stale-local\n", &observed); !errors.Is(err, config.ErrFileConflict) {
+		t.Fatalf("final write must reject stale revision: %v", err)
+	}
+	ts, _ := newTestServer(t, Options{Token: "admin-token", ConfigPath: path})
+	body, _ := json.Marshal(map[string]any{"yaml": initial, "if_updated": observed})
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/manage/config", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("stale API write status=%d", resp.StatusCode)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != remote {
+		t.Fatalf("stale write changed remote config: %q %v", got, err)
 	}
 }

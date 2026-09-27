@@ -60,3 +60,33 @@ test('admin edits hostname and nginx from the form and can roll back', async ({ 
   expect(restored.yaml).not.toContain('browser-visual')
   await request.put('/api/v1/manage/config', { headers, data: { yaml: before.yaml, if_updated: restored.updated } })
 })
+
+
+test('form conflicts retain edits and switching editor asks before discarding them', async ({ page, request }) => {
+  const before = await (await request.get('/api/v1/manage/config', { headers })).json()
+  try {
+    await page.goto('/?token=' + token)
+    await page.getByRole('button', { name: '配置' }).click()
+    const hostname = page.getByRole('textbox', { name: '主机名' })
+    await hostname.fill('keep-my-draft')
+    page.once('dialog', d => d.dismiss())
+    await page.getByRole('button', { name: 'YAML', exact: true }).click()
+    await expect(hostname).toHaveValue('keep-my-draft')
+    const changed = await request.put('/api/v1/manage/config', { headers, data: { yaml: before.yaml + '\n# concurrent-editor\n', if_updated: before.updated } })
+    expect(changed.ok()).toBe(true)
+    await page.getByRole('button', { name: '保存本机配置' }).click()
+    await expect(page.getByRole('alert')).toContainText('草稿已保留')
+    await expect(hostname).toHaveValue('keep-my-draft')
+    await expect(page.getByRole('button', { name: '保存本机配置' })).toBeDisabled()
+    page.once('dialog', d => d.accept())
+    await page.getByRole('button', { name: '载入最新本机配置' }).click()
+    await expect(hostname).toHaveValue(before.form.hostname)
+    await hostname.fill('discard-on-switch')
+    page.once('dialog', d => d.accept())
+    await page.getByRole('button', { name: 'YAML', exact: true }).click()
+    await expect(page.getByRole('textbox', { name: '本机配置内容' })).toHaveValue(/# concurrent-editor/)
+    await expect(page.getByRole('button', { name: '保存本机配置' })).toBeEnabled()
+  } finally {
+    await request.put('/api/v1/manage/config', { headers, data: { yaml: before.yaml } })
+  }
+})

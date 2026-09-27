@@ -1,10 +1,14 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,35 +33,99 @@ func Parse(b []byte) (*Config, error) {
 	return c, nil
 }
 
-// Save backs up the current file (if any) to path+".bak" and atomically
-// writes content, preserving the existing permissions.
+var saveMu sync.Mutex
+
+// ErrFileConflict means another writer changed the config after it was read.
+var ErrFileConflict = errors.New("config changed since read")
+
+// Save atomically replaces the backup and current file, keeping credentials
+// private. All in-process config writers share the same backup/write lock.
 func Save(path string, content []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-		if cur, err := os.ReadFile(path); err == nil {
-			if err := os.WriteFile(path+".bak", cur, mode); err != nil {
-				return fmt.Errorf("backup %s: %w", path+".bak", err)
-			}
+	return SaveIfUpdated(path, content, nil)
+}
+
+// SaveIfUpdated checks the observed Unix-microsecond modification time while
+// holding the write lock shared with remote apply. Nil preserves unconditional
+// writes; zero requires that the file is still absent.
+func SaveIfUpdated(path string, content []byte, expected *int64) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	if expected != nil {
+		var updated int64
+		info, err := os.Stat(path)
+		if err == nil {
+			updated = info.ModTime().UnixMicro()
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if *expected != updated {
+			return ErrFileConflict
 		}
 	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	current, err := os.ReadFile(path)
+	if err == nil {
+		if bytes.Equal(current, content) {
+			if err := secureExistingPrivateFile(path + ".bak"); err != nil {
+				return fmt.Errorf("secure backup %s: %w", path+".bak", err)
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			if info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm() == 0o600) {
+				return nil
+			}
+			// Tighten legacy permissions without changing rollback contents or
+			// following a config symlink with Chmod.
+			return writePrivateFile(path, content)
+		}
+		if err := writePrivateFile(path+".bak", current); err != nil {
+			return fmt.Errorf("backup %s: %w", path+".bak", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writePrivateFile(path, content)
+}
+
+// secureExistingPrivateFile preserves an old backup's contents while replacing
+// permissive files or symlinks. Chmod would follow and modify symlink targets.
+func secureExistingPrivateFile(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm() == 0o600) {
+		return nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(path, content)
+}
+
+func writePrivateFile(path string, content []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".monitor-config-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)

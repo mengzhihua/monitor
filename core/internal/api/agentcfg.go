@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -89,13 +88,17 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "read agent config failed", http.StatusInternalServerError)
 			return
 		}
-		yamlText, err = config.ApplyVisual(current, *body.Form)
+		yamlText, err = config.ApplyVisual(current.YAML, *body.Form)
 		if err != nil {
 			http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	if err := writeAgentConfig(s.opt.ConfigPath, yamlText); err != nil {
+	if err := writeAgentConfigIfUpdated(s.opt.ConfigPath, yamlText, body.IfUpdated); err != nil {
+		if errors.Is(err, config.ErrFileConflict) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		var ve *configValidateError
 		if errors.As(err, &ve) {
 			http.Error(w, ve.Error(), http.StatusBadRequest)
@@ -190,18 +193,35 @@ func (s *Server) handleManageRestart(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-func readAgentConfig(path string) (string, error) {
-	b, err := os.ReadFile(path)
+type agentConfigSnapshot struct {
+	YAML    string
+	Updated int64
+}
+
+func readAgentConfig(path string) (agentConfigSnapshot, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", nil
+			return agentConfigSnapshot{}, nil
 		}
-		return "", err
+		return agentConfigSnapshot{}, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, agentConfigMax+1))
+	if err != nil {
+		return agentConfigSnapshot{}, err
 	}
 	if len(b) > agentConfigMax {
-		return "", errors.New("config file is too large")
+		return agentConfigSnapshot{}, errors.New("config file is too large")
 	}
-	return string(b), nil
+	// Local saves and remote applies replace the path atomically. Stat the
+	// opened file so a concurrent replacement cannot pair old YAML with its
+	// newer revision and incorrectly authorize a stale conditional save.
+	info, err := f.Stat()
+	if err != nil {
+		return agentConfigSnapshot{}, err
+	}
+	return agentConfigSnapshot{YAML: string(b), Updated: info.ModTime().UnixMicro()}, nil
 }
 
 type configValidateError struct{ err error }
@@ -210,6 +230,10 @@ func (e *configValidateError) Error() string { return "invalid config: " + e.err
 func (e *configValidateError) Unwrap() error { return e.err }
 
 func writeAgentConfig(path, yaml string) error {
+	return writeAgentConfigIfUpdated(path, yaml, nil)
+}
+
+func writeAgentConfigIfUpdated(path, yaml string, expected *int64) error {
 	if strings.TrimSpace(yaml) == "" {
 		return &configValidateError{err: errors.New("yaml is empty")}
 	}
@@ -219,17 +243,7 @@ func writeAgentConfig(path, yaml string) error {
 	if _, err := config.Parse([]byte(yaml)); err != nil {
 		return &configValidateError{err: err}
 	}
-	if old, err := os.ReadFile(path); err == nil {
-		if string(old) == yaml {
-			return nil
-		}
-		if err := writePrivateConfig(path+".bak", string(old)); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return writePrivateConfig(path, yaml)
+	return config.SaveIfUpdated(path, []byte(yaml), expected)
 }
 
 // configFileMTime returns Unix microseconds: detect edits within the same second
@@ -241,56 +255,21 @@ func configFileMTime(path string) int64 {
 	return 0
 }
 
-func agentConfigView(path, yaml string) agentConfigResponse {
+func agentConfigView(path string, snapshot agentConfigSnapshot) agentConfigResponse {
 	resp := agentConfigResponse{
-		Path: path, YAML: yaml, Writable: path != "",
-		Updated: configFileMTime(path), Size: len(yaml),
+		Path: path, YAML: snapshot.YAML, Writable: path != "",
+		Updated: snapshot.Updated, Size: len(snapshot.YAML),
 	}
 	if path != "" {
 		if _, err := os.Stat(path + ".bak"); err == nil {
 			resp.Backup = path + ".bak"
 		}
 	}
-	form, err := config.VisualFrom(yaml)
+	form, err := config.VisualFrom(snapshot.YAML)
 	if err != nil {
 		resp.FormError = "配置里有表单无法展示的内容，请用 YAML 修改"
 		return resp
 	}
 	resp.Form = &form
 	return resp
-}
-
-func writePrivateConfig(path, yaml string) error {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".monitor-config-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.Remove(tmp)
-		}
-	}()
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.WriteString(yaml); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	ok = true
-	return nil
 }

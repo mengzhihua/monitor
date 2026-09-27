@@ -320,7 +320,7 @@ export const api = {
   alarmSummary: () => get<{ status: Record<string, number>; classes?: Record<string, number> }>(`/api/v1/alarm_summary${q({})}`),
   manageHealth: () => get<{ enabled: boolean; silent: boolean; maintenance: boolean; maint_until?: number }>('/api/v1/manage/health'),
   setHealth: (body: Record<string, unknown>) => send<unknown>('PUT', '/api/v1/manage/health', body),
-  manageConfig: () => get<ManageConfig>('/api/v1/manage/config'),
+  manageConfig: (signal?: AbortSignal) => get<ManageConfig>('/api/v1/manage/config', signal),
   putManageConfig: (yaml: string, ifUpdated?: number) => send<ManageConfig>('PUT', '/api/v1/manage/config', { yaml, if_updated: ifUpdated }),
   putManageForm: (form: AgentVisual, ifUpdated?: number) => send<ManageConfig>('PUT', '/api/v1/manage/config', { form, if_updated: ifUpdated }),
   rollbackManageConfig: () => post<ManageConfig>('/api/v1/manage/config/rollback', {}),
@@ -336,7 +336,7 @@ export const api = {
   claims: () => get<{ claims: Claim[] }>('/api/v1/hub/claim-tokens'),
   issueClaim: (spaceID: string, roomID: string, ttl = '24h') =>
     post<Claim>('/api/v1/hub/claim-tokens', { space_id: spaceID, room_id: roomID, ttl }),
-  nodeConfig: (node: string) => get<NodeConfigFull>(`/api/v1/hub/config?node=${encodeURIComponent(node)}`),
+  nodeConfig: (node: string, signal?: AbortSignal) => get<NodeConfigFull>(`/api/v1/hub/config?node=${encodeURIComponent(node)}`, signal),
   putNodeConfig: (cfg: { node_id: string; yaml?: string; disabled?: string[]; if_updated?: number }) =>
     send<NodeConfigFull>('PUT', `/api/v1/hub/config?node=${encodeURIComponent(cfg.node_id)}`, cfg),
   console: () => get<ConsoleResponse>('/api/v1/hub/console'),

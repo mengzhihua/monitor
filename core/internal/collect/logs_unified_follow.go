@@ -169,6 +169,11 @@ func runUnifiedStream(ctx context.Context, cmd *exec.Cmd, ready func(), emit fun
 		_ = stdout.Close()
 		return err
 	}
+	// StdoutPipe is read by us, so WaitDelay does not close it while the
+	// scanner is blocked on an inherited pipe. Cancellation must unblock
+	// that read before we can reap the command with Wait.
+	stopClose := context.AfterFunc(ctx, func() { _ = stdout.Close() })
+	defer stopClose()
 	ready()
 	readErr := readUnifiedStream(stdout, emit)
 	if readErr != nil || ctx.Err() != nil {

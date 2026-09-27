@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ type NodeConfig struct {
 	NodeID   string      `json:"node_id"`
 	Disabled []string    `json:"disabled,omitempty"`
 	YAML     string      `json:"yaml,omitempty"`     // desired full config (admin-edited)
-	Updated  int64       `json:"updated"`            // desired revision (unix seconds)
+	Updated  int64       `json:"updated"`            // monotonically increasing desired revision
 	Reported string      `json:"reported,omitempty"` // agent's actual file text
 	ReportAt int64       `json:"report_at,omitempty"`
 	Apply    *ApplyState `json:"apply,omitempty"` // outcome acked by the agent
@@ -112,6 +113,17 @@ func OpenOrg(dir string) (*Org, error) {
 		o.configs = f.Configs
 	}
 	o.keys = append(o.keys, f.Keys...)
+	info, err := os.Lstat(o.path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		// Secure files written by older versions even if this hub only serves
+		// reads after upgrading. Replace symlinks instead of chmodding targets.
+		if err := writeOrgFile(o.path, b); err != nil {
+			return nil, fmt.Errorf("secure org credentials: %w", err)
+		}
+	}
 	return o, nil
 }
 
@@ -133,11 +145,29 @@ func (o *Org) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp := o.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	return writeOrgFile(o.path, b)
+}
+
+func writeOrgFile(path string, content []byte) error {
+	// The org file contains stream keys and desired/reported YAML credentials.
+	// A fresh private temporary file also avoids following a stale .tmp symlink.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".org-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, o.path)
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func (o *Org) Keys() []string {
@@ -301,6 +331,11 @@ func (o *Org) RedeemClaim(token, nodeID string) (Claim, error) {
 	if c.Expires > 0 && now > c.Expires {
 		return Claim{}, errors.New("claim token expired")
 	}
+	for _, existing := range o.claims {
+		if existing.NodeID == nodeID && existing.APIKey != "" {
+			return Claim{}, errors.New("node_id is already claimed")
+		}
+	}
 	key := randomID("key")
 	c.APIKey = key
 	c.NodeID = nodeID
@@ -322,23 +357,55 @@ func (o *Org) RedeemClaim(token, nodeID string) (Claim, error) {
 	return out, o.saveLocked()
 }
 
+// ErrConfigConflict means the desired config changed after the caller read it.
+var ErrConfigConflict = errors.New("config changed since read")
+
 // SetConfig stores the desired overlay, preserving the agent-reported file
 // state and last apply outcome.
 func (o *Org) SetConfig(cfg NodeConfig) (NodeConfig, error) {
-	if cfg.NodeID == "" {
+	return o.UpdateConfig(cfg.NodeID, nil, func(NodeConfig) (NodeConfig, error) { return cfg, nil })
+}
+
+// UpdateConfig compares the caller's revision and computes the desired config
+// under one lock. A nil revision keeps the legacy unconditional-write behavior;
+// a pointer to zero requires that no desired config has been stored yet. The
+// callback receives a copy and must not call another Org method. Only YAML and
+// Disabled are taken from its result; agent reports and apply outcomes survive.
+func (o *Org) UpdateConfig(nodeID string, expected *int64, update func(NodeConfig) (NodeConfig, error)) (NodeConfig, error) {
+	if nodeID == "" {
 		return NodeConfig{}, errors.New("node_id required")
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	cp := o.configs[cfg.NodeID]
-	if cp == nil {
-		cp = &NodeConfig{NodeID: cfg.NodeID}
-		o.configs[cfg.NodeID] = cp
+	previous := o.configs[nodeID]
+	current := NodeConfig{NodeID: nodeID}
+	if previous != nil {
+		current = *copyConfig(previous)
 	}
-	cp.Disabled = append([]string(nil), cfg.Disabled...)
-	cp.YAML = cfg.YAML
-	cp.Updated = o.now().Unix()
-	return *copyConfig(cp), o.saveLocked()
+	if expected != nil && *expected != current.Updated {
+		return NodeConfig{}, ErrConfigConflict
+	}
+	desired, err := update(*copyConfig(&current))
+	if err != nil {
+		return NodeConfig{}, err
+	}
+	current.Disabled = append([]string(nil), desired.Disabled...)
+	current.YAML = desired.YAML
+	revision := o.now().Unix()
+	if revision <= current.Updated {
+		revision = current.Updated + 1
+	}
+	current.Updated = revision
+	o.configs[nodeID] = &current
+	if err := o.saveLocked(); err != nil {
+		if previous == nil {
+			delete(o.configs, nodeID)
+		} else {
+			o.configs[nodeID] = previous
+		}
+		return NodeConfig{}, err
+	}
+	return *copyConfig(&current), nil
 }
 
 // SetReport records the agent-reported config file, preserving desired state.

@@ -46,6 +46,46 @@ func (n *Nodes) Authorized(r *http.Request) bool {
 	return ok
 }
 
+// AuthorizedNode requires both a currently accepted stream key and the same
+// key binding established when this node first registered. Unknown, replica-only
+// and legacy unbound nodes must register before retrieving credential-bearing
+// config by node ID.
+func (n *Nodes) AuthorizedNode(r *http.Request, nodeID string) bool {
+	return n.authorizedNode(r, nodeID, false)
+}
+
+// AuthorizedClaimNode permits the claim's own not-yet-registered node, but a
+// claim never overrides an existing stream key binding. Callers must first
+// resolve the node from Org.ConfigByKey, not from a caller-supplied node ID.
+func (n *Nodes) AuthorizedClaimNode(r *http.Request, nodeID string) bool {
+	return n.authorizedNode(r, nodeID, true)
+}
+
+func (n *Nodes) authorizedNode(r *http.Request, nodeID string, allowUnbound bool) bool {
+	keyHash, ok := n.authorize(r)
+	if !ok {
+		return false
+	}
+	bound := n.nodeKeyHash(nodeID)
+	if bound == "" {
+		return allowUnbound
+	}
+	return subtle.ConstantTimeCompare([]byte(bound), []byte(keyHash)) == 1
+}
+
+// HasKeyBinding reports whether a node has already registered a stream key.
+func (n *Nodes) HasKeyBinding(nodeID string) bool { return n.nodeKeyHash(nodeID) != "" }
+
+func (n *Nodes) nodeKeyHash(nodeID string) string {
+	node, ok := n.Get(nodeID)
+	if !ok {
+		return ""
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	return node.keyHash
+}
+
 // StreamKey extracts the bearer/api_key credential from r.
 func StreamKey(r *http.Request) string {
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

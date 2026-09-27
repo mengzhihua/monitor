@@ -188,10 +188,7 @@ func metricFor(reg *registry.Registry, id, status string, now int64) resourceMet
 
 func diskMetricsFor(reg *registry.Registry, status string, now int64) []diskMetric {
 	out := []diskMetric{}
-	for _, c := range reg.Charts() {
-		if c.Context != "disk.space" {
-			continue
-		}
+	for _, c := range reg.ChartsByContext("disk.space") {
 		m := diskMetric{Mount: c.Family, State: "unavailable"}
 		at, values := c.LatestValues()
 		m.At = at
