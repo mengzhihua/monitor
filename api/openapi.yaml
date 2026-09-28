@@ -390,6 +390,9 @@ components:
         units: {type: string}
         warn: {type: string}
         crit: {type: string}
+        recovery: {type: string, description: "After warn and crit are both false, the alarm stays raised until this expression is true."}
+        for: {type: string}
+        keep_firing_for: {type: string}
         delay: {type: string}
         repeat: {type: string}
         info: {type: string}

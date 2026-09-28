@@ -30,6 +30,7 @@ import (
 //     units: '%'
 //     warn: $this > (($status >= $WARNING) ? (75) : (85))
 //     crit: $this > (($status == $CRITICAL) ? (85) : (95))
+//     recovery: $this < 70              # stay raised until this is also true
 //     for: 1m                            # condition must hold before the status rises
 //     keep_firing_for: 5m               # stay raised after the condition clears
 //     delay: down 15m multiplier 1.5 max 1h
@@ -48,6 +49,7 @@ type RuleSpec struct {
 	Units      string            `yaml:"units" json:"units,omitempty"`
 	Warn       string            `yaml:"warn" json:"warn,omitempty"`
 	Crit       string            `yaml:"crit" json:"crit,omitempty"`
+	Recovery   string            `yaml:"recovery,omitempty" json:"recovery,omitempty"`
 	For        string            `yaml:"for,omitempty" json:"for,omitempty"`
 	KeepFiring string            `yaml:"keep_firing_for,omitempty" json:"keep_firing_for,omitempty"`
 	Delay      string            `yaml:"delay" json:"delay,omitempty"`
@@ -95,6 +97,7 @@ type Rule struct {
 	Calc       *Expr
 	Warn       *Expr
 	Crit       *Expr
+	Recovery   *Expr
 	Delay      Delay
 	Repeat     Repeat
 	For        time.Duration // pending time before a raise commits; 0 = immediate
@@ -129,7 +132,7 @@ func Compile(spec RuleSpec, source string) (*Rule, error) {
 		dst  **Expr
 		src  string
 		name string
-	}{{&r.Calc, spec.Calc, "calc"}, {&r.Warn, spec.Warn, "warn"}, {&r.Crit, spec.Crit, "crit"}} {
+	}{{&r.Calc, spec.Calc, "calc"}, {&r.Warn, spec.Warn, "warn"}, {&r.Crit, spec.Crit, "crit"}, {&r.Recovery, spec.Recovery, "recovery"}} {
 		if *f.dst, err = ParseExpr(f.src); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q %s: %w", source, spec.Name, f.name, err)
 		}

@@ -27,3 +27,23 @@ test('alarm panel shows pending and recovery hold without counting a pending cle
   await expect(panel.locator('tbody tr').filter({ hasText: 'ram_hot' })).toContainText('CRITICAL')
   await expect(button).toContainText('1')
 })
+
+test('alarm panel shows a recovery expression hold as an open problem', async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000)
+  await page.route('**/api/v1/alarms*', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname !== '/api/v1/alarms') return route.continue()
+    await route.fulfill({ json: { hostname: 'browser-test', now, summary: { normal: 0, warning: 1, critical: 0, silent: 0 }, alarms: { 'system.ram.ram_hot': {
+      id: 8, name: 'ram_hot', chart: 'system.ram', context: 'system.ram', family: 'ram', units: '%', info: 'hot',
+      status: 'WARNING', value: 75, last_updated: now, last_status_change: now, active: true, recovery_hold: true,
+    } } } })
+  })
+  await page.route('**/api/v1/alarm_log*', route => route.fulfill({ json: [] }))
+  await page.goto('/?view=charts&token=browser-test-token')
+  const button = page.locator('button[title="告警"]')
+  await expect(button).toContainText('1')
+  await button.click()
+  const row = page.locator('.panel tbody tr').filter({ hasText: 'ram_hot' })
+  await expect(row).toContainText('等待恢复')
+  await expect(row).toContainText('WARNING')
+})

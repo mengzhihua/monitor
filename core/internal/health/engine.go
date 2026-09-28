@@ -97,6 +97,7 @@ type Alarm struct {
 	SustainSince     int64   `json:"pending_since,omitempty"`
 	PendingUntil     int64   `json:"pending_until,omitempty"` // unix seconds when `for` commits
 	HoldUntil        int64   `json:"hold_until,omitempty"`    // keep_firing_for deadline, unix seconds
+	RecoveryHold     bool    `json:"recovery_hold,omitempty"` // raised until the recovery expression is true
 
 	// notification pacing
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
@@ -525,12 +526,17 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 	default:
 		status = StatusClear
 	}
+	recovered := true
+	if r.Recovery != nil {
+		recovered = truthy(r.Recovery.Eval(vars))
+	}
 
 	e.mu.Lock()
 	a.nextRun = now.Add(r.Every)
 	old, oldValue := a.Status, a.Value
 	a.Value = value
 	a.LastUpdated = now.Unix()
+	status = gateRecovery(a, status, recovered)
 	status = gateRaised(a, status, now)
 	if status != old {
 		a.Status = status

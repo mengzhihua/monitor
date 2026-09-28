@@ -713,6 +713,7 @@ health:
   #   every: 10s
   #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'
   #   crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
+  #   recovery: '$this < 70'         # stay raised until warn/crit are false and this is true
   #   for: 1m                         # status stays put until warn/crit holds this long; empty = immediate
   #   keep_firing_for: 5m            # stay raised this long after the condition clears
   #   delay: down 15m multiplier 1.5 max 1h

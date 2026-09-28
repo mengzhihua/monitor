@@ -248,6 +248,7 @@ function onAlarmEvent(e: AlarmLogEntry) {
   const raised = e.status === 'WARNING' || e.status === 'CRITICAL'
   if (!raised) {
     if (e.status !== 'CLEAR' || e.old_status === 'WARNING' || e.old_status === 'CRITICAL') clearAlarmSustain(a)
+    a.recovery_hold = undefined
     return
   }
   const level = e.status === 'CRITICAL' ? 4 : 3
@@ -256,6 +257,7 @@ function onAlarmEvent(e: AlarmLogEntry) {
     a.pending_status = undefined; a.pending_since = undefined; a.pending_until = undefined
   }
   a.hold_until = undefined
+  a.recovery_hold = undefined
 }
 
 function clearAlarmSustain(a: Alarm) {

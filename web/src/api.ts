@@ -159,12 +159,13 @@ export interface Alarm {
   last_status_change: number; active: boolean; delay_up_to_timestamp?: number; last_notified?: number
   silenced?: boolean
   pending_status?: AlarmStatus; pending_since?: number; pending_until?: number; hold_until?: number
+  recovery_hold?: boolean
 }
 export interface SilenceState { all: boolean; until?: number; alarms: Record<string, number>; maintenance?: boolean; maint_until?: number }
 export interface AlertRuleSpec {
   name: string; on: string; class?: string; type?: string; component?: string
   lookup?: string; calc?: string; every?: string; units?: string; warn?: string; crit?: string
-  for?: string; keep_firing_for?: string; delay?: string; repeat?: string; info?: string; to?: string; chart_labels?: Record<string, string>; disabled?: boolean
+  for?: string; keep_firing_for?: string; recovery?: string; delay?: string; repeat?: string; info?: string; to?: string; chart_labels?: Record<string, string>; disabled?: boolean
 }
 export interface AlertRuleConfig {
   hash: string; name: string; on: string; source: string; every: number; config: Omit<AlertRuleSpec, 'on'> & { on?: string }
