@@ -202,6 +202,19 @@ data/
   to: sysadmin
 ```
 
+`lookup` 除 Netdata 风格聚合（average/min/max/sum/median/last/min2max，配 `unaligned`/`absolute`/`percentage`/`anomaly-bit`/`of dims`）外，还支持 Zabbix 风格函数（窗口 `[now-After, now]`，多维度结果求和）：
+
+| 方法 | 语义 |
+|---|---|
+| `nodata -5m` | 窗口内无任何非 NaN 点返回 1，否则 0（绝不返回 NaN） |
+| `first -5m` / `change -5m` / `stddev -5m` | 首值 / 末值−首值 / 总体标准差 |
+| `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
+| `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
+| `forecast -1h horizon 30m` | 最小二乘线性拟合在 now+horizon 的取值 |
+| `timeleft -1h target 0` | 拟合到达 target 的剩余秒数（跨维度取最小；永不收敛返回 1e15） |
+
+规则字段可引用 `{$NAME}` 用户宏：规则内 `macros:` 优先，`health.macros` 全局兜底，未定义宏编译即报错。
+
 - 表达式引擎：支持 `$this / $status / $WARNING / $CRITICAL / $now / 其它告警名引用 / 图表其它维度`，与 Netdata 兼容，便于直接移植其预置规则。
 - 状态机：`UNINITIALIZED → CLEAR ↔ WARNING ↔ CRITICAL`，`REMOVED`；每次跃迁写 `alarm_log`。
 - 静默：按 host/chart/alert/label 维度、时间窗口；维护窗口。

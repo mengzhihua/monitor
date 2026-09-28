@@ -528,7 +528,7 @@ func hostIdentity(cfg *config.Config) (*registry.Host, error) {
 func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, log *slog.Logger) (*health.Engine, error) {
 	var sets [][]*health.Rule
 	if cfg.HealthBuiltin() {
-		builtin, err := health.DefaultRules()
+		builtin, err := health.DefaultRulesWith(cfg.Health.Macros)
 		if err != nil {
 			return nil, err
 		}
@@ -539,13 +539,13 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		dir = filepath.Join(filepath.Dir(cfgPath), dir)
 	}
 	if dir != "" {
-		custom, err := health.LoadDir(dir)
+		custom, err := health.LoadDirWith(dir, cfg.Health.Macros)
 		if err != nil {
 			return nil, err
 		}
 		sets = append(sets, custom)
 	}
-	inline, err := health.CompileAll(cfg.Health.Alarms, cfgPath)
+	inline, err := health.CompileAllWith(cfg.Health.Alarms, cfgPath, cfg.Health.Macros)
 	if err != nil {
 		return nil, err
 	}
@@ -660,6 +660,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		EscalateTo:       cfg.Health.EscalateTo,
 		OnCall:           cfg.Health.OnCall,
 		Windows:          cfg.Health.Windows,
+		Macros:           cfg.Health.Macros,
 	})
 }
 

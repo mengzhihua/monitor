@@ -156,6 +156,7 @@ type Health struct {
 	Notify           Notify                     `yaml:"notify"`
 	Alarms           []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
 	Windows          []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
+	Macros           map[string]string          `yaml:"macros"`  // global {$NAME} user macros usable in rule fields
 }
 
 // Notify holds the notification channels; a channel is active when its

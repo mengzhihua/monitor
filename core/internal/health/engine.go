@@ -174,6 +174,8 @@ type Options struct {
 	Windows          []MaintenanceWindow
 	// Anomaly supplies per-dimension 0–100 rates for lookup `anomaly-bit`.
 	Anomaly AnomalySource
+	// Macros are global {$NAME} user macros; rule-level `macros:` override them.
+	Macros map[string]string
 }
 
 // AnomalySource is implemented by the ML collector (duck-typed; no import cycle).
@@ -260,7 +262,7 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open maintenance plans: %w", err)
 	}
-	e.ruleConfig, e.rules, err = openRuleConfig(opt.LogDir, opt.Rules)
+	e.ruleConfig, e.rules, err = openRuleConfig(opt.LogDir, opt.Rules, opt.Macros)
 	if err != nil {
 		return nil, fmt.Errorf("open alert rules: %w", err)
 	}
@@ -907,6 +909,9 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 	for _, d := range l.Dimensions {
 		selected[d] = true
 	}
+	if l.Kind != "" {
+		return e.lookupKind(c, l, selected, after, before)
+	}
 	var sum, total float64
 	var matched bool
 	var minSum, maxSum float64
@@ -969,6 +974,252 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 			return math.NaN()
 		}
 		return sum * 100 / total
+	}
+	return sum
+}
+
+// lookupKind evaluates the Zabbix-style functions (Lookup.Kind). All of them
+// work on [after, before] over the selected dimensions; per-dimension results
+// are summed unless noted.
+func (e *Engine) lookupKind(c *registry.Chart, l *Lookup, selected map[string]bool, after, before int64) float64 {
+	isSel := func(d *registry.Dimension) bool {
+		return len(selected) == 0 || selected[d.ID] || selected[d.Name]
+	}
+	if l.Kind == "nodata" {
+		// 1 when no non-NaN point exists for any selected dim; never NaN.
+		for _, d := range c.Dims() {
+			if !isSel(d) {
+				continue
+			}
+			pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			if err != nil {
+				continue
+			}
+			for _, p := range pts {
+				if !math.IsNaN(p.Value) {
+					return 0
+				}
+			}
+		}
+		return 1
+	}
+	if l.Kind == "trendavg" || l.Kind == "trendmin" || l.Kind == "trendmax" ||
+		l.Kind == "trendsum" || l.Kind == "trendcount" {
+		return e.lookupTrend(c, l, selected, after, before)
+	}
+	var sum float64
+	matched := false
+	if l.Kind == "timeleft" {
+		sum = timeLeftSentinel
+	}
+	for _, d := range c.Dims() {
+		if !isSel(d) {
+			continue
+		}
+		pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+		if err != nil {
+			continue
+		}
+		vals := make([]tsdb.Point, 0, len(pts))
+		for _, p := range pts {
+			if !math.IsNaN(p.Value) {
+				vals = append(vals, p)
+			}
+		}
+		if len(vals) == 0 {
+			continue
+		}
+		matched = true
+		switch l.Kind {
+		case "first":
+			sum += vals[0].Value
+		case "change":
+			sum += vals[len(vals)-1].Value - vals[0].Value
+		case "stddev":
+			sum += popStddev(vals)
+		case "count":
+			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
+		case "forecast":
+			a, b, ok := linearFit(vals)
+			if !ok {
+				continue
+			}
+			// fit origin is the first sample's timestamp
+			x := float64(before-vals[0].TS) + l.Horizon.Seconds()
+			sum += a + b*x
+		case "timeleft":
+			a, b, ok := linearFit(vals)
+			if !ok || math.Abs(b) < 1e-12 {
+				continue // stays at the sentinel
+			}
+			rem := (l.Target - (a + b*float64(before-vals[0].TS))) / b
+			if rem < 0 {
+				continue
+			}
+			if rem < sum {
+				sum = rem
+			}
+		}
+	}
+	if !matched {
+		return math.NaN()
+	}
+	if l.AbsValue {
+		return math.Abs(sum)
+	}
+	return sum
+}
+
+// timeLeftSentinel replaces the unbounded Zabbix "never" answer; evaluate()
+// treats +Inf as undefined, so timeleft reports a very large finite value.
+const timeLeftSentinel = 1e15
+
+func countMatching(pts []tsdb.Point, op string, v float64) int {
+	var n int
+	for _, p := range pts {
+		ok := true
+		switch op {
+		case "gt":
+			ok = p.Value > v
+		case "ge":
+			ok = p.Value >= v
+		case "lt":
+			ok = p.Value < v
+		case "le":
+			ok = p.Value <= v
+		case "eq":
+			ok = p.Value == v
+		case "ne":
+			ok = p.Value != v
+		}
+		if ok {
+			n++
+		}
+	}
+	return n
+}
+
+func popStddev(pts []tsdb.Point) float64 {
+	var m float64
+	for _, p := range pts {
+		m += p.Value
+	}
+	m /= float64(len(pts))
+	var v float64
+	for _, p := range pts {
+		d := p.Value - m
+		v += d * d
+	}
+	return math.Sqrt(v / float64(len(pts)))
+}
+
+// linearFit is ordinary least squares of (seconds since window start, value).
+func linearFit(pts []tsdb.Point) (a, b float64, ok bool) {
+	if len(pts) < 2 {
+		return 0, 0, false
+	}
+	x0 := float64(pts[0].TS)
+	var sx, sy, sxx, sxy float64
+	for _, p := range pts {
+		x := float64(p.TS) - x0
+		sx += x
+		sy += p.Value
+		sxx += x * x
+		sxy += x * p.Value
+	}
+	n := float64(len(pts))
+	den := n*sxx - sx*sx
+	if math.Abs(den) < 1e-12 {
+		return 0, 0, false
+	}
+	b = (n*sxy - sx*sy) / den
+	a = (sy - b*sx) / n
+	return a, b, true
+}
+
+// lookupTrend reduces rollup-tier buckets; empty coverage falls back to the
+// raw tier-0 samples so fresh installs still answer.
+func (e *Engine) lookupTrend(c *registry.Chart, l *Lookup, selected map[string]bool, after, before int64) float64 {
+	var sum float64
+	matched := false
+	for _, d := range c.Dims() {
+		if len(selected) != 0 && !selected[d.ID] && !selected[d.Name] {
+			continue
+		}
+		id := registry.SeriesID(c.ID, d.ID)
+		bs, _, err := e.db.QueryAuto(id, after, before, 0)
+		if err != nil {
+			continue
+		}
+		var v float64
+		if len(bs) == 0 {
+			pts, err := e.db.Query(id, after, before)
+			if err != nil || len(pts) == 0 {
+				continue
+			}
+			vals := make([]float64, 0, len(pts))
+			for _, p := range pts {
+				if !math.IsNaN(p.Value) {
+					vals = append(vals, p.Value)
+				}
+			}
+			if len(vals) == 0 {
+				continue
+			}
+			switch l.Kind {
+			case "trendavg":
+				v = reduce(vals, tsdb.GroupAverage)
+			case "trendmin":
+				v = reduce(vals, tsdb.GroupMin)
+			case "trendmax":
+				v = reduce(vals, tsdb.GroupMax)
+			case "trendsum":
+				v = reduce(vals, tsdb.GroupSum)
+			case "trendcount":
+				v = float64(len(vals))
+			}
+		} else {
+			switch l.Kind {
+			case "trendavg":
+				var s float64
+				var n int64
+				for _, b := range bs {
+					s += b.Sum
+					n += b.Count
+				}
+				if n == 0 {
+					continue
+				}
+				v = s / float64(n)
+			case "trendmin":
+				v = bs[0].Min
+				for _, b := range bs[1:] {
+					if b.Min < v {
+						v = b.Min
+					}
+				}
+			case "trendmax":
+				v = bs[0].Max
+				for _, b := range bs[1:] {
+					if b.Max > v {
+						v = b.Max
+					}
+				}
+			case "trendsum":
+				for _, b := range bs {
+					v += b.Sum
+				}
+			case "trendcount":
+				for _, b := range bs {
+					v += float64(b.Count)
+				}
+			}
+		}
+		matched = true
+		sum += v
+	}
+	if !matched {
+		return math.NaN()
 	}
 	return sum
 }
