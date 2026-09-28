@@ -127,8 +127,11 @@ func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
 	fields := []*string{&spec.Lookup, &spec.Calc, &spec.Warn, &spec.Crit,
 		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.Delay,
 		&spec.Repeat, &spec.Info, &spec.Units}
-	// Expand iteratively so a macro value may itself contain {$OTHER}.
-	for round := 0; round < 10; round++ {
+	// Expand iteratively so a macro value may itself contain {$OTHER}. An
+	// acyclic chain resolves within #macros rounds; the +1 leaves room for
+	// the no-change pass that terminates expansion.
+	maxRounds := len(spec.Macros) + len(global) + 1
+	for round := 0; round < maxRounds; round++ {
 		changed := false
 		for _, fp := range fields {
 			if !strings.Contains(*fp, "{$") {

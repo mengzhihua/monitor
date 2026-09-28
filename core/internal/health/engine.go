@@ -1207,10 +1207,17 @@ func (e *Engine) lookupTrend(c *registry.Chart, l *Lookup, selected map[string]b
 		// window is too old for tier0 (retention) or a tier was enabled late,
 		// fall back to the coarsest tier that has any data. Tier0 buckets are
 		// single samples, so the reduction below is uniform.
-		nTiers := len(e.db.Tiers())
+		nTiers := e.db.TierCount()
 		var bs []tsdb.Bucket
 		for tier := 0; tier < nTiers; tier++ {
-			if !e.db.TierCovers(id, tier, after) {
+			// Tier0 is only "covering" when its oldest sample reaches back to
+			// `after` — TierCovers returns true for it unconditionally, so an
+			// expired tail would silently truncate the window.
+			if tier == 0 {
+				if first, _, ok := e.db.Bounds(id); !ok || first > after {
+					continue
+				}
+			} else if !e.db.TierCovers(id, tier, after) {
 				continue
 			}
 			b, err := e.db.QueryTier(id, tier, after, before)

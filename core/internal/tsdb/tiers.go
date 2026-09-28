@@ -615,6 +615,10 @@ func decodeBucketsEach(buf []byte, n int, cols [5]bool, emit func(Bucket)) error
 // ---- Store integration ----
 
 // Tiers describes tier0 plus every configured rollup tier.
+// TierCount reports how many tiers exist (tier 0 raw + rollup tiers) without
+// materializing the per-tier TierInfo scan that Tiers performs.
+func (s *Store) TierCount() int { return len(s.tiers) + 1 }
+
 func (s *Store) Tiers() []TierInfo {
 	t0 := TierInfo{Tier: 0, Every: 1, Retention: int64(s.opt.Retention / time.Second)}
 	s.mu.RLock()
