@@ -93,6 +93,9 @@ type Alarm struct {
 	LastStatusChange int64   `json:"last_status_change"`
 	Active           bool    `json:"active"`
 	Silenced         bool    `json:"silenced,omitempty"`
+	SustainStatus    Status  `json:"pending_status,omitempty"` // raised status waiting on `for`
+	SustainSince     int64   `json:"pending_since,omitempty"`
+	HoldUntil        int64   `json:"hold_until,omitempty"` // keep_firing_for deadline, unix seconds
 
 	// notification pacing
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
@@ -102,7 +105,10 @@ type Alarm struct {
 	chart             *registry.Chart
 	nextRun           time.Time
 	pending           *LogEntry // transition waiting for its delay to expire
-	notifiedSt        Status    // status last reported to notifiers (or silently settled)
+	sustainStatus     Status
+	sustainSince      time.Time
+	holdUntil         time.Time
+	notifiedSt        Status // status last reported to notifiers (or silently settled)
 	delayMult         float64
 	lastDelayAt       time.Time
 	lastNotifyAttempt int64 // scheduler time, independent of successful delivery
@@ -524,6 +530,7 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 	old, oldValue := a.Status, a.Value
 	a.Value = value
 	a.LastUpdated = now.Unix()
+	status = gateRaised(a, status, now)
 	if status != old {
 		a.Status = status
 		a.LastStatusChange = now.Unix()

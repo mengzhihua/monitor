@@ -171,6 +171,8 @@ M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEv
 
 告警依赖：`health.inhibit` 在源告警处于严重或警告时抑制目标告警的警告和严重通知，问题本身继续展示。`["*"]` 不抑制同源告警名。跨主机依赖不在本轮。
 
+持续触发：规则字段 `for` 与 `keep_firing_for` 分别推迟状态升高和恢复。`delay` 仍只作用于通知。无数据策略不在本轮。
+
 ## 4.0 M20（已合入 main）
 
 1. journald：`journalctl -f` 跟随（`follow: false` 退回按次查询）；Function 支持 `unit` / `priority` / `boot` / `cursor`

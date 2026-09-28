@@ -11,8 +11,9 @@
 | [Netdata 动态配置](https://learn.netdata.cloud/docs/alerts-%26-notifications#4-dynamic-uiapi-configuration-override)：配置分层，动态修改可持久保存与重置 | 启动配置作为基础，动态覆盖单独保存；支持恢复当前配置规则 | 只管理当前服务的本机规则，未实现 Hub 向远端 Agent 下发 |
 | [Grafana 规则编辑](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/create-grafana-managed-rule/)：保存前预览 | 校验语法、容量及版本，显示匹配图表数量与前 50 张图表 | 这是作用范围预览，不执行表达式、不回放历史，也不预测是否触发 |
 | [Prometheus 规则校验](https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/)：变更前检查规则 | 整批编译与检查后原子保存；任一规则失败，整批不生效 | 使用本项目表达式，未提供 PromQL 或 promtool 兼容接口 |
+| [Prometheus `for` / `keep_firing_for`](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/) | `for` 让警告或严重连续成立后才改变状态；`keep_firing_for` 在条件恢复后保持已升高状态。两者都是 0 秒至 24 小时。等待期间告警带 `pending_status` | 无数据仍立即变成 UNDEFINED；没有单独的错误状态策略 |
 
-优先后续补齐：[Prometheus 的持续触发等待与恢复保持](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/)（`for` / `keep_firing_for`）、[Grafana 的无数据与求值错误策略](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rule-evaluation/nodata-and-error-states/)、规则变更审计与历史回退，以及带权限、确认与失败反馈的远端规则分发。当前 `delay` 延迟的是通知，不能当作持续触发等待；当前规则快照不是历史版本库。
+优先后续补齐：[Grafana 的无数据与求值错误策略](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rule-evaluation/nodata-and-error-states/)、规则变更审计与历史回退，以及带权限、确认与失败反馈的远端规则分发。`delay` 仍然只推迟通知，从状态提交之后才开始计算；当前规则快照不是历史版本库。
 
 ## 使用方式
 
