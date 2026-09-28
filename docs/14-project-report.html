@@ -1197,7 +1197,7 @@ details.a-disclosure[open] > summary::before {
       <button type="button" data-a-zoom="out">缩小</button>
       <button type="button" data-a-zoom="reset">重置</button>
     </div>
-    <svg data-a-diagram-canvas viewBox="0 0 1040 520" role="img" aria-label="架构图：被监控主机上的 monitord 由采集器、plugins.d、摄入端点写入 Registry，再写入三层 TSDB 与 Health 引擎，通过 API 服务内嵌 Dashboard，并流式上报到 Hub；Hub 负责多节点管理、Space/Room、RBAC 和运维工作台，服务浏览器与 Flutter 客户端；Android 服务端壳同样上报 Hub。">
+    <svg class="a-diagram__canvas" data-a-diagram-canvas viewBox="0 0 1040 520" role="img" aria-label="架构图：被监控主机上的 monitord 由采集器、plugins.d、摄入端点写入 Registry，再写入三层 TSDB 与 Health 引擎，通过 API 服务内嵌 Dashboard，并流式上报到 Hub；Hub 负责多节点管理、Space/Room、RBAC 和运维工作台，服务浏览器与 Flutter 客户端；Android 服务端壳同样上报 Hub。">
       <g data-a-diagram-viewport>
         <g class="a-group"><rect x="10" y="10" width="620" height="500" rx="8"/><text x="24" y="34">被监控主机 · monitord（mode: agent）</text></g>
         <g class="a-node" data-a-node tabindex="0" role="button" data-a-title="内置采集器" data-a-detail="core/internal/collect，233 个源文件：系统、Linux proc 深度、应用（nginx/mysql/postgres/redis/kafka/es 等）、容器、Kubernetes、硬件、云平台、合成检查、Windows Perflib、FreeBSD、macOS、SNMP。1 秒粒度，自动探测。"><rect x="30" y="60" width="170" height="56"/><text class="a-node__title" x="44" y="84">内置采集器</text><text class="a-node__sub" x="44" y="102">233 源文件 · 1s</text></g>
@@ -1225,7 +1225,7 @@ details.a-disclosure[open] > summary::before {
         <path class="a-edge a-edge--dim" d="M935 350 C 935 330, 900 320, 880 310"/>
       </g>
     </svg>
-    <div class="a-diagram__inspector" data-a-inspector>选择一个节点查看说明。</div>
+    <div class="a-inspector" data-a-inspector><p class="a-inspector__title" data-a-inspector-title>架构图</p><p data-a-inspector-body>选择一个节点查看说明。</p></div>
   </div>
   <div class="a-table-scroll">
     <table class="a-table">
