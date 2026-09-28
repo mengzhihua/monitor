@@ -158,6 +158,7 @@ export interface Alarm {
   recipient: string; source: string; status: AlarmStatus; value: number | null; last_updated: number
   last_status_change: number; active: boolean; delay_up_to_timestamp?: number; last_notified?: number
   silenced?: boolean
+  pending_status?: AlarmStatus; pending_since?: number; pending_until?: number; hold_until?: number
 }
 export interface SilenceState { all: boolean; until?: number; alarms: Record<string, number>; maintenance?: boolean; maint_until?: number }
 export interface AlertRuleSpec {

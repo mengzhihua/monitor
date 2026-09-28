@@ -239,11 +239,27 @@ async function refreshFunctions(signal?: AbortSignal) {
 function onAlarmEvent(e: AlarmLogEntry) {
   if (!alarmLog.value.some((x) => x.unique_id === e.unique_id)) alarmLog.value = [...alarmLog.value, e].slice(-1000)
   const a = alarms.value.find((x) => x.id === e.alarm_id || (x.chart === e.chart && x.name === e.name))
-  if (a) {
-    a.status = e.status; a.value = e.value; a.last_updated = e.when; a.last_status_change = e.when
-  } else {
+  if (!a) {
     void refreshAlarms()
+    return
   }
+  a.status = e.status; a.value = e.value; a.last_updated = e.when; a.last_status_change = e.when
+  if (e.repeat) return
+  const raised = e.status === 'WARNING' || e.status === 'CRITICAL'
+  if (!raised) {
+    if (e.status !== 'CLEAR' || e.old_status === 'WARNING' || e.old_status === 'CRITICAL') clearAlarmSustain(a)
+    return
+  }
+  const level = e.status === 'CRITICAL' ? 4 : 3
+  const pending = a.pending_status === 'CRITICAL' ? 4 : a.pending_status === 'WARNING' ? 3 : 0
+  if (pending > 0 && pending <= level) {
+    a.pending_status = undefined; a.pending_since = undefined; a.pending_until = undefined
+  }
+  a.hold_until = undefined
+}
+
+function clearAlarmSustain(a: Alarm) {
+  a.pending_status = undefined; a.pending_since = undefined; a.pending_until = undefined; a.hold_until = undefined
 }
 
 async function logout() {

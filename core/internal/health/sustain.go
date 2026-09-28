@@ -22,6 +22,7 @@ func gateRaised(a *Alarm, want Status, now time.Time) Status {
 			a.SustainStatus = want
 			a.SustainSince = now.Unix()
 		}
+		a.PendingUntil = a.sustainSince.Add(r.For).Unix()
 		a.holdUntil = time.Time{}
 		a.HoldUntil = 0
 		if now.Sub(a.sustainSince) < r.For {
@@ -38,10 +39,7 @@ func gateRaised(a *Alarm, want Status, now time.Time) Status {
 		return want
 	}
 	if want == StatusClear && (a.Status == StatusWarning || a.Status == StatusCritical) && r.KeepFiring > 0 {
-		a.sustainStatus = 0
-		a.sustainSince = time.Time{}
-		a.SustainStatus = 0
-		a.SustainSince = 0
+		a.clearPendingRaise()
 		if a.holdUntil.IsZero() {
 			a.holdUntil = now.Add(r.KeepFiring)
 			a.HoldUntil = a.holdUntil.Unix()
@@ -57,11 +55,16 @@ func gateRaised(a *Alarm, want Status, now time.Time) Status {
 	return want
 }
 
-func (a *Alarm) clearSustain() {
+func (a *Alarm) clearPendingRaise() {
 	a.sustainStatus = 0
 	a.sustainSince = time.Time{}
 	a.SustainStatus = 0
 	a.SustainSince = 0
+	a.PendingUntil = 0
+}
+
+func (a *Alarm) clearSustain() {
+	a.clearPendingRaise()
 	a.holdUntil = time.Time{}
 	a.HoldUntil = 0
 }

@@ -1,6 +1,9 @@
 package health
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -31,28 +34,35 @@ func TestForAndKeepFiringHoldStatus(t *testing.T) {
 	}
 	set(now, 85)
 	a := e.Alarms()[0]
-	if a.Status != StatusClear || a.SustainStatus != StatusWarning || a.SustainSince != now.Unix() {
-		t.Fatalf("pending = status %v pending %v since %d", a.Status, a.SustainStatus, a.SustainSince)
+	if a.Status != StatusClear || a.SustainStatus != StatusWarning || a.SustainSince != now.Unix() || a.PendingUntil != now.Add(30*time.Second).Unix() {
+		t.Fatalf("pending = status %v pending %v since %d until %d", a.Status, a.SustainStatus, a.SustainSince, a.PendingUntil)
+	}
+	raw, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"pending_status":"WARNING"`)) || !bytes.Contains(raw, []byte(fmt.Sprintf(`"pending_until":%d`, a.PendingUntil))) {
+		t.Fatalf("pending json %s", raw)
 	}
 	set(now.Add(10*time.Second), 10)
-	if e.Alarms()[0].Status != StatusClear || e.Alarms()[0].SustainStatus != 0 || e.Notified() != 0 {
+	if e.Alarms()[0].Status != StatusClear || e.Alarms()[0].SustainStatus != 0 || e.Alarms()[0].PendingUntil != 0 || e.Notified() != 0 {
 		t.Fatalf("blip committed: status %v pending %v notified %d", e.Alarms()[0].Status, e.Alarms()[0].SustainStatus, e.Notified())
 	}
 
 	start := now.Add(11 * time.Second)
 	set(start, 85)
 	set(start.Add(29*time.Second), 85)
-	if e.Alarms()[0].Status != StatusClear || e.Notified() != 0 {
-		t.Fatalf("raised early: %v notified %d", e.Alarms()[0].Status, e.Notified())
+	if e.Alarms()[0].Status != StatusClear || e.Alarms()[0].PendingUntil != start.Add(30*time.Second).Unix() || e.Notified() != 0 {
+		t.Fatalf("raised early: %v until %d notified %d", e.Alarms()[0].Status, e.Alarms()[0].PendingUntil, e.Notified())
 	}
 	set(start.Add(30*time.Second), 85)
-	if e.Alarms()[0].Status != StatusWarning || e.Alarms()[0].SustainStatus != 0 {
+	if e.Alarms()[0].Status != StatusWarning || e.Alarms()[0].SustainStatus != 0 || e.Alarms()[0].PendingUntil != 0 {
 		t.Fatalf("for did not commit: %+v", e.Alarms()[0])
 	}
 	waitDelivered(t, e, 1)
 
 	set(start.Add(31*time.Second), 95)
-	if e.Alarms()[0].Status != StatusWarning || e.Alarms()[0].SustainStatus != StatusCritical {
+	if e.Alarms()[0].Status != StatusWarning || e.Alarms()[0].SustainStatus != StatusCritical || e.Alarms()[0].PendingUntil != start.Add(61*time.Second).Unix() {
 		t.Fatalf("critical pending = %+v", e.Alarms()[0])
 	}
 	set(start.Add(61*time.Second), 95)
@@ -64,8 +74,8 @@ func TestForAndKeepFiringHoldStatus(t *testing.T) {
 	cleared := start.Add(62 * time.Second)
 	set(cleared, 10)
 	held := e.Alarms()[0]
-	if held.Status != StatusCritical || held.HoldUntil != cleared.Add(20*time.Second).Unix() {
-		t.Fatalf("hold = status %v until %d", held.Status, held.HoldUntil)
+	if held.Status != StatusCritical || held.HoldUntil != cleared.Add(20*time.Second).Unix() || held.PendingUntil != 0 {
+		t.Fatalf("hold = status %v until %d pending %d", held.Status, held.HoldUntil, held.PendingUntil)
 	}
 	set(cleared.Add(19*time.Second), 10)
 	if e.Alarms()[0].Status != StatusCritical || e.Notified() != 2 {

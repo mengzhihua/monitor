@@ -539,4 +539,4 @@ sequenceDiagram
 | Cloud 控制台 / 图上异常高亮 / ACLK MQTT | `web/` + `internal/hub` + `internal/stream` | M25 |
 | 外部服务检查 `GET\|POST /api/v1/checks` | `internal/collect/checks.go` + `internal/api` | 被动检查 |
 | 告警依赖 `health.inhibit` | `internal/health/inhibit.go` | 通知抑制 |
-| 告警 `for` / `keep_firing_for` | `internal/health/sustain.go` | 状态保持 |
+| 告警 `for` / `keep_firing_for` | `internal/health/sustain.go` | 状态保持；面板显示等待与恢复倒计时 |

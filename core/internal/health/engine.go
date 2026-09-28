@@ -95,7 +95,8 @@ type Alarm struct {
 	Silenced         bool    `json:"silenced,omitempty"`
 	SustainStatus    Status  `json:"pending_status,omitempty"` // raised status waiting on `for`
 	SustainSince     int64   `json:"pending_since,omitempty"`
-	HoldUntil        int64   `json:"hold_until,omitempty"` // keep_firing_for deadline, unix seconds
+	PendingUntil     int64   `json:"pending_until,omitempty"` // unix seconds when `for` commits
+	HoldUntil        int64   `json:"hold_until,omitempty"`    // keep_firing_for deadline, unix seconds
 
 	// notification pacing
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
