@@ -696,8 +696,6 @@ var ErrAlarmNotRaised = errors.New("alarm not raised")
 func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
 	e.tickMu.Lock()
 	defer e.tickMu.Unlock()
-	// Stamp the close after acquiring the eval-cycle lock so the timestamp is
-	// never earlier than an evaluation it serialized behind.
 	now := e.now()
 	e.mu.Lock()
 	var a *Alarm

@@ -624,7 +624,7 @@ func (s *Store) Retention() time.Duration { return s.opt.Retention }
 
 // TierFirst reports the effective start timestamp of a series in a tier: the
 // oldest timestamp the tier can currently answer for. Tier 0's start is the
-// older of its first sample and the retention cutoff; tiers >= 1 report their
+// later of its first sample and the retention cutoff; tiers >= 1 report their
 // first rollup bucket. ok=false means the tier has no data for the series.
 func (s *Store) TierFirst(id string, tier int) (int64, bool) {
 	if tier == 0 {
