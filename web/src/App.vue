@@ -8,6 +8,7 @@ import MetricChart from './components/MetricChart.vue'
 import OperationsPanel from './components/OperationsPanel.vue'
 import AlarmsPanel from './components/AlarmsPanel.vue'
 import AlertRulesPanel from './components/AlertRulesPanel.vue'
+import TemplatesPanel from './components/TemplatesPanel.vue'
 import FunctionsPanel from './components/FunctionsPanel.vue'
 import LogsPanel from './components/LogsPanel.vue'
 import WeightsPanel from './components/WeightsPanel.vue'
@@ -64,6 +65,7 @@ const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
 const showHub = ref(false)
+const showTemplates = ref(false)
 const showCloud = ref(false)
 const showConfig = ref(false)
 const configPanel = ref<InstanceType<typeof ConfigPanel> | null>(null)
@@ -202,7 +204,7 @@ async function load(signal: AbortSignal) {
       alarms.value = []
       alarmLog.value = []
       functions.value = []
-      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = showAlertRules.value = false
+      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = showAlertRules.value = showTemplates.value = false
       error.value = ''
       return
     }
@@ -350,6 +352,7 @@ onBeforeUnmount(() => {
       <button v-if="logsAvailable" class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
       <button v-if="isHub" class="alarms-btn" :class="{ open: showCloud }" @click="showCloud = !showCloud" title="Cloud 控制台">Cloud</button>
+      <button v-if="isHub" class="alarms-btn" :class="{ open: showTemplates }" @click="showTemplates = !showTemplates" title="Zabbix 模板 / 主机组 / 资产">模板</button>
       <button v-if="info?.user?.role === 'admin'" class="alarms-btn" :class="{ open: showConfig }" @click="toggleConfig" title="配置：本机与节点">配置</button>
       <button class="alarms-btn" :class="{ open: showWeights }" @click="showWeights = !showWeights" title="异常顾问 / 关联分析">Σ</button>
       <button class="alarms-btn" :class="{ open: showContexts }" @click="showContexts = !showContexts" title="Context 总览">Ctx</button>
@@ -410,6 +413,7 @@ onBeforeUnmount(() => {
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
       <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showCloud = false }" />
+      <TemplatesPanel v-if="showTemplates && isHub" :role="info?.user?.role || 'viewer'" :nodes="nodes" @close="showTemplates = false" />
       <ConfigPanel ref="configPanel" v-if="showConfig && info?.user?.role === 'admin'" :can-manage="info?.user?.role === 'admin'" :is-hub="isHub" @close="showConfig = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
         <p>请输入登录密码或访问令牌。</p>

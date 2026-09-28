@@ -13,6 +13,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/stream"
 )
 
 func (s *Server) requireOrg(w http.ResponseWriter) *hub.Org {
@@ -323,6 +324,19 @@ func (s *Server) handleAgentConfig(w http.ResponseWriter, r *http.Request) {
 		cfg, ok = s.opt.Org.GetConfig(nodeID)
 		if !ok {
 			writeJSON(w, hub.NodeConfig{NodeID: nodeID})
+			return
+		}
+	}
+	if cfg.NodeID == "" && nodeID != "" {
+		cfg.NodeID = nodeID
+	}
+	if s.opt.Templates != nil {
+		roomID, labels := s.nodeScope(cfg.NodeID)
+		if ov := s.opt.Templates.Effective(cfg.NodeID, roomID, labels); ov.Rev != 0 {
+			writeJSON(w, struct {
+				hub.NodeConfig
+				Health *stream.HealthOverlay `json:"health"`
+			}{cfg, &ov})
 			return
 		}
 	}

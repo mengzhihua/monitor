@@ -65,6 +65,8 @@ type Options struct {
 	Cluster *hub.Cluster
 	// Org is the Space/Room/claim store (hub mode).
 	Org *hub.Org
+	// Templates is the hub template + node-inventory store (hub mode).
+	Templates *hub.Templates
 	// PeerToken authenticates POST /api/v1/hub/ring from sibling hubs.
 	PeerToken string
 	// OIDC enables browser login against an identity provider.
@@ -254,6 +256,12 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/hub/config", s.handleHubConfig)
 	m.HandleFunc("PUT /api/v1/hub/config", s.handleHubConfig)
 	m.HandleFunc("GET /api/v1/agent/config", s.handleAgentConfig)
+	m.HandleFunc("GET /api/v1/hub/templates", s.handleTemplates)
+	m.HandleFunc("PUT /api/v1/hub/templates", s.handleTemplates)
+	m.HandleFunc("DELETE /api/v1/hub/templates", s.handleTemplates)
+	m.HandleFunc("GET /api/v1/hub/templates/effective", s.handleTemplateEffective)
+	m.HandleFunc("GET /api/v1/hub/inventory", s.handleInventory)
+	m.HandleFunc("PUT /api/v1/hub/inventory", s.handleInventory)
 	m.HandleFunc("POST /api/v1/hub/ring", s.handleRing)
 	m.HandleFunc("GET /api/v1/auth/oidc/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]bool{"enabled": s.oidc != nil}) })
 	m.HandleFunc("POST /api/v1/auth/oidc/logout", s.handleOIDCLogout)

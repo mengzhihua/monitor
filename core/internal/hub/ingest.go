@@ -276,8 +276,15 @@ func (s *session) serve() {
 	if err := s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())}); err != nil {
 		return
 	}
-	if c := s.n.opt.configFor(node.ID); c != nil && (len(c.Disabled) > 0 || c.YAML != "") {
-		_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: c.Disabled, ConfigYAML: c.YAML, ConfigRev: c.Updated})
+	c := s.n.opt.configFor(node.ID)
+	ov := s.n.opt.healthFor(node.ID)
+	if (c != nil && (len(c.Disabled) > 0 || c.YAML != "")) || ov != nil {
+		var disabled []string
+		var yaml, rev = "", int64(0)
+		if c != nil {
+			disabled, yaml, rev = c.Disabled, c.YAML, c.Updated
+		}
+		_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: disabled, ConfigYAML: yaml, ConfigRev: rev, Health: ov})
 	}
 	s.n.log.Info("hub: node connected", "node", node.ID, "hostname", node.Host.Hostname, "from", s.remote, "charts", len(last))
 

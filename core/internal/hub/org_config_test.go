@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
@@ -449,5 +450,66 @@ func TestNodePushConfigOffline(t *testing.T) {
 	}
 	if ghost.PushConfig(NodeConfig{NodeID: "ghost", YAML: "x", Updated: 1}) {
 		t.Fatal("PushConfig on an offline node returned true")
+	}
+}
+
+// TestIngestPushesHealthOverlay checks that Options.HealthOverlay resolves a
+// template overlay for the connecting node and that a later PushConfig carries
+// the recomputed overlay — the stream e2e for the Z2 template push.
+func TestIngestPushesHealthOverlay(t *testing.T) {
+	tpls, err := OpenTemplates(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tpls.Upsert(Template{
+		Name:   "os-linux",
+		Macros: map[string]string{"CPU_MAX": "90"},
+		Rules: []health.RuleSpec{
+			{Name: "tpl.cpu", On: "system.cpu", Calc: "$user", Warn: "$this > {$CPU_MAX}", Every: "10s"},
+		},
+		Removed: []string{"base.old"},
+		Tags:    map[string]string{"env": "prod"},
+		Assign:  TemplateAssign{Nodes: []string{"agent-t"}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	h := newConfigTestHub(t, Options{Keys: []string{"k"}, HealthOverlay: func(nodeID string) *stream.HealthOverlay {
+		ov := tpls.Effective(nodeID, "", nil)
+		if ov.Rev == 0 {
+			return nil
+		}
+		return &ov
+	}})
+
+	ws := connectAgent(t, h, "agent-t")
+	f := readFrame(t, ws)
+	if f.Type != stream.TypeConfig || f.Health == nil {
+		t.Fatalf("expected config frame with health overlay, got %+v", f)
+	}
+	if f.Health.Rev == 0 || len(f.Health.Templates) != 1 || f.Health.Templates[0] != "os-linux" {
+		t.Fatalf("overlay = %+v", f.Health)
+	}
+	if len(f.Health.Rules) != 1 || f.Health.Rules[0].Name != "tpl.cpu" || f.Health.Macros["CPU_MAX"] != "90" {
+		t.Fatalf("overlay rules/macros = %+v", f.Health)
+	}
+	if len(f.Health.Removed) != 1 || f.Health.Removed[0] != "base.old" || f.Health.Tags["env"] != "prod" {
+		t.Fatalf("overlay removed/tags = %+v", f.Health)
+	}
+
+	// a template upsert triggers PushConfig, which recomputes the overlay
+	nd, _ := h.Get("agent-t")
+	if _, err := tpls.Upsert(Template{
+		Name:   "extra",
+		Rules:  []health.RuleSpec{{Name: "tpl.extra", On: "system.cpu", Calc: "$user", Warn: "$this > 1", Every: "10s"}},
+		Assign: TemplateAssign{Nodes: []string{"agent-t"}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !nd.PushConfig(NodeConfig{NodeID: "agent-t"}) {
+		t.Fatal("PushConfig returned false")
+	}
+	f = readFrame(t, ws)
+	if f.Type != stream.TypeConfig || f.Health == nil || len(f.Health.Templates) != 2 {
+		t.Fatalf("post-upsert overlay = %+v", f.Health)
 	}
 }

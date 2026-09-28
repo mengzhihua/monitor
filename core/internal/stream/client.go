@@ -55,8 +55,10 @@ type ClientOptions struct {
 	Logger *slog.Logger
 	// ClaimToken is redeemed once against POST /api/v1/claim for a stream API key.
 	ClaimToken string
-	// OnConfig applies a hub-pushed overlay (disabled collector names).
-	OnConfig func(disabled []string)
+	// OnConfig applies a hub-pushed overlay: disabled collector names plus an
+	// optional template health overlay (nil when the node matches no hub
+	// template).
+	OnConfig func(disabled []string, health *HealthOverlay)
 }
 
 // ClientStatus is exposed through /api/v1/info.
@@ -356,9 +358,10 @@ func (c *Client) fetchConfig(ctx context.Context, dest string, sess *clientSessi
 		return
 	}
 	var cfg struct {
-		Disabled []string `json:"disabled"`
-		YAML     string   `json:"yaml"`
-		Updated  int64    `json:"updated"`
+		Disabled []string       `json:"disabled"`
+		YAML     string         `json:"yaml"`
+		Updated  int64          `json:"updated"`
+		Health   *HealthOverlay `json:"health"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&cfg) != nil {
 		return
@@ -368,7 +371,7 @@ func (c *Client) fetchConfig(ctx context.Context, dest string, sess *clientSessi
 		return
 	}
 	if c.opt.OnConfig != nil {
-		c.opt.OnConfig(cfg.Disabled)
+		c.opt.OnConfig(cfg.Disabled, cfg.Health)
 	}
 }
 
@@ -739,7 +742,7 @@ func (s *clientSession) reader(ctx context.Context) {
 			if f.ConfigYAML != "" && s.c.opt.OnConfigFile != nil {
 				s.c.applyPushed(s, f.ConfigYAML, f.ConfigRev)
 			} else if s.c.opt.OnConfig != nil {
-				s.c.opt.OnConfig(f.Disabled)
+				s.c.opt.OnConfig(f.Disabled, f.Health)
 			}
 		case TypeError:
 			s.fail(fmt.Errorf("hub: %s", f.Error))

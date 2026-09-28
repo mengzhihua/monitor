@@ -43,6 +43,24 @@ const (
 // ACLKCapabilities is advertised in hello / info.aclk.
 var ACLKCapabilities = []string{"stream", "functions", "alarms", "config", "query"}
 
+// HealthOverlay is the hub-resolved template assignment for one node: the
+// merged result of every matching hub template. Rules and Removed carry
+// alert-rule specs/names; Macros are {$NAME} expansions layered over the
+// agent's configured health.macros; Disabled is a union of collector names;
+// Tags are stamped into the node's hub-side inventory (not sent back to the
+// agent in practice but part of the same payload for symmetry). RuleSource
+// records which template supplied each rule, for provenance display.
+type HealthOverlay struct {
+	Rev        int64             `json:"rev"`
+	Templates  []string          `json:"templates,omitempty"`
+	Macros     map[string]string `json:"macros,omitempty"`
+	Rules      []health.RuleSpec `json:"rules,omitempty"`
+	Removed    []string          `json:"removed,omitempty"`
+	Disabled   []string          `json:"disabled,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	RuleSource map[string]string `json:"rule_source,omitempty"`
+}
+
 // Frame is the union of every message; only the fields relevant to Type are
 // populated.
 type Frame struct {
@@ -63,6 +81,10 @@ type Frame struct {
 	Disabled   []string `json:"disabled,omitempty"`
 	ConfigYAML string   `json:"config_yaml,omitempty"`
 	ConfigRev  int64    `json:"config_rev,omitempty"`
+	// Health carries the hub-resolved template overlay (Zabbix-style
+	// templates): alert rules, macros, rule tombstones, collector disables
+	// and inventory tags for this node.
+	Health *HealthOverlay `json:"health,omitempty"`
 
 	// config_state (agent → hub): ConfigYAML+ConfigPath report the agent's
 	// live config file after every (re)connect; ApplyState/ApplyError ack a
