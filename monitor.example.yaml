@@ -705,6 +705,8 @@ health:
   oncall: []           # local clock windows set the notify role before escalation; empty = off
   # - { start: "09:00", end: "18:00", weekdays: [mon, tue, wed, thu, fri], to: oncall }
   windows: []          # recurring maintenance calendar, e.g. [{ start: "22:00", end: "06:00", weekdays: [sat, sun] }]
+  macros: {}           # global {$NAME} user macros usable in rule lookup/calc/warn/crit/... fields
+  # RAM_HIGH: "90"     # rules may set their own `macros:` map to override these
   alarms: []           # inline rules, e.g.
   # - name: ram_in_use
   #   on: system.ram                      # chart id, or a context (e.g. disk.space) to bind every matching chart

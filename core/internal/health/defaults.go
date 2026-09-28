@@ -12,6 +12,11 @@ var defaultRules embed.FS
 
 // DefaultRules returns the rules shipped with the agent.
 func DefaultRules() ([]*Rule, error) {
+	return DefaultRulesWith(nil)
+}
+
+// DefaultRulesWith is DefaultRules plus global user-macro expansion.
+func DefaultRulesWith(macros map[string]string) ([]*Rule, error) {
 	entries, err := fs.ReadDir(defaultRules, "rules")
 	if err != nil {
 		return nil, err
@@ -27,7 +32,7 @@ func DefaultRules() ([]*Rule, error) {
 		if err != nil {
 			return nil, err
 		}
-		rs, err := ParseRules(b, "builtin:"+n)
+		rs, err := ParseRulesWith(b, "builtin:"+n, macros)
 		if err != nil {
 			return nil, fmt.Errorf("builtin rules: %w", err)
 		}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ import (
 //     delay: down 15m multiplier 1.5 max 1h
 //     repeat: warning 30m critical 10m
 //     info: average CPU utilization over the last 10 minutes
+//     macros: { CPU_WARN: "85" }         # {$NAME} expansions, override health.macros
 //     to: sysadmin
 type RuleSpec struct {
 	Name       string            `yaml:"name" json:"name"`
@@ -58,6 +60,7 @@ type RuleSpec struct {
 	To         string            `yaml:"to" json:"to,omitempty"`
 	Labels     map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
 	Disabled   bool              `yaml:"disabled" json:"disabled,omitempty"`
+	Macros     map[string]string `yaml:"macros" json:"macros,omitempty"` // rule-level {$NAME} overrides
 }
 
 type ruleFile struct {
@@ -73,6 +76,15 @@ type Lookup struct {
 	AbsValue   bool
 	AnomalyBit bool   // query 0–100 anomaly rates instead of raw values
 	MinMax     string // "min2max": max-min of the window
+	// Zabbix-style functions. Kind is empty for the classic grouped reduce
+	// above, or one of: nodata, first, change, stddev, count, trendavg,
+	// trendmin, trendmax, trendsum, trendcount, forecast, timeleft.
+	Kind      string
+	Horizon   time.Duration // forecast: evaluate the linear fit at now+Horizon
+	Target    float64       // timeleft: seconds until the fit reaches Target
+	CountOp   string        // count: gt|ge|lt|le|eq|ne, empty = all points
+	CountVal  float64
+	hasTarget bool
 }
 
 // Delay postpones notifications so flapping alarms do not spam (Netdata's
@@ -102,19 +114,64 @@ type Rule struct {
 	Repeat     Repeat
 	For        time.Duration // pending time before a raise commits; 0 = immediate
 	KeepFiring time.Duration // hold a raised status after the condition clears; 0 = immediate
+	Info       string        // Spec.Info with macros expanded
+	Units      string        // Spec.Units with macros expanded
 	Source     string
+}
+
+var macroRef = regexp.MustCompile(`\{\$[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// applyMacros returns a copy of spec with every {$NAME} placeholder replaced.
+// Rule-level macros win over global ones; a leftover placeholder is an error.
+func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
+	fields := []*string{&spec.Lookup, &spec.Calc, &spec.Warn, &spec.Crit,
+		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.Delay,
+		&spec.Repeat, &spec.Info, &spec.Units}
+	for _, fp := range fields {
+		if !strings.Contains(*fp, "{$") {
+			continue
+		}
+		var bad string
+		*fp = macroRef.ReplaceAllStringFunc(*fp, func(m string) string {
+			name := m[2 : len(m)-1]
+			if v, ok := spec.Macros[name]; ok {
+				return v
+			}
+			if v, ok := global[name]; ok {
+				return v
+			}
+			bad = m
+			return m
+		})
+		if bad != "" {
+			return spec, fmt.Errorf("unknown macro %s", bad)
+		}
+	}
+	return spec, nil
 }
 
 // Compile validates and parses a RuleSpec.
 func Compile(spec RuleSpec, source string) (*Rule, error) {
+	return CompileWith(spec, source, nil)
+}
+
+// CompileWith is Compile plus user-macro expansion: {$NAME} placeholders in
+// the listed spec fields resolve rule-level `macros:` first, then the global
+// map. The stored Spec keeps the original text so Hash() is stable.
+func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (*Rule, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, fmt.Errorf("%s: alarm without name", source)
 	}
+	orig := spec
+	resolved, err := applyMacros(spec, globalMacros)
+	if err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	spec = resolved
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
-	r := &Rule{Spec: spec, Source: source, Every: 10 * time.Second}
-	var err error
+	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units}
 	if spec.Lookup != "" {
 		if r.Lookup, err = ParseLookup(spec.Lookup); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q lookup: %w", source, spec.Name, err)
@@ -166,6 +223,22 @@ func (r *Rule) Hash() string {
 }
 
 // ParseLookup parses "<method> <-duration> [unaligned] [absolute] [percentage] [anomaly-bit] [of dim1,dim2]".
+//
+// Classic methods reduce raw samples: average|avg|mean, min, max, sum
+// (rate-integrated), median, last, min2max (max-min). Zabbix-style functions
+// (Kind) are also accepted; the window is [now-After, now] and the result is
+// summed across the selected `of` dimensions unless noted:
+//
+//	nodata -5m                     1 if no non-NaN point exists in the window, else 0 (never NaN)
+//	first  -5m                     oldest value in the window
+//	change -5m                     last - first value in the window
+//	stddev -5m                     population stddev of the window
+//	count  -5m [gt|ge|lt|le|eq|ne <n>]   non-NaN points matching the operator
+//	trendavg|trendmin|trendmax|trendsum|trendcount -1d
+//	                               rollup-tier equivalents of average/min/max/sum/count
+//	forecast -1h horizon 30m       least-squares linear fit evaluated at now+horizon
+//	timeleft -1h target 0          seconds until the fit reaches target (min across dims);
+//	                               returns the finite sentinel 1e15 when the trend never gets there
 func ParseLookup(s string) (*Lookup, error) {
 	f := strings.Fields(s)
 	if len(f) < 2 {
@@ -187,6 +260,10 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
+	case "nodata", "first", "change", "stddev", "count", "forecast", "timeleft":
+		l.Kind = strings.ToLower(f[0])
+	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
+		l.Kind = strings.ToLower(f[0])
 	default:
 		return nil, fmt.Errorf("unknown method %q", f[0])
 	}
@@ -199,7 +276,8 @@ func ParseLookup(s string) (*Lookup, error) {
 	}
 	l.After = d
 	for i := 2; i < len(f); i++ {
-		switch strings.ToLower(f[i]) {
+		opt := strings.ToLower(f[i])
+		switch opt {
 		case "unaligned", "aligned":
 		case "absolute", "abs", "absolute_sum", "absolute-sum":
 			l.AbsValue = true
@@ -207,6 +285,35 @@ func ParseLookup(s string) (*Lookup, error) {
 			l.Percentage = true
 		case "anomaly-bit", "anomaly_bit", "anomalybit":
 			l.AnomalyBit = true
+		case "horizon", "target", "gt", "ge", "lt", "le", "eq", "ne":
+			if i+1 >= len(f) {
+				return nil, fmt.Errorf("missing value after %q", f[i])
+			}
+			v := f[i+1]
+			i++
+			switch opt {
+			case "horizon":
+				h, err := parseDuration(v)
+				if err != nil || h <= 0 {
+					return nil, fmt.Errorf("bad horizon %q", v)
+				}
+				l.Horizon = h
+			case "target":
+				t, err := strconv.ParseFloat(v, 64)
+				if err != nil {
+					return nil, fmt.Errorf("bad target %q", v)
+				}
+				l.Target, l.hasTarget = t, true
+			default: // count comparison operator
+				if l.Kind != "count" {
+					return nil, fmt.Errorf("option %q only applies to count", opt)
+				}
+				n, err := strconv.ParseFloat(v, 64)
+				if err != nil {
+					return nil, fmt.Errorf("bad count operand %q", v)
+				}
+				l.CountOp, l.CountVal = opt, n
+			}
 		case "of":
 			rest := strings.Join(f[i+1:], "")
 			if rest != "" && rest != "*" {
@@ -220,6 +327,12 @@ func ParseLookup(s string) (*Lookup, error) {
 		default:
 			return nil, fmt.Errorf("unknown option %q", f[i])
 		}
+	}
+	if l.Kind == "forecast" && l.Horizon <= 0 {
+		return nil, fmt.Errorf("forecast requires `horizon <duration>`")
+	}
+	if l.Kind == "timeleft" && !l.hasTarget {
+		return nil, fmt.Errorf("timeleft requires `target <number>`")
 	}
 	return l, nil
 }
@@ -328,6 +441,11 @@ func parseDuration(s string) (time.Duration, error) {
 // LoadDir reads every *.yaml/*.yml in dir (non-recursively, sorted). A
 // missing directory yields no rules and no error.
 func LoadDir(dir string) ([]*Rule, error) {
+	return LoadDirWith(dir, nil)
+}
+
+// LoadDirWith is LoadDir plus global user-macro expansion.
+func LoadDirWith(dir string, macros map[string]string) ([]*Rule, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -351,7 +469,7 @@ func LoadDir(dir string) ([]*Rule, error) {
 		if err != nil {
 			return nil, err
 		}
-		rs, err := ParseRules(b, filepath.Join(dir, n))
+		rs, err := ParseRulesWith(b, filepath.Join(dir, n), macros)
 		if err != nil {
 			return nil, err
 		}
@@ -362,6 +480,11 @@ func LoadDir(dir string) ([]*Rule, error) {
 
 // ParseRules parses a YAML document `alarms: [...]` (or a bare list).
 func ParseRules(b []byte, source string) ([]*Rule, error) {
+	return ParseRulesWith(b, source, nil)
+}
+
+// ParseRulesWith is ParseRules plus global user-macro expansion.
+func ParseRulesWith(b []byte, source string, macros map[string]string) ([]*Rule, error) {
 	var f ruleFile
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		var list []RuleSpec
@@ -370,14 +493,19 @@ func ParseRules(b []byte, source string) ([]*Rule, error) {
 		}
 		f.Alarms = list
 	}
-	return CompileAll(f.Alarms, source)
+	return CompileAllWith(f.Alarms, source, macros)
 }
 
 // CompileAll compiles a list of specs, stopping at the first error.
 func CompileAll(specs []RuleSpec, source string) ([]*Rule, error) {
+	return CompileAllWith(specs, source, nil)
+}
+
+// CompileAllWith is CompileAll plus global user-macro expansion.
+func CompileAllWith(specs []RuleSpec, source string, macros map[string]string) ([]*Rule, error) {
 	rules := make([]*Rule, 0, len(specs))
 	for _, spec := range specs {
-		r, err := Compile(spec, source)
+		r, err := CompileWith(spec, source, macros)
 		if err != nil {
 			return nil, err
 		}
