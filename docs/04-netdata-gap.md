@@ -167,6 +167,8 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEventOpen、NETLINK、sd_journal、ODBC、WAL、mDNS 与推送通道已补上。仍不手写 850 个 Prometheus 名，也不把 CO-RE/BTF 重定位打进默认静态二进制。详见 §2.7。
 
+被动外部检查：`POST /api/v1/checks` 接收本机 `ok` / `warning` / `critical`，图表 context 为 `check.status`，超时未再上报记为 expired，内置告警 `external_check_status`。`collectors.enabled` 白名单不含 `checks` 时，提交仍然立刻出图，过期标记要等该采集器运行才会刷新。
+
 ## 4.0 M20（已合入 main）
 
 1. journald：`journalctl -f` 跟随（`follow: false` 退回按次查询）；Function 支持 `unit` / `priority` / `boot` / `cursor`
