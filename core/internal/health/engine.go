@@ -694,9 +694,9 @@ var ErrAlarmNotRaised = errors.New("alarm not raised")
 // the status mutation and the transition. e.mu is still released before
 // transition, which re-locks it itself.
 func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
-	now := e.now()
 	e.tickMu.Lock()
 	defer e.tickMu.Unlock()
+	now := e.now()
 	e.mu.Lock()
 	var a *Alarm
 	for _, cand := range e.alarms {
@@ -1203,21 +1203,22 @@ func (e *Engine) lookupTrend(c *registry.Chart, l *Lookup, selected map[string]b
 			continue
 		}
 		id := registry.SeriesID(c.ID, d.ID)
-		// Pick the finest tier that still reaches back to `after`; when the
-		// window is too old for tier0 (retention) or a tier was enabled late,
-		// fall back to the coarsest tier that has any data. Tier0 buckets are
-		// single samples, so the reduction below is uniform.
+		// Pick the finest tier whose effective start reaches back to `after`
+		// (tier0's start is max(first sample, retention cutoff); tier>=1's is
+		// its first rollup bucket). When none reaches far enough — or the
+		// covering tiers turn out empty for this window — fall back to the
+		// tiers that reach furthest back. NaN only if no tier has data.
 		nTiers := e.db.TierCount()
 		var bs []tsdb.Bucket
+		starts := make([]int64, nTiers)
 		for tier := 0; tier < nTiers; tier++ {
-			// Tier0 is only "covering" when its oldest sample reaches back to
-			// `after` — TierCovers returns true for it unconditionally, so an
-			// expired tail would silently truncate the window.
-			if tier == 0 {
-				if first, _, ok := e.db.Bounds(id); !ok || first > after {
-					continue
-				}
-			} else if !e.db.TierCovers(id, tier, after) {
+			start, ok := e.db.TierFirst(id, tier)
+			if !ok {
+				starts[tier] = -1
+				continue
+			}
+			starts[tier] = start
+			if start > after {
 				continue
 			}
 			b, err := e.db.QueryTier(id, tier, after, before)
@@ -1226,13 +1227,21 @@ func (e *Engine) lookupTrend(c *registry.Chart, l *Lookup, selected map[string]b
 				break
 			}
 		}
-		if len(bs) == 0 {
-			for tier := nTiers - 1; tier >= 0; tier-- {
-				b, err := e.db.QueryTier(id, tier, after, before)
-				if err == nil && len(b) > 0 {
-					bs = b
-					break
+		for i := 0; len(bs) == 0 && i < nTiers; i++ {
+			// Take the candidate with the smallest start (reaches furthest
+			// back) that still returns buckets for the window.
+			best, bestStart := -1, int64(0)
+			for tier := 0; tier < nTiers; tier++ {
+				if starts[tier] >= 0 && (best < 0 || starts[tier] < bestStart) {
+					best, bestStart = tier, starts[tier]
 				}
+			}
+			if best < 0 {
+				break
+			}
+			starts[best] = -1
+			if b, err := e.db.QueryTier(id, best, after, before); err == nil {
+				bs = b
 			}
 		}
 		if len(bs) == 0 {

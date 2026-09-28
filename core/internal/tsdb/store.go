@@ -499,10 +499,13 @@ func (s *Store) Bounds(id string) (first, last int64, ok bool) {
 		last = sr.blocks[len(sr.blocks)-1].end
 	}
 	if len(sr.ts) > 0 {
-		if !ok {
+		if !ok || sr.ts[0] < first {
 			first = sr.ts[0]
 		}
-		last, ok = sr.ts[len(sr.ts)-1], true
+		if sr.ts[len(sr.ts)-1] > last || !ok {
+			last = sr.ts[len(sr.ts)-1]
+		}
+		ok = true
 	}
 	return
 }

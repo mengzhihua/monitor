@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mengzhihua/monitor/core/internal/health"
 )
@@ -226,7 +227,7 @@ func (s *Server) handleAlarmClose(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(body.Comment) > 512 {
+	if utf8.RuneCountInString(body.Comment) > 512 {
 		http.Error(w, "comment too long (max 512)", http.StatusBadRequest)
 		return
 	}

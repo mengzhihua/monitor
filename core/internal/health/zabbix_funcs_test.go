@@ -275,6 +275,108 @@ func TestLookupTrendTier0ExpiredTail(t *testing.T) {
 	}
 }
 
+func TestLookupTrendTier1EnabledLate(t *testing.T) {
+	// Tier1 only covers the recent tail (enabled after tier0 had history).
+	// A window starting before tier0's first sample picks tier0 via the
+	// "reaches furthest back" fallback, not the partially-covering tier1.
+	dir := t.TempDir()
+	now := time.Unix(1_700_000_000, 0)
+	recent := now.Add(-30 * time.Minute).Unix()
+	recent -= recent % 60
+	old := now.Add(-2 * time.Hour).Unix()
+	// Phase 1: tiers not yet configured — old samples exist in tier0 only.
+	db, err := tsdb.Open(tsdb.Options{Dir: dir, BlockSize: 30, Tiers: []tsdb.TierSpec{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < 60; i++ {
+		db.Append("system.ram|used", old+i, 10)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Phase 2: tier1 enabled — only the recent minute rolls up.
+	opts := tsdb.Options{Dir: dir, BlockSize: 30, Tiers: []tsdb.TierSpec{{Every: 60, BlockSize: 4}}}
+	db, err = tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < 60; i++ {
+		db.Append("system.ram|used", recent+i, 100)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	e, err := New(reg, db, Options{Hostname: "h", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c, _ := reg.Chart("system.ram")
+	l, err := ParseLookup("trendavg -3h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// after < rawFirst(old): tier0.start = old > after → tier0 is the furthest
+	// back and is chosen; its query covers all 120 samples (avg 55).
+	if v := e.lookup(c, l, now); math.IsNaN(v) || math.Abs(v-55) > 1e-9 {
+		t.Fatalf("trendavg via furthest-back tier0: got %v want 55", v)
+	}
+}
+
+func TestLookupTrendRetentionCutoff(t *testing.T) {
+	// Tier0's blocks reach before the window but the retention cutoff sits
+	// inside it: the effective tier0 start is the cutoff, so tier1 (holding
+	// the whole window) must be chosen.
+	dir := t.TempDir()
+	now := time.Unix(1_700_000_000, 0)
+	start := now.Add(-2 * time.Hour).Unix()
+	start -= start % 60
+	opts := tsdb.Options{Dir: dir, BlockSize: 30, Retention: time.Hour, Tiers: []tsdb.TierSpec{{Every: 60, BlockSize: 4}}}
+	db, err := tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < 60; i++ {
+		db.Append("system.ram|used", start+i, float64(i))
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := int64(0); i < 5; i++ {
+		db.Append("system.ram|used", now.Unix()-5+i, 999)
+	}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	e, err := New(reg, db, Options{Hostname: "h", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c, _ := reg.Chart("system.ram")
+	l, err := ParseLookup("trendavg -3h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tier0.start = max(first retained sample, now-1h) > after → tier1 chosen;
+	// its query also folds in the live tail (65 samples, avg 6765/65).
+	if v := e.lookup(c, l, now); math.IsNaN(v) || math.Abs(v-6765.0/65) > 1e-9 {
+		t.Fatalf("trendavg must cover the window via tier1 (want %v), got %v", 6765.0/65, v)
+	}
+}
+
 func TestLookupTrendFallback(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	seed := func(reg *registry.Registry, now time.Time) {

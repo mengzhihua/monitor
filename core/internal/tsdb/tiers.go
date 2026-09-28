@@ -619,6 +619,30 @@ func decodeBucketsEach(buf []byte, n int, cols [5]bool, emit func(Bucket)) error
 // materializing the per-tier TierInfo scan that Tiers performs.
 func (s *Store) TierCount() int { return len(s.tiers) + 1 }
 
+// Retention reports the configured tier0 retention (0 = keep forever).
+func (s *Store) Retention() time.Duration { return s.opt.Retention }
+
+// TierFirst reports the effective start timestamp of a series in a tier: the
+// oldest timestamp the tier can currently answer for. Tier 0's start is the
+// later of its first sample and the retention cutoff; tiers >= 1 report their
+// first rollup bucket. ok=false means the tier has no data for the series.
+func (s *Store) TierFirst(id string, tier int) (int64, bool) {
+	if tier == 0 {
+		first, _, ok := s.Bounds(id)
+		if !ok {
+			return 0, false
+		}
+		if s.opt.Retention > 0 {
+			first = max(first, time.Now().Add(-s.opt.Retention).Unix())
+		}
+		return first, true
+	}
+	if tier < 0 || tier > len(s.tiers) {
+		return 0, false
+	}
+	return s.tiers[tier-1].first(id)
+}
+
 func (s *Store) Tiers() []TierInfo {
 	t0 := TierInfo{Tier: 0, Every: 1, Retention: int64(s.opt.Retention / time.Second)}
 	s.mu.RLock()
