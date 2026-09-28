@@ -10,6 +10,7 @@
 | [Grafana 告警分组](https://grafana.com/docs/grafana/latest/alerting/monitor-status/view-active-notifications/) | 按条件筛选与聚合问题，降低处置负担 | 严重级别、连接状态、待确认筛选；按 family 统计；保存个人视图；同图表严重告警抑制警告；`group_wait` 合并同图表通知；严重重复提醒可改投 `escalate_to`；本机问题显示最近一次通道结果 | 用户已读回执 |
 | [Zabbix 问题确认](https://www.zabbix.com/documentation/7.4/en/manual/acknowledgment) | 确认、备注与处理历史 | 多用户确认/撤销/备注、责任人指派、处理进度、操作者记录、并发冲突检测、重启读取持久记录；`health.oncall` 按本地时钟窗口改投通知角色；`web.ticket_webhook` 在保存成功后 POST 处理记录 | 工单状态回写 |
 | [Datadog Dashboard](https://docs.datadoghq.com/dashboards/) | 汇总关键指标、筛选并进入细节 | CPU/内存资源视图、节点/图表跳转、JSON 快照导出、个人看板分组/顺序/列数配置、历史时段对比；已选分组和指定图表可拖拽排序 | SLO/错误预算、分布式追踪与服务依赖图 |
+| [Alertmanager 抑制](https://prometheus.io/docs/alerting/latest/configuration/#inhibit_rule)、[Zabbix 触发器依赖](https://www.zabbix.com/documentation/current/en/manual/config/triggers/dependencies)、[Nagios 依赖](https://www.nagios.org/documentation/) | 上游故障时不再为下游重复发通知 | `health.inhibit`：源告警处于严重或警告时，目标告警继续求值和展示，警告与严重通知记为 `dependency` | 跨主机依赖、按服务拓扑自动生成 |
 
 这里对比具体工作流，不把本轮描述为上述平台的完整替代。2.0 工作台本轮集成在内嵌 Web Dashboard；Flutter 客户端仍使用已有功能和接口，没有宣称新增的处置界面已在五端原生客户端全部落地。
 
@@ -169,6 +170,21 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 已登录的管理员可以在 Web 顶栏「配置」，或在 Flutter 客户端查看本机且角色为 admin 时打开 Config，读取并修改**当前连接的这台 monitord** 的配置文件，然后请求重启。只读、排障和匿名身份不能读取或写入。配置里有令牌和通知密钥，接口不向其他角色返回正文。
 
 `GET /api/v1/manage/config` 返回 `{path, yaml, writable, updated, size, form}`。`form` 是表单可编辑的子集：运行模式、主机名、采集间隔、数据目录、Web 开关与监听、允许来源、账号、采集器开关、nginx/apache/phpfpm/elasticsearch/rabbitmq/redis/memcached/mysql/postgres/docker/statsd/otlp 的地址、健康引擎开关、通知通道与角色、上报 Hub 和 Hub 接入。告警规则、采集器超时与密码、`web.token`、Webhook 请求头和邮件密码留在 YAML 里，表单保存不会删掉。表单读不出时返回 `form_error`，不附带原文片段。`PUT` 接受 `{yaml}` 或 `{form}` 其中之一，可带 `if_updated`（文件修改时间的微秒）。两边同时提交返回 400。正文最大约 1 MiB。服务端用配置加载器校验后，才以 0600 权限原子替换；内容有变化时先把当前文件复制为同目录 `.bak`。校验失败返回 400，原文件保持不变。`POST /api/v1/manage/config/rollback` 用 `.bak` 换回当前文件，并把被换下的内容写成新的备份；没有备份返回 404。`POST /api/v1/manage/restart` 在确认管理员身份后，先确认磁盘上的文件能加载，不能加载返回 409 且不重启；通过后返回 202，进程先按原有路径关闭采集、健康引擎和数据库并释放数据目录锁，再重新执行当前程序。保存不会立刻改运行中的配置，重启后才会加载。这些接口只作用于本机：带非 local 的 `node` 返回 400。Hub 上的「配置」改的是 Hub 自己的文件，节点配置仍走 Hub 下发，不会被本机表单覆盖。原有 `GET /api/v1/agent/config` 仍是 Hub 下发给流式 Agent 的采集覆盖，不是这个文件编辑器。
+
+## 告警依赖
+
+`health.inhibit` 用来表达「上游已经在报警，下游先不要再发通知」。告警仍会求值，问题列表里仍然看得到。恢复成正常的通知继续发送。同图表里严重告警抑制警告的原有行为保持不变，原因仍是 `inhibited`。
+
+每条规则包含：
+
+| 字段 | 含义 |
+| --- | --- |
+| `source` | 上游告警名 |
+| `status` | `critical`（默认，仅严重）或 `warning`（警告和严重都算） |
+| `targets` | 下游告警名，最多 32 个；`["*"]` 表示其它告警名，不能和具体名字写在一起 |
+| `equal` | 可选。源和目标的 `chart`、`context`、`family`、`class`、`type`、`component` 或 `label:<key>` 必须相同且非空 |
+
+最多 32 条。名称是 1–64 个字母、数字及 `_` `-` `.`，不能以 `.` 或 `-` 开头。配置无法解析时健康引擎不会启动。`["*"]` 不抑制与上游同名的告警，所以同一条规则在多张图表上的实例仍各自通知。表单保存会保留这段 YAML。通知诊断里的原因是 `dependency`。
 
 ## 计划维护窗口
 

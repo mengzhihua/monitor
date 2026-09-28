@@ -8,7 +8,7 @@ import (
 )
 
 func TestApplyVisualKeepsUntouchedConfig(t *testing.T) {
-	raw := "global:\n  hostname: old\nweb:\n  token: secret-token\n  listen: \":19999\"\ncollectors:\n  enabled: [cpu]\n  modules:\n    nginx:\n      url: http://127.0.0.1/stub_status\nhealth:\n  alarms:\n    - name: ram_notice\n      on: system.ram\n"
+	raw := "global:\n  hostname: old\nweb:\n  token: secret-token\n  listen: \":19999\"\ncollectors:\n  enabled: [cpu]\n  modules:\n    nginx:\n      url: http://127.0.0.1/stub_status\nhealth:\n  inhibit:\n    - source: host_down\n      targets: ['*']\n  alarms:\n    - name: ram_notice\n      on: system.ram\n"
 	v, err := VisualFrom(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestApplyVisualKeepsUntouchedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(next, "secret-token") || !strings.Contains(next, "stub_status") || !strings.Contains(next, "ram_notice") {
+	if !strings.Contains(next, "secret-token") || !strings.Contains(next, "stub_status") || !strings.Contains(next, "ram_notice") || !strings.Contains(next, "host_down") {
 		t.Fatalf("dropped untouched config:\n%s", next)
 	}
 	if !strings.Contains(next, "new-host") || !strings.Contains(next, "tok-1") {
@@ -32,8 +32,8 @@ func TestApplyVisualKeepsUntouchedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Global.Hostname != "new-host" || cfg.Web.Token != "secret-token" || len(cfg.Health.Alarms) != 1 {
-		t.Fatalf("loaded = hostname %q token %q alarms %d", cfg.Global.Hostname, cfg.Web.Token, len(cfg.Health.Alarms))
+	if cfg.Global.Hostname != "new-host" || cfg.Web.Token != "secret-token" || len(cfg.Health.Alarms) != 1 || len(cfg.Health.Inhibit) != 1 || cfg.Health.Inhibit[0].Source != "host_down" {
+		t.Fatalf("loaded = hostname %q token %q alarms %d inhibit %+v", cfg.Global.Hostname, cfg.Web.Token, len(cfg.Health.Alarms), cfg.Health.Inhibit)
 	}
 	if _, err := ApplyVisual(raw, Visual{Mode: "nope", UpdateEvery: 1, WebEnabled: "default", HealthEnabled: "default"}); err == nil {
 		t.Fatal("invalid mode accepted")

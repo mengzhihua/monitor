@@ -415,6 +415,12 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | API | `GET /api/v1/prometheus/catalog` 列出 profile / 已有原生采集器 / fallback 策略 |
 | 告警 | etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列 |
 
+### 已实现能力（告警依赖）
+
+| 模块 | 说明 |
+| --- | --- |
+| 通知 | `health.inhibit`：源告警处于 `critical`（或 `warning`）时，目标告警继续展示，警告和严重通知被抑制，诊断原因 `dependency`。`targets: ["*"]` 不抑制同源告警名。可按 chart、context、family、class、type、component 或 `label:<key>` 要求双方相同 |
+
 ### 开发
 
 ```bash

@@ -165,6 +165,8 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 
 M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEventOpen、NETLINK、sd_journal、ODBC、WAL、mDNS 与推送通道已补上。仍不手写 850 个 Prometheus 名，也不把 CO-RE/BTF 重定位打进默认静态二进制。详见 §2.7。
 
+告警依赖：`health.inhibit` 在源告警处于严重或警告时抑制目标告警的警告和严重通知，问题本身继续展示。`["*"]` 不抑制同源告警名。跨主机依赖不在本轮。
+
 ## 4.0 M20（已合入 main）
 
 1. journald：`journalctl -f` 跟随（`follow: false` 退回按次查询）；Function 支持 `unit` / `priority` / `boot` / `cursor`
