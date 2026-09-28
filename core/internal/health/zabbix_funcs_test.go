@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,67 @@ func TestLookupTrendFromTier1(t *testing.T) {
 	}
 }
 
+func TestLookupTrendTier0ExpiredTail(t *testing.T) {
+	// Tier0 retains only the tail of the window (early samples expired) while
+	// tier1 still holds the whole window: the lookup must pick tier1, not the
+	// truncated tier0.
+	dir := t.TempDir()
+	now := time.Unix(1_700_000_000, 0)
+	start := now.Add(-2 * time.Hour).Unix()
+	start -= start % 60
+	opts := tsdb.Options{Dir: dir, BlockSize: 30, Tiers: []tsdb.TierSpec{{Every: 60, BlockSize: 4}}}
+	db, err := tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < 60; i++ {
+		db.Append("system.ram|used", start+i, float64(i))
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Wipe tier0, reopen, then seed fresh tail samples: tier0's first sample
+	// is now inside the tail, far after `after`, while tier1 still covers the
+	// full window.
+	if err := os.RemoveAll(filepath.Join(dir, "tier0")); err != nil {
+		t.Fatal(err)
+	}
+	db, err = tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Tail-only samples: if tier0 were picked, the lookup would see just these.
+	for i := int64(0); i < 5; i++ {
+		db.Append("system.ram|used", now.Unix()-5+i, 999)
+	}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	e, err := New(reg, db, Options{Hostname: "h", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	c, _ := reg.Chart("system.ram")
+	l, err := ParseLookup("trendavg -3h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tier1 is picked and its query also rolls up the live tier0 tail, so the
+	// answer covers the whole window (65 samples), not the truncated tier0
+	// tail (5) nor the stale tier1 bucket alone (60).
+	if v := e.lookup(c, l, now); math.IsNaN(v) || math.Abs(v-6765.0/65) > 1e-9 {
+		t.Fatalf("trendavg must cover the whole window via tier1 (want %v), got %v", 6765.0/65, v)
+	}
+	l, err = ParseLookup("trendcount -3h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := e.lookup(c, l, now); v != 65 {
+		t.Fatalf("trendcount must cover the whole window via tier1 (want 65), got %v", v)
+	}
+}
+
 func TestLookupTrendFallback(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	seed := func(reg *registry.Registry, now time.Time) {
@@ -294,5 +356,29 @@ func TestMacrosNested(t *testing.T) {
 	_, err = CompileWith(RuleSpec{Name: "m", On: "x", Calc: "$used", Warn: "$this > {$A}"}, "t", map[string]string{"A": "{$B}", "B": "{$A}"})
 	if err == nil || !strings.Contains(err.Error(), "macro recursion") {
 		t.Fatalf("mutual recursion: %v", err)
+	}
+}
+
+func TestMacrosLongChain(t *testing.T) {
+	// A 12-deep acyclic chain resolves (the cap scales with #macros) while
+	// self-recursion still errors.
+	global := map[string]string{"M1": "{$M2}"}
+	for i := 2; i < 12; i++ {
+		global["M"+strconv.Itoa(i)] = "{$M" + strconv.Itoa(i+1) + "}"
+	}
+	global["M12"] = "7"
+	spec := RuleSpec{Name: "m", On: "x", Calc: "$used", Warn: "$this > {$M1}"}
+	r, err := CompileWith(spec, "t", global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fires := r.Warn.Eval(func(name string) (float64, bool) {
+		if name == "this" {
+			return 8, true
+		}
+		return 0, true
+	})
+	if fires == 0 {
+		t.Fatal("12-macro chain did not resolve to $this > 7")
 	}
 }
