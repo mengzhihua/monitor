@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -141,6 +142,9 @@ type LogEntry struct {
 	Repeat     bool    `json:"repeat,omitempty"`
 	Notified   bool    `json:"notified"`
 	NotifiedAt int64   `json:"notified_at,omitempty"`
+	Manual     bool    `json:"manual,omitempty"` // operator-closed problem (Zabbix "close problem")
+	User       string  `json:"user,omitempty"`   // who closed it
+	Comment    string  `json:"comment,omitempty"`
 
 	testChannel string // explicit admin test; never serialized or persisted as an alarm
 }
@@ -675,6 +679,46 @@ func (e *Engine) flushPending(now time.Time) {
 	for _, p := range ready {
 		e.notifyAt(p, now.Unix())
 	}
+}
+
+var ErrAlarmNotFound = errors.New("alarm not found")
+var ErrAlarmNotRaised = errors.New("alarm not raised")
+
+// CloseAlarm is Zabbix's "close problem": an operator forces a raised alarm back
+// to CLEAR. The CLEAR transition goes through the normal path so notifiers
+// hear it and repeat timers stop; the rule keeps evaluating and re-raises on
+// the next evaluation while the condition still holds.
+func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
+	now := e.now()
+	e.mu.Lock()
+	var a *Alarm
+	for _, cand := range e.alarms {
+		if cand.ID == alarmID {
+			a = cand
+			break
+		}
+	}
+	if a == nil {
+		e.mu.Unlock()
+		return ErrAlarmNotFound
+	}
+	if a.Status <= StatusClear {
+		e.mu.Unlock()
+		return ErrAlarmNotRaised
+	}
+	old, oldValue := a.Status, a.Value
+	a.Status = StatusClear
+	a.LastStatusChange = now.Unix()
+	a.LastUpdated = now.Unix()
+	a.clearSustain()
+	a.RecoveryHold = false
+	a.pending = nil
+	a.DelayUpTo = 0
+	entry := e.newEntry(a, old, oldValue, now)
+	entry.Manual, entry.User, entry.Comment = true, user, comment
+	e.mu.Unlock()
+	e.transition(a, entry, now)
+	return nil
 }
 
 // record appends to the alarm log, fires OnEvent and optionally notifies.

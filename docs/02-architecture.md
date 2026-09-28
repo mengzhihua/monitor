@@ -219,6 +219,8 @@ data/
 - 状态机：`UNINITIALIZED → CLEAR ↔ WARNING ↔ CRITICAL`，`REMOVED`；每次跃迁写 `alarm_log`。
 - 静默：按 host/chart/alert/label 维度、时间窗口；维护窗口。
 - 通知路由：`to: role` → 角色→渠道映射；Hub 模式下节点可 `notify.local = false` 交给 Hub 集中通知。
+- 手动关闭（Zabbix close problem）：`POST /api/v1/alarms/close {alarm_id, comment}`（admin/troubleshooter）把已触发告警置为 CLEAR 并走正常通知路径；规则继续评估，条件仍成立时下次评估重新触发。仅限本机引擎，`node=` 远端返回 501。日志条目带 `manual/user/comment`。
+- 审计日志：`web.audit`（默认开启，`<data_dir>/operations/audit-log.jsonl`，上限 `max_entries`）记录非 GET 的 `/api/` 变更（用户/角色/远端/动作/状态码）与 `login`/`login_failed` 认证事件；采集上报类端点（ingest、checks、stream、ring）不记录。`GET /api/v1/audit?after=&limit=&user=` 仅 admin。
 - 渠道插件接口 `notify.Channel{Send(ctx, Event) error}`：email(SMTP)、generic webhook、钉钉、企业微信、飞书、Telegram、Slack、Discord、PagerDuty、短信（阿里云/腾讯云）、**App 推送**（APNs / FCM / 自建 WSS 推送）。
 - 去重与聚合：同一告警在 `repeat` 间隔内不重发；一分钟内多条合并为摘要。
 
