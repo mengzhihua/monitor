@@ -114,6 +114,8 @@ type Rule struct {
 	Repeat     Repeat
 	For        time.Duration // pending time before a raise commits; 0 = immediate
 	KeepFiring time.Duration // hold a raised status after the condition clears; 0 = immediate
+	Info       string        // Spec.Info with macros expanded
+	Units      string        // Spec.Units with macros expanded
 	Source     string
 }
 
@@ -169,7 +171,7 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
-	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second}
+	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units}
 	if spec.Lookup != "" {
 		if r.Lookup, err = ParseLookup(spec.Lookup); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q lookup: %w", source, spec.Name, err)

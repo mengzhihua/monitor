@@ -466,7 +466,7 @@ func (e *Engine) bind() {
 			a := &Alarm{
 				ID: e.nextID, Name: r.Spec.Name, Chart: c.ID, Context: c.Context, Family: c.Family,
 				Class: r.Spec.Class, Type: r.Spec.Type, Component: r.Spec.Compon,
-				Units: r.Spec.Units, Info: r.Spec.Info, Lookup: r.Spec.Lookup, Calc: r.Spec.Calc,
+				Units: r.Units, Info: r.Info, Lookup: r.Spec.Lookup, Calc: r.Spec.Calc,
 				Warn: r.Spec.Warn, Crit: r.Spec.Crit, Every: int64(r.Every / time.Second),
 				Recipient: r.Spec.To, Source: r.Source, Labels: c.LabelsSnapshot(),
 				Status: StatusUninitialized, Value: math.NaN(), Active: true,
@@ -1054,7 +1054,7 @@ func (e *Engine) lookupKind(c *registry.Chart, l *Lookup, selected map[string]bo
 			}
 			rem := (l.Target - (a + b*float64(before-vals[0].TS))) / b
 			if rem < 0 {
-				continue
+				continue // moving away from the target: stays at the sentinel
 			}
 			if rem < sum {
 				sum = rem
