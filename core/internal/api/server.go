@@ -208,6 +208,8 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/alert_config", s.handleAlertConfig)
 	m.HandleFunc("POST /api/v1/alert_config", s.handleAlertConfig)
 	m.HandleFunc("DELETE /api/v1/alert_config", s.handleAlertConfig)
+	m.HandleFunc("POST /api/v1/manage/alert-rules/preview", s.handlePreviewAlertRule)
+	m.HandleFunc("POST /api/v1/manage/alert-rules", s.handleManagedAlertRules)
 	m.HandleFunc("GET /api/v3/functions", s.handleFunctions)
 	m.HandleFunc("GET /api/v3/function", s.handleFunction)
 	m.HandleFunc("GET /api/v3/badge.svg", s.handleBadge)

@@ -98,7 +98,7 @@ type Rule struct {
 
 // Compile validates and parses a RuleSpec.
 func Compile(spec RuleSpec, source string) (*Rule, error) {
-	if spec.Name == "" {
+	if strings.TrimSpace(spec.Name) == "" {
 		return nil, fmt.Errorf("%s: alarm without name", source)
 	}
 	if spec.On == "" {

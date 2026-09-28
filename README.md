@@ -37,6 +37,8 @@
 
 运维历史搜索进一步减少备注拼接，跨 Hub 告警采用有界并发；HTTP 探测复用连接并准确记录响应体超时，快照导出与筛选保持一致。测量及使用说明见 [运行效率更新](docs/12-runtime-efficiency.md)。
 
+新增 **本机告警规则** 工作台：JSON 编辑、保存前语法与图表范围预览、规则持久化、并发冲突保护，以及禁用、删除和恢复配置规则。行业对标、权限、生效边界和后续差距见 [告警规则工作台](docs/13-alert-rule-workbench.md)。
+
 ## 代码同步与发布包保留规则
 
 - 开发交付前分别拉取 GitHub 和 GitLab 的最新 `main`，合并两边改动并完成必要验证，再提交、推送到两个仓库的 `main`。推送后分别核对远端提交 SHA，只有两边与本地一致才算同步完成。
@@ -59,6 +61,7 @@
 | [docs/10-final-integration.md](docs/10-final-integration.md) | 性能与发布收尾、升级说明及本轮验证范围 |
 | [docs/11-system-hardening.md](docs/11-system-hardening.md) | 配置并发与密钥隔离、凭据文件、草稿保护、磁盘指标基准及验证边界 |
 | [docs/12-runtime-efficiency.md](docs/12-runtime-efficiency.md) | 历史搜索、跨 Hub 告警并发、HTTP 探测复用与快照导出一致性 |
+| [docs/13-alert-rule-workbench.md](docs/13-alert-rule-workbench.md) | 行业对标、本机规则编辑、持久化、并发保护、恢复与验收 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 

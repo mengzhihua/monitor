@@ -1,5 +1,7 @@
 # Monitor 全量移植 Netdata：差距清单与后续计划
 
+> 2026-09-28 告警配置流程的最新对标及交付见[本机告警规则工作台](13-alert-rule-workbench.md)。下文为早期阶段快照，模块存在或 API 名称相似不表示完整语义兼容、远端部署或真实端点验收已经完成。
+
 > 当前五阶段交付及最新验收见[验收记录](05-acceptance.md)。下方阶段快照保留了本轮早期结果和当时的待办；检查点性能、客户端安全存储、浏览器和macOS打包状态已在新记录中更新。
 
 > 对照 [Netdata](https://github.com/netdata/netdata) Agent + Cloud 全表面。

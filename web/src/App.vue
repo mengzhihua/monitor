@@ -7,6 +7,7 @@ import { usePolling } from './polling'
 import MetricChart from './components/MetricChart.vue'
 import OperationsPanel from './components/OperationsPanel.vue'
 import AlarmsPanel from './components/AlarmsPanel.vue'
+import AlertRulesPanel from './components/AlertRulesPanel.vue'
 import FunctionsPanel from './components/FunctionsPanel.vue'
 import LogsPanel from './components/LogsPanel.vue'
 import WeightsPanel from './components/WeightsPanel.vue'
@@ -52,6 +53,12 @@ const activeSection = ref('')
 const alarms = ref<Alarm[]>([])
 const alarmLog = ref<AlarmLogEntry[]>([])
 const showAlarms = ref(false)
+const showAlertRules = ref(false)
+const alertRulesPanel = ref<InstanceType<typeof AlertRulesPanel> | null>(null)
+function toggleAlertRules() {
+  if (showAlertRules.value) alertRulesPanel.value?.requestClose()
+  else showAlertRules.value = true
+}
 const functions = ref<FunctionInfo[]>([])
 const showFunctions = ref(false)
 const showLogs = ref(false)
@@ -195,7 +202,7 @@ async function load(signal: AbortSignal) {
       alarms.value = []
       alarmLog.value = []
       functions.value = []
-      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = false
+      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = showAlertRules.value = false
       error.value = ''
       return
     }
@@ -319,6 +326,7 @@ onBeforeUnmount(() => {
         @click="showAlarms = !showAlarms" title="告警">
         ⚠ <b v-if="raised.critical">{{ raised.critical }}</b><b v-else-if="raised.warning">{{ raised.warning }}</b><span v-else>0</span>
       </button>
+      <button class="alarms-btn" :class="{ open: showAlertRules }" @click="toggleAlertRules" title="本机告警规则">告警规则</button>
       <button v-if="functions.length" class="alarms-btn" :class="{ open: showFunctions }" @click="showFunctions = !showFunctions"
         title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
       <button v-if="logsAvailable" class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
@@ -377,6 +385,7 @@ onBeforeUnmount(() => {
       <div v-if="error" class="banner">{{ error }}</div>
       <p v-if="nodeNotice" class="node-notice" role="status">{{ nodeNotice }}</p>
       <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :can-manage="info?.user?.role === 'admin' && !selectedNode" @close="showAlarms = false" />
+      <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />

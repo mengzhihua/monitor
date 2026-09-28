@@ -190,7 +190,7 @@ alarms:
 	}
 	t.Cleanup(eng.Close)
 	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
-	srv, err := New(reg, db, sched, Options{Health: eng, StartedAt: time.Now()})
+	srv, err := New(reg, db, sched, Options{Health: eng, Token: "test-alert-admin", StartedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,11 +205,11 @@ alarms:
 			Hash string `json:"hash"`
 		} `json:"configs"`
 	}
-	getJSON(t, ts.URL+"/api/v3/alert_config", &listed)
+	getJSON(t, ts.URL+"/api/v3/alert_config?token=test-alert-admin", &listed)
 	if listed.API != 3 || listed.Count < 1 || listed.Configs[0].Name != "ram_in_use" || listed.Configs[0].Hash == "" {
 		t.Fatalf("list = %+v", listed)
 	}
-	getJSON(t, ts.URL+"/api/v3/alert_config?hash="+listed.Configs[0].Hash, &struct {
+	getJSON(t, ts.URL+"/api/v3/alert_config?token=test-alert-admin&hash="+listed.Configs[0].Hash, &struct {
 		Config struct {
 			Name string `json:"name"`
 		} `json:"config"`
@@ -218,6 +218,7 @@ alarms:
 	body := `{"name":"ram_hot","on":"system.ram","lookup":"average -5s of used","every":"1s","warn":"$this > 50"}`
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v3/alert_config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-alert-admin")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -242,6 +243,7 @@ alarms:
 		t.Fatal(err)
 	}
 	post.Header.Set("Content-Type", "application/json")
+	post.Header.Set("Authorization", "Bearer test-alert-admin")
 	presp, err := http.DefaultClient.Do(post)
 	if err != nil {
 		t.Fatal(err)
@@ -264,6 +266,7 @@ alarms:
 	if err != nil {
 		t.Fatal(err)
 	}
+	del.Header.Set("Authorization", "Bearer test-alert-admin")
 	dresp, err := http.DefaultClient.Do(del)
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +284,7 @@ alarms:
 	var tr struct {
 		API int `json:"api"`
 	}
-	getJSON(t, ts.URL+"/api/v3/alert_transitions", &tr)
+	getJSON(t, ts.URL+"/api/v3/alert_transitions?token=test-alert-admin", &tr)
 	if tr.API != 3 {
 		t.Fatalf("v3 transitions api = %d", tr.API)
 	}

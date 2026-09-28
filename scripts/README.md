@@ -26,6 +26,7 @@
 | `verify-default-auth.py` | 默认认证、错误密码、WebSocket 拒绝、重启和重置 | `python3 scripts/verify-default-auth.py` |
 | `verify-operations.py` | 2.0 真实采样、处置/个人视图持久化、服务重启、单条/批量版本冲突及历史查询导出 | `python3 scripts/verify-operations.py` |
 | `verify-notifications.py` | 本机真实内存触发通知、HTTP 成功/503、静默/路由、凭据隐藏、只读权限及重启计数边界 | `python3 scripts/verify-notifications.py` |
+| `verify-alert-rules.py` | 规则预览无写入、RBAC、原子批次、并发版本、两次重启、覆盖/删除/恢复与损坏文件拒绝启动 | `python3 scripts/verify-alert-rules.py` |
 | `verify-maintenance.py` | 预约开始、精确告警范围、活动计划重启、到期恢复新提醒、重叠取消、并发与只读权限、第二次重启保留取消记录 | `python3 scripts/verify-maintenance.py` |
 | `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
@@ -42,6 +43,8 @@
 通知验收和浏览器测试的通知接收器仅绑定 `127.0.0.1` 随机端口，分别返回 HTTP 204 / 503，不连接真实第三方通知服务。`verify-notifications.py --binary <路径>` 可直接验证包内二进制。它重启同一临时数据目录，验证通知诊断不会把上次启动的发送结果算作当前进程结果；原有告警日志仍按既有方式保存。
 
 `verify-maintenance.py` 同样支持 `--binary`，使用两条基于真实内存的测试告警和本机 HTTP 接收器。它为其中一条安排 12 秒维护窗口，期间重启，验证另一条仍发送、问题仍显示，维护结束后按 `repeat` 周期产生新提醒；随后验证重叠计划、取消和第二次重启。配置、凭据、采样和发送记录仅存在于隔离测试目录或内存。
+
+`verify-alert-rules.py` 支持 `--binary`，使用隔离临时目录与静默健康引擎，不配置外部通知。详细生效与回退边界见 [告警规则工作台](../docs/13-alert-rule-workbench.md)。
 
 保存报告时统一放入被 Git 忽略的 `reports/`：
 
