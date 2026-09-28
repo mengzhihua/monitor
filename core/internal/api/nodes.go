@@ -107,7 +107,7 @@ func (ro Role) allows(r *http.Request) bool {
 	case RoleAdmin:
 		return true
 	case RoleTroubleshooter:
-		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/operations/acknowledgements" || r.URL.Path == "/api/v1/operations/handling" || r.URL.Path == "/api/v1/operations/handling/batch" || r.URL.Path == "/api/v1/checks") {
+		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/operations/acknowledgements" || r.URL.Path == "/api/v1/operations/handling" || r.URL.Path == "/api/v1/operations/handling/batch" || r.URL.Path == "/api/v1/checks" || r.URL.Path == "/api/v1/alarms/close") {
 			return true
 		}
 		return r.Method == http.MethodGet

@@ -23,6 +23,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/mengzhihua/monitor/core/internal/api"
+	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/backup"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
@@ -234,7 +235,17 @@ func run() error {
 		})
 	}
 
+	var auditLog *audit.Log
+	if cfg.AuditEnabled() {
+		auditLog, err = audit.Open(filepath.Join(cfg.Global.DataDir, "operations"), cfg.Web.Audit.MaxEntries)
+		if err != nil {
+			return fmt.Errorf("audit log: %w", err)
+		}
+		defer auditLog.Close()
+	}
+
 	apiOpt := api.Options{
+		Audit:         auditLog,
 		OperationsDir: filepath.Join(cfg.Global.DataDir, "operations"),
 		TicketWebhook: cfg.Web.TicketWebhook,
 		Version:       version,

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -190,6 +191,55 @@ func (s *Server) handleAlarmVariables(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{"chart": chart, "variables": vars})
+}
+
+// POST /api/v1/alarms/close {"alarm_id":N,"comment":"..."}[&node=id]
+//
+// Zabbix-style manual problem close: forces the raised alarm to CLEAR through
+// the normal transition path (notifiers see it, repeats stop). The rule keeps
+// evaluating and re-raises while the condition still holds. Remote node alarm
+// state is mirrored on the hub, so closing is local-engine only.
+func (s *Server) handleAlarmClose(w http.ResponseWriter, r *http.Request) {
+	if u := userOf(r); u.Role != RoleAdmin && u.Role != RoleTroubleshooter {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	node := r.URL.Query().Get("node")
+	if node != "" && node != "local" && node != s.reg.Host.ID {
+		http.Error(w, "manual close is only supported on the local health engine", http.StatusNotImplemented)
+		return
+	}
+	if s.opt.Health == nil {
+		http.Error(w, "health engine disabled", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		AlarmID uint64 `json:"alarm_id"`
+		Comment string `json:"comment"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u := userOf(r)
+	if err := s.opt.Health.CloseAlarm(body.AlarmID, u.Name, body.Comment); err != nil {
+		switch {
+		case errors.Is(err, health.ErrAlarmNotFound):
+			http.Error(w, err.Error(), http.StatusNotFound)
+		case errors.Is(err, health.ErrAlarmNotRaised):
+			http.Error(w, err.Error(), http.StatusConflict)
+		default:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+	for _, a := range s.opt.Health.Alarms() {
+		if a.ID == body.AlarmID {
+			writeJSON(w, a)
+			return
+		}
+	}
+	http.Error(w, "alarm not found", http.StatusNotFound)
 }
 
 type silenceBody struct {
