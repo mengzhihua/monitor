@@ -2,11 +2,14 @@ package health
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
 func TestParseLookupZabbix(t *testing.T) {
@@ -154,6 +157,62 @@ func TestLookupForecastTimeleft(t *testing.T) {
 	}
 }
 
+func TestLookupCountEmpty(t *testing.T) {
+	// count answers 0, not NaN, when the window has no samples.
+	now := time.Unix(1_700_000_000, 0)
+	if v := lookupValue(t, "count -5m", nil, now); v != 0 {
+		t.Fatalf("count on empty window: got %v want 0", v)
+	}
+	if v := lookupValue(t, "count -5m gt 3", nil, now); v != 0 {
+		t.Fatalf("count gt on empty window: got %v want 0", v)
+	}
+}
+
+func TestLookupTrendFromTier1(t *testing.T) {
+	// Data only in a rollup tier (tier0 expired/empty) must still answer.
+	dir := t.TempDir()
+	now := time.Unix(1_700_000_000, 0)
+	start := now.Add(-2 * time.Hour).Unix()
+	start -= start % 60
+	opts := tsdb.Options{Dir: dir, BlockSize: 30, Tiers: []tsdb.TierSpec{{Every: 60, BlockSize: 4}}}
+	db, err := tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One full minute of samples rolls up to one tier1 bucket.
+	for i := int64(0); i < 60; i++ {
+		db.Append("system.ram|used", start+i, float64(i))
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Wipe tier0 and reopen so only rollup data remains in the index.
+	if err := os.RemoveAll(filepath.Join(dir, "tier0")); err != nil {
+		t.Fatal(err)
+	}
+	db, err = tsdb.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	e, err := New(reg, db, Options{Hostname: "h", LogDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	l, err := ParseLookup("trendavg -3h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := reg.Chart("system.ram")
+	v := e.lookup(c, l, now)
+	if math.IsNaN(v) || math.Abs(v-29.5) > 1e-9 {
+		t.Fatalf("trendavg from tier1: got %v want 29.5", v)
+	}
+}
+
 func TestLookupTrendFallback(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	seed := func(reg *registry.Registry, now time.Time) {
@@ -208,5 +267,32 @@ func TestMacros(t *testing.T) {
 	// Unresolved reference fails.
 	if _, err := CompileWith(RuleSpec{Name: "m", On: "x", Warn: "$this > {$NOPE}"}, "t", nil); err == nil || !strings.Contains(err.Error(), "unknown macro {$NOPE}") {
 		t.Fatalf("want unknown macro error, got %v", err)
+	}
+}
+
+func TestMacrosNested(t *testing.T) {
+	// A macro value may itself reference another macro.
+	spec := RuleSpec{Name: "m", On: "x", Calc: "$used", Warn: "$this > {$A}"}
+	r, err := CompileWith(spec, "t", map[string]string{"A": "{$B}*2", "B": "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fires := r.Warn.Eval(func(name string) (float64, bool) {
+		if name == "this" {
+			return 11, true
+		}
+		return 0, true
+	})
+	if fires == 0 {
+		t.Fatal("nested macro did not resolve to $this > 10")
+	}
+	// Self-reference and mutual recursion fail with a recursion error.
+	_, err = CompileWith(RuleSpec{Name: "m", On: "x", Calc: "$used", Warn: "$this > {$A}"}, "t", map[string]string{"A": "{$A}"})
+	if err == nil || !strings.Contains(err.Error(), "macro recursion in {$A}") {
+		t.Fatalf("self-reference: %v", err)
+	}
+	_, err = CompileWith(RuleSpec{Name: "m", On: "x", Calc: "$used", Warn: "$this > {$A}"}, "t", map[string]string{"A": "{$B}", "B": "{$A}"})
+	if err == nil || !strings.Contains(err.Error(), "macro recursion") {
+		t.Fatalf("mutual recursion: %v", err)
 	}
 }
