@@ -402,7 +402,7 @@ onBeforeUnmount(() => {
       <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
       <p v-if="nodeNotice" class="node-notice" role="status">{{ nodeNotice }}</p>
-      <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :can-manage="info?.user?.role === 'admin' && !selectedNode" @close="showAlarms = false" />
+      <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :can-manage="info?.user?.role === 'admin' && !selectedNode" :can-close="['admin', 'troubleshooter'].includes(info?.user?.role || '') && !selectedNode" @close="showAlarms = false" />
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />

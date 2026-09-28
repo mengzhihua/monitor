@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strconv"
@@ -33,6 +34,21 @@ func auditSkip(path string) bool {
 	return false
 }
 
+// auditTargetSlot is a request-scoped slot the handler can fill with the
+// audited object (e.g. an alarm id from the JSON body, which the middleware
+// cannot see).
+type auditTargetSlot struct{ target string }
+
+type auditTargetKey struct{}
+
+// withAuditTarget stores the target for the audit entry; no-op outside an
+// audited request.
+func withAuditTarget(r *http.Request, target string) {
+	if slot, ok := r.Context().Value(auditTargetKey{}).(*auditTargetSlot); ok {
+		slot.target = target
+	}
+}
+
 // auditWrap records a mutating /api/ request after its handler ran. Called
 // after authentication so the caller identity is known.
 func (s *Server) auditWrap(u User, r *http.Request, next http.Handler) http.Handler {
@@ -41,9 +57,14 @@ func (s *Server) auditWrap(u User, r *http.Request, next http.Handler) http.Hand
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		slot := &auditTargetSlot{}
+		req = req.WithContext(context.WithValue(req.Context(), auditTargetKey{}, slot))
 		sw := &statusWriter{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sw, req)
-		target := req.URL.Query().Get("alarm_id")
+		target := slot.target
+		if target == "" {
+			target = req.URL.Query().Get("alarm_id")
+		}
 		if target == "" {
 			target = req.URL.Query().Get("alarm")
 		}

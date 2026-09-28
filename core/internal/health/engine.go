@@ -688,8 +688,15 @@ var ErrAlarmNotRaised = errors.New("alarm not raised")
 // to CLEAR. The CLEAR transition goes through the normal path so notifiers
 // hear it and repeat timers stop; the rule keeps evaluating and re-raises on
 // the next evaluation while the condition still holds.
+//
+// tickMu serializes the close with a whole evaluation cycle (Tick holds it
+// across bind+evaluate+flushPending), so no evaluate() can interleave between
+// the status mutation and the transition. e.mu is still released before
+// transition, which re-locks it itself.
 func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
 	now := e.now()
+	e.tickMu.Lock()
+	defer e.tickMu.Unlock()
 	e.mu.Lock()
 	var a *Alarm
 	for _, cand := range e.alarms {

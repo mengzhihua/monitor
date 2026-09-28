@@ -109,11 +109,14 @@ func TestAlarmCloseAPI(t *testing.T) {
 		t.Fatalf("status %s want CLEAR", a.Status)
 	}
 
-	// The mutation was audited with user/role/status.
+	// The mutation was audited with user/role/status and the alarm id target.
 	entries := al.Query(0, 0, "")
 	var found bool
 	for _, e := range entries {
 		if e.Action == "POST /api/v1/alarms/close" && e.User == "ops" && e.Role == "troubleshooter" && e.Status == 200 {
+			if e.Target != jsonNumber(alarmID) {
+				t.Fatalf("audit target = %q, want %d", e.Target, alarmID)
+			}
 			found = true
 		}
 	}
@@ -121,10 +124,11 @@ func TestAlarmCloseAPI(t *testing.T) {
 		t.Fatalf("close not audited: %+v", entries)
 	}
 
-	// A remote node= target is refused.
+	// A node= that resolves to a remote/unknown hub node is refused; an
+	// unknown node fails node resolution (404) before the 501.
 	resp = postClose(t, ts.URL+"/api/v1/alarms/close?node=abc123", "admin", `{"alarm_id":1}`)
 	resp.Body.Close()
-	if resp.StatusCode != 501 {
+	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("remote close: %d", resp.StatusCode)
 	}
 }
@@ -175,6 +179,31 @@ func TestAuditMiddlewareSkipsReadsAndIngest(t *testing.T) {
 	getJSON(t, ts.URL+"/api/v1/audit?token=admin", &out)
 	if len(out.Entries) == 0 {
 		t.Fatal("audit endpoint returned nothing")
+	}
+}
+
+func TestAuditWrapperPerRequest(t *testing.T) {
+	// Two sequential POSTs by different users must produce exactly one entry
+	// each, attributed to the right user (no wrapper accumulation).
+	ts, _, al := newCloseTestServer(t)
+	for _, tok := range []string{"operator", "admin", "operator"} {
+		resp := postClose(t, ts.URL+"/api/v1/alarms/close", tok, `{"alarm_id":999999}`)
+		resp.Body.Close()
+	}
+	var ops, root int
+	for _, e := range al.Query(0, 0, "") {
+		if e.Action != "POST /api/v1/alarms/close" {
+			continue
+		}
+		switch e.User {
+		case "ops":
+			ops++
+		case "root":
+			root++
+		}
+	}
+	if ops != 2 || root != 1 {
+		t.Fatalf("want ops=2 root=1, got ops=%d root=%d: %+v", ops, root, al.Query(0, 0, ""))
 	}
 }
 
