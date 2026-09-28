@@ -169,6 +169,8 @@ M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEv
 
 被动外部检查：`POST /api/v1/checks` 接收本机 `ok` / `warning` / `critical`，图表 context 为 `check.status`，超时未再上报记为 expired，内置告警 `external_check_status`。`collectors.enabled` 白名单不含 `checks` 时，提交仍然立刻出图，过期标记要等该采集器运行才会刷新。
 
+告警依赖：`health.inhibit` 在源告警处于严重或警告时抑制目标告警的警告和严重通知，问题本身继续展示。`["*"]` 不抑制同源告警名。跨主机依赖不在本轮。
+
 ## 4.0 M20（已合入 main）
 
 1. journald：`journalctl -f` 跟随（`follow: false` 退回按次查询）；Function 支持 `unit` / `priority` / `boot` / `cursor`

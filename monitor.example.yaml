@@ -694,6 +694,11 @@ health:
   log_keep: 1000       # alarm log entries kept in memory (full history in <data_dir>/health/alarm-log.jsonl)
   silent: false        # true = evaluate and log, but never notify
   inhibit_same_chart: true # warnings on a chart stay quiet while that chart has a critical alarm
+  inhibit: []           # source alarms suppress target notifications; the target stays visible
+  # - source: host_down
+  #   status: critical   # critical, or warning (warning and critical)
+  #   targets: ["*"]     # other alarm names; a single "*" cannot be mixed with names
+  #   equal: [chart]     # optional: chart, context, family, class, type, component, label:<key>
   group_wait: ""       # e.g. 10s holds same-chart notifications and sends one
   escalate_after: ""   # e.g. 15m; critical repeats then use escalate_to
   escalate_to: ""      # notify role from notify.roles

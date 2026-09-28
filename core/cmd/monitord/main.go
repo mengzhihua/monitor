@@ -654,6 +654,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		Logger:           log,
 		SilenceAll:       cfg.Health.Silent,
 		InhibitSameChart: inhibit,
+		Inhibit:          cfg.Health.Inhibit,
 		GroupWait:        groupWait,
 		EscalateAfter:    escalateAfter,
 		EscalateTo:       cfg.Health.EscalateTo,

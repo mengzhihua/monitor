@@ -148,6 +148,7 @@ type Health struct {
 	LogKeep          int                        `yaml:"log_keep"`           // alarm log entries kept in memory
 	Silent           bool                       `yaml:"silent"`             // evaluate but never notify
 	InhibitSameChart *bool                      `yaml:"inhibit_same_chart"` // nil = suppress warnings while the same chart is critical
+	Inhibit          []health.InhibitRule       `yaml:"inhibit"`            // source alarms suppress target notifications
 	GroupWait        string                     `yaml:"group_wait"`         // hold same-chart notifications, e.g. 10s; empty = off
 	EscalateAfter    string                     `yaml:"escalate_after"`     // critical repeats change recipient after this, e.g. 15m
 	EscalateTo       string                     `yaml:"escalate_to"`

@@ -157,6 +157,7 @@ type Options struct {
 	Now              func() time.Time
 	SilenceAll       bool
 	InhibitSameChart bool          // a critical alarm suppresses warnings on the same chart
+	Inhibit          []InhibitRule // source alarms suppress target notifications
 	GroupWait        time.Duration // hold same-chart notifications and send one
 	EscalateAfter    time.Duration // critical repeats use EscalateTo after this long
 	EscalateTo       string
@@ -211,6 +212,7 @@ type Engine struct {
 	windows      []MaintenanceWindow
 	anomaly      AnomalySource
 	groups       map[string]*notifyGroup
+	inhibit      []compiledInhibit
 }
 
 type notifyGroup struct {
@@ -237,12 +239,15 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
+	inhibit, err := compileInhibit(opt.Inhibit)
+	if err != nil {
+		return nil, err
+	}
 	e := &Engine{opt: opt, reg: reg, db: db, log: opt.Logger, now: opt.Now, rules: opt.Rules,
 		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256),
 		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows,
-		anomaly: opt.Anomaly}
+		anomaly: opt.Anomaly, inhibit: inhibit}
 	e.initNotificationDiagnostics()
-	var err error
 	e.plans, err = openMaintenancePlans(opt.LogDir)
 	if err != nil {
 		return nil, fmt.Errorf("open maintenance plans: %w", err)
@@ -722,6 +727,11 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 				return
 			}
 		}
+	}
+	if e.dependencyInhibitedLocked(entry) {
+		e.diagnostics.Suppressed++
+		e.addNotificationResultLocked(entry, "", "suppressed", "dependency", 0, 0)
+		return
 	}
 	if strings.TrimSpace(entry.Recipient) == "silent" {
 		e.diagnostics.Suppressed++
