@@ -30,28 +30,32 @@ import (
 //     units: '%'
 //     warn: $this > (($status >= $WARNING) ? (75) : (85))
 //     crit: $this > (($status == $CRITICAL) ? (85) : (95))
+//     for: 1m                            # condition must hold before the status rises
+//     keep_firing_for: 5m               # stay raised after the condition clears
 //     delay: down 15m multiplier 1.5 max 1h
 //     repeat: warning 30m critical 10m
 //     info: average CPU utilization over the last 10 minutes
 //     to: sysadmin
 type RuleSpec struct {
-	Name     string            `yaml:"name" json:"name"`
-	On       string            `yaml:"on" json:"on"`
-	Class    string            `yaml:"class" json:"class,omitempty"`
-	Type     string            `yaml:"type" json:"type,omitempty"`
-	Compon   string            `yaml:"component" json:"component,omitempty"`
-	Lookup   string            `yaml:"lookup" json:"lookup,omitempty"`
-	Calc     string            `yaml:"calc" json:"calc,omitempty"`
-	Every    string            `yaml:"every" json:"every,omitempty"`
-	Units    string            `yaml:"units" json:"units,omitempty"`
-	Warn     string            `yaml:"warn" json:"warn,omitempty"`
-	Crit     string            `yaml:"crit" json:"crit,omitempty"`
-	Delay    string            `yaml:"delay" json:"delay,omitempty"`
-	Repeat   string            `yaml:"repeat" json:"repeat,omitempty"`
-	Info     string            `yaml:"info" json:"info,omitempty"`
-	To       string            `yaml:"to" json:"to,omitempty"`
-	Labels   map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
-	Disabled bool              `yaml:"disabled" json:"disabled,omitempty"`
+	Name       string            `yaml:"name" json:"name"`
+	On         string            `yaml:"on" json:"on"`
+	Class      string            `yaml:"class" json:"class,omitempty"`
+	Type       string            `yaml:"type" json:"type,omitempty"`
+	Compon     string            `yaml:"component" json:"component,omitempty"`
+	Lookup     string            `yaml:"lookup" json:"lookup,omitempty"`
+	Calc       string            `yaml:"calc" json:"calc,omitempty"`
+	Every      string            `yaml:"every" json:"every,omitempty"`
+	Units      string            `yaml:"units" json:"units,omitempty"`
+	Warn       string            `yaml:"warn" json:"warn,omitempty"`
+	Crit       string            `yaml:"crit" json:"crit,omitempty"`
+	For        string            `yaml:"for,omitempty" json:"for,omitempty"`
+	KeepFiring string            `yaml:"keep_firing_for,omitempty" json:"keep_firing_for,omitempty"`
+	Delay      string            `yaml:"delay" json:"delay,omitempty"`
+	Repeat     string            `yaml:"repeat" json:"repeat,omitempty"`
+	Info       string            `yaml:"info" json:"info,omitempty"`
+	To         string            `yaml:"to" json:"to,omitempty"`
+	Labels     map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
+	Disabled   bool              `yaml:"disabled" json:"disabled,omitempty"`
 }
 
 type ruleFile struct {
@@ -85,15 +89,17 @@ type Repeat struct {
 
 // Rule is a compiled RuleSpec.
 type Rule struct {
-	Spec   RuleSpec
-	Lookup *Lookup
-	Every  time.Duration
-	Calc   *Expr
-	Warn   *Expr
-	Crit   *Expr
-	Delay  Delay
-	Repeat Repeat
-	Source string
+	Spec       RuleSpec
+	Lookup     *Lookup
+	Every      time.Duration
+	Calc       *Expr
+	Warn       *Expr
+	Crit       *Expr
+	Delay      Delay
+	Repeat     Repeat
+	For        time.Duration // pending time before a raise commits; 0 = immediate
+	KeepFiring time.Duration // hold a raised status after the condition clears; 0 = immediate
+	Source     string
 }
 
 // Compile validates and parses a RuleSpec.
@@ -130,6 +136,12 @@ func Compile(spec RuleSpec, source string) (*Rule, error) {
 	}
 	if r.Lookup == nil && r.Calc == nil {
 		return nil, fmt.Errorf("%s: alarm %q needs a lookup or calc", source, spec.Name)
+	}
+	if r.For, err = parseSustain(source, spec.Name, "for", spec.For); err != nil {
+		return nil, err
+	}
+	if r.KeepFiring, err = parseSustain(source, spec.Name, "keep_firing_for", spec.KeepFiring); err != nil {
+		return nil, err
 	}
 	if r.Delay, err = ParseDelay(spec.Delay); err != nil {
 		return nil, fmt.Errorf("%s: alarm %q delay: %w", source, spec.Name, err)
@@ -270,6 +282,21 @@ func ParseRepeat(s string) (Repeat, error) {
 		}
 	}
 	return r, nil
+}
+
+func parseSustain(source, name, field, raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := parseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: alarm %q %s: %w", source, name, field, err)
+	}
+	if d < 0 || d > 24*time.Hour {
+		return 0, fmt.Errorf("%s: alarm %q %s must be from 0s to 24h", source, name, field)
+	}
+	return d, nil
 }
 
 // parseDuration accepts Go durations plus bare seconds and the d suffix.

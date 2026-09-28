@@ -12,6 +12,26 @@ const silence = ref<SilenceState>({ all: false, alarms: {} })
 const now = ref(Math.floor(Date.now() / 1000))
 onMounted(() => { void refreshSilence() })
 usePolling(async () => { now.value = Math.floor(Date.now() / 1000) }, 1000)
+usePolling(async (signal) => {
+  try {
+    const latest = await api.alarms(signal)
+    if (signal.aborted) return
+    const byKey = new Map(Object.values(latest.alarms).map((a) => [`${a.chart}.${a.name}`, a]))
+    for (const old of props.alarms) {
+      const n = byKey.get(`${old.chart}.${old.name}`)
+      if (!n) continue
+      old.status = n.status
+      old.value = n.value
+      old.last_updated = n.last_updated
+      old.last_status_change = n.last_status_change
+      old.pending_status = n.pending_status
+      old.pending_since = n.pending_since
+      old.pending_until = n.pending_until
+      old.hold_until = n.hold_until
+      old.silenced = n.silenced
+    }
+  } catch { /* next tick */ }
+}, 5000)
 
 async function refreshSilence() {
   if (!props.canManage) return
@@ -19,8 +39,13 @@ async function refreshSilence() {
 }
 
 const order: Record<string, number> = { CRITICAL: 0, WARNING: 1, CLEAR: 2, UNDEFINED: 3, UNINITIALIZED: 4, REMOVED: 5 }
+function rank(a: Alarm) {
+  if (a.pending_status === 'CRITICAL') return 0.5
+  if (a.pending_status === 'WARNING') return 1.5
+  return order[a.status] ?? 9
+}
 const sorted = computed(() =>
-  [...props.alarms].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.chart.localeCompare(b.chart) || a.name.localeCompare(b.name)),
+  [...props.alarms].sort((a, b) => rank(a) - rank(b) || a.chart.localeCompare(b.chart) || a.name.localeCompare(b.name)),
 )
 const recent = computed(() => [...props.log].sort((a, b) => b.unique_id - a.unique_id).slice(0, 50))
 const allSilenced = computed(() => silence.value.all && (!silence.value.until || silence.value.until > now.value))
@@ -89,6 +114,16 @@ function ago(t: number) {
   const s = Math.max(0, Math.floor(Date.now() / 1000 - t))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`
 }
+function sustainText(a: Alarm) {
+  if (a.pending_status === 'WARNING' || a.pending_status === 'CRITICAL') {
+    const label = a.pending_status === 'CRITICAL' ? '等待严重' : '等待警告'
+    return a.pending_until ? `${label} ${remain(a.pending_until)}` : label
+  }
+  if ((a.status === 'WARNING' || a.status === 'CRITICAL') && a.hold_until && a.hold_until > now.value) {
+    return `恢复保持 ${remain(a.hold_until)}`
+  }
+  return ''
+}
 </script>
 
 <template>
@@ -113,7 +148,7 @@ function ago(t: number) {
       </thead>
       <tbody>
         <tr v-for="a in sorted" :key="a.chart + '.' + a.name" :class="a.status.toLowerCase()" :title="a.info">
-          <td><span class="badge">{{ a.status }}</span></td>
+          <td><span class="badge">{{ a.status }}</span><span v-if="sustainText(a)" class="phase">{{ sustainText(a) }}</span></td>
           <td>{{ a.name }}</td>
           <td class="dim">{{ a.chart }}</td>
           <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
@@ -158,6 +193,7 @@ td { padding: 4px 6px; border-bottom: 1px solid #111827; white-space: nowrap; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .dim { color: #64748b; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #1e293b; color: #94a3b8; }
+.phase { display: block; margin-top: 2px; color: #fbbf24; font-size: 11px; }
 .critical .badge { background: #7f1d1d; color: #fecaca; }
 .warning .badge { background: #78350f; color: #fde68a; }
 .clear .badge { background: #14532d; color: #bbf7d0; }

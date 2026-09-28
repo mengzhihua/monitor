@@ -101,7 +101,7 @@ test('local rules validate JSON, freeze the preview payload, save and retain def
   await validate.click()
   await expect(panel.getByRole('alert')).toContainText('不支持字段 unsupported')
   expect(state.previews).toHaveLength(0)
-  const updated = { ...spec('base_ram'), info: '我的规则定义' }
+  const updated = { ...spec('base_ram'), info: '我的规则定义', for: '30s', keep_firing_for: '1m' }
   await editor.fill(pretty(updated))
   await validate.click()
   await expect(panel.getByRole('region', { name: '告警规则预览' })).toContainText('当前匹配 1 个图表')
@@ -112,7 +112,7 @@ test('local rules validate JSON, freeze the preview payload, save and retain def
   await panel.getByRole('button', { name: '确认保存规则变更' }).click()
   await expect(panel.getByRole('status')).toContainText('重启后继续生效')
   expect(state.writes).toEqual([state.previews[1]])
-  expect(state.writes[0]).toMatchObject({ revision: 'opaque-1', action: 'update', config: { warn: '$this > 95' } })
+  expect(state.writes[0]).toMatchObject({ revision: 'opaque-1', action: 'update', config: { warn: '$this > 95', for: '30s', keep_firing_for: '1m' } })
   expect(state.urls.every(url => !new URL(url).searchParams.has('node'))).toBe(true)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await panel.screenshot({ path: info.outputPath('alert-rules.png') })
