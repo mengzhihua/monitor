@@ -1,5 +1,7 @@
 # Monitor 全量移植 Netdata：差距清单与后续计划
 
+> 2026-09-28 告警配置流程的最新对标及交付见[本机告警规则工作台](13-alert-rule-workbench.md)。下文为早期阶段快照，模块存在或 API 名称相似不表示完整语义兼容、远端部署或真实端点验收已经完成。
+
 > 当前五阶段交付及最新验收见[验收记录](05-acceptance.md)。下方阶段快照保留了本轮早期结果和当时的待办；检查点性能、客户端安全存储、浏览器和macOS打包状态已在新记录中更新。
 
 > 对照 [Netdata](https://github.com/netdata/netdata) Agent + Cloud 全表面。
@@ -164,6 +166,8 @@ M21 / M22 / M23 互不阻塞，可并行开 PR。M24 依赖前面采集面稳定
 ## 4. 本轮之后
 
 M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEventOpen、NETLINK、sd_journal、ODBC、WAL、mDNS 与推送通道已补上。仍不手写 850 个 Prometheus 名，也不把 CO-RE/BTF 重定位打进默认静态二进制。详见 §2.7。
+
+被动外部检查：`POST /api/v1/checks` 接收本机 `ok` / `warning` / `critical`，图表 context 为 `check.status`，超时未再上报记为 expired，内置告警 `external_check_status`。`collectors.enabled` 白名单不含 `checks` 时，提交仍然立刻出图，过期标记要等该采集器运行才会刷新。
 
 告警依赖：`health.inhibit` 在源告警处于严重或警告时抑制目标告警的警告和严重通知，问题本身继续展示。`["*"]` 不抑制同源告警名。跨主机依赖不在本轮。
 

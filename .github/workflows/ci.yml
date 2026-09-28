@@ -65,7 +65,7 @@ jobs:
       - name: default login protection
         if: runner.os != 'Windows'
         run: python3 scripts/verify-default-auth.py
-      - name: operations, notifications and maintenance
+      - name: operations, notifications, maintenance and alert rules
         if: runner.os != 'Windows'
         run: |
           python3 scripts/verify-operations.py
@@ -73,6 +73,7 @@ jobs:
           python3 scripts/verify-notification-services.py
           python3 scripts/verify-push-services.py
           python3 scripts/verify-maintenance.py
+          python3 scripts/verify-alert-rules.py
       - name: Process identity and snapshot freshness
         if: runner.os == 'macOS'
         run: python3 scripts/verify-apps-identity.py --require-clean-startup

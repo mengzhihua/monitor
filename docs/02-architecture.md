@@ -537,4 +537,5 @@ sequenceDiagram
 | ibm.d / pandas / lxc/ecs/containerd | `internal/collect` | M23 |
 | API v3 / group_by=dimension / alert_config / 每维 anomaly | `internal/api` + `collect/ml.go` + Vue MetricChart | M24 |
 | Cloud 控制台 / 图上异常高亮 / ACLK MQTT | `web/` + `internal/hub` + `internal/stream` | M25 |
+| 外部服务检查 `GET\|POST /api/v1/checks` | `internal/collect/checks.go` + `internal/api` | 被动检查 |
 | 告警依赖 `health.inhibit` | `internal/health/inhibit.go` | 通知抑制 |

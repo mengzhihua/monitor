@@ -89,6 +89,23 @@ func (c *Chart) MergeLabels(labels map[string]string) {
 	}
 }
 
+// LabelsSnapshot returns a detached copy, safe to read while labels are merged.
+func (c *Chart) LabelsSnapshot() map[string]string {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Labels == nil {
+		return nil
+	}
+	labels := make(map[string]string, len(c.Labels))
+	for key, value := range c.Labels {
+		labels[key] = value
+	}
+	return labels
+}
+
 func (c *Chart) Dimension(id string) *Dimension {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -171,6 +171,26 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 
 `GET /api/v1/manage/config` 返回 `{path, yaml, writable, updated, size, form}`。`form` 是表单可编辑的子集：运行模式、主机名、采集间隔、数据目录、Web 开关与监听、允许来源、账号、采集器开关、nginx/apache/phpfpm/elasticsearch/rabbitmq/redis/memcached/mysql/postgres/docker/statsd/otlp 的地址、健康引擎开关、通知通道与角色、上报 Hub 和 Hub 接入。告警规则、采集器超时与密码、`web.token`、Webhook 请求头和邮件密码留在 YAML 里，表单保存不会删掉。表单读不出时返回 `form_error`，不附带原文片段。`PUT` 接受 `{yaml}` 或 `{form}` 其中之一，可带 `if_updated`（文件修改时间的微秒）。两边同时提交返回 400。正文最大约 1 MiB。服务端用配置加载器校验后，才以 0600 权限原子替换；内容有变化时先把当前文件复制为同目录 `.bak`。校验失败返回 400，原文件保持不变。`POST /api/v1/manage/config/rollback` 用 `.bak` 换回当前文件，并把被换下的内容写成新的备份；没有备份返回 404。`POST /api/v1/manage/restart` 在确认管理员身份后，先确认磁盘上的文件能加载，不能加载返回 409 且不重启；通过后返回 202，进程先按原有路径关闭采集、健康引擎和数据库并释放数据目录锁，再重新执行当前程序。保存不会立刻改运行中的配置，重启后才会加载。这些接口只作用于本机：带非 local 的 `node` 返回 400。Hub 上的「配置」改的是 Hub 自己的文件，节点配置仍走 Hub 下发，不会被本机表单覆盖。原有 `GET /api/v1/agent/config` 仍是 Hub 下发给流式 Agent 的采集覆盖，不是这个文件编辑器。
 
+## 外部服务检查
+
+外部探针可以把一次检查结果推到当前这台 monitord，对应 Nagios 被动检查、Zabbix trapper 和 Datadog service check。结果进入现有图表和告警，不另做面板。
+
+`POST /api/v1/checks` 接受一个 JSON 对象，正文最大 8 KiB：
+
+| 字段 | 含义 |
+| --- | --- |
+| `name` | 1–64 个字符，字母、数字及 `_` `-` `.`，不能以 `.` 或 `-` 开头 |
+| `status` | `ok`、`warning` 或 `critical` |
+| `message` | 可选。折叠成一行，最多 240 个字符。服务端不把这段说明写入日志 |
+| `value` | 可选有限数字，写入隐藏维度 |
+| `ttl` | 可选时长，默认 5 分钟，允许 10 秒至 24 小时 |
+
+最多保存 200 个不同名称。同名再次提交会替换状态、说明和数值，并清除过期标记。省略 `value` 时，隐藏维度保留上一次有限样本。提交后立刻写入图表 `check.<name>`（context `check.status`，family `checks`）。维度 `status` 取值为 0 正常、1 警告、2 严重、3 过期。
+
+超过 TTL 没有新结果时，采集器 `checks` 把该检查标成过期。内置告警 `external_check_status` 绑定 context `check.status`：警告为 WARNING，严重或过期为 CRITICAL。`GET /api/v1/checks` 返回 `{now, checks}`。Function `checks` 列出同一份结果。
+
+管理员和排障账号可以提交，只读账号只能查看。带非 local 的 `node` 返回 400。若 `collectors.enabled` 白名单没有 `checks`，提交仍然立刻出图；空闲后的过期标记要等该采集器运行才会刷新。进程重启后内存中的检查结果不保留。
+
 ## 告警依赖
 
 `health.inhibit` 用来表达「上游已经在报警，下游先不要再发通知」。告警仍会求值，问题列表里仍然看得到。恢复成正常的通知继续发送。同图表里严重告警抑制警告的原有行为保持不变，原因仍是 `inhibited`。

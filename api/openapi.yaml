@@ -8,6 +8,83 @@ info:
 servers:
   - url: http://127.0.0.1:19999
 paths:
+  /api/v1/alert_config:
+    get:
+      summary: Local effective alert rules and persisted overrides
+      description: Also available at /api/v3/alert_config with api=3. Includes deleted base rules and orphan deletion markers. Accepts name or hash to return one config. Non-local node selectors rejected. Cache-Control no-store.
+      responses:
+        "200":
+          description: Local snapshot, or api/config/revision/persistent for a single match
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertRulesSnapshot'}
+        "404": {description: Health engine or rule unavailable}
+    post:
+      summary: Atomically create a batch of local rules
+      description: Authenticated admin only. Alias /api/v3/alert_config. Accepts single RuleSpec JSON, config wrapper, alarms array wrapper, or YAML alarms list. All rules must be valid and new; no partial changes. Unknown fields, multiple documents and ambiguous wrappers rejected. Maximum 1 MiB. Optional revision query protects concurrent changes; absent revision preserves unconditional legacy writes. Persists before publication.
+      parameters:
+        - {in: query, name: revision, schema: {type: string, maxLength: 128}}
+      responses:
+        "200": {description: Snapshot metadata and submitted configs only}
+        "400": {description: Invalid rule or body}
+        "403": {description: Authenticated administrator required}
+        "409": {description: Revision changed or name exists; whole batch unchanged}
+        "413": {description: Request exceeds 1 MiB}
+        "422": {description: Override or file capacity reached}
+        "503": {description: Persistence failed; rules unchanged}
+    put:
+      summary: Atomically create or replace local rules
+      description: Same admin contract, body, persistence and optional revision query as POST; permits existing names. Alias /api/v3/alert_config.
+      responses:
+        "200": {description: Submitted configs with new revision and persistent flag}
+        "409": {description: Stale revision; whole batch unchanged}
+    delete:
+      summary: Delete a local rule
+      description: Authenticated admin only. Optional revision query. Alias /api/v3/alert_config. Base rules retain a deletion marker for reset.
+      parameters:
+        - {in: query, name: name, required: true, schema: {type: string}}
+        - {in: query, name: revision, schema: {type: string, maxLength: 128}}
+      responses:
+        "200": {description: api, deleted name, new revision, persistent}
+        "404": {description: Rule or health engine unavailable}
+        "409": {description: Stale revision; rules unchanged}
+  /api/v1/manage/alert-rules/preview:
+    post:
+      summary: Validate a local rule mutation and preview matching charts
+      description: Authenticated admin only. Same revision, compilation, existence and capacity checks as saving. Does not evaluate expressions/history, modify rules or send notifications. Scope matching includes disabled rules; at most 50 chart details. Chart inventory may change after preview. Non-local node selectors rejected. Cache-Control no-store.
+      requestBody: &alertRuleMutationBody
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AlertRuleMutation'}
+      responses:
+        "200": {description: 'revision, action, name, valid=true, persistent, disabled, matched count, charts (id/title/context/family), truncated, limit=50 and notice. Orphan deletion reset has zero matches.'}
+        "400": {description: Invalid request or missing revision}
+        "401": {description: Authentication required}
+        "403": {description: Authenticated administrator required}
+        "404": {description: Rule or health engine unavailable}
+        "409": {description: Stale revision or create name exists}
+        "413": {description: Request exceeds 1 MiB}
+        "422": {description: At most 1000 overrides and deletion markers and 4 MiB file}
+  /api/v1/manage/alert-rules:
+    post:
+      summary: Persist a local rule mutation with optimistic concurrency
+      description: Same admin, body and validation contract as preview; revalidates at commit. No preview token required. Private file is replaced before publishing runtime changes. Reset exposes current startup configuration, not necessarily builtin defaults. Old revisions including before restart fail. After a lost response, read current state before retrying. Dispatched notifications cannot be withdrawn. Cache-Control no-store.
+      requestBody: *alertRuleMutationBody
+      responses:
+        "200":
+          description: Complete updated snapshot
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertRulesSnapshot'}
+        "400": {description: Invalid request or missing revision}
+        "401": {description: Authentication required}
+        "403": {description: Authenticated administrator required}
+        "404": {description: Rule or health engine unavailable}
+        "409": {description: Stale revision or name conflict; no changes saved}
+        "413": {description: Request exceeds 1 MiB}
+        "422": {description: Override or file capacity reached}
+        "503": {description: Persistence failed; rules unchanged}
   /api/v1/operations:
     get:
       summary: Global fleet resources, active problems and recent handling history
@@ -295,6 +372,65 @@ paths:
         "404":
           description: this process is not a hub
 components:
+  schemas:
+    AlertRuleSpec:
+      type: object
+      additionalProperties: false
+      required: [name, on]
+      description: lookup or calc required. Expressions use Monitor health syntax. every/delay/repeat use the existing duration grammar. disabled stops binding/evaluation.
+      properties:
+        name: {type: string, minLength: 1}
+        on: {type: string, minLength: 1}
+        class: {type: string}
+        type: {type: string}
+        component: {type: string}
+        lookup: {type: string}
+        calc: {type: string}
+        every: {type: string}
+        units: {type: string}
+        warn: {type: string}
+        crit: {type: string}
+        delay: {type: string}
+        repeat: {type: string}
+        info: {type: string}
+        to: {type: string}
+        chart_labels: {type: object, additionalProperties: {type: string}}
+        disabled: {type: boolean}
+    AlertRuleMutation:
+      type: object
+      additionalProperties: false
+      required: [revision, action]
+      description: create/update require config and no name; delete/reset require name and no config. reset removes a dynamic override or deletion marker, including orphan markers without a base.
+      properties:
+        revision: {type: string, minLength: 1, maxLength: 128, description: Opaque version changes at every commit and process restart}
+        action: {type: string, enum: [create, update, delete, reset]}
+        config: {$ref: '#/components/schemas/AlertRuleSpec'}
+        name: {type: string}
+    AlertRulesSnapshot:
+      type: object
+      required: [api, revision, persistent, scope, hostname, can_manage, configs, count]
+      properties:
+        api: {type: integer, enum: [1, 3]}
+        revision: {type: string}
+        persistent: {type: boolean}
+        scope: {type: string, enum: [local]}
+        hostname: {type: string}
+        can_manage: {type: boolean}
+        count: {type: integer}
+        configs:
+          type: array
+          items:
+            type: object
+            properties:
+              hash: {type: string}
+              name: {type: string}
+              on: {type: string}
+              source: {type: string}
+              every: {type: number, description: Evaluation interval seconds}
+              origin: {type: string, enum: [base, override, custom, deleted]}
+              has_base: {type: boolean}
+              deleted: {type: boolean}
+              config: {type: object, description: RuleSpec or a name with empty on for orphan deletion markers}
   securitySchemes:
     bearer:
       type: http

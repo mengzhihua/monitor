@@ -160,6 +160,26 @@ export interface Alarm {
   silenced?: boolean
 }
 export interface SilenceState { all: boolean; until?: number; alarms: Record<string, number>; maintenance?: boolean; maint_until?: number }
+export interface AlertRuleSpec {
+  name: string; on: string; class?: string; type?: string; component?: string
+  lookup?: string; calc?: string; every?: string; units?: string; warn?: string; crit?: string
+  delay?: string; repeat?: string; info?: string; to?: string; chart_labels?: Record<string, string>; disabled?: boolean
+}
+export interface AlertRuleConfig {
+  hash: string; name: string; on: string; source: string; every: number; config: Omit<AlertRuleSpec, 'on'> & { on?: string }
+  origin: 'base' | 'override' | 'custom' | 'deleted'; has_base: boolean; deleted: boolean
+}
+export interface AlertRulesSnapshot {
+  api: number; revision: string; persistent: boolean; hostname: string; scope: 'local'; can_manage: boolean
+  configs: AlertRuleConfig[]; count: number
+}
+export type AlertRuleChange = { revision: string; action: 'create' | 'update'; config: AlertRuleSpec }
+  | { revision: string; action: 'delete' | 'reset'; name: string }
+export interface AlertRulePreview {
+  revision: string; action: AlertRuleChange['action']; name: string; valid: boolean; persistent: boolean
+  matched: number; charts: { id: string; title: string; context: string; family: string }[]
+  truncated: boolean; limit: number; disabled: boolean; notice: string
+}
 export interface AlarmLogEntry {
   unique_id: number; alarm_id: number; when: number; hostname: string; name: string; chart: string; context: string
   family: string; status: AlarmStatus; old_status: AlarmStatus; value: number | null; old_value: number | null
@@ -237,10 +257,10 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return r.json() as Promise<T>
 }
 
-async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function send<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`
-  let init: RequestInit = { method, headers }
+  let init: RequestInit = { method, headers, signal }
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
     init = { ...init, body: JSON.stringify(body) }
@@ -273,6 +293,9 @@ function q(params: Record<string, string | number>): string {
 }
 
 export const api = {
+  alertRules: (signal?: AbortSignal) => get<AlertRulesSnapshot>('/api/v1/alert_config', signal),
+  previewAlertRule: (body: AlertRuleChange, signal?: AbortSignal) => send<AlertRulePreview>('POST', '/api/v1/manage/alert-rules/preview', body, signal),
+  changeAlertRule: (body: AlertRuleChange) => post<AlertRulesSnapshot>('/api/v1/manage/alert-rules', body),
   operationsViews: (signal?: AbortSignal) => get<OperationsViews>('/api/v1/operations/views', signal),
   saveOperationsViews: (revision: number, views: OperationsView[]) => post<OperationsViews>('/api/v1/operations/views', { revision, views }),
   operations: (signal?: AbortSignal, query: Record<string, string> = {}) => {

@@ -42,6 +42,10 @@ curl -sf "http://127.0.0.1:$PORT/api/v2/nodes" | grep '"api":2' >/dev/null || fa
 curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_count" | grep '"count"' >/dev/null || fail "alarm_count"
 curl -sf "http://127.0.0.1:$PORT/api/v1/alarm_summary" | grep '"status"' >/dev/null || fail "alarm_summary"
 curl -sf "http://127.0.0.1:$PORT/api/v1/manage/health" | grep '"enabled"' >/dev/null || fail "manage health"
+check=$(curl -sf -X POST "http://127.0.0.1:$PORT/api/v1/checks" -H 'Content-Type: application/json' -d '{"name":"smoke-check","status":"warning","message":"smoke","ttl":"1m"}') || fail "checks post"
+echo "$check" | grep '"status":"warning"' >/dev/null || fail "checks post body: $check"
+curl -sf "http://127.0.0.1:$PORT/api/v1/charts" | grep '"check.smoke-check"' >/dev/null || fail "check chart"
+curl -sf "http://127.0.0.1:$PORT/api/v1/checks" | grep 'smoke-check' >/dev/null || fail "checks list"
 curl -sf "http://127.0.0.1:$PORT/api/v1/info" | grep '"aclk"' >/dev/null || fail "info aclk"
 curl -sf "http://127.0.0.1:$PORT/api/v1/info" | python3 -c "import json,sys; a=json.load(sys.stdin)['aclk']; assert 'protocol' in a and 'capabilities' in a, a" || fail "info aclk fields"
 curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5" | grep '"anomaly"' >/dev/null || fail "data anomaly"
@@ -63,6 +67,7 @@ echo "$collectors" | grep '"name":"macos"' >/dev/null || fail "collector macos m
 echo "$collectors" | grep '"name":"db2"' >/dev/null || fail "collector db2 missing"
 echo "$collectors" | grep '"name":"containerd"' >/dev/null || fail "collector containerd missing"
 echo "$collectors" | grep '"name":"mq"' >/dev/null || fail "collector mq missing"
+echo "$collectors" | grep '"name":"checks"' >/dev/null || fail "collector checks missing"
 curl -sf "http://127.0.0.1:$PORT/api/v1/prometheus/catalog" | grep '"etcd"' >/dev/null || fail "prometheus catalog"
 
 data=$(curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5") || fail "data"

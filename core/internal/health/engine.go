@@ -176,12 +176,14 @@ type AnomalySource interface {
 
 // Engine evaluates rules and tracks alarms for one host.
 type Engine struct {
-	opt   Options
-	reg   *registry.Registry
-	db    *tsdb.Store
-	log   *slog.Logger
-	now   func() time.Time
-	rules []*Rule
+	opt        Options
+	reg        *registry.Registry
+	db         *tsdb.Store
+	log        *slog.Logger
+	now        func() time.Time
+	rules      []*Rule
+	tickMu     sync.Mutex // serializes evaluations with complete rule-set mutations
+	ruleConfig *ruleConfigStore
 
 	mu      sync.RWMutex
 	alarms  map[string]*Alarm // rule name|chart id
@@ -250,6 +252,10 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open maintenance plans: %w", err)
 	}
+	e.ruleConfig, e.rules, err = openRuleConfig(opt.LogDir, opt.Rules)
+	if err != nil {
+		return nil, fmt.Errorf("open alert rules: %w", err)
+	}
 	if opt.Enabled != nil {
 		e.enabled = *opt.Enabled
 	}
@@ -314,9 +320,7 @@ func (e *Engine) loadLog(path string) error {
 func (e *Engine) Rules() []*Rule {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	out := make([]*Rule, len(e.rules))
-	copy(out, e.rules)
-	return out
+	return cloneRules(e.rules)
 }
 
 // SetAnomaly installs the ML bit source used by lookup `anomaly-bit`.
@@ -332,49 +336,15 @@ func (e *Engine) UpsertRule(r *Rule) {
 	if r == nil {
 		return
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	replaced := false
-	for i, old := range e.rules {
-		if old.Spec.Name == r.Spec.Name {
-			e.rules[i] = r
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		e.rules = append(e.rules, r)
-	}
-	for k, a := range e.alarms {
-		if a.Name == r.Spec.Name {
-			delete(e.alarms, k)
-		}
+	if _, err := e.MutateRules(nil, RuleMutation{Upserts: []RuleSpec{r.Spec}}); err != nil {
+		e.log.Warn("alert rule upsert rejected", "name", r.Spec.Name, "err", err)
 	}
 }
 
 // RemoveRule drops a rule and its bound alarms. Returns false if unknown.
 func (e *Engine) RemoveRule(name string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	kept := e.rules[:0]
-	found := false
-	for _, r := range e.rules {
-		if r.Spec.Name == name {
-			found = true
-			continue
-		}
-		kept = append(kept, r)
-	}
-	if !found {
-		return false
-	}
-	e.rules = kept
-	for k, a := range e.alarms {
-		if a.Name == name {
-			delete(e.alarms, k)
-		}
-	}
-	return true
+	_, err := e.MutateRules(nil, RuleMutation{Delete: []string{name}})
+	return err == nil
 }
 
 // Now returns the engine clock (overridable in tests via Options.Now).
@@ -414,10 +384,12 @@ func (e *Engine) startDispatch() {
 // and closes the alarm log. Safe to call more than once.
 func (e *Engine) Close() {
 	e.closeOnce.Do(func() {
+		e.tickMu.Lock()
 		e.mu.Lock()
 		e.closed = true
 		close(e.notifyCh)
 		e.mu.Unlock()
+		e.tickMu.Unlock()
 		e.dispatchWG.Wait()
 		e.mu.Lock()
 		if e.logFile != nil {
@@ -430,6 +402,14 @@ func (e *Engine) Close() {
 
 // Tick binds rules to any new charts and evaluates alarms that are due.
 func (e *Engine) Tick(now time.Time) {
+	e.tickMu.Lock()
+	defer e.tickMu.Unlock()
+	e.mu.RLock()
+	closed := e.closed
+	e.mu.RUnlock()
+	if closed {
+		return
+	}
 	e.flushNotifyGroups(now)
 	if !e.Enabled() {
 		return
@@ -465,10 +445,7 @@ func (e *Engine) bind() {
 			continue
 		}
 		for _, c := range charts {
-			if c.ID != r.Spec.On && c.Context != r.Spec.On {
-				continue
-			}
-			if !labelsMatch(r.Spec.Labels, c.Labels) {
+			if !MatchesRuleChart(r.Spec, c) {
 				continue
 			}
 			key := r.Spec.Name + "|" + c.ID
@@ -481,7 +458,7 @@ func (e *Engine) bind() {
 				Class: r.Spec.Class, Type: r.Spec.Type, Component: r.Spec.Compon,
 				Units: r.Spec.Units, Info: r.Spec.Info, Lookup: r.Spec.Lookup, Calc: r.Spec.Calc,
 				Warn: r.Spec.Warn, Crit: r.Spec.Crit, Every: int64(r.Every / time.Second),
-				Recipient: r.Spec.To, Source: r.Source, Labels: c.Labels,
+				Recipient: r.Spec.To, Source: r.Source, Labels: c.LabelsSnapshot(),
 				Status: StatusUninitialized, Value: math.NaN(), Active: true,
 				rule: r, chart: c, delayMult: 1, notifiedSt: StatusUninitialized,
 			}
