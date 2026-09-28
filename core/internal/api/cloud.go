@@ -98,12 +98,14 @@ func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		s.pushTemplates() // membership change may alter matched templates
 		writeJSON(w, rm)
 	case http.MethodDelete:
 		if err := org.DeleteRoom(q.Get("id")); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		s.pushTemplates() // deleted membership may alter matched templates
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

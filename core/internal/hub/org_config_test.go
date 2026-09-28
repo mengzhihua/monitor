@@ -513,3 +513,45 @@ func TestIngestPushesHealthOverlay(t *testing.T) {
 		t.Fatalf("post-upsert overlay = %+v", f.Health)
 	}
 }
+
+// TestUnlinkClearsOverlay: after the last matching template is deleted, the
+// next push must still carry a (now-empty) overlay so the agent clears stale
+// template rules — nil would mean "no template support" and be ignored.
+func TestUnlinkClearsOverlay(t *testing.T) {
+	tpls, err := OpenTemplates(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := tpls.Upsert(Template{
+		Name:   "os-linux",
+		Rules:  []health.RuleSpec{{Name: "tpl.cpu", On: "system.cpu", Calc: "$user", Warn: "$this > 1", Every: "10s"}},
+		Assign: TemplateAssign{Nodes: []string{"agent-t"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newConfigTestHub(t, Options{Keys: []string{"k"}, HealthOverlay: func(nodeID string) *stream.HealthOverlay {
+		ov := tpls.Effective(nodeID, "", nil)
+		return &ov // non-nil even when empty, like main.go when templates are enabled
+	}})
+	ws := connectAgent(t, h, "agent-t")
+	f := readFrame(t, ws)
+	if f.Health == nil || f.Health.Rev == 0 {
+		t.Fatalf("expected non-empty overlay, got %+v", f)
+	}
+
+	if err := tpls.Delete(saved.ID); err != nil {
+		t.Fatal(err)
+	}
+	nd, _ := h.Get("agent-t")
+	if !nd.PushConfig(NodeConfig{NodeID: "agent-t"}) {
+		t.Fatal("PushConfig returned false")
+	}
+	f = readFrame(t, ws)
+	if f.Type != stream.TypeConfig || f.Health == nil {
+		t.Fatalf("post-delete frame must still carry the (empty) overlay: %+v", f)
+	}
+	if f.Health.Rev != 0 || len(f.Health.Templates) != 0 || len(f.Health.Rules) != 0 {
+		t.Fatalf("want empty overlay after delete, got %+v", f.Health)
+	}
+}

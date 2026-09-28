@@ -9,9 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/mengzhihua/monitor/core/internal/collect"
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
@@ -166,4 +170,101 @@ func TestTemplatesAPI(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("DELETE = %d", resp.StatusCode)
 	}
+}
+
+// SetRoomNodes must re-push the overlay to newly-matched connected nodes.
+func TestRoomMembershipPushesOverlay(t *testing.T) {
+	reg := registry.New(&registry.Host{ID: "hub-id", Hostname: "hub", OS: "linux", UpdateEvery: 1}, nil)
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	org, err := hub.OpenOrg(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, _ := org.CreateSpace("prod")
+	rm, _ := org.CreateRoom(sp.ID, "edge")
+	tpls, err := hub.OpenTemplates(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tpls.Upsert(hub.Template{
+		Name:   "os-linux",
+		Rules:  healthRuleForTest(),
+		Assign: hub.TemplateAssign{Rooms: []string{rm.ID}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var nodes *hub.Nodes
+	nodes, err = hub.Open(db, t.TempDir(), hub.Options{Keys: []string{testKey}, ExtraKeys: org.Keys,
+		HealthOverlay: func(nodeID string) *stream.HealthOverlay {
+			_, roomID := org.Membership(nodeID)
+			var labels map[string]string
+			if nd, ok := nodes.Get(nodeID); ok {
+				labels = nd.Host.Labels
+			}
+			ov := tpls.Effective(nodeID, roomID, labels)
+			return &ov // always non-nil when templates are enabled
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
+	s, err := New(reg, db, sched, Options{Mode: "hub", Nodes: nodes, Org: org, Templates: tpls,
+		OperationsDir: t.TempDir(), StartedAt: time.Now(), Users: []User{{Name: "root", Token: "admin", Role: RoleAdmin}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	// connect agent; initial overlay is empty (node not in the room yet)
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+stream.Path,
+		http.Header{"Authorization": []string{"Bearer " + testKey}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if err := ws.WriteJSON(stream.Frame{Type: stream.TypeHello,
+		Host: &registry.Host{ID: "agent-r", Hostname: "agent-r", OS: "linux", UpdateEvery: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	readWSFrame(t, ws) // welcome
+	f := readWSFrame(t, ws)
+	if f.Type != stream.TypeConfig || f.Health == nil || f.Health.Rev != 0 {
+		t.Fatalf("want initial empty overlay, got %+v", f)
+	}
+
+	// PUT the node into the room → hub must push a fresh overlay
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/hub/rooms?id="+rm.ID,
+		strings.NewReader(`{"nodes":["agent-r"]}`))
+	req.Header.Set("Authorization", "Bearer admin")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("SetRoomNodes = %d", resp.StatusCode)
+	}
+	f = readWSFrame(t, ws)
+	if f.Type != stream.TypeConfig || f.Health == nil || len(f.Health.Templates) != 1 || f.Health.Templates[0] != "os-linux" {
+		t.Fatalf("post-membership overlay = %+v", f)
+	}
+}
+
+func healthRuleForTest() []health.RuleSpec {
+	return []health.RuleSpec{{Name: "tpl.cpu", On: "system.cpu", Calc: "$user", Warn: "$this > 1", Every: "10s"}}
+}
+
+func readWSFrame(t *testing.T, ws *websocket.Conn) stream.Frame {
+	t.Helper()
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var f stream.Frame
+	if err := ws.ReadJSON(&f); err != nil {
+		t.Fatal(err)
+	}
+	return f
 }

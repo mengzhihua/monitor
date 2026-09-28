@@ -328,10 +328,8 @@ func run() error {
 					labels = nd.Host.Labels
 				}
 				ov := templates.Effective(nodeID, roomID, labels)
-				if ov.Rev == 0 {
-					return nil
-				}
-				return &ov
+				return &ov // always non-nil when templates are enabled: an empty
+				// overlay (Rev 0) tells the agent to clear stale template rules
 			}, // resolved per-node template overlay
 			OnConfigState: func(nodeID string, f stream.Frame) {
 				if f.ConfigYAML != "" {
