@@ -4,7 +4,7 @@ import type { Alarm, AlarmLogEntry, SilenceState } from '../api'
 import { api } from '../api'
 import { usePolling } from '../polling'
 
-const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[]; canManage: boolean }>()
+const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[]; canManage: boolean; canClose: boolean }>()
 const actionError = ref('')
 const actionBusy = ref(false)
 const emit = defineEmits<{ close: [] }>()
@@ -91,7 +91,7 @@ async function silenceAll(on: boolean) {
 }
 
 async function closeAlarm(a: Alarm) {
-  if (!props.canManage || actionBusy.value) return
+  if (!props.canClose || actionBusy.value) return
   const comment = window.prompt(`关闭问题 ${a.name}？可填写备注。`, '')
   if (comment === null) return
   actionError.value = ''
@@ -168,7 +168,7 @@ function sustainText(a: Alarm) {
           <td class="dim">{{ a.chart }}</td>
           <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
           <td class="dim">{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</td>
-          <td><button v-if="canManage && (a.status === 'WARNING' || a.status === 'CRITICAL')" class="mute tiny" :disabled="actionBusy" title="手动关闭此问题（条件仍成立时下次评估会重新触发）" @click="closeAlarm(a)">关闭</button>
+          <td class="ops"><button v-if="canClose && (a.status === 'WARNING' || a.status === 'CRITICAL')" class="mute tiny" :disabled="actionBusy" title="手动关闭此问题（条件仍成立时下次评估会重新触发）" @click="closeAlarm(a)">关闭</button>
             <button v-if="canManage" class="mute tiny" :disabled="actionBusy" @click="silenceOne(a, !manuallySilenced(a))">{{ manuallySilenced(a) ? '解除手动静默' : '静默' }}</button>
             <span v-if="manuallySilenced(a) || allSilenced" class="dim"> {{ remain(manuallySilenced(a) ? alarmUntil(a) : silence.until) }}</span>
             <span v-else-if="a.silenced" class="dim">维护或其他抑制</span>
@@ -206,6 +206,8 @@ h3 small { color: #64748b; font-weight: 400; margin-left: 6px; text-transform: n
 table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
 th { text-align: left; color: #64748b; font-weight: 500; font-size: 11px; padding: 4px 6px; border-bottom: 1px solid #1e293b; }
 td { padding: 4px 6px; border-bottom: 1px solid #111827; white-space: nowrap; }
+td.ops { white-space: normal; }
+td.ops .mute { display: block; margin-bottom: 2px; width: max-content; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .dim { color: #64748b; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #1e293b; color: #94a3b8; }
