@@ -127,24 +127,40 @@ func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
 	fields := []*string{&spec.Lookup, &spec.Calc, &spec.Warn, &spec.Crit,
 		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.Delay,
 		&spec.Repeat, &spec.Info, &spec.Units}
-	for _, fp := range fields {
-		if !strings.Contains(*fp, "{$") {
-			continue
+	// Expand iteratively so a macro value may itself contain {$OTHER}.
+	for round := 0; round < 10; round++ {
+		changed := false
+		for _, fp := range fields {
+			if !strings.Contains(*fp, "{$") {
+				continue
+			}
+			*fp = macroRef.ReplaceAllStringFunc(*fp, func(m string) string {
+				name := m[2 : len(m)-1]
+				if v, ok := spec.Macros[name]; ok {
+					changed = true
+					return v
+				}
+				if v, ok := global[name]; ok {
+					changed = true
+					return v
+				}
+				return m
+			})
 		}
-		var bad string
-		*fp = macroRef.ReplaceAllStringFunc(*fp, func(m string) string {
+		if !changed {
+			break
+		}
+	}
+	for _, fp := range fields {
+		if m := macroRef.FindString(*fp); m != "" {
 			name := m[2 : len(m)-1]
-			if v, ok := spec.Macros[name]; ok {
-				return v
+			if _, ok := spec.Macros[name]; ok {
+				return spec, fmt.Errorf("macro recursion in %s", m)
 			}
-			if v, ok := global[name]; ok {
-				return v
+			if _, ok := global[name]; ok {
+				return spec, fmt.Errorf("macro recursion in %s", m)
 			}
-			bad = m
-			return m
-		})
-		if bad != "" {
-			return spec, fmt.Errorf("unknown macro %s", bad)
+			return spec, fmt.Errorf("unknown macro %s", m)
 		}
 	}
 	return spec, nil

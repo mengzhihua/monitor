@@ -1064,6 +1064,11 @@ func (e *Engine) lookupKind(c *registry.Chart, l *Lookup, selected map[string]bo
 		if err != nil {
 			continue
 		}
+		if l.Kind == "count" {
+			// count answers 0 for a selected dimension that simply has no
+			// matching samples; only query failures keep it out.
+			matched = true
+		}
 		vals := make([]tsdb.Point, 0, len(pts))
 		for _, p := range pts {
 			if !math.IsNaN(p.Value) {
@@ -1191,38 +1196,36 @@ func (e *Engine) lookupTrend(c *registry.Chart, l *Lookup, selected map[string]b
 			continue
 		}
 		id := registry.SeriesID(c.ID, d.ID)
-		bs, _, err := e.db.QueryAuto(id, after, before, 0)
-		if err != nil {
+		// Pick the finest tier that still reaches back to `after`; when the
+		// window is too old for tier0 (retention) or a tier was enabled late,
+		// fall back to the coarsest tier that has any data. Tier0 buckets are
+		// single samples, so the reduction below is uniform.
+		nTiers := len(e.db.Tiers())
+		var bs []tsdb.Bucket
+		for tier := 0; tier < nTiers; tier++ {
+			if !e.db.TierCovers(id, tier, after) {
+				continue
+			}
+			b, err := e.db.QueryTier(id, tier, after, before)
+			if err == nil && len(b) > 0 {
+				bs = b
+				break
+			}
+		}
+		if len(bs) == 0 {
+			for tier := nTiers - 1; tier >= 0; tier-- {
+				b, err := e.db.QueryTier(id, tier, after, before)
+				if err == nil && len(b) > 0 {
+					bs = b
+					break
+				}
+			}
+		}
+		if len(bs) == 0 {
 			continue
 		}
 		var v float64
-		if len(bs) == 0 {
-			pts, err := e.db.Query(id, after, before)
-			if err != nil || len(pts) == 0 {
-				continue
-			}
-			vals := make([]float64, 0, len(pts))
-			for _, p := range pts {
-				if !math.IsNaN(p.Value) {
-					vals = append(vals, p.Value)
-				}
-			}
-			if len(vals) == 0 {
-				continue
-			}
-			switch l.Kind {
-			case "trendavg":
-				v = reduce(vals, tsdb.GroupAverage)
-			case "trendmin":
-				v = reduce(vals, tsdb.GroupMin)
-			case "trendmax":
-				v = reduce(vals, tsdb.GroupMax)
-			case "trendsum":
-				v = reduce(vals, tsdb.GroupSum)
-			case "trendcount":
-				v = float64(len(vals))
-			}
-		} else {
+		{
 			switch l.Kind {
 			case "trendavg":
 				var s float64
