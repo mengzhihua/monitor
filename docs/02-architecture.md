@@ -540,3 +540,4 @@ sequenceDiagram
 | 外部服务检查 `GET\|POST /api/v1/checks` | `internal/collect/checks.go` + `internal/api` | 被动检查 |
 | 告警依赖 `health.inhibit` | `internal/health/inhibit.go` | 通知抑制 |
 | 告警 `for` / `keep_firing_for` | `internal/health/sustain.go` | 状态保持；面板显示等待与恢复倒计时 |
+| 告警 `recovery` | `internal/health/recovery.go` | 恢复表达式成立后才从警告或严重回到正常 |

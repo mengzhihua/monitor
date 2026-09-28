@@ -83,6 +83,7 @@ func cloneRule(rule *Rule) *Rule {
 	copy.Calc = cloneRuleExpr(rule.Calc)
 	copy.Warn = cloneRuleExpr(rule.Warn)
 	copy.Crit = cloneRuleExpr(rule.Crit)
+	copy.Recovery = cloneRuleExpr(rule.Recovery)
 	return &copy
 }
 

@@ -173,6 +173,8 @@ M19–M26 计划批次已全部合入。profile、Kafka 二进制协议、PerfEv
 
 持续触发：规则字段 `for` 与 `keep_firing_for` 分别推迟状态升高和恢复。`delay` 仍只作用于通知。告警面板显示等待和恢复倒计时。无数据策略不在本轮。
 
+恢复表达式：规则字段 `recovery` 对应 Zabbix 的 Recovery expression。警告和严重表达式都不成立后，恢复表达式为真才回到正常。告警带 `recovery_hold`。
+
 ## 4.0 M20（已合入 main）
 
 1. journald：`journalctl -f` 跟随（`follow: false` 退回按次查询）；Function 支持 `unit` / `priority` / `boot` / `cursor`

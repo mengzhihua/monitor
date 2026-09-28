@@ -54,7 +54,7 @@ function parseDraft(): AlertRuleSpec {
   const value: unknown = JSON.parse(draft.value)
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('请输入单个规则 JSON 对象。')
   const rule = value as Record<string, unknown>
-  const strings = ['name', 'on', 'class', 'type', 'component', 'lookup', 'calc', 'every', 'units', 'warn', 'crit', 'for', 'keep_firing_for', 'delay', 'repeat', 'info', 'to']
+  const strings = ['name', 'on', 'class', 'type', 'component', 'lookup', 'calc', 'every', 'units', 'warn', 'crit', 'recovery', 'for', 'keep_firing_for', 'delay', 'repeat', 'info', 'to']
   for (const [key, item] of Object.entries(rule)) {
     if (strings.includes(key)) { if (typeof item !== 'string') throw new Error(`${key} 必须是字符串。`) }
     else if (key === 'disabled') { if (typeof item !== 'boolean') throw new Error('disabled 必须是布尔值。') }
@@ -203,7 +203,7 @@ onBeforeUnmount(() => {
             <p v-if="action === 'delete'" class="notice">{{ target?.has_base ? '将停用这条配置规则并保留删除标记，之后可恢复配置规则。' : '将删除这条自定义规则。' }}JSON 草稿不会作为删除操作提交。</p>
             <p v-if="action === 'reset'" class="notice">{{ orphanedDeletion ? '基础配置中已不存在这条规则。此操作只清除失效的删除标记，不会新建规则。' : '将移除对这条规则的覆盖或删除记录，恢复服务器加载的基础定义。' }}</p>
             <label>规则 JSON<textarea v-model="draft" :readonly="!canManage || busy || ['delete','reset'].includes(action)" spellcheck="false" aria-label="规则 JSON" /></label>
-            <details class="guide"><summary>规则字段与示例说明</summary><p>name 是规则名称，on 是图表 ID 或 context；lookup 或 calc 至少填写一个。warn / crit 使用 $this 判断警告与严重级别，every 为求值间隔。</p><p>支持 name、on、class、type、component、lookup、calc、every、units、warn、crit、for、keep_firing_for、delay、repeat、info、to、chart_labels、disabled。JSON 不支持注释。</p><p>for 是状态升到警告或严重之前条件必须连续成立的时间；keep_firing_for 是条件恢复后仍保持已升高状态的时间。delay 只推迟通知，不改变状态何时切换。disabled 为 true 时停止该规则求值；需要临时抑制通知时，请使用静默或维护计划。</p></details>
+            <details class="guide"><summary>规则字段与示例说明</summary><p>name 是规则名称，on 是图表 ID 或 context；lookup 或 calc 至少填写一个。warn / crit 使用 $this 判断警告与严重级别，every 为求值间隔。</p><p>支持 name、on、class、type、component、lookup、calc、every、units、warn、crit、recovery、for、keep_firing_for、delay、repeat、info、to、chart_labels、disabled。JSON 不支持注释。</p><p>for 是状态升到警告或严重之前条件必须连续成立的时间；keep_firing_for 是条件恢复后仍保持已升高状态的时间。recovery 在警告和严重表达式都不成立后，还要成立才回到正常。delay 只推迟通知，不改变状态何时切换。disabled 为 true 时停止该规则求值；需要临时抑制通知时，请使用静默或维护计划。</p></details>
             <div v-if="canManage" class="toolbar editor-actions"><button v-if="action === 'update'" :disabled="busy" @click="toggleDisabled">切换启用 / 禁用草稿</button><button :disabled="!canPreview" @click="validate">{{ previewing ? '正在校验…' : '校验并预览' }}</button></div>
             <p v-if="changed || mustReview" class="notice">服务器版本已变化或需要重新核对。当前 JSON 草稿和原保存基线已保留。</p>
             <button v-if="canManage && (changed || mustReview)" :disabled="loading || busy" @click="load(true)">读取最新并重新核对</button>

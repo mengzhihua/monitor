@@ -28,6 +28,7 @@ usePolling(async (signal) => {
       old.pending_since = n.pending_since
       old.pending_until = n.pending_until
       old.hold_until = n.hold_until
+      old.recovery_hold = n.recovery_hold
       old.silenced = n.silenced
     }
   } catch { /* next tick */ }
@@ -119,6 +120,7 @@ function sustainText(a: Alarm) {
     const label = a.pending_status === 'CRITICAL' ? '等待严重' : '等待警告'
     return a.pending_until ? `${label} ${remain(a.pending_until)}` : label
   }
+  if (a.recovery_hold && (a.status === 'WARNING' || a.status === 'CRITICAL')) return '等待恢复'
   if ((a.status === 'WARNING' || a.status === 'CRITICAL') && a.hold_until && a.hold_until > now.value) {
     return `恢复保持 ${remain(a.hold_until)}`
   }
