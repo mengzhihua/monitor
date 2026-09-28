@@ -415,6 +415,13 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | API | `GET /api/v1/prometheus/catalog` 列出 profile / 已有原生采集器 / fallback 策略 |
 | 告警 | etcd 无 leader、Vault sealed、MinIO、blackbox、Kafka brokers、Alertmanager、Jenkins 队列 |
 
+### 已实现能力（外部服务检查）
+
+| 模块 | 说明 |
+| --- | --- |
+| API | `GET\|POST /api/v1/checks`：本机被动检查（Nagios passive / Zabbix trapper / Datadog service check）。状态 `ok` / `warning` / `critical`，超过 TTL 未再上报记为 `expired`。图表 `check.<name>`，context `check.status`。管理员和排障可提交，只读可查看 |
+| 采集 / 告警 | 采集器 `checks` 与 Function `checks`；内置告警 `external_check_status`（警告为 WARNING，严重或过期为 CRITICAL） |
+
 ### 开发
 
 ```bash
