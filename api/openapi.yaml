@@ -360,7 +360,7 @@ paths:
               required: [alarm_id]
               properties:
                 alarm_id: {type: integer, format: uint64}
-                comment: {type: string, maxLength: 2048}
+                comment: {type: string, maxLength: 512}
       responses:
         "200": {description: updated alarm}
         "403": {description: insufficient role}

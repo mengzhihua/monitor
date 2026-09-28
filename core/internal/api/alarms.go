@@ -204,8 +204,13 @@ func (s *Server) handleAlarmClose(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	node := r.URL.Query().Get("node")
-	if node != "" && node != "local" && node != s.reg.Host.ID {
+	// Same resolution as handleAlarms: only the local view has a live engine;
+	// remote hub nodes carry mirrored alarm state that cannot be closed here.
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	if v.node != nil {
 		http.Error(w, "manual close is only supported on the local health engine", http.StatusNotImplemented)
 		return
 	}
@@ -221,6 +226,11 @@ func (s *Server) handleAlarmClose(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if len(body.Comment) > 512 {
+		http.Error(w, "comment too long (max 512)", http.StatusBadRequest)
+		return
+	}
+	withAuditTarget(r, strconv.FormatUint(body.AlarmID, 10))
 	u := userOf(r)
 	if err := s.opt.Health.CloseAlarm(body.AlarmID, u.Name, body.Comment); err != nil {
 		switch {

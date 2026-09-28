@@ -322,7 +322,11 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				return
 			}
 			r = r.WithContext(context.WithValue(r.Context(), userKey{}, u))
-			next = s.auditWrap(u, r, next)
+			// Local variable: reassigning the closure's `next` would nest
+			// wrappers across requests and bake in the first caller's identity.
+			h := s.auditWrap(u, r, next)
+			h.ServeHTTP(w, r)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
