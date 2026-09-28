@@ -206,6 +206,7 @@ h3 small { color: #64748b; font-weight: 400; margin-left: 6px; text-transform: n
 table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
 th { text-align: left; color: #64748b; font-weight: 500; font-size: 11px; padding: 4px 6px; border-bottom: 1px solid #1e293b; }
 td { padding: 4px 6px; border-bottom: 1px solid #111827; white-space: nowrap; }
+td:last-child { white-space: normal; min-width: 130px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .dim { color: #64748b; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #1e293b; color: #94a3b8; }
