@@ -87,7 +87,7 @@ func (s *Server) alertConfigResponse(r *http.Request, snapshot health.RuleConfig
 			// An invalid override shadowing an active base rule replaces the
 			// entry: the shown config is the broken override needing repair.
 			item := &out.Configs[i]
-			item.Origin, item.Source, item.Config, item.On = "invalid", "api", spec, spec.On
+			*item = alertConfigItem{Name: spec.Name, On: spec.On, Source: "api", HasBase: item.HasBase, Config: spec, Origin: "invalid"}
 			continue
 		}
 		out.Configs = append(out.Configs, alertConfigItem{Name: spec.Name, On: spec.On, Source: "api",
