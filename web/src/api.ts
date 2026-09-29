@@ -328,6 +328,13 @@ function q(params: Record<string, string | number>): string {
   return s ? `?${s}` : ''
 }
 
+export interface ServiceNode {
+  name: string; status: string; sla: number; alarms?: string[]; children?: string[]
+}
+export interface ServiceReport { from: number; to: number; services: ServiceNode[] }
+export interface TopologyEdge { source: string; target: string; kind: string }
+export interface AvailabilityRow { name: string; chart: string; uptime: number; raised_seconds: number; window_seconds: number }
+
 export const api = {
   alertRules: (signal?: AbortSignal) => get<AlertRulesSnapshot>('/api/v1/alert_config', signal),
   previewAlertRule: (body: AlertRuleChange, signal?: AbortSignal) => send<AlertRulePreview>('POST', '/api/v1/manage/alert-rules/preview', body, signal),
@@ -339,6 +346,9 @@ export const api = {
     const s = q.toString()
     return get<OperationsSnapshot>('/api/v1/operations' + (s ? '?' + s : ''), signal)
   },
+  services: (signal?: AbortSignal, window = '24h') => get<ServiceReport>('/api/v1/services?window=' + encodeURIComponent(window), signal),
+  topology: (signal?: AbortSignal) => get<{ edges: TopologyEdge[] }>('/api/v1/topology', signal),
+  availability: (signal?: AbortSignal, window = '24h') => get<{ from: number; to: number; alarms: AvailabilityRow[] }>('/api/v1/reports/availability?window=' + encodeURIComponent(window), signal),
   testNotification: (channel: string) => post<{ queued: boolean }>('/api/v1/operations/notifications/test', { channel }),
   notifications: (signal?: AbortSignal) => get<NotificationSnapshot>('/api/v1/operations/notifications', signal),
   maintenance: (signal?: AbortSignal) => get<MaintenanceSnapshot>('/api/v1/operations/maintenance', signal),

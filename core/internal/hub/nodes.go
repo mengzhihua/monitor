@@ -36,6 +36,8 @@ type Options struct {
 	// Keys agents must present (Authorization: Bearer / ?api_key=). Empty
 	// disables ingestion.
 	Keys []string
+	// PSK, when set, must also be sent as X-Monitor-PSK.
+	PSK string
 	// Replicate bounds how far back agents may backfill on connect.
 	Replicate time.Duration
 	// Quotas guard hub memory/disk against a misbehaving agent; zero means

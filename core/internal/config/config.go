@@ -13,6 +13,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/export"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
+	"github.com/mengzhihua/monitor/core/internal/sla"
 )
 
 type Config struct {
@@ -43,6 +44,9 @@ type Config struct {
 		Users         []User   `yaml:"users"`      // named credentials with roles
 		OIDC          OIDC     `yaml:"oidc"`
 		LDAP          LDAP     `yaml:"ldap"`
+		SAML          SAML     `yaml:"saml"`
+		TOTPSecret    string   `yaml:"totp_secret"`
+		Groups        []Group  `yaml:"groups"`
 		TicketWebhook string   `yaml:"ticket_webhook"` // POST handling JSON after a successful save; empty = off
 		// Audit logs mutating API calls and auth events to <data_dir>/operations/audit-log.jsonl.
 		Audit struct {
@@ -60,16 +64,58 @@ type Config struct {
 		// monitor.example.yaml).
 		Modules map[string]yaml.Node `yaml:"modules"`
 	} `yaml:"collectors"`
-	Health  Health  `yaml:"health"`
-	Plugins Plugins `yaml:"plugins"`
-	Export  Export  `yaml:"export"`
+	Health   Health        `yaml:"health"`
+	Plugins  Plugins       `yaml:"plugins"`
+	Export   Export        `yaml:"export"`
+	Services []sla.Service `yaml:"services"`
+	Topology []sla.Link    `yaml:"topology"`
+	Commands []Command     `yaml:"commands"`
+	Reports  Reports       `yaml:"reports"`
+	Trapper  Trapper       `yaml:"trapper"`
+}
+
+// Group grants Room names to the users that list it.
+type Group struct {
+	Name  string   `yaml:"name"`
+	Rooms []string `yaml:"rooms"`
+}
+
+// Command is a whitelisted absolute argv. The API only accepts the name.
+type Command struct {
+	Name string   `yaml:"name"`
+	Argv []string `yaml:"argv"`
+}
+
+// Reports writes an availability CSV on a timer. Every empty disables it.
+type Reports struct {
+	Every time.Duration `yaml:"every"`
+	Dir   string        `yaml:"dir"`
+}
+
+// Trapper listens for zabbix_sender frames. Listen empty disables it.
+type Trapper struct {
+	Listen  string   `yaml:"listen"`
+	Allowed []string `yaml:"allowed"`
+	PSK     string   `yaml:"psk"`
+}
+
+// SAML is web.saml.
+type SAML struct {
+	EntityID string `yaml:"entity_id"`
+	ACSURL   string `yaml:"acs_url"`
+	SSOURL   string `yaml:"sso_url"`
+	CertPEM  string `yaml:"idp_cert"`
+	Role     string `yaml:"role"`
 }
 
 // User is an API credential: role admin | troubleshooter | viewer.
 type User struct {
-	Name  string `yaml:"name"`
-	Token string `yaml:"token"`
-	Role  string `yaml:"role"`
+	Name   string   `yaml:"name"`
+	Token  string   `yaml:"token"`
+	Role   string   `yaml:"role"`
+	Groups []string `yaml:"groups"`
+	Rooms  []string `yaml:"rooms"`
+	TOTP   string   `yaml:"totp_secret"`
 }
 
 // Stream configures this agent's upstream connection to a hub.
@@ -77,6 +123,7 @@ type Stream struct {
 	Enabled            bool          `yaml:"enabled"`
 	Destinations       []string      `yaml:"destinations"` // ws://hub:19999 (path optional), tried in order
 	APIKey             string        `yaml:"api_key"`
+	PSK                string        `yaml:"psk"`
 	ClaimToken         string        `yaml:"claim_token"`
 	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
 	Timeout            time.Duration `yaml:"timeout"`
@@ -89,6 +136,7 @@ type Stream struct {
 // Hub configures accepting streamed nodes (mode: hub).
 type Hub struct {
 	APIKeys   []string      `yaml:"api_keys"`  // credentials agents present; empty = no ingestion
+	PSK       string        `yaml:"psk"`       // required X-Monitor-PSK header when set
 	Replicate time.Duration `yaml:"replicate"` // max backfill accepted from agents
 	// Ingest quotas (0 = default: 1000 / 5000 / 1000).
 	MaxNodes         int `yaml:"max_nodes"`
@@ -162,6 +210,8 @@ type Health struct {
 	Alarms           []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
 	Windows          []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
 	Macros           map[string]string          `yaml:"macros"`  // global {$NAME} user macros usable in rule fields
+	Actions          []health.Action            `yaml:"actions"`
+	Correlation      []health.CorrelationRule   `yaml:"correlation"`
 }
 
 // Notify holds the notification channels; a channel is active when its
@@ -260,6 +310,10 @@ type Notify struct {
 		Phone     string `yaml:"phone"`
 		URL       string `yaml:"url"`
 	} `yaml:"sms"`
+	Script struct {
+		Path string   `yaml:"path"`
+		Args []string `yaml:"args"`
+	} `yaml:"script"`
 }
 
 // Export pushes latest samples to Graphite / Influx / JSON HTTP.

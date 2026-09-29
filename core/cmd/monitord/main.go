@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
+	"github.com/mengzhihua/monitor/core/internal/trapper"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
@@ -180,7 +182,7 @@ func run() error {
 	}
 	var users []api.User
 	for _, u := range cfg.Web.Users {
-		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role)})
+		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role), Rooms: userRooms(u, cfg.Web.Groups), TOTP: u.TOTP})
 	}
 
 	var sc *stream.Client
@@ -216,6 +218,7 @@ func run() error {
 			Alarms:             alarms,
 			Destinations:       cfg.Stream.Destinations,
 			APIKey:             cfg.Stream.APIKey,
+			PSK:                cfg.Stream.PSK,
 			ClaimToken:         cfg.Stream.ClaimToken,
 			InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
 			Timeout:            cfg.Stream.Timeout,
@@ -277,7 +280,14 @@ func run() error {
 		StartedAt:     time.Now(),
 		AllowFrom:     cfg.Web.AllowFrom,
 		Token:         cfg.Web.Token,
+		TOTPSecret:    cfg.Web.TOTPSecret,
 		Users:         users,
+		Services:      cfg.Services,
+		Links:         cfg.Topology,
+		Commands:      apiCommands(cfg.Commands),
+		ReportEvery:   cfg.Reports.Every,
+		ReportDir:     reportDir(cfg),
+		SelfMonitor:   true,
 		Health:        eng,
 		Plugins:       pm,
 		Stream:        sc,
@@ -317,6 +327,7 @@ func run() error {
 		}
 		nodes, err = hub.Open(db, hubDir, hub.Options{
 			Keys:             cfg.Hub.APIKeys,
+			PSK:              cfg.Hub.PSK,
 			ExtraKeys:        org.Keys,
 			Replicate:        cfg.Hub.Replicate,
 			MaxNodes:         cfg.Hub.MaxNodes,
@@ -378,6 +389,10 @@ func run() error {
 		apiOpt.OIDC = &api.OIDCConfig{Issuer: cfg.Web.OIDC.Issuer, ClientID: cfg.Web.OIDC.ClientID,
 			ClientSecret: cfg.Web.OIDC.ClientSecret, RedirectURL: cfg.Web.OIDC.RedirectURL, Role: cfg.Web.OIDC.Role}
 	}
+	if cfg.Web.SAML.SSOURL != "" {
+		apiOpt.SAML = &api.SAMLConfig{EntityID: cfg.Web.SAML.EntityID, ACSURL: cfg.Web.SAML.ACSURL,
+			SSOURL: cfg.Web.SAML.SSOURL, CertPEM: cfg.Web.SAML.CertPEM, Role: cfg.Web.SAML.Role}
+	}
 	if cfg.Web.LDAP.URL != "" {
 		apiOpt.LDAP = &api.LDAPConfig{URL: cfg.Web.LDAP.URL, UserDN: cfg.Web.LDAP.UserDN,
 			BindDN: cfg.Web.LDAP.BindDN, BindPass: cfg.Web.LDAP.BindPass, Role: cfg.Web.LDAP.Role}
@@ -391,6 +406,11 @@ func run() error {
 	srv, err = api.New(reg, db, sched, apiOpt)
 	if err != nil {
 		return err
+	}
+	if cfg.Trapper.Listen != "" {
+		if _, err := trapper.Start(ctx.Done(), cfg.Trapper.Listen, cfg.Trapper.Allowed, cfg.Trapper.PSK, reg); err != nil {
+			return fmt.Errorf("trapper: %w", err)
+		}
 	}
 	if eng != nil {
 		eng.SetOnEvent(func(e health.LogEntry) {
@@ -677,6 +697,9 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	if n.SMS.Phone != "" && (n.SMS.URL != "" || n.SMS.AccessKey != "") {
 		notifiers = append(notifiers, &health.SMSNotifier{Provider: n.SMS.Provider, AccessKey: n.SMS.AccessKey, Secret: n.SMS.Secret, SignName: n.SMS.SignName, Template: n.SMS.Template, Phone: n.SMS.Phone, URL: n.SMS.URL})
 	}
+	if n.Script.Path != "" {
+		notifiers = append(notifiers, &health.ScriptNotifier{Path: n.Script.Path, Args: n.Script.Args})
+	}
 
 	vars := map[string]float64{"cpus": float64(runtime.NumCPU())}
 	if vm, err := mem.VirtualMemory(); err == nil {
@@ -713,7 +736,54 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		OnCall:           cfg.Health.OnCall,
 		Windows:          cfg.Health.Windows,
 		Macros:           cfg.Health.Macros,
+		Actions:          cfg.Health.Actions,
+		Correlation:      cfg.Health.Correlation,
+		RunCommand:       commandRunner(cfg.Commands),
 	})
+}
+
+func userRooms(u config.User, groups []config.Group) []string {
+	out := append([]string{}, u.Rooms...)
+	for _, name := range u.Groups {
+		for _, g := range groups {
+			if g.Name == name {
+				out = append(out, g.Rooms...)
+			}
+		}
+	}
+	return out
+}
+
+func apiCommands(in []config.Command) []api.Command {
+	out := make([]api.Command, 0, len(in))
+	for _, c := range in {
+		out = append(out, api.Command{Name: c.Name, Argv: c.Argv})
+	}
+	return out
+}
+
+func commandRunner(commands []config.Command) func(string) {
+	return func(name string) {
+		for _, c := range commands {
+			if c.Name != name || len(c.Argv) == 0 {
+				continue
+			}
+			cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
+			_ = cmd.Run()
+			return
+		}
+	}
+}
+
+func reportDir(cfg *config.Config) string {
+	if cfg.Reports.Every <= 0 {
+		return ""
+	}
+	dir := cfg.Reports.Dir
+	if dir == "" {
+		dir = filepath.Join(cfg.Global.DataDir, "reports")
+	}
+	return dir
 }
 
 func optionalDuration(raw string) (time.Duration, error) {

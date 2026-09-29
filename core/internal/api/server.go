@@ -29,6 +29,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/operations"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/sla"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -77,6 +78,19 @@ type Options struct {
 	Anomaly health.AnomalySource
 	// Audit records mutating API calls and auth events; nil disables it.
 	Audit *audit.Log
+	// Services and Links feed the service tree, SLA report, and topology API.
+	Services []sla.Service
+	Links    []sla.Link
+	// Commands are the only argv values POST /api/v1/commands may execute.
+	Commands []Command
+	// ReportEvery writes an availability CSV into ReportDir. Zero disables it.
+	ReportEvery time.Duration
+	ReportDir   string
+	// SelfMonitor publishes notification-queue and hub node charts.
+	SelfMonitor bool
+	SAML        *SAMLConfig
+	// TOTPSecret is the legacy admin token's second factor. Empty means off.
+	TOTPSecret string
 }
 
 type Server struct {
@@ -98,6 +112,7 @@ type Server struct {
 	ldap               *LDAPConfig
 	shares             *shareStore
 	audit              *audit.Log
+	saml               *samlState
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -148,6 +163,10 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	s.shares = newShareStore()
 	s.audit = opt.Audit
 	var err error
+	s.saml, err = newSAML(opt.SAML)
+	if err != nil {
+		return nil, err
+	}
 	s.operations, err = operations.Open(opt.OperationsDir)
 	if err != nil {
 		return nil, fmt.Errorf("open operations store: %w", err)
@@ -157,6 +176,12 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		return nil, fmt.Errorf("open personal views store: %w", err)
 	}
 	s.routes()
+	if opt.SelfMonitor {
+		go s.selfMonitor()
+	}
+	if opt.ReportEvery > 0 && opt.ReportDir != "" {
+		go s.exportReports()
+	}
 	return s, nil
 }
 
@@ -276,6 +301,13 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/manage/restart", s.handleManageRestart)
 	m.HandleFunc("GET /api/v1/checks", s.handleChecks)
 	m.HandleFunc("POST /api/v1/checks", s.handleChecks)
+	m.HandleFunc("GET /api/v1/services", s.handleServices)
+	m.HandleFunc("GET /api/v1/reports/availability", s.handleAvailability)
+	m.HandleFunc("GET /api/v1/topology", s.handleTopology)
+	m.HandleFunc("POST /api/v1/commands", s.handleCommand)
+	m.HandleFunc("POST /api/v1/discovery/scan", s.handleDiscovery)
+	m.HandleFunc("GET /api/v1/auth/saml/login", s.handleSAMLLogin)
+	m.HandleFunc("POST /api/v1/auth/saml/acs", s.handleSAMLACS)
 	m.HandleFunc("GET /api/v1/alarm_summary", s.handleAlarmSummary)
 	m.HandleFunc("POST /api/v1/share", s.handleShare)
 	m.HandleFunc("GET /api/v1/share", s.handleShare)
@@ -327,6 +359,10 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			}
 			if !u.Role.allows(r) {
 				http.Error(w, "forbidden: role "+string(u.Role)+" may not "+r.Method+" "+r.URL.Path, http.StatusForbidden)
+				return
+			}
+			if !s.roomAllowed(u, r.URL.Query().Get("node")) {
+				http.Error(w, "forbidden: room", http.StatusForbidden)
 				return
 			}
 			r = r.WithContext(context.WithValue(r.Context(), userKey{}, u))

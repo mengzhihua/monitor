@@ -99,6 +99,7 @@ type Alarm struct {
 	PendingUntil     int64   `json:"pending_until,omitempty"` // unix seconds when `for` commits
 	HoldUntil        int64   `json:"hold_until,omitempty"`    // keep_firing_for deadline, unix seconds
 	RecoveryHold     bool    `json:"recovery_hold,omitempty"` // raised until the recovery expression is true
+	Cause            string  `json:"correlated_cause,omitempty"`
 
 	// notification pacing
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
@@ -115,6 +116,7 @@ type Alarm struct {
 	delayMult         float64
 	lastDelayAt       time.Time
 	lastNotifyAttempt int64 // scheduler time, independent of successful delivery
+	actionFired       int   // last escalation step whose command already ran; -1 = recovery
 }
 
 // LogEntry records a status transition (or a repeat notification).
@@ -180,6 +182,11 @@ type Options struct {
 	Anomaly AnomalySource
 	// Macros are global {$NAME} user macros; rule-level `macros:` override them.
 	Macros map[string]string
+	// Actions are multi-step escalation policies. RunCommand executes a
+	// whitelisted command name; it must not call back into the engine.
+	Actions     []Action
+	RunCommand  func(name string)
+	Correlation []CorrelationRule
 }
 
 // AnomalySource is implemented by the ML collector (duck-typed; no import cycle).
@@ -227,6 +234,8 @@ type Engine struct {
 	anomaly      AnomalySource
 	groups       map[string]*notifyGroup
 	inhibit      []compiledInhibit
+	actions      []compiledAction
+	correlation  []compiledCorrelation
 }
 
 type notifyGroup struct {
@@ -257,10 +266,18 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
+	actions, err := compileActions(opt.Actions)
+	if err != nil {
+		return nil, err
+	}
+	correlation, err := compileCorrelation(opt.Correlation)
+	if err != nil {
+		return nil, err
+	}
 	e := &Engine{opt: opt, reg: reg, db: db, log: opt.Logger, now: opt.Now, rules: opt.Rules,
 		alarms: map[string]*Alarm{}, nextID: 1, nextLog: 1, notifyCh: make(chan LogEntry, 256),
 		silenceAll: opt.SilenceAll, silenced: map[string]int64{}, enabled: true, windows: opt.Windows,
-		anomaly: opt.Anomaly, inhibit: inhibit}
+		anomaly: opt.Anomaly, inhibit: inhibit, actions: actions, correlation: correlation}
 	e.initNotificationDiagnostics()
 	e.plans, err = openMaintenancePlans(opt.LogDir)
 	if err != nil {
@@ -554,6 +571,7 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 	if status != old {
 		a.Status = status
 		a.LastStatusChange = now.Unix()
+		a.actionFired = 0
 		entry := e.newEntry(a, old, oldValue, now)
 		e.mu.Unlock()
 		e.transition(a, entry, now)
@@ -807,6 +825,12 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 		e.addNotificationResultLocked(entry, "", "suppressed", "dependency", 0, 0)
 		return
 	}
+	if e.correlationSuppressedLocked(entry) {
+		e.diagnostics.Suppressed++
+		e.addNotificationResultLocked(entry, "", "suppressed", "correlation", 0, 0)
+		return
+	}
+	e.applyActionLocked(&entry, at)
 	if strings.TrimSpace(entry.Recipient) == "silent" {
 		e.diagnostics.Suppressed++
 		e.addNotificationResultLocked(entry, "", "suppressed", "silent_recipient", 0, 0)
@@ -1410,6 +1434,7 @@ func (e *Engine) Alarms() []Alarm {
 				}
 			}
 		}
+		cp.Cause = e.correlatedCauseLocked(a.Name)
 		out = append(out, cp)
 	}
 	e.mu.RUnlock()

@@ -32,6 +32,7 @@ type ClientOptions struct {
 	// is used until it fails. "host:port" defaults to ws://host:port/api/v1/stream.
 	Destinations       []string
 	APIKey             string
+	PSK                string
 	InsecureSkipVerify bool
 	// ConfigPath is this agent's monitor.yaml; when set the client reports
 	// the file content to the hub after every (re)connect.
@@ -250,6 +251,9 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, string, error) {
 		hdr := http.Header{}
 		if c.opt.APIKey != "" {
 			hdr.Set("Authorization", "Bearer "+c.opt.APIKey)
+		}
+		if c.opt.PSK != "" {
+			hdr.Set("X-Monitor-PSK", c.opt.PSK)
 		}
 		u, err := destURLPath(d, c.defaultPath())
 		if err != nil {

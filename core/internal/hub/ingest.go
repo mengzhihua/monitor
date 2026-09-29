@@ -97,6 +97,9 @@ func StreamKey(r *http.Request) string {
 
 // authorize returns the hash of the accepted key; nodes are bound to it.
 func (n *Nodes) authorize(r *http.Request) (string, bool) {
+	if n.opt.PSK != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Monitor-PSK")), []byte(n.opt.PSK)) != 1 {
+		return "", false
+	}
 	return n.authorizeKey(StreamKey(r))
 }
 
