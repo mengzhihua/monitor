@@ -48,7 +48,7 @@ func (s *Server) alertConfigResponse(r *http.Request, snapshot health.RuleConfig
 	u := userOf(r)
 	out := alertConfigResponse{API: apiVer, Revision: snapshot.Revision, Persistent: snapshot.Persistent,
 		Scope: "local", Hostname: s.reg.Host.Hostname, CanManage: u.Role == RoleAdmin && u.principal != "",
-		Configs: make([]alertConfigItem, 0, len(snapshot.Rules)+len(snapshot.Removed))}
+		Configs: make([]alertConfigItem, 0, len(snapshot.Rules)+len(snapshot.Removed)+len(snapshot.InvalidRules))}
 	base := make(map[string]*health.Rule, len(snapshot.Base))
 	for _, rule := range snapshot.Base {
 		base[rule.Spec.Name] = rule
@@ -77,6 +77,10 @@ func (s *Server) alertConfigResponse(r *http.Request, snapshot health.RuleConfig
 			item.HasBase, item.Deleted, item.Origin = true, true, "deleted"
 		}
 		out.Configs = append(out.Configs, item)
+	}
+	for _, spec := range snapshot.InvalidRules {
+		out.Configs = append(out.Configs, alertConfigItem{Name: spec.Name, On: spec.On, Source: "api",
+			HasBase: base[spec.Name] != nil, Config: spec, Origin: "invalid"})
 	}
 	sort.Slice(out.Configs, func(i, j int) bool { return out.Configs[i].Name < out.Configs[j].Name })
 	out.Count = len(out.Configs)
