@@ -181,9 +181,7 @@ func openRuleConfig(dir string, base []*Rule, macros map[string]string) (*ruleCo
 			s.overlay = *ov
 		}
 	}
-	// Runtime overrides invalid under the persisted overlay macros are
-	// tolerated on load (listed in the store's invalid set); base and
-	// template compile errors still fail startup.
+	// Invalid runtime overrides are tolerated on load; base/template errors still fail.
 	rules, invalid, err := effectiveRules(s.base, s.state, s.effectiveMacros(), &s.overlay, true)
 	if err != nil {
 		return nil, nil, err
@@ -272,11 +270,8 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 		seen[spec.Name] = true
 		rule, err := CompileWith(cloneRuleSpec(spec), "api", macros)
 		if err != nil {
-			// Only macro-resolution failures are tolerated: a runtime
-			// override may reference a macro the new overlay removed.
-			// Other compile errors (e.g. damaged persisted files) must still
-			// fail so corrupt state is not silently dropped.
-			if !tolerateRuntime || !strings.Contains(err.Error(), "macro") {
+			// Only unresolved-macro failures are tolerated; other errors still fail.
+			if !tolerateRuntime || !errors.Is(err, ErrUnknownMacro) {
 				return nil, invalid, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
 			}
 			slog.Warn("health: skipping invalid runtime rule under new overlay", "rule", spec.Name, "err", err)
@@ -569,8 +564,7 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 		delete(removed, spec.Name)
 	}
 	for _, name := range mutation.Delete {
-		// An override invalid under the current overlay is not in the live
-		// set but is still deletable (it exists in state.Overrides).
+		// Invalid overrides are absent from the live set but still deletable.
 		if current[name] == nil {
 			if _, isOverride := overrides[name]; !isOverride {
 				return nil, fmt.Errorf("%w: %s", ErrRuleNotFound, name)
@@ -609,9 +603,7 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 	if err != nil {
 		return nil, err
 	}
-	// Only reject when the rule this mutation introduces fails to compile
-	// now; pre-existing invalid overrides unrelated to the mutation are
-	// tolerated (and remain listed in the store's invalid set).
+	// Reject only upserts that fail to compile; pre-existing invalid overrides stay tolerated.
 	upsertNames := make(map[string]bool, len(mutation.Upserts))
 	for _, spec := range mutation.Upserts {
 		upsertNames[spec.Name] = true
