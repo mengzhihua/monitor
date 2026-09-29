@@ -6,6 +6,7 @@ package health
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,6 +124,10 @@ type Rule struct {
 
 var macroRef = regexp.MustCompile(`\{\$[A-Za-z_][A-Za-z0-9_]*\}`)
 
+// ErrUnknownMacro marks {$NAME} placeholders that neither the rule-level
+// macros nor the global set can resolve (including macro recursion).
+var ErrUnknownMacro = errors.New("unknown macro")
+
 // applyMacros returns a copy of spec with every {$NAME} placeholder replaced.
 // Rule-level macros win over global ones; a leftover placeholder is an error.
 func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
@@ -160,12 +165,12 @@ func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
 		if m := macroRef.FindString(*fp); m != "" {
 			name := m[2 : len(m)-1]
 			if _, ok := spec.Macros[name]; ok {
-				return spec, fmt.Errorf("macro recursion in %s", m)
+				return spec, fmt.Errorf("%w: macro recursion in %s", ErrUnknownMacro, m)
 			}
 			if _, ok := global[name]; ok {
-				return spec, fmt.Errorf("macro recursion in %s", m)
+				return spec, fmt.Errorf("%w: macro recursion in %s", ErrUnknownMacro, m)
 			}
-			return spec, fmt.Errorf("unknown macro %s", m)
+			return spec, fmt.Errorf("%w %s", ErrUnknownMacro, m)
 		}
 	}
 	return spec, nil
