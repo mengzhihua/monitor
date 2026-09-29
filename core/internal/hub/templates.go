@@ -56,6 +56,19 @@ var ErrTemplateNotFound = errors.New("unknown template")
 // ErrTemplateInvalid means the template failed validation.
 var ErrTemplateInvalid = errors.New("invalid template")
 
+// Capacity limits for templates and per-node inventory.
+const (
+	TemplateLimit         = 256
+	TemplateRuleLimit     = 128
+	TemplateMacroLimit    = 64
+	TemplateRemovedLimit  = 64
+	TemplateDisabledLimit = 64
+	TemplateTagLimit      = 64
+	InventoryFieldLimit   = 64
+	TemplateFieldKeyMax   = 256  // macro/tag/label/inventory key bytes
+	TemplateFieldValueMax = 4096 // macro/tag/inventory value bytes
+)
+
 // Templates persists hub templates and node inventory next to org.json.
 type Templates struct {
 	path string
@@ -166,6 +179,9 @@ func (t *Templates) Upsert(in Template, expected *int64) (Template, error) {
 	if in.Name == "" {
 		return Template{}, fmt.Errorf("%w: name required", ErrTemplateInvalid)
 	}
+	if err := validateTemplateLimits(in); err != nil {
+		return Template{}, err
+	}
 	for _, spec := range in.Rules {
 		if _, err := health.CompileWith(spec, "template:"+in.Name, in.Macros); err != nil {
 			return Template{}, fmt.Errorf("%w: rule %q: %v", ErrTemplateInvalid, spec.Name, err)
@@ -174,6 +190,9 @@ func (t *Templates) Upsert(in Template, expected *int64) (Template, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	previous := t.templates[in.ID]
+	if previous == nil && len(t.templates) >= TemplateLimit {
+		return Template{}, fmt.Errorf("%w: template limit %d reached", ErrTemplateInvalid, TemplateLimit)
+	}
 	if expected != nil {
 		var cur int64
 		if previous != nil {
@@ -208,11 +227,16 @@ func (t *Templates) Upsert(in Template, expected *int64) (Template, error) {
 func (t *Templates) Delete(id string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.templates[id]; !ok {
+	previous, ok := t.templates[id]
+	if !ok {
 		return ErrTemplateNotFound
 	}
 	delete(t.templates, id)
-	return t.saveLocked()
+	if err := t.saveLocked(); err != nil {
+		t.templates[id] = previous
+		return err
+	}
+	return nil
 }
 
 // Inventory returns the manual inventory fields for a node.
@@ -232,6 +256,14 @@ func (t *Templates) Inventory(nodeID string) (NodeInventory, bool) {
 func (t *Templates) SetInventory(nodeID string, fields map[string]string, expected *int64) (NodeInventory, error) {
 	if nodeID == "" {
 		return NodeInventory{}, errors.New("node_id required")
+	}
+	if len(fields) > InventoryFieldLimit {
+		return NodeInventory{}, fmt.Errorf("%w: inventory fields %d exceeds limit %d", ErrTemplateInvalid, len(fields), InventoryFieldLimit)
+	}
+	for k, v := range fields {
+		if len(k) > TemplateFieldKeyMax || len(v) > TemplateFieldValueMax {
+			return NodeInventory{}, fmt.Errorf("%w: inventory field %q too long", ErrTemplateInvalid, k)
+		}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -350,4 +382,45 @@ func (t *Templates) Effective(nodeID, roomID string, labels map[string]string) s
 	sort.Strings(out.Removed)
 	sort.Strings(out.Disabled)
 	return out
+}
+
+// validateTemplateLimits enforces the exported capacity caps before compile.
+func validateTemplateLimits(in Template) error {
+	check := func(what string, n, max int) error {
+		if n > max {
+			return fmt.Errorf("%w: %s %d exceeds limit %d", ErrTemplateInvalid, what, n, max)
+		}
+		return nil
+	}
+	if err := check("rules", len(in.Rules), TemplateRuleLimit); err != nil {
+		return err
+	}
+	if err := check("macros", len(in.Macros), TemplateMacroLimit); err != nil {
+		return err
+	}
+	if err := check("removed", len(in.Removed), TemplateRemovedLimit); err != nil {
+		return err
+	}
+	if err := check("disabled", len(in.Disabled), TemplateDisabledLimit); err != nil {
+		return err
+	}
+	if err := check("tags", len(in.Tags), TemplateTagLimit); err != nil {
+		return err
+	}
+	for k, v := range in.Macros {
+		if len(k) > TemplateFieldKeyMax || len(v) > TemplateFieldValueMax {
+			return fmt.Errorf("%w: macro %q too long", ErrTemplateInvalid, k)
+		}
+	}
+	for k, v := range in.Tags {
+		if len(k) > TemplateFieldKeyMax || len(v) > TemplateFieldValueMax {
+			return fmt.Errorf("%w: tag %q too long", ErrTemplateInvalid, k)
+		}
+	}
+	for k, v := range in.Assign.Labels {
+		if len(k) > TemplateFieldKeyMax || len(v) > TemplateFieldKeyMax {
+			return fmt.Errorf("%w: assign label %q too long", ErrTemplateInvalid, k)
+		}
+	}
+	return nil
 }
