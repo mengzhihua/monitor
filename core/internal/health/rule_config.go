@@ -364,7 +364,6 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 		}
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	s.overlay = next
 	s.invalid = invalid
 	current := make(map[string]*Rule, len(e.rules))
@@ -384,8 +383,22 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 		changed[name] = true
 	}
 	e.rules = rules
+	removedEntries := make([]struct {
+		a     *Alarm
+		entry LogEntry
+	}, 0)
+	now := e.now()
 	for key, alarm := range e.alarms {
 		if changed[alarm.Name] {
+			if alarm.Status == StatusWarning || alarm.Status == StatusCritical {
+				old, oldValue := alarm.Status, alarm.Value
+				alarm.Status = StatusRemoved
+				alarm.LastStatusChange = now.Unix()
+				removedEntries = append(removedEntries, struct {
+					a     *Alarm
+					entry LogEntry
+				}{alarm, e.newEntry(alarm, old, oldValue, now)})
+			}
 			delete(e.alarms, key)
 		}
 	}
@@ -400,6 +413,10 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 		if len(kept) == 0 {
 			delete(e.groups, key)
 		}
+	}
+	e.mu.Unlock()
+	for _, removed := range removedEntries {
+		e.transition(removed.a, removed.entry, now)
 	}
 	return nil
 }
@@ -426,8 +443,22 @@ func (e *Engine) MutateRules(expected *string, mutation RuleMutation) (RuleConfi
 	e.mu.Lock()
 	e.ruleConfig.state = prepared.state
 	e.rules = prepared.rules
+	now := e.now()
+	removedEntries := make([]struct {
+		a     *Alarm
+		entry LogEntry
+	}, 0)
 	for key, alarm := range e.alarms {
 		if prepared.changed[alarm.Name] {
+			if alarm.Status == StatusWarning || alarm.Status == StatusCritical {
+				old, oldValue := alarm.Status, alarm.Value
+				alarm.Status = StatusRemoved
+				alarm.LastStatusChange = now.Unix()
+				removedEntries = append(removedEntries, struct {
+					a     *Alarm
+					entry LogEntry
+				}{alarm, e.newEntry(alarm, old, oldValue, now)})
+			}
 			delete(e.alarms, key)
 		}
 	}
@@ -445,6 +476,9 @@ func (e *Engine) MutateRules(expected *string, mutation RuleMutation) (RuleConfi
 	}
 	out := e.rulesConfigLocked()
 	e.mu.Unlock()
+	for _, removed := range removedEntries {
+		e.transition(removed.a, removed.entry, now)
+	}
 	return out, nil
 }
 

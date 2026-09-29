@@ -133,3 +133,32 @@ func TestOverlayRemovalToleratesInvalidRuntimeRule(t *testing.T) {
 		t.Fatalf("invalid after macro restored=%v", s.Invalid)
 	}
 }
+
+// Removing a template rule clears its alarm via the normal transition path so
+// the stream/notifier see it.
+func TestOverlayRemovalClearsAlarm(t *testing.T) {
+	dir := t.TempDir()
+	e := ruleConfigEngine(t, dir)
+	var seen []LogEntry
+	e.opt.OnEvent = func(entry LogEntry) { seen = append(seen, entry) }
+	if err := e.SetOverlay(OverlayLayer{Rev: 1, Templates: []string{"t"}, Rules: []RuleSpec{
+		{Name: "tpl.x", On: "system.ram", Calc: "$used", Warn: "$this > 50", Every: "1s"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	e.reg.Collect("system.ram", e.now(), map[string]float64{"used": 90})
+	e.Tick(e.now())
+	seen = seen[:0]
+	if err := e.SetOverlay(OverlayLayer{}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, en := range seen {
+		if en.Name == "tpl.x" && en.Status == StatusRemoved {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no REMOVED transition emitted: %+v", seen)
+	}
+}
