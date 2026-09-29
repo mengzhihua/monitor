@@ -120,6 +120,12 @@ func managedAlertMutation(request managedAlertRuleRequest, snapshot health.RuleC
 				break
 			}
 		}
+		for _, name := range snapshot.Invalid {
+			if name == spec.Name {
+				exists = true
+				break
+			}
+		}
 		if request.Action == "create" && exists {
 			return mutation, spec, health.ErrRuleConflict
 		}
@@ -144,6 +150,14 @@ func managedAlertMutation(request managedAlertRuleRequest, snapshot health.RuleC
 		}
 		if request.Action == "reset" && spec.Name == "" {
 			for _, name := range snapshot.Removed {
+				if name == request.Name {
+					spec.Name = name
+					break
+				}
+			}
+		}
+		if request.Action == "delete" && spec.Name == "" {
+			for _, name := range snapshot.Invalid {
 				if name == request.Name {
 					spec.Name = name
 					break
