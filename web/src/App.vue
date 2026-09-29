@@ -6,6 +6,7 @@ import { live } from './live'
 import { usePolling } from './polling'
 import MetricChart from './components/MetricChart.vue'
 import OperationsPanel from './components/OperationsPanel.vue'
+import ServicesPanel from './components/ServicesPanel.vue'
 import AlarmsPanel from './components/AlarmsPanel.vue'
 import AlertRulesPanel from './components/AlertRulesPanel.vue'
 import TemplatesPanel from './components/TemplatesPanel.vue'
@@ -20,7 +21,8 @@ import DashboardsPanel from './components/DashboardsPanel.vue'
 import ChartTimeline from './components/ChartTimeline.vue'
 import { decodeTimeline, encodeTimeline, timelineKey, type ChartTimeline as TimelineState } from './chartTimeline'
 
-const workspace = ref(new URL(location.href).searchParams.get('view') === 'charts' ? 'charts' : 'operations')
+const initialView = new URL(location.href).searchParams.get('view')
+const workspace = ref(initialView === 'charts' || initialView === 'services' ? initialView : 'operations')
 async function drill(node: string, chart: string) {
   await selectNode(node)
   if (chartEnd.value !== null) {
@@ -369,6 +371,7 @@ onBeforeUnmount(() => {
 
   <div v-if="info" class="workspace-tabs" aria-label="工作区">
     <button :class="{ selected: workspace === 'operations' }" @click="workspace = 'operations'">运维总览</button>
+    <button :class="{ selected: workspace === 'services' }" @click="workspace = 'services'">服务与拓扑</button>
     <button :class="{ selected: workspace === 'charts' }" @click="workspace = 'charts'">指标图表</button>
   </div>
   <div class="layout">
@@ -424,6 +427,7 @@ onBeforeUnmount(() => {
         <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
       <OperationsPanel v-if="info && !needToken && workspace === 'operations'" :role="info.user?.role || 'viewer'" @drill="drill" />
+      <ServicesPanel v-if="info && !needToken && workspace === 'services'" />
       <template v-if="workspace === 'charts'">
       <ChartTimeline v-if="info && !needToken" :end="chartEnd" :window="windowSec" :notice="timelineNotice" @update:end="value => chartEnd = value" />
       <div v-if="info && !needToken" class="view-switch" aria-label="看板视图">

@@ -802,3 +802,83 @@ export:
 #     insecure_skip_verify: false
 # Existing self-signed endpoints must configure their CA (preferred), or
 # explicitly opt into insecure_skip_verify: true for isolated test deployments.
+
+# Z3–Z6 示例（默认关闭；采集器没有 jobs 时 Init 失败并保持禁用）。
+# collectors:
+#   modules:
+#     snmp:
+#       address: 10.0.0.5
+#       version: "3"
+#       user: monitor
+#       auth_protocol: SHA
+#       auth_passphrase: example-auth
+#       priv_protocol: AES
+#       priv_passphrase: example-priv
+#       items:
+#         - { name: load, oid: "1.3.6.1.4.1.2021.10.1.3.1", preprocess: [{ type: regex, pattern: "([0-9.]+)" }] }
+#       lld:
+#         - { name: disks, table: "1.3.6.1.4.1.2021.9.1.2", value: "1.3.6.1.4.1.2021.9.1.9" }
+#     sshcheck:
+#       jobs:
+#         - { name: load, address: 10.0.0.8, user: monitor, command: "cat /proc/loadavg", preprocess: [{ type: regex, pattern: "^([0-9.]+)" }] }
+#     jolokia:
+#       jobs:
+#         - { name: heap, url: http://127.0.0.1:8778/jolokia, mbean: "java.lang:type=Memory", attribute: HeapMemoryUsage, path: used }
+#     httpagent:
+#       jobs:
+#         - { name: users, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: regex, pattern: "ready_users ([0-9]+)" }] }
+#     webscenario:
+#       jobs:
+#         - name: login
+#           steps:
+#             - { url: http://127.0.0.1:8080/login, extract: "sid=([a-z]+)", var: sid }
+#             - { url: http://127.0.0.1:8080/home, headers: { Cookie: "sid={{sid}}" } }
+#     dependent:
+#       items:
+#         - { name: used_x2, chart: system.ram, dimension: used, preprocess: [{ type: multiplier, factor: 2 }] }
+#     netscan:
+#       networks:
+#         - { name: lab, cidr: 192.168.1.0/28, ports: [22, 443] }
+# services:
+#   - { name: edge, children: [site] }
+#   - { name: site, alarms: [http_down] }
+# topology:
+#   - { source: core, target: edge-sw }
+# commands:
+#   - { name: echo-ok, argv: ["/bin/echo", "ok"] }
+# reports:
+#   every: 1h
+#   dir: data/reports
+# trapper:
+#   listen: 127.0.0.1:10051
+#   allowed: ["127.0.0.1"]
+# health:
+#   actions:
+#     - name: page
+#       severities: [CRITICAL]
+#       alarms: ["disk_*"]
+#       steps:
+#         - { role: sysadmin, command: echo-ok }
+#         - { delay: 5m, role: pager }
+#       recovery: { role: sysadmin }
+#   correlation:
+#     - { cause: host_down, symptoms: [disk_full] }
+#   notify:
+#     script:
+#       path: /usr/local/bin/monitor-notify
+# stream:
+#   psk: example-psk
+# hub:
+#   psk: example-psk
+# web:
+#   totp_secret: ""
+#   groups:
+#     - { name: ops, rooms: [edge] }
+#   saml:
+#     entity_id: monitor
+#     acs_url: https://monitor.example/api/v1/auth/saml/acs
+#     sso_url: https://idp.example/sso
+#     idp_cert: |
+#       -----BEGIN CERTIFICATE-----
+#       ...
+#       -----END CERTIFICATE-----

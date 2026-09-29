@@ -31,6 +31,10 @@ type User struct {
 	Name      string `json:"name"`
 	Token     string `json:"-"`
 	Role      Role   `json:"role"`
+	// Rooms limits node= access. Empty means every room.
+	Rooms []string `json:"rooms,omitempty"`
+	// TOTP is a base32 secret. Empty means this credential has no second factor.
+	TOTP string `json:"-"`
 }
 
 type userKey struct{}
@@ -67,16 +71,27 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 		return User{}, false
 	}
 	if s.opt.Token != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.opt.Token)) == 1 {
+		if !s.otpOK(s.opt.TOTPSecret, r.Header.Get("X-Monitor-OTP"), time.Now()) {
+			return User{}, false
+		}
 		return User{Name: "admin", Role: RoleAdmin, principal: viewPrincipal("legacy", s.opt.Token)}, true
 	}
 	for _, u := range s.opt.Users {
 		if subtle.ConstantTimeCompare([]byte(tok), []byte(u.Token)) == 1 {
+			if !s.otpOK(u.TOTP, r.Header.Get("X-Monitor-OTP"), time.Now()) {
+				return User{}, false
+			}
 			u.principal = viewPrincipal("static", u.Token)
 			return u, true
 		}
 	}
 	if s.oidc != nil {
 		if u, ok := s.oidc.session(tok); ok {
+			return u, true
+		}
+	}
+	if s.saml != nil {
+		if u, ok := s.saml.session(tok); ok {
 			return u, true
 		}
 	}
@@ -91,7 +106,8 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 func publicAPI(path string) bool {
 	switch path {
 	case "/api/v1/auth/oidc/status", stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
-		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap":
+		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap",
+		"/api/v1/auth/saml/login", "/api/v1/auth/saml/acs":
 		return true
 	}
 	return false
