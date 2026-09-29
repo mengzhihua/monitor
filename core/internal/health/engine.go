@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -141,6 +142,9 @@ type LogEntry struct {
 	Repeat     bool    `json:"repeat,omitempty"`
 	Notified   bool    `json:"notified"`
 	NotifiedAt int64   `json:"notified_at,omitempty"`
+	Manual     bool    `json:"manual,omitempty"` // operator-closed problem (Zabbix "close problem")
+	User       string  `json:"user,omitempty"`   // who closed it
+	Comment    string  `json:"comment,omitempty"`
 
 	testChannel string // explicit admin test; never serialized or persisted as an alarm
 }
@@ -174,6 +178,8 @@ type Options struct {
 	Windows          []MaintenanceWindow
 	// Anomaly supplies per-dimension 0–100 rates for lookup `anomaly-bit`.
 	Anomaly AnomalySource
+	// Macros are global {$NAME} user macros; rule-level `macros:` override them.
+	Macros map[string]string
 }
 
 // AnomalySource is implemented by the ML collector (duck-typed; no import cycle).
@@ -260,7 +266,7 @@ func New(reg *registry.Registry, db *tsdb.Store, opt Options) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open maintenance plans: %w", err)
 	}
-	e.ruleConfig, e.rules, err = openRuleConfig(opt.LogDir, opt.Rules)
+	e.ruleConfig, e.rules, err = openRuleConfig(opt.LogDir, opt.Rules, opt.Macros)
 	if err != nil {
 		return nil, fmt.Errorf("open alert rules: %w", err)
 	}
@@ -464,7 +470,7 @@ func (e *Engine) bind() {
 			a := &Alarm{
 				ID: e.nextID, Name: r.Spec.Name, Chart: c.ID, Context: c.Context, Family: c.Family,
 				Class: r.Spec.Class, Type: r.Spec.Type, Component: r.Spec.Compon,
-				Units: r.Spec.Units, Info: r.Spec.Info, Lookup: r.Spec.Lookup, Calc: r.Spec.Calc,
+				Units: r.Units, Info: r.Info, Lookup: r.Spec.Lookup, Calc: r.Spec.Calc,
 				Warn: r.Spec.Warn, Crit: r.Spec.Crit, Every: int64(r.Every / time.Second),
 				Recipient: r.Spec.To, Source: r.Source, Labels: c.LabelsSnapshot(),
 				Status: StatusUninitialized, Value: math.NaN(), Active: true,
@@ -680,6 +686,53 @@ func (e *Engine) flushPending(now time.Time) {
 	for _, p := range ready {
 		e.notifyAt(p, now.Unix())
 	}
+}
+
+var ErrAlarmNotFound = errors.New("alarm not found")
+var ErrAlarmNotRaised = errors.New("alarm not raised")
+
+// CloseAlarm is Zabbix's "close problem": an operator forces a raised alarm back
+// to CLEAR. The CLEAR transition goes through the normal path so notifiers
+// hear it and repeat timers stop; the rule keeps evaluating and re-raises on
+// the next evaluation while the condition still holds.
+//
+// tickMu serializes the close with a whole evaluation cycle (Tick holds it
+// across bind+evaluate+flushPending), so no evaluate() can interleave between
+// the status mutation and the transition. e.mu is still released before
+// transition, which re-locks it itself.
+func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
+	e.tickMu.Lock()
+	defer e.tickMu.Unlock()
+	now := e.now()
+	e.mu.Lock()
+	var a *Alarm
+	for _, cand := range e.alarms {
+		if cand.ID == alarmID {
+			a = cand
+			break
+		}
+	}
+	if a == nil {
+		e.mu.Unlock()
+		return ErrAlarmNotFound
+	}
+	if a.Status <= StatusClear {
+		e.mu.Unlock()
+		return ErrAlarmNotRaised
+	}
+	old, oldValue := a.Status, a.Value
+	a.Status = StatusClear
+	a.LastStatusChange = now.Unix()
+	a.LastUpdated = now.Unix()
+	a.clearSustain()
+	a.RecoveryHold = false
+	a.pending = nil
+	a.DelayUpTo = 0
+	entry := e.newEntry(a, old, oldValue, now)
+	entry.Manual, entry.User, entry.Comment = true, user, comment
+	e.mu.Unlock()
+	e.transition(a, entry, now)
+	return nil
 }
 
 // record appends to the alarm log, fires OnEvent and optionally notifies.
@@ -914,6 +967,9 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 	for _, d := range l.Dimensions {
 		selected[d] = true
 	}
+	if l.Kind != "" {
+		return e.lookupKind(c, l, selected, after, before)
+	}
 	var sum, total float64
 	var matched bool
 	var minSum, maxSum float64
@@ -976,6 +1032,271 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 			return math.NaN()
 		}
 		return sum * 100 / total
+	}
+	return sum
+}
+
+// lookupKind evaluates the Zabbix-style functions (Lookup.Kind). All of them
+// work on [after, before] over the selected dimensions; per-dimension results
+// are summed unless noted.
+func (e *Engine) lookupKind(c *registry.Chart, l *Lookup, selected map[string]bool, after, before int64) float64 {
+	isSel := func(d *registry.Dimension) bool {
+		return len(selected) == 0 || selected[d.ID] || selected[d.Name]
+	}
+	if l.Kind == "nodata" {
+		// 1 when no non-NaN point exists for any selected dim; never NaN.
+		for _, d := range c.Dims() {
+			if !isSel(d) {
+				continue
+			}
+			pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			if err != nil {
+				continue
+			}
+			for _, p := range pts {
+				if !math.IsNaN(p.Value) {
+					return 0
+				}
+			}
+		}
+		return 1
+	}
+	if l.Kind == "trendavg" || l.Kind == "trendmin" || l.Kind == "trendmax" ||
+		l.Kind == "trendsum" || l.Kind == "trendcount" {
+		return e.lookupTrend(c, l, selected, after, before)
+	}
+	var sum float64
+	matched := false
+	if l.Kind == "timeleft" {
+		sum = timeLeftSentinel
+	}
+	for _, d := range c.Dims() {
+		if !isSel(d) {
+			continue
+		}
+		pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+		if err != nil {
+			continue
+		}
+		if l.Kind == "count" {
+			// count answers 0 for a selected dimension that simply has no
+			// matching samples; only query failures keep it out.
+			matched = true
+		}
+		vals := make([]tsdb.Point, 0, len(pts))
+		for _, p := range pts {
+			if !math.IsNaN(p.Value) {
+				vals = append(vals, p)
+			}
+		}
+		if len(vals) == 0 {
+			continue
+		}
+		matched = true
+		switch l.Kind {
+		case "first":
+			sum += vals[0].Value
+		case "change":
+			sum += vals[len(vals)-1].Value - vals[0].Value
+		case "stddev":
+			sum += popStddev(vals)
+		case "count":
+			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
+		case "forecast":
+			a, b, ok := linearFit(vals)
+			if !ok {
+				continue
+			}
+			// fit origin is the first sample's timestamp
+			x := float64(before-vals[0].TS) + l.Horizon.Seconds()
+			sum += a + b*x
+		case "timeleft":
+			a, b, ok := linearFit(vals)
+			if !ok || math.Abs(b) < 1e-12 {
+				continue // stays at the sentinel
+			}
+			rem := (l.Target - (a + b*float64(before-vals[0].TS))) / b
+			if rem < 0 {
+				continue // moving away from the target: stays at the sentinel
+			}
+			if rem < sum {
+				sum = rem
+			}
+		}
+	}
+	if !matched {
+		return math.NaN()
+	}
+	if l.AbsValue {
+		return math.Abs(sum)
+	}
+	return sum
+}
+
+// timeLeftSentinel replaces the unbounded Zabbix "never" answer; evaluate()
+// treats +Inf as undefined, so timeleft reports a very large finite value.
+const timeLeftSentinel = 1e15
+
+func countMatching(pts []tsdb.Point, op string, v float64) int {
+	var n int
+	for _, p := range pts {
+		ok := true
+		switch op {
+		case "gt":
+			ok = p.Value > v
+		case "ge":
+			ok = p.Value >= v
+		case "lt":
+			ok = p.Value < v
+		case "le":
+			ok = p.Value <= v
+		case "eq":
+			ok = p.Value == v
+		case "ne":
+			ok = p.Value != v
+		}
+		if ok {
+			n++
+		}
+	}
+	return n
+}
+
+func popStddev(pts []tsdb.Point) float64 {
+	var m float64
+	for _, p := range pts {
+		m += p.Value
+	}
+	m /= float64(len(pts))
+	var v float64
+	for _, p := range pts {
+		d := p.Value - m
+		v += d * d
+	}
+	return math.Sqrt(v / float64(len(pts)))
+}
+
+// linearFit is ordinary least squares of (seconds since window start, value).
+func linearFit(pts []tsdb.Point) (a, b float64, ok bool) {
+	if len(pts) < 2 {
+		return 0, 0, false
+	}
+	x0 := float64(pts[0].TS)
+	var sx, sy, sxx, sxy float64
+	for _, p := range pts {
+		x := float64(p.TS) - x0
+		sx += x
+		sy += p.Value
+		sxx += x * x
+		sxy += x * p.Value
+	}
+	n := float64(len(pts))
+	den := n*sxx - sx*sx
+	if math.Abs(den) < 1e-12 {
+		return 0, 0, false
+	}
+	b = (n*sxy - sx*sy) / den
+	a = (sy - b*sx) / n
+	return a, b, true
+}
+
+// lookupTrend reduces rollup-tier buckets; empty coverage falls back to the
+// raw tier-0 samples so fresh installs still answer.
+func (e *Engine) lookupTrend(c *registry.Chart, l *Lookup, selected map[string]bool, after, before int64) float64 {
+	var sum float64
+	matched := false
+	for _, d := range c.Dims() {
+		if len(selected) != 0 && !selected[d.ID] && !selected[d.Name] {
+			continue
+		}
+		id := registry.SeriesID(c.ID, d.ID)
+		// Pick the finest tier whose effective start reaches back to `after`
+		// (tier0's start is max(first sample, retention cutoff); tier>=1's is
+		// its first rollup bucket). When none reaches far enough — or the
+		// covering tiers turn out empty for this window — fall back to the
+		// tiers that reach furthest back. NaN only if no tier has data.
+		nTiers := e.db.TierCount()
+		var bs []tsdb.Bucket
+		starts := make([]int64, nTiers)
+		for tier := 0; tier < nTiers; tier++ {
+			start, ok := e.db.TierFirst(id, tier)
+			if !ok {
+				starts[tier] = -1
+				continue
+			}
+			starts[tier] = start
+			if start > after {
+				continue
+			}
+			b, err := e.db.QueryTier(id, tier, after, before)
+			if err == nil && len(b) > 0 {
+				bs = b
+				break
+			}
+		}
+		for i := 0; len(bs) == 0 && i < nTiers; i++ {
+			// Take the candidate with the smallest start (reaches furthest
+			// back) that still returns buckets for the window.
+			best, bestStart := -1, int64(0)
+			for tier := 0; tier < nTiers; tier++ {
+				if starts[tier] >= 0 && (best < 0 || starts[tier] < bestStart) {
+					best, bestStart = tier, starts[tier]
+				}
+			}
+			if best < 0 {
+				break
+			}
+			starts[best] = -1
+			if b, err := e.db.QueryTier(id, best, after, before); err == nil {
+				bs = b
+			}
+		}
+		if len(bs) == 0 {
+			continue
+		}
+		var v float64
+		{
+			switch l.Kind {
+			case "trendavg":
+				var s float64
+				var n int64
+				for _, b := range bs {
+					s += b.Sum
+					n += b.Count
+				}
+				if n == 0 {
+					continue
+				}
+				v = s / float64(n)
+			case "trendmin":
+				v = bs[0].Min
+				for _, b := range bs[1:] {
+					if b.Min < v {
+						v = b.Min
+					}
+				}
+			case "trendmax":
+				v = bs[0].Max
+				for _, b := range bs[1:] {
+					if b.Max > v {
+						v = b.Max
+					}
+				}
+			case "trendsum":
+				for _, b := range bs {
+					v += b.Sum
+				}
+			case "trendcount":
+				for _, b := range bs {
+					v += float64(b.Count)
+				}
+			}
+		}
+		matched = true
+		sum += v
+	}
+	if !matched {
+		return math.NaN()
 	}
 	return sum
 }

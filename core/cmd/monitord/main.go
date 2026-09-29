@@ -23,6 +23,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 
 	"github.com/mengzhihua/monitor/core/internal/api"
+	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/backup"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
@@ -234,7 +235,17 @@ func run() error {
 		})
 	}
 
+	var auditLog *audit.Log
+	if cfg.AuditEnabled() {
+		auditLog, err = audit.Open(filepath.Join(cfg.Global.DataDir, "operations"), cfg.Web.Audit.MaxEntries)
+		if err != nil {
+			return fmt.Errorf("audit log: %w", err)
+		}
+		defer auditLog.Close()
+	}
+
 	apiOpt := api.Options{
+		Audit:         auditLog,
 		OperationsDir: filepath.Join(cfg.Global.DataDir, "operations"),
 		TicketWebhook: cfg.Web.TicketWebhook,
 		Version:       version,
@@ -528,7 +539,7 @@ func hostIdentity(cfg *config.Config) (*registry.Host, error) {
 func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, log *slog.Logger) (*health.Engine, error) {
 	var sets [][]*health.Rule
 	if cfg.HealthBuiltin() {
-		builtin, err := health.DefaultRules()
+		builtin, err := health.DefaultRulesWith(cfg.Health.Macros)
 		if err != nil {
 			return nil, err
 		}
@@ -539,13 +550,13 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		dir = filepath.Join(filepath.Dir(cfgPath), dir)
 	}
 	if dir != "" {
-		custom, err := health.LoadDir(dir)
+		custom, err := health.LoadDirWith(dir, cfg.Health.Macros)
 		if err != nil {
 			return nil, err
 		}
 		sets = append(sets, custom)
 	}
-	inline, err := health.CompileAll(cfg.Health.Alarms, cfgPath)
+	inline, err := health.CompileAllWith(cfg.Health.Alarms, cfgPath, cfg.Health.Macros)
 	if err != nil {
 		return nil, err
 	}
@@ -660,6 +671,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		EscalateTo:       cfg.Health.EscalateTo,
 		OnCall:           cfg.Health.OnCall,
 		Windows:          cfg.Health.Windows,
+		Macros:           cfg.Health.Macros,
 	})
 }
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/hub"
@@ -72,6 +73,8 @@ type Options struct {
 	LDAP *LDAPConfig
 	// Anomaly overrides the ML collector as the per-dimension bit source.
 	Anomaly health.AnomalySource
+	// Audit records mutating API calls and auth events; nil disables it.
+	Audit *audit.Log
 }
 
 type Server struct {
@@ -92,6 +95,7 @@ type Server struct {
 	oidc               *oidcState
 	ldap               *LDAPConfig
 	shares             *shareStore
+	audit              *audit.Log
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -140,6 +144,7 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 		}
 	}
 	s.shares = newShareStore()
+	s.audit = opt.Audit
 	var err error
 	s.operations, err = operations.Open(opt.OperationsDir)
 	if err != nil {
@@ -225,6 +230,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/alarm_variables", s.handleAlarmVariables)
 	m.HandleFunc("GET /api/v1/alarms/silence", s.handleSilence)
 	m.HandleFunc("POST /api/v1/alarms/silence", s.handleSilence)
+	m.HandleFunc("POST /api/v1/alarms/close", s.handleAlarmClose)
+	m.HandleFunc("GET /api/v1/audit", s.handleAudit)
 	m.HandleFunc("GET /api/v1/contexts", s.handleContexts)
 	m.HandleFunc("GET /api/v1/weights", s.handleWeights)
 	m.HandleFunc("GET /api/v1/logs", s.handleLogs)
@@ -306,6 +313,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/v1/") {
 			u, ok := s.authenticate(r)
 			if !ok {
+				s.auditEvent(r, "login_failed", "")
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -314,6 +322,11 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				return
 			}
 			r = r.WithContext(context.WithValue(r.Context(), userKey{}, u))
+			// Local variable: reassigning the closure's `next` would nest
+			// wrappers across requests and bake in the first caller's identity.
+			h := s.auditWrap(u, r, next)
+			h.ServeHTTP(w, r)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})

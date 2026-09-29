@@ -52,10 +52,11 @@ type ruleConfigState struct {
 // The engine's tickMu serializes writers and evaluation. State is published
 // under engine.mu only after the replacement file has been written successfully.
 type ruleConfigStore struct {
-	path  string
-	epoch string
-	base  []*Rule
-	state ruleConfigState
+	path   string
+	epoch  string
+	base   []*Rule
+	state  ruleConfigState
+	macros map[string]string // global {$NAME} user macros
 }
 
 func cloneRuleSpec(spec RuleSpec) RuleSpec {
@@ -65,6 +66,13 @@ func cloneRuleSpec(spec RuleSpec) RuleSpec {
 			labels[key] = value
 		}
 		spec.Labels = labels
+	}
+	if spec.Macros != nil {
+		macros := make(map[string]string, len(spec.Macros))
+		for key, value := range spec.Macros {
+			macros[key] = value
+		}
+		spec.Macros = macros
 	}
 	return spec
 }
@@ -105,7 +113,7 @@ func cloneRules(rules []*Rule) []*Rule {
 	return out
 }
 
-func openRuleConfig(dir string, base []*Rule) (*ruleConfigStore, []*Rule, error) {
+func openRuleConfig(dir string, base []*Rule, macros map[string]string) (*ruleConfigStore, []*Rule, error) {
 	var epoch [16]byte
 	if _, err := rand.Read(epoch[:]); err != nil {
 		return nil, nil, err
@@ -115,7 +123,7 @@ func openRuleConfig(dir string, base []*Rule) (*ruleConfigStore, []*Rule, error)
 			return nil, nil, fmt.Errorf("%w: nil base rule", ErrRuleInvalid)
 		}
 	}
-	s := &ruleConfigStore{epoch: hex.EncodeToString(epoch[:]), base: cloneRules(Merge(base)),
+	s := &ruleConfigStore{epoch: hex.EncodeToString(epoch[:]), base: cloneRules(Merge(base)), macros: macros,
 		state: ruleConfigState{Version: 1, Overrides: []RuleSpec{}, Removed: []string{}}}
 	if dir != "" {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -139,14 +147,14 @@ func openRuleConfig(dir string, base []*Rule) (*ruleConfigStore, []*Rule, error)
 			s.state = disk
 		}
 	}
-	rules, err := effectiveRules(s.base, s.state)
+	rules, err := effectiveRules(s.base, s.state, s.macros)
 	if err != nil {
 		return nil, nil, err
 	}
 	return s, rules, nil
 }
 
-func effectiveRules(base []*Rule, state ruleConfigState) ([]*Rule, error) {
+func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]string) ([]*Rule, error) {
 	if len(state.Overrides)+len(state.Removed) > RuleOverrideLimit {
 		return nil, ErrRuleCapacity
 	}
@@ -157,7 +165,7 @@ func effectiveRules(base []*Rule, state ruleConfigState) ([]*Rule, error) {
 			return nil, fmt.Errorf("%w: duplicate rule %q", ErrRuleInvalid, spec.Name)
 		}
 		seen[spec.Name] = true
-		rule, err := Compile(cloneRuleSpec(spec), "api")
+		rule, err := CompileWith(cloneRuleSpec(spec), "api", macros)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
 		}
@@ -273,7 +281,7 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 			return nil, fmt.Errorf("%w: duplicate rule %q", ErrRuleInvalid, spec.Name)
 		}
 		seen[spec.Name] = true
-		if _, err := Compile(spec, "api"); err != nil {
+		if _, err := CompileWith(spec, "api", e.ruleConfig.macros); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
 		}
 	}
@@ -348,7 +356,7 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 	}
 	sort.Slice(next.Overrides, func(i, j int) bool { return next.Overrides[i].Name < next.Overrides[j].Name })
 	sort.Strings(next.Removed)
-	rules, err := effectiveRules(s.base, next)
+	rules, err := effectiveRules(s.base, next, s.macros)
 	if err != nil {
 		return nil, err
 	}

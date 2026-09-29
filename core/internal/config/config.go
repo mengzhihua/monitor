@@ -44,6 +44,11 @@ type Config struct {
 		OIDC          OIDC     `yaml:"oidc"`
 		LDAP          LDAP     `yaml:"ldap"`
 		TicketWebhook string   `yaml:"ticket_webhook"` // POST handling JSON after a successful save; empty = off
+		// Audit logs mutating API calls and auth events to <data_dir>/operations/audit-log.jsonl.
+		Audit struct {
+			Enabled    *bool `yaml:"enabled"`     // nil = on
+			MaxEntries int   `yaml:"max_entries"` // default 10000
+		} `yaml:"audit"`
 	} `yaml:"web"`
 	Stream     Stream `yaml:"stream"`
 	Hub        Hub    `yaml:"hub"`
@@ -156,6 +161,7 @@ type Health struct {
 	Notify           Notify                     `yaml:"notify"`
 	Alarms           []health.RuleSpec          `yaml:"alarms"`  // inline rules, same schema as health.d files
 	Windows          []health.MaintenanceWindow `yaml:"windows"` // recurring maintenance calendar
+	Macros           map[string]string          `yaml:"macros"`  // global {$NAME} user macros usable in rule fields
 }
 
 // Notify holds the notification channels; a channel is active when its
@@ -293,6 +299,9 @@ func Default() *Config {
 // WebEnabled reports whether the embedded HTTP server should run. web.enabled
 // is unset (nil) by default, which keeps the server on for backward compat.
 func (c *Config) WebEnabled() bool { return c.Web.Enabled == nil || *c.Web.Enabled }
+
+// AuditEnabled reports whether the API audit log should record mutations.
+func (c *Config) AuditEnabled() bool { return c.Web.Audit.Enabled == nil || *c.Web.Audit.Enabled }
 
 // Load reads path (if it exists) on top of Default().
 func Load(path string) (*Config, error) {

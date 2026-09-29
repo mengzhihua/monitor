@@ -202,10 +202,25 @@ data/
   to: sysadmin
 ```
 
+`lookup` 除 Netdata 风格聚合（average/min/max/sum/median/last/min2max，配 `unaligned`/`absolute`/`percentage`/`anomaly-bit`/`of dims`）外，还支持 Zabbix 风格函数（窗口 `[now-After, now]`，多维度结果求和）：
+
+| 方法 | 语义 |
+|---|---|
+| `nodata -5m` | 窗口内无任何非 NaN 点返回 1，否则 0（绝不返回 NaN） |
+| `first -5m` / `change -5m` / `stddev -5m` | 首值 / 末值−首值 / 总体标准差 |
+| `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
+| `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
+| `forecast -1h horizon 30m` | 最小二乘线性拟合在 now+horizon 的取值 |
+| `timeleft -1h target 0` | 拟合到达 target 的剩余秒数（跨维度取最小；永不收敛返回 1e15） |
+
+规则字段可引用 `{$NAME}` 用户宏：规则内 `macros:` 优先，`health.macros` 全局兜底，未定义宏编译即报错。
+
 - 表达式引擎：支持 `$this / $status / $WARNING / $CRITICAL / $now / 其它告警名引用 / 图表其它维度`，与 Netdata 兼容，便于直接移植其预置规则。
 - 状态机：`UNINITIALIZED → CLEAR ↔ WARNING ↔ CRITICAL`，`REMOVED`；每次跃迁写 `alarm_log`。
 - 静默：按 host/chart/alert/label 维度、时间窗口；维护窗口。
 - 通知路由：`to: role` → 角色→渠道映射；Hub 模式下节点可 `notify.local = false` 交给 Hub 集中通知。
+- 手动关闭（Zabbix close problem）：`POST /api/v1/alarms/close {alarm_id, comment}`（admin/troubleshooter）把已触发告警置为 CLEAR 并走正常通知路径；规则继续评估，条件仍成立时下次评估重新触发。仅限本机引擎，`node=` 远端返回 501。日志条目带 `manual/user/comment`。
+- 审计日志：`web.audit`（默认开启，`<data_dir>/operations/audit-log.jsonl`，上限 `max_entries`）记录非 GET 的 `/api/` 变更（用户/角色/远端/动作/状态码）与 `login`/`login_failed` 认证事件；采集上报类端点（ingest、checks、stream、ring）不记录。`GET /api/v1/audit?after=&limit=&user=` 仅 admin。
 - 渠道插件接口 `notify.Channel{Send(ctx, Event) error}`：email(SMTP)、generic webhook、钉钉、企业微信、飞书、Telegram、Slack、Discord、PagerDuty、短信（阿里云/腾讯云）、**App 推送**（APNs / FCM / 自建 WSS 推送）。
 - 去重与聚合：同一告警在 `repeat` 间隔内不重发；一分钟内多条合并为摘要。
 

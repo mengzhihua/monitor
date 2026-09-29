@@ -345,6 +345,40 @@ paths:
       responses:
         "200":
           description: alarms
+  /api/v1/alarms/close:
+    post:
+      summary: Manually close a raised alarm
+      description: Admin and troubleshooter only. Zabbix-style manual close; the rule keeps evaluating and re-raises if the condition still holds. Local alarms only; node= for a remote node returns 501. Actor recorded on the log entry.
+      parameters:
+        - {in: query, name: node, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alarm_id]
+              properties:
+                alarm_id: {type: integer, format: uint64}
+                comment: {type: string, maxLength: 512}
+      responses:
+        "200": {description: updated alarm}
+        "403": {description: insufficient role}
+        "404": {description: alarm id unknown or health engine disabled}
+        "409": {description: alarm is not raised}
+        "501": {description: node= refers to a remote node}
+  /api/v1/audit:
+    get:
+      summary: Audit log entries
+      description: Admin only. Newest first. Mutating /api calls and login/login_failed auth events; reads and ingest endpoints are not recorded.
+      parameters:
+        - {in: query, name: after, schema: {type: integer, format: int64}}
+        - {in: query, name: limit, schema: {type: integer, maximum: 1000}}
+        - {in: query, name: user, schema: {type: string}}
+      responses:
+        "200": {description: "{entries:[{ts,user,role,remote,method,path,action,target,status}]}"}
+        "403": {description: admin only}
+        "404": {description: audit disabled}
   /api/v1/collectors:
     get:
       summary: Collector status

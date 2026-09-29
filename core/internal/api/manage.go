@@ -243,6 +243,7 @@ func (s *Server) handleLDAP(w http.ResponseWriter, r *http.Request) {
 		bind = func(user, pass string) error { return ldapSimpleBind(s.ldap, user, pass) }
 	}
 	if err := bind(body.User, body.Password); err != nil {
+		s.auditEvent(r, "login_failed", body.User)
 		http.Error(w, "ldap bind failed", http.StatusUnauthorized)
 		return
 	}
@@ -251,6 +252,7 @@ func (s *Server) handleLDAP(w http.ResponseWriter, r *http.Request) {
 		role = string(RoleViewer)
 	}
 	st := s.shares.issueUser(body.User, Role(role), 24*time.Hour, viewPrincipal("ldap", s.ldap.URL, s.ldap.UserDN, body.User))
+	s.auditEvent(r, "login", body.User)
 	writeJSON(w, map[string]any{"token": st.Token, "user": body.User, "role": role, "until": st.Until})
 }
 

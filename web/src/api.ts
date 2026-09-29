@@ -333,6 +333,8 @@ export const api = {
   silence: (body: { all?: boolean; alarm?: string; chart?: string; until?: number; clear?: boolean } = {}) =>
     post<SilenceState>('/api/v1/alarms/silence', body),
   silenceState: () => get<SilenceState>('/api/v1/alarms/silence'),
+  closeAlarm: (alarmId: number, comment: string) =>
+    post<Alarm>(`/api/v1/alarms/close${q({})}`, { alarm_id: alarmId, comment }),
   functions: (signal?: AbortSignal) => get<FunctionInfo[]>(`/api/v1/functions${q({})}`, signal),
   function: (name: string, args: Record<string, string> = {}, signal?: AbortSignal) =>
     get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`, signal),

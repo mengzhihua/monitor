@@ -351,7 +351,7 @@ func TestRuleConfigCorruptFileFailsStartup(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := openRuleConfig(dir, nil); !errors.Is(err, ErrRuleInvalid) {
+		if _, _, err := openRuleConfig(dir, nil, nil); !errors.Is(err, ErrRuleInvalid) {
 			t.Fatalf("bad file accepted: %v", err)
 		}
 		if unchanged, err := os.ReadFile(path); err != nil || string(unchanged) != body {
