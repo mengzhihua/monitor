@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +36,7 @@ type RuleConfigSnapshot struct {
 	Overridden    []string `json:"overridden"`
 	Templates     []string `json:"templates,omitempty"`      // matched template names (agent overlay)
 	TemplateRules []string `json:"template_rules,omitempty"` // rule names supplied by templates
+	Invalid       []string `json:"invalid,omitempty"`        // runtime rules skipped under current macros
 }
 
 // OverlayLayer is the hub-pushed template overlay: rules, macros and base-rule
@@ -81,6 +82,7 @@ type ruleConfigStore struct {
 	state       ruleConfigState
 	macros      map[string]string // global {$NAME} user macros
 	overlay     OverlayLayer      // hub template overlay (Rev 0 = none)
+	invalid     []string          // runtime overrides invalid under overlay macros
 }
 
 func cloneRuleSpec(spec RuleSpec) RuleSpec {
@@ -179,7 +181,7 @@ func openRuleConfig(dir string, base []*Rule, macros map[string]string) (*ruleCo
 			s.overlay = *ov
 		}
 	}
-	rules, err := effectiveRules(s.base, s.state, s.effectiveMacros(), &s.overlay)
+	rules, _, err := effectiveRules(s.base, s.state, s.effectiveMacros(), &s.overlay, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -221,16 +223,20 @@ func (s *ruleConfigStore) effectiveMacros() map[string]string {
 	return out
 }
 
-func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]string, overlay *OverlayLayer) ([]*Rule, error) {
+// effectiveRules merges base + template overlay + runtime overrides. Runtime
+// overrides that no longer compile under the current macro set are skipped
+// and returned in invalid (template rules still reject the whole merge).
+func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]string, overlay *OverlayLayer, tolerateRuntime bool) ([]*Rule, []string, error) {
+	var invalid []string
 	if len(state.Overrides)+len(state.Removed) > RuleOverrideLimit {
-		return nil, ErrRuleCapacity
+		return nil, invalid, ErrRuleCapacity
 	}
 	var tplRules []*Rule
 	seenTpl := make(map[string]bool)
 	if overlay != nil {
 		for _, spec := range overlay.Rules {
 			if seenTpl[spec.Name] {
-				return nil, fmt.Errorf("%w: duplicate template rule %q", ErrRuleInvalid, spec.Name)
+				return nil, invalid, fmt.Errorf("%w: duplicate template rule %q", ErrRuleInvalid, spec.Name)
 			}
 			seenTpl[spec.Name] = true
 			src := "template"
@@ -239,7 +245,7 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 			}
 			rule, err := CompileWith(cloneRuleSpec(spec), src, macros)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
+				return nil, invalid, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
 			}
 			tplRules = append(tplRules, rule)
 		}
@@ -248,7 +254,7 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 	if overlay != nil {
 		for _, name := range overlay.Removed {
 			if strings.TrimSpace(name) == "" || tplRemoved[name] {
-				return nil, fmt.Errorf("%w: duplicate or empty removed template rule", ErrRuleInvalid)
+				return nil, invalid, fmt.Errorf("%w: duplicate or empty removed template rule", ErrRuleInvalid)
 			}
 			tplRemoved[name] = true
 		}
@@ -257,19 +263,26 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 	overrides := make([]*Rule, 0, len(state.Overrides))
 	for _, spec := range state.Overrides {
 		if seen[spec.Name] {
-			return nil, fmt.Errorf("%w: duplicate rule %q", ErrRuleInvalid, spec.Name)
+			return nil, invalid, fmt.Errorf("%w: duplicate rule %q", ErrRuleInvalid, spec.Name)
 		}
 		seen[spec.Name] = true
 		rule, err := CompileWith(cloneRuleSpec(spec), "api", macros)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
+			if !tolerateRuntime {
+				return nil, invalid, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
+			}
+			// A runtime override may reference a macro the new overlay
+			// removed; skip it rather than reject the whole overlay.
+			slog.Warn("health: skipping invalid runtime rule under new overlay", "rule", spec.Name, "err", err)
+			invalid = append(invalid, spec.Name)
+			continue
 		}
 		overrides = append(overrides, rule)
 	}
 	removed := make(map[string]bool, len(state.Removed))
 	for _, name := range state.Removed {
 		if strings.TrimSpace(name) == "" || seen[name] || removed[name] {
-			return nil, fmt.Errorf("%w: duplicate or empty removed rule", ErrRuleInvalid)
+			return nil, invalid, fmt.Errorf("%w: duplicate or empty removed rule", ErrRuleInvalid)
 		}
 		removed[name] = true
 	}
@@ -281,7 +294,7 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 			rules = append(rules, rule)
 		}
 	}
-	return rules, nil
+	return rules, invalid, nil
 }
 
 func (s *ruleConfigStore) revision() string {
@@ -300,7 +313,7 @@ func (e *Engine) RulesConfig() RuleConfigSnapshot {
 func (e *Engine) rulesConfigLocked() RuleConfigSnapshot {
 	s := e.ruleConfig
 	out := RuleConfigSnapshot{Revision: s.revision(), Persistent: s.path != "", Rules: cloneRules(e.rules),
-		Base: cloneRules(s.base), Removed: append([]string{}, s.state.Removed...), Overridden: []string{}}
+		Base: cloneRules(s.base), Removed: append([]string{}, s.state.Removed...), Overridden: []string{}, Invalid: append([]string{}, s.invalid...)}
 	for _, spec := range s.state.Overrides {
 		out.Overridden = append(out.Overridden, spec.Name)
 	}
@@ -337,7 +350,7 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 	}
 	e.mu.RUnlock()
 	next := o
-	rules, err := effectiveRules(s.base, s.state, macros, &next)
+	rules, invalid, err := effectiveRules(s.base, s.state, macros, &next, true)
 	if err != nil {
 		return err
 	}
@@ -351,20 +364,17 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 		}
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	// A macro-only change (same specs, different values) leaves Hash()
-	// untouched, so refresh every rule's alarm state in that case.
-	macroChange := !reflect.DeepEqual(s.overlay.Macros, next.Macros)
 	s.overlay = next
+	s.invalid = invalid
 	current := make(map[string]*Rule, len(e.rules))
 	for _, rule := range e.rules {
 		current[rule.Spec.Name] = rule
 	}
 	changed := make(map[string]bool)
 	for _, rule := range rules {
-		if macroChange {
-			changed[rule.Spec.Name] = true
-		} else if previous := current[rule.Spec.Name]; previous == nil || previous.Hash() != rule.Hash() {
+		// ExpandedHash covers the macro-resolved spec, so a macro-only
+		// change refreshes only the rules that actually resolved differently.
+		if previous := current[rule.Spec.Name]; previous == nil || previous.ExpandedHash() != rule.ExpandedHash() {
 			changed[rule.Spec.Name] = true
 		}
 		delete(current, rule.Spec.Name)
@@ -373,8 +383,22 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 		changed[name] = true
 	}
 	e.rules = rules
+	removedEntries := make([]struct {
+		a     *Alarm
+		entry LogEntry
+	}, 0)
+	now := e.now()
 	for key, alarm := range e.alarms {
 		if changed[alarm.Name] {
+			if alarm.Status == StatusWarning || alarm.Status == StatusCritical {
+				old, oldValue := alarm.Status, alarm.Value
+				alarm.Status = StatusRemoved
+				alarm.LastStatusChange = now.Unix()
+				removedEntries = append(removedEntries, struct {
+					a     *Alarm
+					entry LogEntry
+				}{alarm, e.newEntry(alarm, old, oldValue, now)})
+			}
 			delete(e.alarms, key)
 		}
 	}
@@ -389,6 +413,10 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 		if len(kept) == 0 {
 			delete(e.groups, key)
 		}
+	}
+	e.mu.Unlock()
+	for _, removed := range removedEntries {
+		e.transition(removed.a, removed.entry, now)
 	}
 	return nil
 }
@@ -415,8 +443,22 @@ func (e *Engine) MutateRules(expected *string, mutation RuleMutation) (RuleConfi
 	e.mu.Lock()
 	e.ruleConfig.state = prepared.state
 	e.rules = prepared.rules
+	now := e.now()
+	removedEntries := make([]struct {
+		a     *Alarm
+		entry LogEntry
+	}, 0)
 	for key, alarm := range e.alarms {
 		if prepared.changed[alarm.Name] {
+			if alarm.Status == StatusWarning || alarm.Status == StatusCritical {
+				old, oldValue := alarm.Status, alarm.Value
+				alarm.Status = StatusRemoved
+				alarm.LastStatusChange = now.Unix()
+				removedEntries = append(removedEntries, struct {
+					a     *Alarm
+					entry LogEntry
+				}{alarm, e.newEntry(alarm, old, oldValue, now)})
+			}
 			delete(e.alarms, key)
 		}
 	}
@@ -434,6 +476,9 @@ func (e *Engine) MutateRules(expected *string, mutation RuleMutation) (RuleConfi
 	}
 	out := e.rulesConfigLocked()
 	e.mu.Unlock()
+	for _, removed := range removedEntries {
+		e.transition(removed.a, removed.entry, now)
+	}
 	return out, nil
 }
 
@@ -548,7 +593,8 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 	}
 	sort.Slice(next.Overrides, func(i, j int) bool { return next.Overrides[i].Name < next.Overrides[j].Name })
 	sort.Strings(next.Removed)
-	rules, err := effectiveRules(s.base, next, s.effectiveMacros(), &s.overlay)
+	rules, invalid, err := effectiveRules(s.base, next, s.effectiveMacros(), &s.overlay, false)
+	_ = invalid
 	if err != nil {
 		return nil, err
 	}

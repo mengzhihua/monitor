@@ -103,3 +103,62 @@ func TestSetOverlayMacroChangeResetsAlarms(t *testing.T) {
 		}
 	}
 }
+
+func TestOverlayRemovalToleratesInvalidRuntimeRule(t *testing.T) {
+	e := ruleConfigEngine(t, t.TempDir(), ruleConfigFixture("base.keep"))
+	rt := RuleSpec{Name: "rt.macro", On: "system.ram", Calc: "$used", Warn: "$this > {$T}", Every: "1s"}
+	if err := e.SetOverlay(OverlayLayer{Rev: 1, Macros: map[string]string{"T": "50"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.MutateRules(nil, RuleMutation{Upserts: []RuleSpec{rt}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetOverlay(OverlayLayer{Rev: 2}); err != nil {
+		t.Fatalf("overlay removal should succeed: %v", err)
+	}
+	s := e.RulesConfig()
+	if len(s.Invalid) != 1 || s.Invalid[0] != "rt.macro" {
+		t.Fatalf("invalid=%v", s.Invalid)
+	}
+	for _, r := range s.Rules {
+		if r.Spec.Name == "rt.macro" {
+			t.Fatal("invalid runtime rule evaluated")
+		}
+	}
+	if err := e.SetOverlay(OverlayLayer{Rev: 3, Macros: map[string]string{"T": "60"}}); err != nil {
+		t.Fatal(err)
+	}
+	s = e.RulesConfig()
+	if len(s.Invalid) != 0 {
+		t.Fatalf("invalid after macro restored=%v", s.Invalid)
+	}
+}
+
+// Removing a template rule clears its alarm via the normal transition path so
+// the stream/notifier see it.
+func TestOverlayRemovalClearsAlarm(t *testing.T) {
+	dir := t.TempDir()
+	e := ruleConfigEngine(t, dir)
+	var seen []LogEntry
+	e.opt.OnEvent = func(entry LogEntry) { seen = append(seen, entry) }
+	if err := e.SetOverlay(OverlayLayer{Rev: 1, Templates: []string{"t"}, Rules: []RuleSpec{
+		{Name: "tpl.x", On: "system.ram", Calc: "$used", Warn: "$this > 50", Every: "1s"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	e.reg.Collect("system.ram", e.now(), map[string]float64{"used": 90})
+	e.Tick(e.now())
+	seen = seen[:0]
+	if err := e.SetOverlay(OverlayLayer{}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, en := range seen {
+		if en.Name == "tpl.x" && en.Status == StatusRemoved {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no REMOVED transition emitted: %+v", seen)
+	}
+}

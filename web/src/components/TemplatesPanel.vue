@@ -87,12 +87,12 @@ async function saveWithYaml() {
     await api.putTemplateRaw(body, t.id)
     error.value = ''
     editing.value = null
-    await load()
+    await Promise.all([load(), loadInventory()])
   } catch (e) { error.value = (e as Error).message } finally { saving.value = false }
 }
 async function del(tpl: Template) {
   if (!tpl.id || !window.confirm(`删除模板 ${tpl.name}？`)) return
-  try { await api.deleteTemplate(tpl.id); await load() } catch (e) { error.value = (e as Error).message }
+  try { await api.deleteTemplate(tpl.id); await Promise.all([load(), loadInventory()]) } catch (e) { error.value = (e as Error).message }
 }
 
 function kvEntries(rec: Record<string, string> | undefined) { return Object.entries(rec || {}) }
