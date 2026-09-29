@@ -331,3 +331,58 @@ func TestAlertRulesManageInvalidOverride(t *testing.T) {
 	}
 	call("create", &rt3, "", 409) // exists in Invalid
 }
+
+// An invalid override named like a base rule yields one list entry (the
+// broken override, has_base true) instead of duplicate base+invalid items.
+func TestAlertRulesInvalidShadowsBase(t *testing.T) {
+	dir := t.TempDir()
+	base, err := health.Compile(health.RuleSpec{Name: "base", On: "system.ram", Calc: "$used", Warn: "$this > 10"}, "inline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := health.New(registry.New(&registry.Host{Hostname: "test"}, nil), nil, health.Options{Rules: []*health.Rule{base}, LogDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 1, Macros: map[string]string{"T": "50"}}); err != nil {
+		t.Fatal(err)
+	}
+	shadow := health.RuleSpec{Name: "base", On: "system.ram", Calc: "$used", Warn: "$this > {$T}", Every: "1s"}
+	if _, err := e.MutateRules(nil, health.RuleMutation{Upserts: []health.RuleSpec{shadow}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.RulesConfig(); len(s.Invalid) != 1 || s.Invalid[0] != "base" {
+		t.Fatalf("invalid=%v", s.Invalid)
+	}
+
+	ts, _ := newTestServer(t, Options{Health: e, Users: []User{{Name: "admin", Token: "admin", Role: RoleAdmin}}})
+	req, _ := http.NewRequest("GET", ts.URL+"/api/v1/alert_config", nil)
+	req.Header.Set("Authorization", "Bearer admin")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out alertConfigResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	var item *alertConfigItem
+	for i := range out.Configs {
+		if out.Configs[i].Name == "base" {
+			count++
+			item = &out.Configs[i]
+		}
+	}
+	if count != 1 || item == nil {
+		t.Fatalf("want exactly one 'base' entry, got %d: %+v", count, out.Configs)
+	}
+	if item.Origin != "invalid" || !item.HasBase || item.Config.Warn != "$this > {$T}" || item.Config.Every != "1s" {
+		t.Fatalf("shadowed base entry: %+v", item)
+	}
+}
