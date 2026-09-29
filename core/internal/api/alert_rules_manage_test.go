@@ -382,7 +382,7 @@ func TestAlertRulesInvalidShadowsBase(t *testing.T) {
 	if count != 1 || item == nil {
 		t.Fatalf("want exactly one 'base' entry, got %d: %+v", count, out.Configs)
 	}
-	if item.Origin != "invalid" || !item.HasBase || item.Config.Warn != "$this > {$T}" || item.Config.Every != "1s" {
+	if item.Origin != "invalid" || !item.HasBase || item.Hash != "" || item.Every != 0 || item.Config.Warn != "$this > {$T}" || item.Config.Every != "1s" {
 		t.Fatalf("shadowed base entry: %+v", item)
 	}
 }
