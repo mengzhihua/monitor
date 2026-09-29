@@ -27,12 +27,33 @@ var ErrRuleCapacity = errors.New("alert rule override capacity reached")
 // RuleConfigSnapshot includes the effective rules and their original file-based
 // definitions. Revision is opaque and changes on every mutation and restart.
 type RuleConfigSnapshot struct {
-	Revision   string   `json:"revision"`
-	Persistent bool     `json:"persistent"`
-	Rules      []*Rule  `json:"rules"`
-	Base       []*Rule  `json:"base"`
-	Removed    []string `json:"removed"`
-	Overridden []string `json:"overridden"`
+	Revision      string   `json:"revision"`
+	Persistent    bool     `json:"persistent"`
+	Rules         []*Rule  `json:"rules"`
+	Base          []*Rule  `json:"base"`
+	Removed       []string `json:"removed"`
+	Overridden    []string `json:"overridden"`
+	Templates     []string `json:"templates,omitempty"`      // matched template names (agent overlay)
+	TemplateRules []string `json:"template_rules,omitempty"` // rule names supplied by templates
+}
+
+// OverlayLayer is the hub-pushed template overlay: rules, macros and base-rule
+// tombstones resolved for this node. Macros layer over the global health.macros
+// (global < template < rule-level) when compiling both overlay and runtime
+// rules. The runtime layer still wins over overlay rules of the same name; a
+// runtime Restore does not resurrect a rule hidden by the overlay's Removed.
+type OverlayLayer struct {
+	Rev        int64             `json:"rev"`
+	Macros     map[string]string `json:"macros,omitempty"`
+	Rules      []RuleSpec        `json:"rules,omitempty"`
+	Removed    []string          `json:"removed,omitempty"`
+	Templates  []string          `json:"templates,omitempty"`   // provenance: matched template names
+	RuleSource map[string]string `json:"rule_source,omitempty"` // rule name -> template name
+}
+
+type overlayFile struct {
+	Version int          `json:"version"`
+	Overlay OverlayLayer `json:"overlay"`
 }
 
 type RuleMutation struct {
@@ -52,11 +73,13 @@ type ruleConfigState struct {
 // The engine's tickMu serializes writers and evaluation. State is published
 // under engine.mu only after the replacement file has been written successfully.
 type ruleConfigStore struct {
-	path   string
-	epoch  string
-	base   []*Rule
-	state  ruleConfigState
-	macros map[string]string // global {$NAME} user macros
+	path        string
+	overlayPath string
+	epoch       string
+	base        []*Rule
+	state       ruleConfigState
+	macros      map[string]string // global {$NAME} user macros
+	overlay     OverlayLayer      // hub template overlay (Rev 0 = none)
 }
 
 func cloneRuleSpec(spec RuleSpec) RuleSpec {
@@ -147,16 +170,87 @@ func openRuleConfig(dir string, base []*Rule, macros map[string]string) (*ruleCo
 			s.state = disk
 		}
 	}
-	rules, err := effectiveRules(s.base, s.state, s.macros)
+	if dir != "" {
+		s.overlayPath = filepath.Join(dir, "template-overlay.json")
+		if ov, err := loadOverlay(s.overlayPath); err != nil {
+			return nil, nil, err
+		} else if ov != nil {
+			s.overlay = *ov
+		}
+	}
+	rules, err := effectiveRules(s.base, s.state, s.effectiveMacros(), &s.overlay)
 	if err != nil {
 		return nil, nil, err
 	}
 	return s, rules, nil
 }
 
-func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]string) ([]*Rule, error) {
+func loadOverlay(path string) (*OverlayLayer, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxRuleConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	var disk overlayFile
+	if len(b) > maxRuleConfigBytes || json.Unmarshal(b, &disk) != nil || disk.Version != 1 {
+		return nil, fmt.Errorf("%w: damaged template overlay file", ErrRuleInvalid)
+	}
+	return &disk.Overlay, nil
+}
+
+// effectiveMacros merges global and template-overlay macros; the overlay wins.
+func (s *ruleConfigStore) effectiveMacros() map[string]string {
+	if len(s.overlay.Macros) == 0 {
+		return s.macros
+	}
+	out := make(map[string]string, len(s.macros)+len(s.overlay.Macros))
+	for k, v := range s.macros {
+		out[k] = v
+	}
+	for k, v := range s.overlay.Macros {
+		out[k] = v
+	}
+	return out
+}
+
+func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]string, overlay *OverlayLayer) ([]*Rule, error) {
 	if len(state.Overrides)+len(state.Removed) > RuleOverrideLimit {
 		return nil, ErrRuleCapacity
+	}
+	var tplRules []*Rule
+	seenTpl := make(map[string]bool)
+	if overlay != nil {
+		for _, spec := range overlay.Rules {
+			if seenTpl[spec.Name] {
+				return nil, fmt.Errorf("%w: duplicate template rule %q", ErrRuleInvalid, spec.Name)
+			}
+			seenTpl[spec.Name] = true
+			src := "template"
+			if name := overlay.RuleSource[spec.Name]; name != "" {
+				src = "template:" + name
+			}
+			rule, err := CompileWith(cloneRuleSpec(spec), src, macros)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
+			}
+			tplRules = append(tplRules, rule)
+		}
+	}
+	tplRemoved := make(map[string]bool)
+	if overlay != nil {
+		for _, name := range overlay.Removed {
+			if strings.TrimSpace(name) == "" || tplRemoved[name] {
+				return nil, fmt.Errorf("%w: duplicate or empty removed template rule", ErrRuleInvalid)
+			}
+			tplRemoved[name] = true
+		}
 	}
 	seen := make(map[string]bool)
 	overrides := make([]*Rule, 0, len(state.Overrides))
@@ -179,10 +273,10 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 		removed[name] = true
 	}
 	sort.Slice(overrides, func(i, j int) bool { return overrides[i].Spec.Name < overrides[j].Spec.Name })
-	merged := Merge(base, overrides)
+	merged := Merge(base, tplRules, overrides)
 	rules := make([]*Rule, 0, len(merged))
 	for _, rule := range merged {
-		if !removed[rule.Spec.Name] {
+		if !removed[rule.Spec.Name] && !tplRemoved[rule.Spec.Name] {
 			rules = append(rules, rule)
 		}
 	}
@@ -207,9 +301,88 @@ func (e *Engine) rulesConfigLocked() RuleConfigSnapshot {
 	for _, spec := range s.state.Overrides {
 		out.Overridden = append(out.Overridden, spec.Name)
 	}
+	for _, spec := range s.overlay.Rules {
+		out.TemplateRules = append(out.TemplateRules, spec.Name)
+	}
+	out.Templates = append(out.Templates, s.overlay.Templates...)
 	sort.Strings(out.Removed)
 	sort.Strings(out.Overridden)
+	sort.Strings(out.TemplateRules)
+	sort.Strings(out.Templates)
 	return out
+}
+
+// SetOverlay replaces the hub-pushed template overlay atomically: compile
+// errors reject the whole overlay and the previous one stays. The new layer
+// is persisted to template-overlay.json so it survives restarts that happen
+// before the next hub push.
+func (e *Engine) SetOverlay(o OverlayLayer) error {
+	e.tickMu.Lock()
+	defer e.tickMu.Unlock()
+	e.mu.RLock()
+	s := e.ruleConfig
+	if e.closed {
+		e.mu.RUnlock()
+		return ErrRuleInvalid
+	}
+	macros := make(map[string]string, len(s.macros)+len(o.Macros))
+	for k, v := range s.macros {
+		macros[k] = v
+	}
+	for k, v := range o.Macros {
+		macros[k] = v
+	}
+	e.mu.RUnlock()
+	next := o
+	rules, err := effectiveRules(s.base, s.state, macros, &next)
+	if err != nil {
+		return err
+	}
+	if s.overlayPath != "" {
+		b, err := json.Marshal(overlayFile{Version: 1, Overlay: next})
+		if err != nil {
+			return err
+		}
+		if err := persistAtomic(s.overlayPath, b); err != nil {
+			return err
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	s.overlay = next
+	current := make(map[string]*Rule, len(e.rules))
+	for _, rule := range e.rules {
+		current[rule.Spec.Name] = rule
+	}
+	changed := make(map[string]bool)
+	for _, rule := range rules {
+		if previous := current[rule.Spec.Name]; previous == nil || previous.Hash() != rule.Hash() {
+			changed[rule.Spec.Name] = true
+		}
+		delete(current, rule.Spec.Name)
+	}
+	for name := range current {
+		changed[name] = true
+	}
+	e.rules = rules
+	for key, alarm := range e.alarms {
+		if changed[alarm.Name] {
+			delete(e.alarms, key)
+		}
+	}
+	for key, group := range e.groups {
+		kept := group.entries[:0]
+		for _, entry := range group.entries {
+			if !changed[entry.Name] {
+				kept = append(kept, entry)
+			}
+		}
+		group.entries = kept
+		if len(kept) == 0 {
+			delete(e.groups, key)
+		}
+	}
+	return nil
 }
 
 type preparedRuleMutation struct {
@@ -356,7 +529,7 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 	}
 	sort.Slice(next.Overrides, func(i, j int) bool { return next.Overrides[i].Name < next.Overrides[j].Name })
 	sort.Strings(next.Removed)
-	rules, err := effectiveRules(s.base, next, s.macros)
+	rules, err := effectiveRules(s.base, next, s.effectiveMacros(), &s.overlay)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +558,11 @@ func (s *ruleConfigStore) persist(b []byte) error {
 	if s.path == "" {
 		return nil
 	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".alert-rules-*") // owner-only
+	return persistAtomic(s.path, b)
+}
+
+func persistAtomic(path string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".persist-*") // owner-only
 	if err != nil {
 		return err
 	}
@@ -401,8 +578,8 @@ func (s *ruleConfigStore) persist(b []byte) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
-		return fmt.Errorf("persist alert rules: %w", err)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return fmt.Errorf("persist %s: %w", filepath.Base(path), err)
 	}
 	return nil
 }

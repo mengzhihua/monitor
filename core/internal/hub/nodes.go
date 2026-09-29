@@ -49,6 +49,9 @@ type Options struct {
 	// NodeConfig returns the desired overlay for a node (hub → agent
 	// TypeConfig); nil means nothing to push.
 	NodeConfig func(nodeID string) *NodeConfig
+	// HealthOverlay returns the merged template overlay for a node; nil means
+	// the node matches no template.
+	HealthOverlay func(nodeID string) *stream.HealthOverlay
 	// OnConfigState receives agent config reports and apply acks
 	// (TypeConfigState).
 	OnConfigState func(nodeID string, f stream.Frame)
@@ -70,6 +73,14 @@ func (o *Options) configFor(nodeID string) *NodeConfig {
 	return o.NodeConfig(nodeID)
 }
 
+// healthFor returns the merged template overlay for a node, or nil.
+func (o *Options) healthFor(nodeID string) *stream.HealthOverlay {
+	if o.HealthOverlay == nil {
+		return nil
+	}
+	return o.HealthOverlay(nodeID)
+}
+
 // Node is one remote agent.
 type Node struct {
 	ID        string
@@ -83,6 +94,7 @@ type Node struct {
 
 	reg *registry.Registry
 	db  *tsdb.View
+	opt *Options
 
 	mu        sync.Mutex
 	functions []stream.FunctionInfo
@@ -211,7 +223,7 @@ func Open(db *tsdb.Store, dir string, opt Options) (*Nodes, error) {
 func (n *Nodes) newNode(id string, host registry.Host) *Node {
 	h := host
 	view := tsdb.Prefixed(n.db, "node:"+id+"|")
-	node := &Node{ID: id, Host: h, db: view, alarms: map[string]health.LogEntry{}, calls: map[uint64]chan stream.Frame{}}
+	node := &Node{ID: id, Host: h, db: view, opt: &n.opt, alarms: map[string]health.LogEntry{}, calls: map[uint64]chan stream.Frame{}}
 	node.reg = registry.New(&node.Host, view)
 	if n.opt.OnSample != nil {
 		fn := n.opt.OnSample
@@ -593,7 +605,8 @@ func (nd *Node) PushConfig(cfg NodeConfig) bool {
 		return false
 	}
 	return s.send(stream.Frame{Type: stream.TypeConfig,
-		Disabled: cfg.Disabled, ConfigYAML: cfg.YAML, ConfigRev: cfg.Updated}) == nil
+		Disabled: cfg.Disabled, ConfigYAML: cfg.YAML, ConfigRev: cfg.Updated,
+		Health: nd.opt.healthFor(nd.ID)}) == nil
 }
 
 // Call runs a function on the agent over the stream and returns its raw JSON

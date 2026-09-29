@@ -66,6 +66,38 @@ export interface ManageConfig {
   backup?: string; form?: AgentVisual; form_error?: string
 }
 export interface NodeApplyState { rev: number; state: 'applied' | 'rejected' | 'deferred'; error?: string; at: number }
+export interface Template {
+  id?: string
+  name: string
+  description?: string
+  macros?: Record<string, string>
+  rules?: AlertRuleSpec[]
+  removed?: string[]
+  disabled?: string[]
+  tags?: Record<string, string>
+  assign?: TemplateAssign
+  updated?: number
+}
+export interface TemplateAssign { rooms?: string[]; nodes?: string[]; labels?: Record<string, string> }
+export interface HealthOverlay {
+  rev: number
+  templates?: string[]
+  macros?: Record<string, string>
+  rules?: AlertRuleSpec[]
+  removed?: string[]
+  disabled?: string[]
+  tags?: Record<string, string>
+  rule_source?: Record<string, string>
+}
+export interface NodeInventoryView {
+  node_id: string
+  auto: Record<string, string>
+  tags: Record<string, string>
+  manual: Record<string, string>
+  effective: Record<string, string>
+  updated: number
+  sort_order: string[]
+}
 export interface NodeConfigFull extends NodeConfig {
   reported?: string; report_at?: number; apply?: NodeApplyState; online?: boolean; pending?: boolean; pushed?: boolean
 }
@@ -167,6 +199,7 @@ export interface AlertRuleSpec {
   name: string; on: string; class?: string; type?: string; component?: string
   lookup?: string; calc?: string; every?: string; units?: string; warn?: string; crit?: string
   for?: string; keep_firing_for?: string; recovery?: string; delay?: string; repeat?: string; info?: string; to?: string; chart_labels?: Record<string, string>; disabled?: boolean
+  macros?: Record<string, string>
 }
 export interface AlertRuleConfig {
   hash: string; name: string; on: string; source: string; every: number; config: Omit<AlertRuleSpec, 'on'> & { on?: string }
@@ -368,6 +401,19 @@ export const api = {
   putNodeConfig: (cfg: { node_id: string; yaml?: string; disabled?: string[]; if_updated?: number }) =>
     send<NodeConfigFull>('PUT', `/api/v1/hub/config?node=${encodeURIComponent(cfg.node_id)}`, cfg),
   console: () => get<ConsoleResponse>('/api/v1/hub/console'),
+  templates: (signal?: AbortSignal) => get<{ templates: Template[] }>('/api/v1/hub/templates', signal),
+  putTemplate: (tpl: Template, ifUpdated?: number) =>
+    send<Template>('PUT', '/api/v1/hub/templates' + (tpl.id ? `?id=${encodeURIComponent(tpl.id)}` : ''), { ...tpl, if_updated: ifUpdated }),
+  deleteTemplate: (id: string) => send<void>(`DELETE`, `/api/v1/hub/templates?id=${encodeURIComponent(id)}`),
+  putTemplateRaw: (body: Record<string, unknown>, id?: string) =>
+    send<Template>('PUT', '/api/v1/hub/templates' + (id ? `?id=${encodeURIComponent(id)}` : ''), body),
+  templateEffective: (node: string, signal?: AbortSignal) =>
+    get<HealthOverlay>(`/api/v1/hub/templates/effective?node=${encodeURIComponent(node)}`, signal),
+  inventory: (signal?: AbortSignal) => get<{ inventory: Record<string, NodeInventoryView> }>('/api/v1/hub/inventory', signal),
+  nodeInventory: (node: string, signal?: AbortSignal) =>
+    get<NodeInventoryView>(`/api/v1/hub/inventory?node=${encodeURIComponent(node)}`, signal),
+  putInventory: (node: string, fields: Record<string, string>, ifUpdated?: number) =>
+    send<NodeInventoryView>(`PUT`, `/api/v1/hub/inventory?node=${encodeURIComponent(node)}`, { fields, if_updated: ifUpdated }),
   oidcLoginURL: () => '/api/v1/auth/oidc/login',
   liveURL(charts: string[] = []) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'

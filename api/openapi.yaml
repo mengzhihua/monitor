@@ -397,6 +397,40 @@ paths:
       responses:
         "200":
           description: nodes
+  /api/v1/hub/templates:
+    get:
+      summary: Zabbix-style hub templates (list, or one with ?id=)
+      responses:
+        "200": {description: templates}
+        "404": {description: unknown id or not a hub}
+    put:
+      summary: Create/update a template (CAS via if_updated; optional rules_yaml)
+      responses:
+        "200": {description: saved template}
+        "400": {description: invalid rules or body}
+        "409": {description: revision conflict}
+    delete:
+      summary: Delete a template (?id=)
+      responses:
+        "200": {description: deleted}
+        "404": {description: unknown id}
+  /api/v1/hub/templates/effective:
+    get:
+      summary: Resolved template overlay for a node (?node=)
+      responses:
+        "200": {description: HealthOverlay with rev, templates, macros, rules, removed, disabled, tags, rule_source}
+        "400": {description: node parameter required}
+  /api/v1/hub/inventory:
+    get:
+      summary: Node inventory — all nodes, or one with ?node= ({auto, tags, manual, effective, updated})
+      responses:
+        "200": {description: merged inventory view}
+    put:
+      summary: Set manual inventory fields for a node (?node=, CAS via if_updated)
+      responses:
+        "200": {description: merged inventory view}
+        "400": {description: node parameter required}
+        "409": {description: revision conflict}
   /api/v1/hub/spaces:
     get:
       summary: Hub spaces

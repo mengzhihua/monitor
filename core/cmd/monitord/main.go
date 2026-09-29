@@ -224,11 +224,26 @@ func run() error {
 			Functions:          sched.Functions,
 			Logger:             log.With("component", "stream"),
 			ConfigPath:         *cfgPath,
-			OnConfig: func(disabled []string) {
+			OnConfig: func(disabled []string, ov *stream.HealthOverlay) {
+				seen := map[string]bool{}
 				for _, n := range disabled {
+					seen[n] = true
+				}
+				if ov != nil {
+					for _, n := range ov.Disabled {
+						seen[n] = true
+					}
+					if eng != nil {
+						if err := eng.SetOverlay(health.OverlayLayer{Rev: ov.Rev, Macros: ov.Macros,
+							Rules: ov.Rules, Removed: ov.Removed, Templates: ov.Templates, RuleSource: ov.RuleSource}); err != nil {
+							log.Warn("template overlay rejected", "err", err)
+						}
+					}
+				}
+				for n := range seen {
 					sched.SetEnabled(n, false)
 				}
-			},
+			}, // union(nodeConfig.Disabled, overlay.Disabled)
 			OnConfigFile: func(yamlText string, rev int64) error {
 				return applyAgentConfig(*cfgPath, cfg, yamlText, rev, log, requestExit)
 			},
@@ -263,6 +278,7 @@ func run() error {
 	var nodes *hub.Nodes
 	var cluster *hub.Cluster
 	var org *hub.Org
+	var srvTemplates *hub.Templates
 	var srv *api.Server
 	if cfg.Mode == "hub" {
 		hubDir := filepath.Join(cfg.Global.DataDir, "hub")
@@ -270,6 +286,11 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("hub org: %w", err)
 		}
+		templates, err := hub.OpenTemplates(hubDir)
+		if err != nil {
+			return fmt.Errorf("hub templates: %w", err)
+		}
+		srvTemplates = templates
 		if len(org.Spaces()) == 0 {
 			spName, rmName := cfg.Hub.Space, cfg.Hub.Room
 			if spName == "" {
@@ -300,6 +321,16 @@ func run() error {
 				}
 				return &c
 			},
+			HealthOverlay: func(nodeID string) *stream.HealthOverlay {
+				_, roomID := org.Membership(nodeID)
+				var labels map[string]string
+				if nd, ok := nodes.Get(nodeID); ok {
+					labels = nd.Host.Labels
+				}
+				ov := templates.Effective(nodeID, roomID, labels)
+				return &ov // always non-nil when templates are enabled: an empty
+				// overlay (Rev 0) tells the agent to clear stale template rules
+			}, // resolved per-node template overlay
 			OnConfigState: func(nodeID string, f stream.Frame) {
 				if f.ConfigYAML != "" {
 					if err := org.SetReport(nodeID, f.ConfigYAML, time.Now().Unix()); err != nil {
@@ -325,6 +356,7 @@ func run() error {
 		}
 		apiOpt.Nodes = nodes
 		apiOpt.Org = org
+		apiOpt.Templates = srvTemplates
 		apiOpt.PeerToken = cfg.Hub.PeerToken
 		apiOpt.ExtraFunctions = []collect.Function{streamingFunction(nodes)}
 		if len(cfg.Hub.Peers) > 0 {

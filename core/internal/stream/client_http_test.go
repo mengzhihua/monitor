@@ -46,7 +46,7 @@ func TestControlHTTPRequestsCloseConnections(t *testing.T) {
 			defer srv.Close()
 			configured := 0
 			client := &Client{opt: ClientOptions{APIKey: "fixture-key", ClaimToken: "fixture-claim", Timeout: time.Second,
-				OnConfig: func(disabled []string) {
+				OnConfig: func(disabled []string, _ *HealthOverlay) {
 					configured++
 					if !slices.Equal(disabled, []string{"apps"}) {
 						t.Errorf("disabled = %v", disabled)
