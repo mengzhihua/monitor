@@ -47,6 +47,22 @@ func TestActionEscalatesAndRunsCommandOnce(t *testing.T) {
 	}
 }
 
+func TestActionChartFilterSkipsOtherCharts(t *testing.T) {
+	e := diagnosticsEngine(t, Options{
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Actions: []Action{{
+			Name: "disk-only", Charts: []string{"disk.*"},
+			Steps: []ActionStep{{Role: "pager"}},
+		}},
+		Roles: map[string][]string{"pager": {"slack"}},
+	})
+	e.alarms["hot|system.cpu"] = &Alarm{Name: "hot", Chart: "system.cpu", Status: StatusCritical, LastStatusChange: 1}
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: 1, Recipient: "sysadmin"}, 1)
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("filtered %s", got.Recipient)
+	}
+}
+
 func TestCorrelationSuppressesSymptom(t *testing.T) {
 	e := diagnosticsEngine(t, Options{
 		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},

@@ -1,23 +1,27 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import { api, ApiError } from '../api'
 import type { AvailabilityRow, ServiceReport, TopologyEdge } from '../api'
+import { usePolling } from '../polling'
 
 const report = ref<ServiceReport | null>(null)
 const edges = ref<TopologyEdge[]>([])
 const rows = ref<AvailabilityRow[]>([])
 const error = ref('')
 
-onMounted(async () => {
+usePolling(async signal => {
   try {
-    const [services, topology, availability] = await Promise.all([api.services(), api.topology(), api.availability()])
+    const [services, topology, availability] = await Promise.all([api.services(signal), api.topology(signal), api.availability(signal)])
+    if (signal.aborted) return
     report.value = services
     edges.value = topology.edges || []
     rows.value = availability.alarms || []
+    error.value = ''
   } catch (e) {
+    if (signal.aborted) return
     error.value = e instanceof ApiError ? e.message : '读取服务与拓扑失败'
   }
-})
+}, 15000)
 
 function pie(sla: number) {
   const p = Math.max(0, Math.min(100, sla))

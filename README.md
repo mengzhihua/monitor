@@ -432,7 +432,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | 通知 | `health.inhibit`：源告警处于 `critical`（或 `warning`）时，目标告警继续展示，警告和严重通知被抑制，诊断原因 `dependency`。`targets: ["*"]` 不抑制同源告警名。可按 chart、context、family、class、type、component 或 `label:<key>` 要求双方相同 |
 | 持续触发 | 规则 `for`：警告或严重需连续成立后才改变状态。`keep_firing_for`：条件恢复后仍保持已升高状态。`delay` 只推迟通知。等待升高时告警带 `pending_status` 和 `pending_until`。告警面板显示等待或恢复倒计时 |
 | 恢复表达式 | 规则 `recovery`：警告和严重表达式都不成立后，该表达式为真才回到正常。等待期间告警带 `recovery_hold`，面板显示「等待恢复」 |
-| 无代理采集 | SNMPv3、自定义 OID、SNMP 表 LLD、SSH 检查、Jolokia、HTTP Agent、多步 Web 场景、依赖项与值预处理 |
+| 无代理采集 | SNMPv3、自定义 OID、SNMP 表 LLD、SSH/Telnet 检查、Jolokia、HTTP Agent、带 Cookie 的多步 Web 场景、依赖项与值预处理 |
 | 动作 | `health.actions` 多步升级和恢复操作；`correlation` 在原因告警升高时抑制症状通知；`commands` 白名单；脚本通知 |
 | 服务与拓扑 | `services` 树和 SLA、LLDP/手工拓扑、可用性报表；界面「服务与拓扑」 |
 | 企业管理 | 用户组 Room 权限、TOTP、SAML、`/24` 以内地址扫描、zabbix_sender、`X-Monitor-PSK`、通知队列自监控 |

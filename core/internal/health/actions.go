@@ -18,6 +18,7 @@ type Action struct {
 	Name       string       `yaml:"name" json:"name"`
 	Severities []string     `yaml:"severities,omitempty" json:"severities,omitempty"`
 	Alarms     []string     `yaml:"alarms,omitempty" json:"alarms,omitempty"`
+	Charts     []string     `yaml:"charts,omitempty" json:"charts,omitempty"`
 	Steps      []ActionStep `yaml:"steps" json:"steps"`
 	Recovery   *ActionStep  `yaml:"recovery,omitempty" json:"recovery,omitempty"`
 }
@@ -33,6 +34,7 @@ type compiledAction struct {
 	name       string
 	severities map[Status]bool
 	alarms     []string
+	charts     []string
 	steps      []compiledStep
 	recovery   *compiledStep
 }
@@ -55,7 +57,7 @@ func compileActions(actions []Action) ([]compiledAction, error) {
 			return nil, fmt.Errorf("action name %q", raw.Name)
 		}
 		seen[name] = true
-		compiled := compiledAction{name: name, alarms: raw.Alarms}
+		compiled := compiledAction{name: name, alarms: raw.Alarms, charts: raw.Charts}
 		if len(raw.Severities) > 0 {
 			compiled.severities = map[Status]bool{}
 			for _, s := range raw.Severities {
@@ -135,7 +137,7 @@ func parseActionStatus(raw string) (Status, error) {
 	}
 }
 
-func (a compiledAction) matches(name string, status Status) bool {
+func (a compiledAction) matches(name, chart string, status Status) bool {
 	if status == StatusClear {
 		if a.recovery == nil {
 			return false
@@ -143,11 +145,18 @@ func (a compiledAction) matches(name string, status Status) bool {
 	} else if len(a.severities) > 0 && !a.severities[status] {
 		return false
 	}
-	if len(a.alarms) == 0 {
+	if !matchGlob(a.alarms, name) || !matchGlob(a.charts, chart) {
+		return false
+	}
+	return true
+}
+
+func matchGlob(pats []string, value string) bool {
+	if len(pats) == 0 {
 		return true
 	}
-	for _, pat := range a.alarms {
-		if pat == name || (strings.HasSuffix(pat, "*") && strings.HasPrefix(name, strings.TrimSuffix(pat, "*"))) {
+	for _, pat := range pats {
+		if pat == value || (strings.HasSuffix(pat, "*") && strings.HasPrefix(value, strings.TrimSuffix(pat, "*"))) {
 			return true
 		}
 	}
@@ -181,7 +190,7 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 		}
 	}
 	for _, action := range e.actions {
-		if entry == nil || !action.matches(entry.Name, entry.Status) {
+		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status) {
 			continue
 		}
 		if entry.Status == StatusClear {

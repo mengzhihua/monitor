@@ -182,7 +182,7 @@ func run() error {
 	}
 	var users []api.User
 	for _, u := range cfg.Web.Users {
-		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role), Rooms: userRooms(u, cfg.Web.Groups), TOTP: u.TOTP})
+		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role), Rooms: config.EffectiveRooms(u, cfg.Web.Groups), TOTP: u.TOTP})
 	}
 
 	var sc *stream.Client
@@ -742,18 +742,6 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	})
 }
 
-func userRooms(u config.User, groups []config.Group) []string {
-	out := append([]string{}, u.Rooms...)
-	for _, name := range u.Groups {
-		for _, g := range groups {
-			if g.Name == name {
-				out = append(out, g.Rooms...)
-			}
-		}
-	}
-	return out
-}
-
 func apiCommands(in []config.Command) []api.Command {
 	out := make([]api.Command, 0, len(in))
 	for _, c := range in {
@@ -765,7 +753,7 @@ func apiCommands(in []config.Command) []api.Command {
 func commandRunner(commands []config.Command) func(string) {
 	return func(name string) {
 		for _, c := range commands {
-			if c.Name != name || len(c.Argv) == 0 {
+			if c.Name != name || len(c.Argv) == 0 || !filepath.IsAbs(c.Argv[0]) || strings.ContainsAny(strings.Join(c.Argv, ""), "\n\r") {
 				continue
 			}
 			cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
