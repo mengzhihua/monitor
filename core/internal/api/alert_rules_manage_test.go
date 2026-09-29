@@ -250,6 +250,34 @@ func TestAlertRulesManageInvalidOverride(t *testing.T) {
 	}
 
 	ts, _ := newTestServer(t, Options{Health: e, Users: []User{{Name: "admin", Token: "admin", Role: RoleAdmin}}})
+	list := func() alertConfigResponse {
+		t.Helper()
+		req, _ := http.NewRequest("GET", ts.URL+"/api/v1/alert_config", nil)
+		req.Header.Set("Authorization", "Bearer admin")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out alertConfigResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	find := func(cfg alertConfigResponse, name string) *alertConfigItem {
+		for i := range cfg.Configs {
+			if cfg.Configs[i].Name == name {
+				return &cfg.Configs[i]
+			}
+		}
+		return nil
+	}
+	// the invalid override shows up in the list as origin "invalid" with its config
+	if item := find(list(), "rt.macro"); item == nil || item.Origin != "invalid" || item.Config.Warn != "$this > {$T}" {
+		t.Fatalf("invalid rule not listed: %+v", item)
+	}
+
 	call := func(action string, spec *health.RuleSpec, name string, want int) {
 		t.Helper()
 		body, _ := json.Marshal(managedAlertRuleRequest{Action: action, Revision: e.RulesConfig().Revision, Config: spec, Name: name})
@@ -287,6 +315,9 @@ func TestAlertRulesManageInvalidOverride(t *testing.T) {
 	call("delete", nil, "rt.macro", 200)
 	if s := e.RulesConfig(); len(s.Invalid) != 0 {
 		t.Fatalf("invalid after delete=%v", s.Invalid)
+	}
+	if item := find(list(), "rt.macro"); item != nil {
+		t.Fatalf("deleted invalid rule still listed: %+v", item)
 	}
 	// create on an existing invalid name conflicts (it exists, in Invalid)
 	call("update", &rt, "", 404) // rt.macro is gone now

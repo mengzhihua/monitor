@@ -16,7 +16,7 @@ let previewBody: AlertRuleChange | null = null
 let listRequest: AbortController | undefined, previewRequest: AbortController | undefined
 let disposed = false
 const pretty = (value: unknown) => JSON.stringify(value, null, 2)
-const originName = { base: '基础规则', override: '已覆盖基础', custom: '自定义规则', deleted: '基础规则已删除' }
+const originName = { base: '基础规则', override: '已覆盖基础', custom: '自定义规则', deleted: '基础规则已删除', invalid: '失效（宏缺失）' }
 const actionName = { create: '新建规则', update: '更新规则', delete: '删除规则', reset: '恢复配置规则' }
 const target = computed(() => data.value?.configs.find(rule => rule.name === selected.value))
 const orphanedDeletion = computed(() => !!target.value?.deleted && !target.value.has_base)

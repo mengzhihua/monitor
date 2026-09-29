@@ -28,15 +28,16 @@ var ErrRuleCapacity = errors.New("alert rule override capacity reached")
 // RuleConfigSnapshot includes the effective rules and their original file-based
 // definitions. Revision is opaque and changes on every mutation and restart.
 type RuleConfigSnapshot struct {
-	Revision      string   `json:"revision"`
-	Persistent    bool     `json:"persistent"`
-	Rules         []*Rule  `json:"rules"`
-	Base          []*Rule  `json:"base"`
-	Removed       []string `json:"removed"`
-	Overridden    []string `json:"overridden"`
-	Templates     []string `json:"templates,omitempty"`      // matched template names (agent overlay)
-	TemplateRules []string `json:"template_rules,omitempty"` // rule names supplied by templates
-	Invalid       []string `json:"invalid,omitempty"`        // runtime rules skipped under current macros
+	Revision      string     `json:"revision"`
+	Persistent    bool       `json:"persistent"`
+	Rules         []*Rule    `json:"rules"`
+	Base          []*Rule    `json:"base"`
+	Removed       []string   `json:"removed"`
+	Overridden    []string   `json:"overridden"`
+	Templates     []string   `json:"templates,omitempty"`      // matched template names (agent overlay)
+	TemplateRules []string   `json:"template_rules,omitempty"` // rule names supplied by templates
+	Invalid       []string   `json:"invalid,omitempty"`        // runtime rules skipped under current macros
+	InvalidRules  []RuleSpec `json:"invalid_rules,omitempty"`  // their persisted specs
 }
 
 // OverlayLayer is the hub-pushed template overlay: rules, macros and base-rule
@@ -315,8 +316,15 @@ func (e *Engine) rulesConfigLocked() RuleConfigSnapshot {
 	s := e.ruleConfig
 	out := RuleConfigSnapshot{Revision: s.revision(), Persistent: s.path != "", Rules: cloneRules(e.rules),
 		Base: cloneRules(s.base), Removed: append([]string{}, s.state.Removed...), Overridden: []string{}, Invalid: append([]string{}, s.invalid...)}
+	invalid := make(map[string]bool, len(s.invalid))
+	for _, name := range s.invalid {
+		invalid[name] = true
+	}
 	for _, spec := range s.state.Overrides {
 		out.Overridden = append(out.Overridden, spec.Name)
+		if invalid[spec.Name] {
+			out.InvalidRules = append(out.InvalidRules, cloneRuleSpec(spec))
+		}
 	}
 	for _, spec := range s.overlay.Rules {
 		out.TemplateRules = append(out.TemplateRules, spec.Name)

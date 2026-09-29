@@ -203,7 +203,7 @@ export interface AlertRuleSpec {
 }
 export interface AlertRuleConfig {
   hash: string; name: string; on: string; source: string; every: number; config: Omit<AlertRuleSpec, 'on'> & { on?: string }
-  origin: 'base' | 'override' | 'custom' | 'deleted'; has_base: boolean; deleted: boolean
+  origin: 'base' | 'override' | 'custom' | 'deleted' | 'invalid'; has_base: boolean; deleted: boolean
 }
 export interface AlertRulesSnapshot {
   api: number; revision: string; persistent: boolean; hostname: string; scope: 'local'; can_manage: boolean
