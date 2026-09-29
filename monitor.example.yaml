@@ -821,6 +821,9 @@ export:
 #     sshcheck:
 #       jobs:
 #         - { name: load, address: 10.0.0.8, user: monitor, command: "cat /proc/loadavg", preprocess: [{ type: regex, pattern: "^([0-9.]+)" }] }
+#     telnet:
+#       jobs:
+#         - { name: load, address: 10.0.0.8:23, send: show, expect: "load=", preprocess: [{ type: regex, pattern: "load=([0-9.]+)" }] }
 #     jolokia:
 #       jobs:
 #         - { name: heap, url: http://127.0.0.1:8778/jolokia, mbean: "java.lang:type=Memory", attribute: HeapMemoryUsage, path: used }
@@ -873,7 +876,8 @@ export:
 # web:
 #   totp_secret: ""
 #   groups:
-#     - { name: ops, rooms: [edge] }
+#     - { name: net, rooms: [core] }
+#     - { name: ops, rooms: [edge], groups: [net] }
 #   saml:
 #     entity_id: monitor
 #     acs_url: https://monitor.example/api/v1/auth/saml/acs

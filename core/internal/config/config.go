@@ -74,10 +74,50 @@ type Config struct {
 	Trapper  Trapper       `yaml:"trapper"`
 }
 
-// Group grants Room names to the users that list it.
+// Group grants Room names to the users that list it. Groups lists other
+// group names whose rooms are included, one level of nesting is followed
+// and cycles are ignored.
 type Group struct {
-	Name  string   `yaml:"name"`
-	Rooms []string `yaml:"rooms"`
+	Name   string   `yaml:"name"`
+	Rooms  []string `yaml:"rooms"`
+	Groups []string `yaml:"groups"`
+}
+
+// EffectiveRooms is the user's own rooms plus rooms from named groups.
+// An empty result means the user is not limited to a room.
+func EffectiveRooms(u User, groups []Group) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(rooms []string) {
+		for _, room := range rooms {
+			if room == "" || seen["room:"+room] {
+				continue
+			}
+			seen["room:"+room] = true
+			out = append(out, room)
+		}
+	}
+	add(u.Rooms)
+	var walk func(name string)
+	walk = func(name string) {
+		if name == "" || seen["group:"+name] {
+			return
+		}
+		seen["group:"+name] = true
+		for _, g := range groups {
+			if g.Name != name {
+				continue
+			}
+			add(g.Rooms)
+			for _, child := range g.Groups {
+				walk(child)
+			}
+		}
+	}
+	for _, name := range u.Groups {
+		walk(name)
+	}
+	return out
 }
 
 // Command is a whitelisted absolute argv. The API only accepts the name.

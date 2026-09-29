@@ -17,6 +17,11 @@ type snmpTopologyConfig struct {
 	Version   string        `yaml:"version"`
 	Command   string        `yaml:"command"`
 	Timeout   time.Duration `yaml:"timeout"`
+	User      string        `yaml:"user"`
+	AuthProto string        `yaml:"auth_protocol"`
+	AuthPass  string        `yaml:"auth_passphrase"`
+	PrivProto string        `yaml:"priv_protocol"`
+	PrivPass  string        `yaml:"priv_passphrase"`
 }
 
 type snmpTopologyCollector struct {
@@ -114,8 +119,15 @@ func (s *snmpTopologyCollector) neighbors(ctx context.Context) ([]string, error)
 	if run == nil {
 		run = execRun(s.cfg.Timeout)
 	}
-	// lldpRemSysName
-	args := []string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, "1.0.8802.1.1.2.1.4.1.1.9"}
+	// lldpRemSysName. v3 uses the same USM flags as the snmp collector.
+	args, err := (&snmpCollector{cfg: snmpConfig{
+		Address: s.cfg.Address, Community: s.cfg.Community, Version: s.cfg.Version,
+		User: s.cfg.User, AuthProto: s.cfg.AuthProto, AuthPass: s.cfg.AuthPass,
+		PrivProto: s.cfg.PrivProto, PrivPass: s.cfg.PrivPass,
+	}}).snmpArgs("1.0.8802.1.1.2.1.4.1.1.9")
+	if err != nil {
+		return nil, err
+	}
 	b, err := run(ctx, s.cfg.Command, args...)
 	if err != nil {
 		return nil, fmt.Errorf("snmp_topology: %w", err)

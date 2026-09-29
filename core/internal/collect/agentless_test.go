@@ -28,7 +28,7 @@ func TestSNMPv3ItemsAndLLD(t *testing.T) {
 	s := &snmpCollector{cfg: snmpConfig{
 		Address: "10.0.0.5", Version: "3", User: "mon", AuthProto: "SHA", AuthPass: "auth-secret", PrivProto: "AES", PrivPass: "priv-secret",
 		Items: []snmpItem{{Name: "load", OID: "1.3.6.1.4.1.1.0", Steps: []preprocess.Step{{Type: "regex", Pattern: `([0-9.]+)`}}}},
-		LLD:   []snmpLLD{{Name: "disks", Table: "1.3.6.1.4.1.2.1.2", Value: "1.3.6.1.4.1.2.1.3"}},
+		LLD:   []snmpLLD{{Name: "disks", Table: "1.3.6.1.4.1.2.1.2", Value: "1.3.6.1.4.1.2.1.3", Units: "%"}},
 	}}
 	args, err := s.snmpArgs("1.3.6.1.2.1.1.3.0")
 	if err != nil || !containsAll(args, []string{"-v", "3", "-l", "authPriv", "-u", "mon", "-a", "SHA", "-x", "AES"}) {
@@ -69,8 +69,11 @@ func TestSNMPv3ItemsAndLLD(t *testing.T) {
 	if _, v := mustChart(t, reg, "snmp.item.load").LastValues(); v["value"] != 1.5 {
 		t.Fatalf("item %+v", v)
 	}
+	if ch := mustChart(t, reg, "snmp.lld.disks.1"); ch.Units != "%" {
+		t.Fatalf("lld units %s", ch.Units)
+	}
 	if _, v := mustChart(t, reg, "snmp.lld.disks.1").LastValues(); v["value"] != 40 {
-		t.Fatalf("lld %+v", v)
+		t.Fatalf("lld value")
 	}
 }
 

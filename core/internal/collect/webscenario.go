@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"regexp"
 	"strings"
 	"time"
@@ -95,6 +96,8 @@ func (w *webscenarioCollector) Collect(ctx context.Context, reg *registry.Regist
 }
 
 func (w *webscenarioCollector) run(ctx context.Context, job webscenarioJob) (ok bool, failedStep int, elapsed float64) {
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Timeout: w.cfg.Timeout, Jar: jar}
 	vars := map[string]string{}
 	for i, st := range job.Steps {
 		rawURL := expandVars(st.URL, vars)
@@ -103,7 +106,7 @@ func (w *webscenarioCollector) run(ctx context.Context, job webscenarioJob) (ok 
 		for k, v := range st.Headers {
 			headers[k] = expandVars(v, vars)
 		}
-		code, text, dt, err := httpText(ctx, w.client, st.Method, rawURL, headers, body, 1<<20)
+		code, text, dt, err := httpText(ctx, client, st.Method, rawURL, headers, body, 1<<20)
 		elapsed += dt
 		expect := st.Expect
 		if expect == 0 {

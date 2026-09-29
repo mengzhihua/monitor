@@ -41,6 +41,7 @@ type snmpLLD struct {
 	Name  string `yaml:"name"`
 	Table string `yaml:"table"`
 	Value string `yaml:"value"`
+	Units string `yaml:"units"`
 }
 
 type snmpCollector struct {
@@ -175,7 +176,11 @@ func (s *snmpCollector) collectLLD(ctx context.Context, reg *registry.Registry, 
 			id := "snmp.lld." + sanitizeID(rule.Name) + "." + sanitizeID(idx)
 			if !s.seen[id] {
 				s.seen[id] = true
-				ch := &registry.Chart{ID: id, Context: "snmp.lld." + sanitizeID(rule.Name), Title: "SNMP LLD " + rule.Name, Units: "value",
+				units := rule.Units
+				if units == "" {
+					units = "value"
+				}
+				ch := &registry.Chart{ID: id, Context: "snmp.lld." + sanitizeID(rule.Name), Title: "SNMP LLD " + rule.Name, Units: units,
 					Priority: 56140, Labels: map[string]string{"index": idx, "name": name}, Dimensions: []*registry.Dimension{{ID: "value"}}}
 				ch.Family, ch.Plugin, ch.Module = "snmp", "snmp", "snmp"
 				reg.AddChart(ch)

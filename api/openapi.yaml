@@ -439,6 +439,73 @@ paths:
           description: spaces
         "404":
           description: this process is not a hub
+  /api/v1/services:
+    get:
+      summary: Service tree status and SLA
+      parameters:
+        - {in: query, name: window, schema: {type: string}, description: "Duration ending now, default 24h, max 90d"}
+      responses:
+        "200": {description: "{from,to,services:[{name,status,sla,alarms,children}]}"}
+  /api/v1/reports/availability:
+    get:
+      summary: Per-alarm availability over a window
+      parameters:
+        - {in: query, name: window, schema: {type: string}}
+        - {in: query, name: format, schema: {type: string, enum: [json, csv]}}
+      responses:
+        "200": {description: JSON alarms or CSV}
+  /api/v1/topology:
+    get:
+      summary: LLDP neighbors plus manual topology edges
+      responses:
+        "200": {description: "{edges:[{source,target,kind}]}"}
+  /api/v1/commands:
+    post:
+      summary: Run one whitelisted command
+      description: Admin only. The body names a commands entry; argv comes from the server config and must be an absolute executable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        "200": {description: "{name,exit,output}"}
+        "400": {description: unknown command}
+        "403": {description: admin only}
+  /api/v1/discovery/scan:
+    post:
+      summary: TCP scan of one IPv4 network
+      description: Admin only. The network must be at most 256 addresses and list 1 to 8 ports.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cidr, ports]
+              properties:
+                cidr: {type: string}
+                ports: {type: array, items: {type: integer}, maxItems: 8}
+      responses:
+        "200": {description: "{cidr,hosts,open}"}
+        "400": {description: network too large or ports invalid}
+        "403": {description: admin only}
+  /api/v1/auth/saml/login:
+    get:
+      summary: Redirect to the configured SAML IdP
+      responses:
+        "302": {description: SAMLRequest redirect}
+        "404": {description: SAML is not configured}
+  /api/v1/auth/saml/acs:
+    post:
+      summary: Accept a signed SAML response and start a session
+      responses:
+        "302": {description: redirect to /?token=}
+        "401": {description: signature or NameID rejected}
 components:
   schemas:
     AlertRuleSpec:
