@@ -141,11 +141,11 @@ func run() error {
 	}
 
 	reg := registry.New(h, db)
-	disabled := map[string]bool{}
+	localDisabled := map[string]bool{}
 	for _, n := range cfg.Collectors.Disabled {
-		disabled[n] = true
+		localDisabled[n] = true
 	}
-	sched := collect.NewScheduler(reg, log.With("component", "collect"), collect.Options{Names: cfg.Collectors.Enabled, Disabled: disabled, Modules: cfg.ModuleDecoders()})
+	sched := collect.NewScheduler(reg, log.With("component", "collect"), collect.Options{Names: cfg.Collectors.Enabled, Disabled: localDisabled, Modules: cfg.ModuleDecoders()})
 
 	var eng *health.Engine
 	if cfg.HealthEnabled() {
@@ -242,8 +242,10 @@ func run() error {
 					}
 				}
 				for n := range pushedDisabled {
-					if !next[n] {
-						sched.SetEnabled(n, true) // re-enable only what a push disabled
+					if !next[n] && !localDisabled[n] {
+						// re-enable only what a push disabled, never collectors
+						// disabled in the local config
+						sched.SetEnabled(n, true)
 					}
 				}
 				for n := range next {

@@ -117,6 +117,8 @@ type Rule struct {
 	Info       string        // Spec.Info with macros expanded
 	Units      string        // Spec.Units with macros expanded
 	Source     string
+
+	expandedHash string // hash of the macro-resolved spec (set by CompileWith)
 }
 
 var macroRef = regexp.MustCompile(`\{\$[A-Za-z_][A-Za-z0-9_]*\}`)
@@ -228,7 +230,21 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 	if r.Repeat, err = ParseRepeat(spec.Repeat); err != nil {
 		return nil, fmt.Errorf("%s: alarm %q repeat: %w", source, spec.Name, err)
 	}
+	b, _ := yaml.Marshal(spec)
+	sum := sha256.Sum256([]byte(r.Source + "\x00" + spec.Name + "\x00" + string(b)))
+	r.expandedHash = hex.EncodeToString(sum[:8])
 	return r, nil
+}
+
+// ExpandedHash identifies the rule after macro expansion: identical Specs
+// produce different values when their global/template macros resolve
+// differently. SetOverlay uses it to spot macro-only changes that Hash()
+// (over the unexpanded Spec) cannot.
+func (r *Rule) ExpandedHash() string {
+	if r == nil {
+		return ""
+	}
+	return r.expandedHash
 }
 
 // Hash is a stable id for GET /api/v3/alert_config?hash= (Netdata-style).

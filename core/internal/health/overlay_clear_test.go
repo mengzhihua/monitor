@@ -103,3 +103,33 @@ func TestSetOverlayMacroChangeResetsAlarms(t *testing.T) {
 		}
 	}
 }
+
+func TestOverlayRemovalToleratesInvalidRuntimeRule(t *testing.T) {
+	e := ruleConfigEngine(t, t.TempDir(), ruleConfigFixture("base.keep"))
+	rt := RuleSpec{Name: "rt.macro", On: "system.ram", Calc: "$used", Warn: "$this > {$T}", Every: "1s"}
+	if err := e.SetOverlay(OverlayLayer{Rev: 1, Macros: map[string]string{"T": "50"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.MutateRules(nil, RuleMutation{Upserts: []RuleSpec{rt}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetOverlay(OverlayLayer{Rev: 2}); err != nil {
+		t.Fatalf("overlay removal should succeed: %v", err)
+	}
+	s := e.RulesConfig()
+	if len(s.Invalid) != 1 || s.Invalid[0] != "rt.macro" {
+		t.Fatalf("invalid=%v", s.Invalid)
+	}
+	for _, r := range s.Rules {
+		if r.Spec.Name == "rt.macro" {
+			t.Fatal("invalid runtime rule evaluated")
+		}
+	}
+	if err := e.SetOverlay(OverlayLayer{Rev: 3, Macros: map[string]string{"T": "60"}}); err != nil {
+		t.Fatal(err)
+	}
+	s = e.RulesConfig()
+	if len(s.Invalid) != 0 {
+		t.Fatalf("invalid after macro restored=%v", s.Invalid)
+	}
+}
