@@ -2,6 +2,9 @@ package hub
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/mengzhihua/monitor/core/internal/health"
@@ -178,4 +181,63 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// A failed save must restore the deleted template in memory (Upsert does the
+// same on error).
+func TestTemplatesDeleteRollbackOnSaveError(t *testing.T) {
+	dir := t.TempDir()
+	tpl, err := OpenTemplates(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := tpl.Upsert(templateFixture("keep"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755) // let t.TempDir cleanup proceed
+	if err := tpl.Delete(a.ID); err == nil {
+		t.Skip("save unexpectedly succeeded in read-only dir")
+	}
+	if _, ok := tpl.Get(a.ID); !ok {
+		t.Fatal("delete persisted in memory after failed save")
+	}
+}
+
+func TestTemplatesLimits(t *testing.T) {
+	tpl, err := OpenTemplates(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	over := templateFixture("fat")
+	over.Macros = map[string]string{}
+	for i := 0; i <= TemplateMacroLimit; i++ {
+		over.Macros[fmt.Sprintf("M%d", i)] = "1"
+	}
+	if _, err := tpl.Upsert(over, nil); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("macros over limit: %v", err)
+	}
+	over = templateFixture("fat")
+	for i := 0; i <= TemplateRuleLimit; i++ {
+		over.Rules = append(over.Rules, health.RuleSpec{
+			Name: fmt.Sprintf("r%d", i), On: "system.cpu", Calc: "$user", Warn: "$this > 1", Every: "10s"})
+	}
+	if _, err := tpl.Upsert(over, nil); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("rules over limit: %v", err)
+	}
+	over = templateFixture("fat")
+	over.Tags = map[string]string{"k": strings.Repeat("v", TemplateFieldValueMax+1)}
+	if _, err := tpl.Upsert(over, nil); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("tag value over limit: %v", err)
+	}
+	fields := map[string]string{}
+	for i := 0; i <= InventoryFieldLimit; i++ {
+		fields[fmt.Sprintf("f%d", i)] = "x"
+	}
+	if _, err := tpl.SetInventory("n1", fields, nil); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("inventory over limit: %v", err)
+	}
 }

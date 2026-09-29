@@ -211,6 +211,7 @@ func run() error {
 		if eng != nil {
 			alarms = eng.Alarms
 		}
+		var pushedDisabled = map[string]bool{} // collectors a push disabled; re-enable on unlink
 		sc = stream.NewClient(reg, db, stream.ClientOptions{
 			Alarms:             alarms,
 			Destinations:       cfg.Stream.Destinations,
@@ -225,13 +226,13 @@ func run() error {
 			Logger:             log.With("component", "stream"),
 			ConfigPath:         *cfgPath,
 			OnConfig: func(disabled []string, ov *stream.HealthOverlay) {
-				seen := map[string]bool{}
+				next := map[string]bool{}
 				for _, n := range disabled {
-					seen[n] = true
+					next[n] = true
 				}
 				if ov != nil {
 					for _, n := range ov.Disabled {
-						seen[n] = true
+						next[n] = true
 					}
 					if eng != nil {
 						if err := eng.SetOverlay(health.OverlayLayer{Rev: ov.Rev, Macros: ov.Macros,
@@ -240,9 +241,15 @@ func run() error {
 						}
 					}
 				}
-				for n := range seen {
+				for n := range pushedDisabled {
+					if !next[n] {
+						sched.SetEnabled(n, true) // re-enable only what a push disabled
+					}
+				}
+				for n := range next {
 					sched.SetEnabled(n, false)
 				}
+				pushedDisabled = next
 			}, // union(nodeConfig.Disabled, overlay.Disabled)
 			OnConfigFile: func(yamlText string, rev int64) error {
 				return applyAgentConfig(*cfgPath, cfg, yamlText, rev, log, requestExit)

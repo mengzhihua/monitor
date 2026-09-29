@@ -52,6 +52,7 @@ func (s *Server) handleSpaces(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		s.pushTemplates() // room cascade may alter matched templates
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -77,7 +77,12 @@ async function saveWithYaml() {
   try {
     const body: Record<string, unknown> = { ...t }
     delete body.updated
-    if (rulesYaml.value.trim()) body.rules_yaml = rulesYaml.value
+    if (rulesYaml.value.trim()) {
+      body.rules_yaml = rulesYaml.value
+      delete body.rules
+    } else {
+      body.rules = [] // empty box = no rules; don't keep stale draft rules
+    }
     body.if_updated = t.updated
     await api.putTemplateRaw(body, t.id)
     error.value = ''

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -284,7 +285,9 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 }
 
 func (s *ruleConfigStore) revision() string {
-	return s.epoch + ":" + strconv.FormatUint(s.state.Counter, 10)
+	// The overlay is part of the effective rule set, so its revision is part
+	// of the snapshot revision: a SetOverlay invalidates earlier CAS tokens.
+	return s.epoch + ":" + strconv.FormatUint(s.state.Counter, 10) + ":" + strconv.FormatInt(s.overlay.Rev, 10)
 }
 
 // RulesConfig returns an isolated, internally consistent revision and rule set.
@@ -349,6 +352,9 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// A macro-only change (same specs, different values) leaves Hash()
+	// untouched, so refresh every rule's alarm state in that case.
+	macroChange := !reflect.DeepEqual(s.overlay.Macros, next.Macros)
 	s.overlay = next
 	current := make(map[string]*Rule, len(e.rules))
 	for _, rule := range e.rules {
@@ -356,7 +362,9 @@ func (e *Engine) SetOverlay(o OverlayLayer) error {
 	}
 	changed := make(map[string]bool)
 	for _, rule := range rules {
-		if previous := current[rule.Spec.Name]; previous == nil || previous.Hash() != rule.Hash() {
+		if macroChange {
+			changed[rule.Spec.Name] = true
+		} else if previous := current[rule.Spec.Name]; previous == nil || previous.Hash() != rule.Hash() {
 			changed[rule.Spec.Name] = true
 		}
 		delete(current, rule.Spec.Name)
@@ -449,12 +457,23 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 		return nil, ErrRuleCapacity
 	}
 	seen := make(map[string]bool, count)
+	// Runtime rules compile against global + template-overlay macros, same as
+	// the effective rule set does.
+	e.mu.RLock()
+	mergedMacros := make(map[string]string, len(e.ruleConfig.macros)+len(e.ruleConfig.overlay.Macros))
+	for k, v := range e.ruleConfig.macros {
+		mergedMacros[k] = v
+	}
+	for k, v := range e.ruleConfig.overlay.Macros {
+		mergedMacros[k] = v
+	}
+	e.mu.RUnlock()
 	for _, spec := range mutation.Upserts {
 		if seen[spec.Name] {
 			return nil, fmt.Errorf("%w: duplicate rule %q", ErrRuleInvalid, spec.Name)
 		}
 		seen[spec.Name] = true
-		if _, err := CompileWith(spec, "api", e.ruleConfig.macros); err != nil {
+		if _, err := CompileWith(spec, "api", mergedMacros); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
 		}
 	}
