@@ -181,10 +181,14 @@ func openRuleConfig(dir string, base []*Rule, macros map[string]string) (*ruleCo
 			s.overlay = *ov
 		}
 	}
-	rules, _, err := effectiveRules(s.base, s.state, s.effectiveMacros(), &s.overlay, false)
+	// Runtime overrides invalid under the persisted overlay macros are
+	// tolerated on load (listed in the store's invalid set); base and
+	// template compile errors still fail startup.
+	rules, invalid, err := effectiveRules(s.base, s.state, s.effectiveMacros(), &s.overlay, true)
 	if err != nil {
 		return nil, nil, err
 	}
+	s.invalid = invalid
 	return s, rules, nil
 }
 
@@ -268,11 +272,13 @@ func effectiveRules(base []*Rule, state ruleConfigState, macros map[string]strin
 		seen[spec.Name] = true
 		rule, err := CompileWith(cloneRuleSpec(spec), "api", macros)
 		if err != nil {
-			if !tolerateRuntime {
+			// Only macro-resolution failures are tolerated: a runtime
+			// override may reference a macro the new overlay removed.
+			// Other compile errors (e.g. damaged persisted files) must still
+			// fail so corrupt state is not silently dropped.
+			if !tolerateRuntime || !strings.Contains(err.Error(), "macro") {
 				return nil, invalid, fmt.Errorf("%w: %v", ErrRuleInvalid, err)
 			}
-			// A runtime override may reference a macro the new overlay
-			// removed; skip it rather than reject the whole overlay.
 			slog.Warn("health: skipping invalid runtime rule under new overlay", "rule", spec.Name, "err", err)
 			invalid = append(invalid, spec.Name)
 			continue
@@ -426,6 +432,7 @@ type preparedRuleMutation struct {
 	rules   []*Rule
 	changed map[string]bool
 	encoded []byte
+	invalid []string
 }
 
 // MutateRules validates and commits the complete batch or leaves both the live
@@ -442,6 +449,7 @@ func (e *Engine) MutateRules(expected *string, mutation RuleMutation) (RuleConfi
 	}
 	e.mu.Lock()
 	e.ruleConfig.state = prepared.state
+	e.ruleConfig.invalid = prepared.invalid
 	e.rules = prepared.rules
 	now := e.now()
 	removedEntries := make([]struct {
@@ -561,8 +569,12 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 		delete(removed, spec.Name)
 	}
 	for _, name := range mutation.Delete {
+		// An override invalid under the current overlay is not in the live
+		// set but is still deletable (it exists in state.Overrides).
 		if current[name] == nil {
-			return nil, fmt.Errorf("%w: %s", ErrRuleNotFound, name)
+			if _, isOverride := overrides[name]; !isOverride {
+				return nil, fmt.Errorf("%w: %s", ErrRuleNotFound, name)
+			}
 		}
 		delete(overrides, name)
 		if base[name] {
@@ -593,11 +605,23 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 	}
 	sort.Slice(next.Overrides, func(i, j int) bool { return next.Overrides[i].Name < next.Overrides[j].Name })
 	sort.Strings(next.Removed)
-	rules, invalid, err := effectiveRules(s.base, next, s.effectiveMacros(), &s.overlay, false)
-	_ = invalid
+	rules, invalid, err := effectiveRules(s.base, next, s.effectiveMacros(), &s.overlay, true)
 	if err != nil {
 		return nil, err
 	}
+	// Only reject when the rule this mutation introduces fails to compile
+	// now; pre-existing invalid overrides unrelated to the mutation are
+	// tolerated (and remain listed in the store's invalid set).
+	upsertNames := make(map[string]bool, len(mutation.Upserts))
+	for _, spec := range mutation.Upserts {
+		upsertNames[spec.Name] = true
+	}
+	for _, name := range invalid {
+		if upsertNames[name] {
+			return nil, fmt.Errorf("%w: rule %q does not compile under the current macros", ErrRuleInvalid, name)
+		}
+	}
+	preparedInvalid := invalid
 	b, err := json.Marshal(next)
 	if err != nil {
 		return nil, err
@@ -616,7 +640,7 @@ func (e *Engine) prepareRuleMutation(expected *string, mutation RuleMutation) (*
 	for name := range current {
 		changed[name] = true
 	}
-	return &preparedRuleMutation{state: next, rules: rules, changed: changed, encoded: b}, nil
+	return &preparedRuleMutation{state: next, rules: rules, changed: changed, encoded: b, invalid: preparedInvalid}, nil
 }
 
 func (s *ruleConfigStore) persist(b []byte) error {
