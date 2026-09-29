@@ -221,3 +221,82 @@ func TestAlertRulesManagedRequiresAuthenticatedAdmin(t *testing.T) {
 		}
 	}
 }
+
+// A runtime override invalid under the current overlay is not in
+// snapshot.Rules; update/delete must still treat it as existing.
+func TestAlertRulesManageInvalidOverride(t *testing.T) {
+	dir := t.TempDir()
+	base, err := health.Compile(health.RuleSpec{Name: "base", On: "system.ram", Calc: "$used", Warn: "$this > 10"}, "inline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := health.New(registry.New(&registry.Host{Hostname: "test"}, nil), nil, health.Options{Rules: []*health.Rule{base}, LogDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 1, Macros: map[string]string{"T": "50"}}); err != nil {
+		t.Fatal(err)
+	}
+	rt := health.RuleSpec{Name: "rt.macro", On: "system.ram", Calc: "$used", Warn: "$this > {$T}", Every: "1s"}
+	if _, err := e.MutateRules(nil, health.RuleMutation{Upserts: []health.RuleSpec{rt}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.RulesConfig(); len(s.Invalid) != 1 || s.Invalid[0] != "rt.macro" {
+		t.Fatalf("invalid=%v", s.Invalid)
+	}
+
+	ts, _ := newTestServer(t, Options{Health: e, Users: []User{{Name: "admin", Token: "admin", Role: RoleAdmin}}})
+	call := func(action string, spec *health.RuleSpec, name string, want int) {
+		t.Helper()
+		body, _ := json.Marshal(managedAlertRuleRequest{Action: action, Revision: e.RulesConfig().Revision, Config: spec, Name: name})
+		req, _ := http.NewRequest("POST", ts.URL+"/api/v1/manage/alert-rules", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer admin")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != want {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("%s %s: got %d want %d: %s", action, name, resp.StatusCode, want, b)
+		}
+	}
+
+	// update with a now-valid config succeeds and clears the invalid entry
+	fixed := health.RuleSpec{Name: "rt.macro", On: "system.ram", Calc: "$used", Warn: "$this > 90", Every: "1s"}
+	call("update", &fixed, "", 200)
+	if s := e.RulesConfig(); len(s.Invalid) != 0 {
+		t.Fatalf("invalid after update=%v", s.Invalid)
+	}
+	// make it invalid again, then delete (restore the macro so the upsert
+	// compiles, then remove it via the overlay)
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 3, Macros: map[string]string{"T": "50"}}); err != nil {
+		t.Fatal(err)
+	}
+	call("update", &rt, "", 200)
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.RulesConfig(); len(s.Invalid) != 1 {
+		t.Fatalf("invalid=%v", s.Invalid)
+	}
+	call("delete", nil, "rt.macro", 200)
+	if s := e.RulesConfig(); len(s.Invalid) != 0 {
+		t.Fatalf("invalid after delete=%v", s.Invalid)
+	}
+	// create on an existing invalid name conflicts (it exists, in Invalid)
+	call("update", &rt, "", 404) // rt.macro is gone now
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 5, Macros: map[string]string{"T": "50"}}); err != nil {
+		t.Fatal(err)
+	}
+	rt3 := health.RuleSpec{Name: "rt.bad2", On: "system.ram", Calc: "$used", Warn: "$this > {$T}", Every: "1s"}
+	call("create", &rt3, "", 200)
+	if err := e.SetOverlay(health.OverlayLayer{Rev: 6}); err != nil {
+		t.Fatal(err)
+	}
+	call("create", &rt3, "", 409) // exists in Invalid
+}
