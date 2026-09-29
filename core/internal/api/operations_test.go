@@ -266,6 +266,11 @@ func TestOperationsShowsRecoveryHold(t *testing.T) {
 	var snap operationsSnapshot
 	check := func(sec int, hold bool, until int64) {
 		t.Helper()
+		alarms := eng.Alarms()
+		if len(alarms) != 1 || alarms[0].Status != health.StatusWarning || alarms[0].RecoveryHold != hold || alarms[0].HoldUntil != until {
+			t.Fatalf("sec %d alarms %+v", sec, alarms)
+		}
+		snap = operationsSnapshot{}
 		getJSON(t, ts.URL+"/api/v1/operations?token=secret", &snap)
 		if len(snap.Problems) != 1 {
 			t.Fatalf("sec %d problems %+v", sec, snap.Problems)
