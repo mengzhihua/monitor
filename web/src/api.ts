@@ -92,7 +92,8 @@ export interface HandlingRecord {
 export interface Problem {
   id: string; node: string; hostname: string; node_status: string; chart: string; name: string
   severity: 'WARNING' | 'CRITICAL'; family: string; info: string; value: number | null; units: string
-  since: number; updated: number; stale: boolean; handling: HandlingRecord
+  since: number; updated: number; stale: boolean; recovery_hold?: boolean; hold_until?: number
+  handling: HandlingRecord
   delivery?: { at: number; channel: string; outcome: string; reason?: string }
 }
 export interface OperationsSnapshot {

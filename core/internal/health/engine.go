@@ -526,9 +526,16 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 	default:
 		status = StatusClear
 	}
+	// Recovery only changes a clear result on an alarm that is already raised.
+	// Steady clear and steady firing skip the extra expression.
 	recovered := true
-	if r.Recovery != nil {
-		recovered = truthy(r.Recovery.Eval(vars))
+	if r.Recovery != nil && status == StatusClear {
+		e.mu.RLock()
+		raised := a.Status == StatusWarning || a.Status == StatusCritical
+		e.mu.RUnlock()
+		if raised {
+			recovered = truthy(r.Recovery.Eval(vars))
+		}
 	}
 
 	e.mu.Lock()

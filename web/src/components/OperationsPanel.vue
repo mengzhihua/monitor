@@ -338,6 +338,8 @@ async function exportSnapshot() {
         <div class="row"><div class="problem-title"><span class="badge" :class="p.severity.toLowerCase()">{{ p.severity === 'CRITICAL' ? '严重' : '警告' }}</span><h3>{{ p.name }}</h3><span class="ack" v-if="p.handling.acknowledged">已确认</span><span class="muted" v-else>待确认</span></div><span class="muted">{{ age(p.since) }}</span></div>
         <p>{{ p.info || '暂无规则说明' }}</p>
         <p class="muted">{{ p.hostname }} · {{ p.chart }} · {{ p.value === null ? '暂无数值' : p.value.toFixed(2) + ' ' + p.units }}</p>
+        <p v-if="p.recovery_hold" class="muted">等待恢复：警告和严重条件已不成立，恢复表达式尚未成立。</p>
+        <p v-else-if="p.hold_until && snapshot.now < p.hold_until" class="muted">恢复保持至 {{ formatTime(p.hold_until) }}</p>
         <p v-if="p.delivery" class="muted">通知 {{ p.delivery.channel }} {{ deliveryText(p.delivery) }}。通道结果不代表用户已收件。</p>
         <div class="workflow-state"><span class="owner">责任人：{{ p.handling.assignee || '未分配' }}</span><span class="badge progress-state" :class="p.handling.status">{{ progressName[p.handling.status] }}</span></div>
         <p v-if="p.stale" class="stale-text">历史告警状态，最近观测 {{ formatTime(p.updated) }}；节点恢复更新前不视为当前健康结论。</p>

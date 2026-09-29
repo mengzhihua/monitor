@@ -227,6 +227,65 @@ func TestOperationsShowsLocalDeliveryAndPostsTicket(t *testing.T) {
 	}
 }
 
+func TestOperationsShowsRecoveryHold(t *testing.T) {
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "local", Hostname: "ops-test", UpdateEvery: 1}, db)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Family: "ram", Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	rules, err := health.ParseRules([]byte(`alarms:
+  - name: ram_high
+    on: system.ram
+    calc: '$used'
+    every: 1s
+    warn: '$this > 80'
+    crit: '$this > 90'
+    recovery: '$this < 70'
+    keep_firing_for: 30s
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := health.New(reg, db, health.Options{Rules: rules, SilenceAll: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(eng.Close)
+	ts, _ := newTestServer(t, Options{Health: eng, Token: "secret"})
+	start := time.Now().Truncate(time.Second)
+	set := func(v float64, sec int) {
+		t.Helper()
+		at := start.Add(time.Duration(sec) * time.Second)
+		if err := reg.Collect("system.ram", at, map[string]float64{"used": v, "free": 100 - v}); err != nil {
+			t.Fatal(err)
+		}
+		eng.Tick(at)
+	}
+	var snap operationsSnapshot
+	check := func(sec int, hold bool, until int64) {
+		t.Helper()
+		getJSON(t, ts.URL+"/api/v1/operations?token=secret", &snap)
+		if len(snap.Problems) != 1 {
+			t.Fatalf("sec %d problems %+v", sec, snap.Problems)
+		}
+		p := snap.Problems[0]
+		if p.Name != "ram_high" || p.Severity != "WARNING" || p.RecoveryHold != hold || p.HoldUntil != until {
+			t.Fatalf("sec %d %+v", sec, p)
+		}
+	}
+	set(85, 0)
+	check(0, false, 0)
+	set(75, 1)
+	check(1, true, 0)
+	set(65, 2)
+	check(2, false, start.Add(32*time.Second).Unix())
+	if snap.Now >= snap.Problems[0].HoldUntil {
+		t.Fatalf("hold already expired now=%d until=%d", snap.Now, snap.Problems[0].HoldUntil)
+	}
+}
+
 func TestOperationsAcknowledgementLifecycleAndRBAC(t *testing.T) {
 	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
 	if err != nil {

@@ -45,22 +45,24 @@ type operationsNode struct {
 }
 
 type problem struct {
-	ID         string            `json:"id"`
-	Node       string            `json:"node"`
-	Hostname   string            `json:"hostname"`
-	NodeStatus string            `json:"node_status"`
-	Chart      string            `json:"chart"`
-	Name       string            `json:"name"`
-	Severity   string            `json:"severity"`
-	Family     string            `json:"family"`
-	Info       string            `json:"info"`
-	Value      *float64          `json:"value"`
-	Units      string            `json:"units"`
-	Since      int64             `json:"since"`
-	Updated    int64             `json:"updated"`
-	Stale      bool              `json:"stale"`
-	Handling   operations.Record `json:"handling"`
-	Delivery   *problemDelivery  `json:"delivery,omitempty"`
+	ID           string            `json:"id"`
+	Node         string            `json:"node"`
+	Hostname     string            `json:"hostname"`
+	NodeStatus   string            `json:"node_status"`
+	Chart        string            `json:"chart"`
+	Name         string            `json:"name"`
+	Severity     string            `json:"severity"`
+	Family       string            `json:"family"`
+	Info         string            `json:"info"`
+	Value        *float64          `json:"value"`
+	Units        string            `json:"units"`
+	Since        int64             `json:"since"`
+	Updated      int64             `json:"updated"`
+	Stale        bool              `json:"stale"`
+	RecoveryHold bool              `json:"recovery_hold,omitempty"`
+	HoldUntil    int64             `json:"hold_until,omitempty"`
+	Handling     operations.Record `json:"handling"`
+	Delivery     *problemDelivery  `json:"delivery,omitempty"`
 }
 
 // problemDelivery is the latest local channel outcome for this alarm.
@@ -300,7 +302,8 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 			p := problem{ID: problemID(inf.ID, a), Node: inf.ID, Hostname: inf.Hostname, NodeStatus: inf.Status,
 				Chart: a.Chart, Name: a.Name, Severity: a.Status.String(), Family: a.Family, Info: a.Info,
 				Value: finiteValue(a.Value), Units: a.Units, Since: a.LastStatusChange, Updated: a.LastUpdated,
-				Stale: n.AlarmCoverage == "disabled" || inf.Status != hub.StatusLive || a.LastUpdated <= 0 || now-a.LastUpdated > max(30, 3*a.Every)}
+				Stale:        n.AlarmCoverage == "disabled" || inf.Status != hub.StatusLive || a.LastUpdated <= 0 || now-a.LastUpdated > max(30, 3*a.Every),
+				RecoveryHold: a.RecoveryHold, HoldUntil: a.HoldUntil}
 			p.Handling = s.operations.Get(p.ID)
 			if n.AlarmCoverage == "local" && s.opt.Health != nil {
 				if d, ok := s.opt.Health.LatestDelivery(a.Chart, a.Name); ok {

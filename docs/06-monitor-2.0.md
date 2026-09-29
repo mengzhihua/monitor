@@ -222,7 +222,7 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 
 规则可以写 `recovery`，对应 [Zabbix 触发器的 Recovery expression](https://www.zabbix.com/documentation/7.0/en/manual/config/triggers/trigger)。它是一条可选表达式，空值表示问题表达式不再成立就按原规则恢复。
 
-警告或严重表达式仍然成立时，级别继续由这两条表达式决定。两条都不成立、告警已经处于警告或严重、并且 `recovery` 不为真时，状态保持最近一次提交的级别，告警带 `recovery_hold`。面板显示「等待恢复」。这条告警仍算作问题。`recovery` 变为真之后才回到正常；同时配置了 `keep_firing_for` 时，保持计时从这一刻开始。没有数据时仍立即变成 UNDEFINED。求值只在问题表达式不再成立时多算一次恢复表达式。
+警告或严重表达式仍然成立时，级别继续由这两条表达式决定。两条都不成立、告警已经处于警告或严重、并且 `recovery` 不为真时，状态保持最近一次提交的级别，告警带 `recovery_hold`。告警面板和运维总览都显示「等待恢复」。这条告警仍算作问题。`recovery` 变为真之后才回到正常；同时配置了 `keep_firing_for` 时，保持计时从这一刻开始，问题卡片写出 `hold_until`。没有数据时仍立即变成 UNDEFINED。恢复表达式只在告警已经升高、且本轮问题表达式不再成立时求值。由转移日志还原的远端告警不带 `recovery_hold`。
 
 ## 计划维护窗口
 
