@@ -4,6 +4,8 @@ import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from '
 import { ApiError, api, auth, selection } from './api'
 import { live } from './live'
 import { usePolling } from './polling'
+import { pageVisible } from './visibility'
+import { sharedRequest } from './sharedRequest'
 import MetricChart from './components/MetricChart.vue'
 import OperationsPanel from './components/OperationsPanel.vue'
 import ServicesPanel from './components/ServicesPanel.vue'
@@ -193,7 +195,7 @@ async function load(signal: AbortSignal) {
     })
     error.value = ''
     needToken.value = false
-    await Promise.all([refreshAlarms(signal), refreshFunctions(signal)])
+    await Promise.all([refreshAlarms(signal), refreshAlarmLog(signal), refreshFunctions(signal)])
   } catch (e) {
     if (signal.aborted) return
     if (e instanceof ApiError && e.status === 401) {
@@ -219,16 +221,37 @@ async function load(signal: AbortSignal) {
   }
 }
 
-async function refreshAlarms(signal?: AbortSignal) {
-  if (!healthOn.value) return
-  const node = selectedNode.value
-  try {
-    const [a, l] = await Promise.all([api.alarms(signal), api.alarmLog(0, signal)])
-    if (signal?.aborted || selectedNode.value !== node) return
-    alarms.value = Object.values(a.alarms)
-    alarmLog.value = l
-  } catch { /* transient; the next refresh retries */ }
+const alarmSnapshotRead = sharedRequest(api.alarms, result => {
+  alarms.value = Object.values(result.alarms)
+})
+const alarmLogRead = sharedRequest(async signal => {
+  const known = new Set(alarmLog.value.map(event => event.unique_id))
+  return { entries: await api.alarmLog(0, signal), known }
+}, ({ entries, known }) => {
+  // Preserve live events received while history was loading, without duplicates.
+  // The server snapshot remains authoritative for retained/updated history.
+  const arrived = alarmLog.value.filter(event => !known.has(event.unique_id))
+  const byID = new Map([...arrived, ...entries].map(event => [event.unique_id, event]))
+  alarmLog.value = [...byID.values()].sort((a, b) => a.unique_id - b.unique_id).slice(-1000)
+})
+
+function refreshAlarms(signal?: AbortSignal): Promise<void> {
+  if (!healthOn.value || !pageVisible.value || needToken.value) return Promise.resolve()
+  return alarmSnapshotRead.run(signal)
 }
+
+function refreshAlarmLog(signal?: AbortSignal): Promise<void> {
+  if (!showAlarms.value || !healthOn.value || !pageVisible.value || needToken.value) return Promise.resolve()
+  return alarmLogRead.run(signal)
+}
+
+function cancelAlarmReads() {
+  alarmSnapshotRead.cancel()
+  alarmLogRead.cancel()
+}
+
+watch([selectedNode, pageVisible, needToken], cancelAlarmReads, { flush: 'sync' })
+watch(showAlarms, open => { if (open) void refreshAlarmLog(); else alarmLogRead.cancel() })
 
 async function refreshFunctions(signal?: AbortSignal) {
   const node = selectedNode.value
@@ -311,6 +334,7 @@ const refresh = usePolling(async (signal) => {
 }, 30000)
 function onDocKeydown(e: KeyboardEvent) { if (e.key === 'Escape') closeNodeMenu() }
 onBeforeUnmount(() => {
+  cancelAlarmReads()
   live.stop()
   document.removeEventListener('click', closeNodeMenu)
   document.removeEventListener('keydown', onDocKeydown)
@@ -408,7 +432,7 @@ onBeforeUnmount(() => {
       <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
       <p v-if="nodeNotice" class="node-notice" role="status">{{ nodeNotice }}</p>
-      <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :can-manage="info?.user?.role === 'admin' && !selectedNode" :can-close="['admin', 'troubleshooter'].includes(info?.user?.role || '') && !selectedNode" @close="showAlarms = false" />
+      <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :refresh="refreshAlarms" :can-manage="info?.user?.role === 'admin' && !selectedNode" :can-close="['admin', 'troubleshooter'].includes(info?.user?.role || '') && !selectedNode" @close="showAlarms = false" />
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />

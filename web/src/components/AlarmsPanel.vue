@@ -4,7 +4,7 @@ import type { Alarm, AlarmLogEntry, SilenceState } from '../api'
 import { api } from '../api'
 import { usePolling } from '../polling'
 
-const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[]; canManage: boolean; canClose: boolean }>()
+const props = defineProps<{ alarms: Alarm[]; log: AlarmLogEntry[]; refresh: (signal?: AbortSignal) => Promise<void>; canManage: boolean; canClose: boolean }>()
 const actionError = ref('')
 const actionBusy = ref(false)
 const emit = defineEmits<{ close: [] }>()
@@ -12,27 +12,7 @@ const silence = ref<SilenceState>({ all: false, alarms: {} })
 const now = ref(Math.floor(Date.now() / 1000))
 onMounted(() => { void refreshSilence() })
 usePolling(async () => { now.value = Math.floor(Date.now() / 1000) }, 1000)
-usePolling(async (signal) => {
-  try {
-    const latest = await api.alarms(signal)
-    if (signal.aborted) return
-    const byKey = new Map(Object.values(latest.alarms).map((a) => [`${a.chart}.${a.name}`, a]))
-    for (const old of props.alarms) {
-      const n = byKey.get(`${old.chart}.${old.name}`)
-      if (!n) continue
-      old.status = n.status
-      old.value = n.value
-      old.last_updated = n.last_updated
-      old.last_status_change = n.last_status_change
-      old.pending_status = n.pending_status
-      old.pending_since = n.pending_since
-      old.pending_until = n.pending_until
-      old.hold_until = n.hold_until
-      old.recovery_hold = n.recovery_hold
-      old.silenced = n.silenced
-    }
-  } catch { /* next tick */ }
-}, 5000)
+usePolling(props.refresh, 5000)
 
 async function refreshSilence() {
   if (!props.canManage) return

@@ -307,12 +307,5 @@ func (s *Server) handleSilence(w http.ResponseWriter, r *http.Request) {
 func (s *Server) PublishAlarm(e health.LogEntry) { s.publishAlarm("", e) }
 
 func (s *Server) publishAlarm(nodeID string, e health.LogEntry) {
-	b, err := json.Marshal(struct {
-		Node  string          `json:"node,omitempty"`
-		Alarm health.LogEntry `json:"alarm"`
-	}{nodeID, e})
-	if err != nil {
-		return
-	}
-	s.live.broadcastAll(nodeID, b)
+	s.live.broadcastAlarm(nodeID, e)
 }

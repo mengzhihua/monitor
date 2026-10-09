@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -112,14 +113,25 @@ func (h *liveHub) broadcastNode(node, chartID string, ts int64, values map[strin
 	}
 }
 
-// broadcastAll sends b to every client watching node, regardless of chart
-// subscription.
-func (h *liveHub) broadcastAll(node string, b []byte) {
+// broadcastAlarm encodes an event only when a client watches its node. Chart
+// subscriptions do not filter alarms, and all recipients share one encoding.
+func (h *liveHub) broadcastAlarm(node string, e health.LogEntry) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	var b []byte
 	for c := range h.conns {
 		if !c.wants(node, "") {
 			continue
+		}
+		if b == nil {
+			var err error
+			b, err = json.Marshal(struct {
+				Node  string          `json:"node,omitempty"`
+				Alarm health.LogEntry `json:"alarm"`
+			}{node, e})
+			if err != nil {
+				return
+			}
 		}
 		select {
 		case c.send <- b:

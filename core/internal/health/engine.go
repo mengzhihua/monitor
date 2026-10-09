@@ -1001,13 +1001,21 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 	src := e.anomaly
 	e.mu.RUnlock()
 	for _, d := range dims {
+		isSel := len(selected) == 0 || selected[d.ID] || selected[d.Name]
+		// Only percentage needs unselected series for its denominator. Avoid
+		// reading and reducing every dimension on wide charts otherwise.
+		if !isSel && !l.Percentage {
+			continue
+		}
 		var vals []float64
+		var pts []tsdb.Point
 		if l.AnomalyBit {
 			if src != nil {
 				vals = src.RatesBetween(c.ID, d.ID, after, before)
 			}
 		} else {
-			pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			var err error
+			pts, err = e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
 			if err != nil || len(pts) == 0 {
 				continue
 			}
@@ -1023,10 +1031,8 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 		}
 		var v float64
 		if !l.AnomalyBit && l.Method == tsdb.GroupSum {
-			pts, err := e.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
-			if err != nil {
-				continue
-			}
+			// Integrate this same query snapshot, including NaN timestamps:
+			// they delimit intervals even though their values contribute zero.
 			v = integrate(pts, int64(c.UpdateEvery))
 		} else {
 			v = reduce(vals, l.Method)
@@ -1034,7 +1040,6 @@ func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
 		if l.AbsValue {
 			v = math.Abs(v)
 		}
-		isSel := len(selected) == 0 || selected[d.ID] || selected[d.Name]
 		if isSel {
 			matched = true
 			sum += v
