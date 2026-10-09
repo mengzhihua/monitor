@@ -1,9 +1,9 @@
-# Monitor 实时监控平台 · 2.0.1
+# Monitor 实时监控平台
 
 对标 [Netdata](https://www.netdata.cloud/) 的实时（每秒）、零配置、边缘优先的基础设施监控平台。
 
 - **服务端** `monitord`（Go 单二进制，配置 `mode: agent` 或 `mode: hub`）：macOS / Linux / Windows / FreeBSD / Android
-- **客户端**：内嵌 Web Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
+- **客户端**：内嵌 Web / 手机 H5 Dashboard（Vue3）+ Monitor App（Flutter）：macOS / Linux / Windows / Android / iOS
 
 代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。完成验证后将改动合入 `main` 并[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
 
@@ -41,6 +41,8 @@
 
 新增 **本机告警规则** 工作台：JSON 编辑、保存前语法与图表范围预览、规则持久化、并发冲突保护，以及禁用、删除和恢复配置规则。行业对标、权限、生效边界和后续差距见 [告警规则工作台](docs/13-alert-rule-workbench.md)。
 
+新增 **手机 H5 看板**：手机浏览器访问原监控地址，底部切换总览、图表、告警，“更多”打开服务拓扑及管理工具；支持图表触控读数、手机告警卡片、安全区适配和主屏幕入口，继续使用原有登录与权限。详见 [手机 H5 使用指南](docs/16-mobile-h5.md)。
+
 ## 代码同步与发布包保留规则
 
 - 开发交付前分别拉取 GitHub 和 GitLab 的最新 `main`，合并两边改动并完成必要验证，再提交、推送到两个仓库的 `main`。推送后分别核对远端提交 SHA，只有两边与本地一致才算同步完成。
@@ -64,6 +66,7 @@
 | [docs/11-system-hardening.md](docs/11-system-hardening.md) | 配置并发与密钥隔离、凭据文件、草稿保护、磁盘指标基准及验证边界 |
 | [docs/12-runtime-efficiency.md](docs/12-runtime-efficiency.md) | 历史搜索、跨 Hub 告警并发、HTTP 探测复用与快照导出一致性 |
 | [docs/13-alert-rule-workbench.md](docs/13-alert-rule-workbench.md) | 行业对标、本机规则编辑、持久化、并发保护、恢复与验收 |
+| [docs/16-mobile-h5.md](docs/16-mobile-h5.md) | 手机浏览器访问、底部导航、触控图表、主屏幕入口与验证边界 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
@@ -86,6 +89,12 @@ cd core && go run ./cmd/monitord -listen :19999
 ```
 
 配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
+
+### 手机访问（H5）
+
+升级服务端后，在手机浏览器打开原监控地址，例如 `https://monitor.example.com/`（替换为实际地址），输入已有登录密码即可。局域网部署使用手机能够访问的服务器地址及端口；手机上的 `localhost` 指向手机本身。H5 已内嵌到服务端，不需要另装客户端或新增端口。
+
+底部导航提供总览、图表、告警和更多功能；可在 Safari 共享菜单或 Android 浏览器菜单中添加到主屏幕，实际安装选项由浏览器决定。主屏幕入口不携带密码，重新打开可能需要登录，查看数据仍需连接服务器。完整使用说明见 [手机 H5 使用指南](docs/16-mobile-h5.md)。
 
 ### 默认登录密码
 

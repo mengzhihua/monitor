@@ -1,3 +1,4 @@
+import { openTools } from './mobile-navigation'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import type { AlertRuleChange, AlertRuleConfig, AlertRulePreview, AlertRuleSpec, AlertRulesSnapshot } from '../src/api'
 
@@ -81,6 +82,7 @@ async function fixture(page: Page, role = 'admin') {
     return route.continue()
   })
   await page.goto('/?view=charts&node=remote-1&token=browser-test-token')
+  await openTools(page)
   await page.getByRole('button', { name: '告警规则', exact: true }).click()
   const panel = page.getByRole('region', { name: '本机告警规则', exact: true })
   await expect(panel).toContainText('rules-local-hub')
@@ -117,6 +119,7 @@ test('local rules validate JSON, freeze the preview payload, save and retain def
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await panel.screenshot({ path: info.outputPath('alert-rules.png') })
   await page.reload()
+  await openTools(page)
   await page.getByRole('button', { name: '告警规则', exact: true }).click()
   await panel.locator('[data-rule-name="base_ram"]').click()
   await expect(editor).toHaveValue(pretty({ ...updated, warn: '$this > 95' }))
@@ -263,6 +266,7 @@ test('dirty-close guards both header and panel, and in-flight saves freeze dupli
   const json = pretty({ ...spec('base_ram'), info: '离开前保留' })
   await panel.getByLabel('规则 JSON').fill(json)
   page.once('dialog', dialog => dialog.dismiss())
+  await openTools(page)
   await page.getByRole('button', { name: '告警规则', exact: true }).click()
   await expect(panel.getByLabel('规则 JSON')).toHaveValue(json)
   await panel.getByRole('button', { name: '校验并预览', exact: true }).click()
@@ -271,6 +275,7 @@ test('dirty-close guards both header and panel, and in-flight saves freeze dupli
   await expect.poll(() => state.writes.length).toBe(1)
   await expect(panel.getByRole('button', { name: '保存中…', exact: true })).toBeDisabled()
   await expect(panel.getByRole('button', { name: '关闭告警规则' })).toBeDisabled()
+  await openTools(page)
   await page.getByRole('button', { name: '告警规则', exact: true }).click()
   await expect(panel).toBeVisible()
   state.writeGate.release()
@@ -297,6 +302,7 @@ test('real API creates a disabled rule after preview, survives browser reload, a
   const name = `browser_rules_e2e_${info.project.name}`
   try {
     await page.goto('/?token=browser-test-token&view=charts')
+    await openTools(page)
     await page.getByRole('button', { name: '告警规则', exact: true }).click()
     const panel = page.getByRole('region', { name: '本机告警规则', exact: true })
     await expect(panel).toContainText('实例：browser-test')
@@ -309,6 +315,7 @@ test('real API creates a disabled rule after preview, survives browser reload, a
     let snapshot: AlertRulesSnapshot = await (await request.get(readPath, { headers })).json()
     expect(snapshot.configs.find(rule => rule.name === name)).toMatchObject({ origin: 'custom', config: { disabled: true } })
     await page.reload()
+    await openTools(page)
     await page.getByRole('button', { name: '告警规则', exact: true }).click()
     await panel.locator(`[data-rule-name="${name}"]`).click()
     expect(JSON.parse(await panel.getByLabel('规则 JSON').inputValue()).disabled).toBe(true)

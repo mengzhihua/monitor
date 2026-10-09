@@ -1,3 +1,4 @@
+import { openTools } from './mobile-navigation'
 import { test, expect } from '@playwright/test'
 
 const token = 'browser-test-token'
@@ -72,12 +73,20 @@ test('login, real chart, long history, layout and logout', async ({page, request
   ])
   await expect(page.locator('.card canvas').first()).toBeVisible()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
-  const plot = await page.locator('.card .u-over').boundingBox()
-  expect(plot).not.toBeNull()
-  await page.mouse.move(plot!.x+plot!.width-0.05,plot!.y+plot!.height/2)
-  await expect(page.locator('.card .u-value').nth(1)).toContainText(/\d/)
+  if (info.project.name === 'mobile') {
+    const sample = page.getByLabel('已加载末行采样')
+    await sample.scrollIntoViewIfNeeded()
+    await expect(sample.locator('strong')).toContainText(/\d/)
+    await expect(sample.locator('time')).toHaveAttribute('datetime', /T/)
+  } else {
+    const plot = await page.locator('.card .u-over').boundingBox()
+    expect(plot).not.toBeNull()
+    await page.mouse.move(plot!.x+plot!.width-0.05,plot!.y+plot!.height/2)
+    await expect(page.locator('.card .u-value').nth(1)).toContainText(/\d/)
+  }
   await page.screenshot({path:info.outputPath('dashboard.png'),fullPage:true})
   expect(errors).toEqual([])
+  await openTools(page)
   await page.getByRole('button',{name:'退出登录'}).click()
   await expect(page.getByPlaceholder('登录密码或访问令牌',{exact:true})).toBeVisible()
   expect(await page.evaluate(()=>sessionStorage.getItem('monitor.token'))).toBeFalsy()

@@ -48,4 +48,11 @@ watch(() => props.end, end => { input.value = localDateTime(end ?? Math.floor(Da
 button { color:#cbd5e1; background:#172337; border:1px solid #475569; border-radius:6px; padding:7px 10px; cursor:pointer; font-size:12px; } button:disabled { opacity:.4; cursor:default; } button:focus-visible, input:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
 form { align-items:end; margin-top:12px; } label { display:flex; flex-direction:column; gap:5px; font-size:12px; max-width:100%; min-width:0; } input { background:#0b1120; color:#e2e8f0; color-scheme:dark; border:1px solid #475569; border-radius:5px; padding:6px; max-width:100%; min-width:0; box-sizing:border-box; }
 p, small { color:#cbd5e1; font-size:12px; line-height:1.6; margin:8px 0 0; } small { flex-basis:100%; } .error { color:#fca5a5; }
+@media (max-width:600px), (pointer:coarse) {
+  button, input { min-height:44px; }
+  input { font-size:16px; width:100%; }
+  label { width:100%; }
+  .timeline-actions { width:100%; }
+  .timeline-actions button { flex:1; }
+}
 </style>

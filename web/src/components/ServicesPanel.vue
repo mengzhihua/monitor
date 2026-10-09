@@ -56,14 +56,14 @@ function pie(sla: number) {
       </div>
       <h2>拓扑</h2>
       <p v-if="!edges.length" class="muted">没有 LLDP 邻居或手工 topology 边。</p>
-      <ul v-else>
-        <li v-for="(e, i) in edges" :key="i">{{ e.source }} → {{ e.target }} <small>{{ e.kind }}</small></li>
+      <ul v-else class="topology">
+        <li v-for="(e, i) in edges" :key="i"><span>{{ e.source }} → {{ e.target }}</span> <small>{{ e.kind }}</small></li>
       </ul>
       <h2>可用性</h2>
-      <table v-if="rows.length">
+      <table v-if="rows.length" aria-label="告警可用性">
         <thead><tr><th>告警</th><th>图表</th><th>正常时间</th></tr></thead>
         <tbody>
-          <tr v-for="r in rows" :key="r.name + r.chart"><td>{{ r.name }}</td><td>{{ r.chart }}</td><td>{{ r.uptime.toFixed(1) }}%</td></tr>
+          <tr v-for="r in rows" :key="r.name + r.chart"><td data-label="告警"><span>{{ r.name }}</span></td><td data-label="图表"><span>{{ r.chart }}</span></td><td data-label="正常时间"><span>{{ r.uptime.toFixed(1) }}%</span></td></tr>
         </tbody>
       </table>
     </template>
@@ -71,15 +71,34 @@ function pie(sla: number) {
 </template>
 
 <style scoped>
-.services { max-width: 1100px; margin: 0 auto; padding: 24px; color: #e2e8f0; }
+.services { max-width: 1100px; min-width: 0; margin: 0 auto; padding: 24px; color: #e2e8f0; overflow-wrap: anywhere; }
 .muted { color: #94a3b8; }
 .cards { display: flex; flex-wrap: wrap; gap: 12px; }
 .card { display: flex; gap: 12px; align-items: center; background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 12px 16px; min-width: 220px; }
-.pie { width: 48px; height: 48px; }
+.card > div { min-width: 0; }
+.pie { width: 48px; height: 48px; flex-shrink: 0; }
 .track { fill: #1e293b; }
 .slice { fill: #34d399; }
 h1, h2 { font-weight: 650; }
 h2 { font-size: 16px; margin: 0; }
 table { width: 100%; border-collapse: collapse; }
 td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #1e293b; }
+@media (max-width: 760px) {
+  .services { padding: 16px 12px; }
+  h1 { font-size: 22px; }
+  .services > h2 { margin-top: 20px; margin-bottom: 10px; }
+  .cards { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .card { min-width: 0; padding: 12px; }
+  .card p { line-height: 1.5; margin-bottom: 0; }
+  .topology { list-style: none; padding: 0; }
+  .topology li { padding: 12px; margin-bottom: 8px; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; line-height: 1.6; }
+  .topology small { display: block; color: #94a3b8; }
+  table, tbody { display: block; }
+  thead { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  tbody { display: grid; gap: 8px; }
+  tbody tr { display: block; min-width: 0; padding: 10px 12px; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; }
+  td { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 10px; padding: 5px 0; border: 0; }
+  td::before { content: attr(data-label); color: #94a3b8; font-size: 12px; }
+  td > span { min-width: 0; }
+}
 </style>

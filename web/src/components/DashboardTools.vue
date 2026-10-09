@@ -1,0 +1,68 @@
+<script setup lang="ts">
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+
+type Tool = { id: string; label: string; title: string; description: string; active: boolean }
+const props = defineProps<{ mobile: boolean; tools: Tool[] }>()
+const emit = defineEmits<{ select: [id: string]; visibility: [open: boolean] }>()
+const sheet = ref<HTMLDialogElement>()
+let previousOverflow: string | undefined
+let trigger: HTMLElement | null = null
+function closed() {
+  if (previousOverflow !== undefined) document.body.style.overflow = previousOverflow
+  previousOverflow = undefined
+  emit('visibility', false)
+  trigger?.focus({ preventScroll: true })
+  trigger = null
+}
+function close() { sheet.value?.close(); closed() }
+async function open(source?: EventTarget | null) {
+  if (!props.mobile) return
+  await nextTick()
+  if (!sheet.value || sheet.value.open) return
+  trigger = source instanceof HTMLElement ? source : document.activeElement instanceof HTMLElement ? document.activeElement : null
+  previousOverflow = document.body.style.overflow
+  sheet.value.showModal()
+  document.body.style.overflow = 'hidden'
+  emit('visibility', true)
+}
+function select(id: string) { close(); emit('select', id) }
+watch(() => props.mobile, () => close(), { flush: 'sync' })
+onBeforeUnmount(close)
+defineExpose({ open, close })
+</script>
+
+<template>
+  <div v-if="!mobile" class="desktop-tools">
+    <button v-for="tool in tools" :key="tool.id" class="tool-button" :class="{ active: tool.active }"
+      :title="tool.title" @click="emit('select', tool.id)">{{ tool.label }}</button>
+  </div>
+  <dialog v-else ref="sheet" class="tools-sheet" aria-label="更多功能" @close="closed" @click="event => { if (event.target === sheet) close() }">
+    <div class="sheet-body">
+      <div class="sheet-heading"><div><small>MONITOR</small><h2>更多功能</h2></div><button class="close" autofocus @click="close" aria-label="关闭更多功能">关闭</button></div>
+      <div class="tool-grid">
+        <button v-for="tool in tools" :key="tool.id" :title="tool.title" :aria-label="tool.label" :class="{ active: tool.active }"
+          @click="select(tool.id)"><strong>{{ tool.label }}</strong><span>{{ tool.description }}</span></button>
+      </div>
+      <details class="homescreen"><summary>添加到手机主屏幕</summary><p>iPhone / iPad：在 Safari 的共享菜单选择“添加到主屏幕”。Android：在浏览器菜单选择“添加到主屏幕”或“安装应用”（以浏览器提供的选项为准）。</p><p>从主屏幕重新打开时可能需要再次登录。查看实时数据需要连接服务器。</p></details>
+    </div>
+  </dialog>
+</template>
+
+<style scoped>
+.desktop-tools { display:contents; }
+.tool-button { background:#1e293b; color:#94a3b8; border:1px solid #334155; border-radius:12px; padding:1px 8px; font-size:12px; cursor:pointer; }
+.active { outline:1px solid #5eead4; }
+.tools-sheet { padding:0; color:#e2e8f0; background:#0b1526; border:1px solid #334155; border-radius:20px 20px 0 0; margin:auto auto 0; width:100%; max-width:600px; max-height:calc(100dvh - env(safe-area-inset-top) - 16px); }
+.tools-sheet::backdrop { background:#020617ba; }
+.sheet-body { padding:20px max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.sheet-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
+.sheet-heading small { font-size:10px; letter-spacing:.18em; color:#5eead4; }
+h2 { margin:4px 0 0; font-size:20px; }
+button { font:inherit; cursor:pointer; }
+.close { min-width:60px; min-height:44px; border:1px solid #475569; color:#cbd5e1; background:#172337; border-radius:10px; }
+.tool-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.tool-grid button { min-height:76px; padding:12px; border:1px solid #283b50; border-radius:12px; background:#112136; color:#e2e8f0; display:flex; flex-direction:column; gap:6px; text-align:left; overflow-wrap:anywhere; }
+.tool-grid strong { font-size:14px; }.tool-grid span { color:#94a3b8; font-size:12px; line-height:1.5; }
+.homescreen { color:#94a3b8; font-size:13px; margin-top:18px; line-height:1.7; }.homescreen summary { min-height:44px; display:flex; align-items:center; cursor:pointer; color:#5eead4; }
+button:focus-visible,summary:focus-visible { outline:2px solid #5eead4; outline-offset:3px; }
+</style>

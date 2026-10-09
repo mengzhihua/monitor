@@ -1,3 +1,4 @@
+import { workspace } from './mobile-navigation'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import type { OperationsSnapshot } from '../src/api'
@@ -102,7 +103,7 @@ for (const change of ['filter', 'workspace', 'authentication']) {
       await page.getByLabel('搜索主机或问题').fill('new-filter')
       await expect(page.locator('.node-tile h3')).toHaveText('new-filter')
     } else if (change === 'workspace') {
-      await page.getByRole('button', { name: '指标图表', exact: true }).click()
+      await workspace(page, 'charts')
       await expect(page.locator('.operations')).toHaveCount(0)
     } else {
       rejectOverview = true

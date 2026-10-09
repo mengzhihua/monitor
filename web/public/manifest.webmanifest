@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Monitor 监控看板",
+  "short_name": "Monitor",
+  "description": "查看主机资源、指标图表与告警",
+  "lang": "zh-CN",
+  "start_url": "/?view=operations",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#0b1526",
+  "icons": [
+    { "src": "/icons/monitor-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/monitor-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "指标图表", "url": "/?view=charts" },
+    { "name": "告警", "url": "/?view=alarms" }
+  ]
+}

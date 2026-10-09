@@ -137,21 +137,22 @@ function sustainText(a: Alarm) {
     <p v-if="actionError" role="alert">{{ actionError }}</p>
     <p v-if="!canManage" class="dim">通知静默仅允许管理员在本机执行；跨节点问题请在运维总览中确认和记录。</p>
     <p class="dim">这里仅修改临时手动静默。维护计划请到运维总览查看或取消，解除手动静默不会清除维护抑制。</p>
-    <table>
+    <table aria-label="当前告警规则">
       <thead>
         <tr><th>状态</th><th>告警</th><th>图表</th><th class="num">当前值</th><th>持续</th><th></th></tr>
       </thead>
       <tbody>
         <tr v-for="a in sorted" :key="a.chart + '.' + a.name" :class="a.status.toLowerCase()" :title="a.info">
-          <td><span class="badge">{{ a.status }}</span><span v-if="sustainText(a)" class="phase">{{ sustainText(a) }}</span></td>
-          <td>{{ a.name }}</td>
-          <td class="dim">{{ a.chart }}</td>
-          <td class="num">{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></td>
-          <td class="dim">{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</td>
-          <td class="ops"><button v-if="canClose && (a.status === 'WARNING' || a.status === 'CRITICAL')" class="mute tiny" :disabled="actionBusy" title="手动关闭此问题（条件仍成立时下次评估会重新触发）" @click="closeAlarm(a)">关闭</button>
+          <td data-label="状态"><div><span class="badge">{{ a.status }}</span><span v-if="sustainText(a)" class="phase">{{ sustainText(a) }}</span></div></td>
+          <td data-label="告警"><div>{{ a.name }}<details v-if="a.info" class="mobile-info"><summary>查看说明</summary><p>{{ a.info }}</p></details></div></td>
+          <td class="dim" data-label="图表"><span>{{ a.chart }}</span></td>
+          <td class="num" data-label="当前值"><span>{{ fmt(a.value) }} <span class="dim">{{ a.units }}</span></span></td>
+          <td class="dim" data-label="持续"><span>{{ a.last_status_change ? ago(a.last_status_change) : '—' }}</span></td>
+          <td class="ops" data-label="操作"><div class="row-actions"><button v-if="canClose && (a.status === 'WARNING' || a.status === 'CRITICAL')" class="mute tiny" :disabled="actionBusy" title="手动关闭此问题（条件仍成立时下次评估会重新触发）" @click="closeAlarm(a)">关闭</button>
             <button v-if="canManage" class="mute tiny" :disabled="actionBusy" @click="silenceOne(a, !manuallySilenced(a))">{{ manuallySilenced(a) ? '解除手动静默' : '静默' }}</button>
             <span v-if="manuallySilenced(a) || allSilenced" class="dim"> {{ remain(manuallySilenced(a) ? alarmUntil(a) : silence.until) }}</span>
             <span v-else-if="a.silenced" class="dim">维护或其他抑制</span>
+            </div>
           </td>
         </tr>
         <tr v-if="!alarms.length"><td colspan="6" class="dim">暂无告警规则</td></tr>
@@ -175,7 +176,7 @@ function sustainText(a: Alarm) {
 </template>
 
 <style scoped>
-.panel { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; }
+.panel { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 13px; min-width: 0; }
 .head { display: flex; justify-content: space-between; align-items: center; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .mute { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
@@ -192,10 +193,40 @@ td.ops .mute { display: block; margin-bottom: 2px; width: max-content; }
 .dim { color: #64748b; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #1e293b; color: #94a3b8; }
 .phase { display: block; margin-top: 2px; color: #fbbf24; font-size: 11px; }
+.mobile-info { display: none; }
 .critical .badge { background: #7f1d1d; color: #fecaca; }
 .warning .badge { background: #78350f; color: #fde68a; }
 .clear .badge { background: #14532d; color: #bbf7d0; }
 .log { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow: auto; }
 .log li { display: flex; gap: 10px; padding: 3px 0; border-bottom: 1px solid #111827; flex-wrap: wrap; }
-@media (max-width: 760px) { td:nth-child(3), th:nth-child(3), td:nth-child(5), th:nth-child(5) { display: none; } }
+@media (max-width: 760px) {
+  .panel { padding: 12px; overflow-wrap: anywhere; }
+  .dim { color: #94a3b8; }
+  .head { flex-wrap: wrap; gap: 4px 8px; }
+  .head h3 { margin: 0; }
+  .actions { margin-left: auto; flex-wrap: wrap; max-width: 100%; gap: 4px; }
+  .mute, .mute.tiny, .x { min-height: 44px; min-width: 44px; padding: 8px 12px; font-size: 13px; }
+  .x { padding: 8px; font-size: 22px; }
+  table, tbody { display: block; }
+  thead { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  tbody { display: grid; gap: 10px; }
+  tbody tr { display: block; min-width: 0; padding: 10px; border: 1px solid #334155; border-radius: 8px; }
+  td { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 10px; align-items: start; padding: 5px 0; border: 0; white-space: normal; text-align: left; }
+  td::before { content: attr(data-label); color: #94a3b8; font-size: 12px; }
+  td > * { min-width: 0; }
+  td[colspan] { display: block; }
+  td[colspan]::before { content: none; }
+  td.ops:has(.row-actions:empty) { display: none; }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  td.ops .mute { margin: 0; max-width: 100%; }
+  .phase { font-size: 12px; margin-top: 4px; }
+  .mobile-info { display: block; margin-top: 4px; color: #94a3b8; }
+  .mobile-info summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: #93c5fd; }
+  .mobile-info summary::before { content: '＋'; margin-right: 4px; }
+  .mobile-info[open] summary::before { content: '−'; }
+  .mobile-info p { margin: 0 0 6px; line-height: 1.6; }
+  .log { max-height: 360px; }
+  .log li { gap: 6px 10px; padding: 10px 0; }
+  .log li > * { min-width: 0; max-width: 100%; }
+}
 </style>

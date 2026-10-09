@@ -1,5 +1,13 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; background: #020617; color: #e2e8f0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
 #app { min-height: 100vh; }
+button, a, summary { -webkit-tap-highlight-color: transparent; }
+@media (max-width: 760px) {
+  #app { min-height: 100dvh; }
+  button, input:not([type="checkbox"]):not([type="radio"]), select, textarea { min-height:44px; }
+  /* Keep every mobile editor above Safari's focus-zoom threshold, including scoped panel styles. */
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size:16px !important; }
+  button, summary { touch-action:manipulation; }
+}
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }

@@ -1,3 +1,4 @@
+import { workspace } from './mobile-navigation'
 import { test, expect, type Page } from '@playwright/test'
 import { decodeTimeline, encodeTimeline, timelineKey } from '../src/chartTimeline'
 import { newBoard, encodeBoards, storageKey } from '../src/dashboardConfig'
@@ -106,7 +107,7 @@ test('current operations drill-down exits historical mode instead of showing an 
   expect(await page.evaluate(key => JSON.parse(sessionStorage.getItem(key)!).end, timelineKey)).toBeNull()
   await expect(page.locator('.history-badge')).toHaveCount(0)
   await page.getByRole('button', { name: '冻结整个看板', exact: true }).click()
-  await page.getByRole('button', { name: '运维总览', exact: true }).click()
+  await workspace(page, 'operations')
   await page.evaluate(key => {
     const original = Storage.prototype.setItem
     Storage.prototype.setItem = function (name, value) {

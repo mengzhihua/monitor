@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from './api'
 import { ApiError, api, auth, selection } from './api'
 import { live } from './live'
@@ -21,10 +21,43 @@ import ConfigPanel from './components/ConfigPanel.vue'
 import ContextsPanel from './components/ContextsPanel.vue'
 import DashboardsPanel from './components/DashboardsPanel.vue'
 import ChartTimeline from './components/ChartTimeline.vue'
+import DashboardTools from './components/DashboardTools.vue'
 import { decodeTimeline, encodeTimeline, timelineKey, type ChartTimeline as TimelineState } from './chartTimeline'
 
 const initialView = new URL(location.href).searchParams.get('view')
-const workspace = ref(initialView === 'charts' || initialView === 'services' ? initialView : 'operations')
+type Workspace = 'operations' | 'charts' | 'services' | 'alarms'
+const workspace = ref<Workspace>(initialView === 'charts' || initialView === 'services' || initialView === 'alarms' ? initialView : 'operations')
+const mobileQuery = window.matchMedia('(max-width: 760px)')
+const isMobile = ref(mobileQuery.matches)
+const toolsMenu = ref<InstanceType<typeof DashboardTools> | null>(null)
+const toolsOpen = ref(false)
+function syncMobile() { isMobile.value = mobileQuery.matches }
+function jumpGroup(event: Event) {
+  activeSection.value = (event.target as HTMLSelectElement).value
+  document.getElementById(activeSection.value)?.scrollIntoView({ block: 'start' })
+}
+function scrollToWorkspace() {
+  void nextTick(() => document.getElementById('workspace-main')?.scrollIntoView({ block: 'start' }))
+}
+function navigate(work: Workspace) {
+  workspace.value = work
+  showAlarms.value = work === 'alarms'
+  if (isMobile.value) scrollToWorkspace()
+}
+function closeAlarms() {
+  showAlarms.value = false
+  if (workspace.value === 'alarms') workspace.value = 'operations'
+}
+function toggleAlarms() {
+  if (showAlarms.value) closeAlarms()
+  else { showAlarms.value = true; if (isMobile.value) scrollToWorkspace() }
+}
+watch(workspace, value => {
+  const url = new URL(location.href)
+  url.searchParams.set('view', value)
+  url.searchParams.delete('token')
+  history.replaceState(history.state, '', url)
+})
 async function drill(node: string, chart: string) {
   await selectNode(node)
   if (chartEnd.value !== null) {
@@ -57,7 +90,7 @@ const filter = ref('')
 const activeSection = ref('')
 const alarms = ref<Alarm[]>([])
 const alarmLog = ref<AlarmLogEntry[]>([])
-const showAlarms = ref(false)
+const showAlarms = ref(initialView === 'alarms')
 const showAlertRules = ref(false)
 const alertRulesPanel = ref<InstanceType<typeof AlertRulesPanel> | null>(null)
 function toggleAlertRules() {
@@ -107,6 +140,35 @@ const raised = computed(() => ({
   warning: alarms.value.filter((a) => a.status === 'WARNING').length,
   critical: alarms.value.filter((a) => a.status === 'CRITICAL').length,
 }))
+const tools = computed(() => [
+  { id: 'services', label: '服务与拓扑', title: '服务与拓扑', description: '服务状态与可用性', active: workspace.value === 'services', visible: isMobile.value },
+  { id: 'rules', label: '告警规则', title: '本机告警规则', description: '查看与管理本机规则', active: showAlertRules.value, visible: true },
+  { id: 'functions', label: `ƒ ${functions.value.length}`, title: 'Functions（实时进程表等）', description: '实时进程与诊断', active: showFunctions.value, visible: !!functions.value.length },
+  { id: 'logs', label: '日志', title: '日志', description: '查询当前节点日志', active: showLogs.value, visible: logsAvailable.value },
+  { id: 'hub', label: 'Hub', title: 'Hub：Space / Room / claim', description: '节点分组与接入', active: showHub.value, visible: isHub.value },
+  { id: 'cloud', label: 'Cloud', title: 'Cloud 控制台', description: '云节点控制台', active: showCloud.value, visible: isHub.value },
+  { id: 'templates', label: '模板', title: 'Zabbix 模板 / 主机组 / 资产', description: '主机组与资产模板', active: showTemplates.value, visible: isHub.value },
+  { id: 'config', label: '配置', title: '配置：本机与节点', description: '本机与节点配置', active: showConfig.value, visible: info.value?.user?.role === 'admin' },
+  { id: 'weights', label: '异常顾问', title: '异常顾问 / 关联分析', description: '异常与指标关联', active: showWeights.value, visible: true },
+  { id: 'contexts', label: 'Context', title: 'Context 总览', description: '按指标类型浏览', active: showContexts.value, visible: true },
+  { id: 'logout', label: '退出登录', title: '退出登录', description: '结束当前浏览器登录', active: false, visible: isMobile.value && !!auth.token },
+].filter(tool => tool.visible))
+function activateTool(id: string) {
+  switch (id) {
+    case 'services': navigate('services'); break
+    case 'rules': toggleAlertRules(); break
+    case 'functions': showFunctions.value = !showFunctions.value; break
+    case 'logs': showLogs.value = !showLogs.value; break
+    case 'hub': showHub.value = !showHub.value; break
+    case 'cloud': showCloud.value = !showCloud.value; break
+    case 'templates': showTemplates.value = !showTemplates.value; break
+    case 'config': toggleConfig(); break
+    case 'weights': showWeights.value = !showWeights.value; break
+    case 'contexts': showContexts.value = !showContexts.value; break
+    case 'logout': void logout(); break
+  }
+  if (isMobile.value) scrollToWorkspace()
+}
 
 const windows = [
   { label: '1 分钟', v: 60 },
@@ -195,11 +257,13 @@ async function load(signal: AbortSignal) {
     })
     error.value = ''
     needToken.value = false
+    if (workspace.value === 'alarms') showAlarms.value = true
     await Promise.all([refreshAlarms(signal), refreshAlarmLog(signal), refreshFunctions(signal)])
   } catch (e) {
     if (signal.aborted) return
     if (e instanceof ApiError && e.status === 401) {
       needToken.value = true
+      toolsMenu.value?.close()
       live.stop()
       connected.value = false
       info.value = null
@@ -318,6 +382,7 @@ function fmtUptime(s: number) {
 }
 
 onMounted(() => {
+  mobileQuery.addEventListener('change', syncMobile)
   auth.fromURL()
   const saved = new URL(location.href).searchParams.get('node') ?? sessionStorage.getItem(NODE_KEY) ?? ''
   selectedNode.value = saved
@@ -334,6 +399,7 @@ const refresh = usePolling(async (signal) => {
 }, 30000)
 function onDocKeydown(e: KeyboardEvent) { if (e.key === 'Escape') closeNodeMenu() }
 onBeforeUnmount(() => {
+  mobileQuery.removeEventListener('change', syncMobile)
   cancelAlarmReads()
   live.stop()
   document.removeEventListener('click', closeNodeMenu)
@@ -345,8 +411,8 @@ onBeforeUnmount(() => {
   <header>
     <div class="brand">
       <span class="logo">◉</span> Monitor
-      <span v-if="info && !currentNode" class="host">{{ info.host.hostname }} · {{ info.host.os }}/{{ info.host.arch }}</span>
-      <span v-else-if="currentNode" class="host">{{ currentNode.hostname }} · {{ currentNode.os }}/{{ currentNode.arch }}
+      <span v-if="info && !currentNode" class="host" :title="info.host.hostname">{{ info.host.hostname }} · {{ info.host.os }}/{{ info.host.arch }}</span>
+      <span v-else-if="currentNode" class="host" :title="currentNode.hostname">{{ currentNode.hostname }} · {{ currentNode.os }}/{{ currentNode.arch }}
         <i :class="['node-status', currentNode.status]">{{ currentNode.status }}</i></span>
     </div>
     <div class="meta" v-if="info">
@@ -365,41 +431,32 @@ onBeforeUnmount(() => {
       <span v-if="isHub" class="nodes-count" title="在线节点 / 全部节点">{{ nodes.filter((n) => n.status === 'live').length }}/{{ nodes.length }} nodes</span>
       <span v-if="info.stream" :class="['dot', info.stream.connected ? 'on' : 'off']"
         :title="info.stream.connected ? '已上报到 ' + info.stream.destination : ('未连接 Hub' + (info.stream.last_error ? ': ' + info.stream.last_error : ''))">⇡</span>
-      <span>{{ currentNode ? currentNode.charts_count : info.charts_count }} charts</span>
-      <span v-if="!currentNode">{{ info.metrics_count }} metrics</span>
-      <span v-if="!currentNode">up {{ fmtUptime(info.uptime) }}</span>
+      <span class="chart-count">{{ currentNode ? currentNode.charts_count : info.charts_count }} charts</span>
+      <span v-if="!currentNode" class="desktop-detail">{{ info.metrics_count }} metrics</span>
+      <span v-if="!currentNode" class="desktop-detail">up {{ fmtUptime(info.uptime) }}</span>
       <button v-if="healthOn" class="alarms-btn" :class="{ crit: raised.critical, warn: !raised.critical && raised.warning, open: showAlarms }"
-        @click="showAlarms = !showAlarms" title="告警">
+        @click="toggleAlarms" title="告警">
         ⚠ <b v-if="raised.critical">{{ raised.critical }}</b><b v-else-if="raised.warning">{{ raised.warning }}</b><span v-else>0</span>
       </button>
-      <button class="alarms-btn" :class="{ open: showAlertRules }" @click="toggleAlertRules" title="本机告警规则">告警规则</button>
-      <button v-if="functions.length" class="alarms-btn" :class="{ open: showFunctions }" @click="showFunctions = !showFunctions"
-        title="Functions（实时进程表等）">ƒ {{ functions.length }}</button>
-      <button v-if="logsAvailable" class="alarms-btn" :class="{ open: showLogs }" @click="showLogs = !showLogs" title="日志">☰</button>
-      <button v-if="isHub" class="alarms-btn" :class="{ open: showHub }" @click="showHub = !showHub" title="Hub：Space / Room / claim">Hub</button>
-      <button v-if="isHub" class="alarms-btn" :class="{ open: showCloud }" @click="showCloud = !showCloud" title="Cloud 控制台">Cloud</button>
-      <button v-if="isHub" class="alarms-btn" :class="{ open: showTemplates }" @click="showTemplates = !showTemplates" title="Zabbix 模板 / 主机组 / 资产">模板</button>
-      <button v-if="info?.user?.role === 'admin'" class="alarms-btn" :class="{ open: showConfig }" @click="toggleConfig" title="配置：本机与节点">配置</button>
-      <button class="alarms-btn" :class="{ open: showWeights }" @click="showWeights = !showWeights" title="异常顾问 / 关联分析">Σ</button>
-      <button class="alarms-btn" :class="{ open: showContexts }" @click="showContexts = !showContexts" title="Context 总览">Ctx</button>
+      <DashboardTools ref="toolsMenu" :mobile="isMobile" :tools="tools" @select="activateTool" @visibility="value => toolsOpen = value" />
       <span :class="['dot', connected ? 'on' : 'off']" :title="connected ? 'live' : 'reconnecting'">●</span>
     </div>
     <div class="controls" v-if="workspace === 'charts'">
-      <input v-model="filter" placeholder="筛选图表…" />
-      <select v-model.number="windowSec">
+      <input v-model="filter" placeholder="筛选图表…" aria-label="筛选图表" type="search" />
+      <select v-model.number="windowSec" aria-label="查看时长">
         <option v-for="w in windows" :key="w.v" :value="w.v">{{ w.label }}</option>
       </select>
     </div>
-    <button v-if="info && auth.token" @click="logout">退出登录</button>
+    <button v-if="info && auth.token && !isMobile" class="logout" @click="logout">退出登录</button>
   </header>
 
   <div v-if="info" class="workspace-tabs" aria-label="工作区">
-    <button :class="{ selected: workspace === 'operations' }" @click="workspace = 'operations'">运维总览</button>
-    <button :class="{ selected: workspace === 'services' }" @click="workspace = 'services'">服务与拓扑</button>
-    <button :class="{ selected: workspace === 'charts' }" @click="workspace = 'charts'">指标图表</button>
+    <button :class="{ selected: workspace === 'operations' }" @click="navigate('operations')">运维总览</button>
+    <button :class="{ selected: workspace === 'services' }" @click="navigate('services')">服务与拓扑</button>
+    <button :class="{ selected: workspace === 'charts' }" @click="navigate('charts')">指标图表</button>
   </div>
   <div class="layout">
-    <nav v-if="workspace === 'charts' && dashboardView === 'all'">
+    <nav class="chart-nav" v-if="workspace === 'charts' && dashboardView === 'all'">
       <a v-for="s in sections" :key="s.name" :href="'#' + s.name" :class="{ active: activeSection === s.name }"
         @click="activeSection = s.name">{{ s.name }} <small>{{ s.charts.length }}</small></a>
       <div class="collectors" v-if="info && !currentNode">
@@ -419,7 +476,7 @@ onBeforeUnmount(() => {
       </div>
     </nav>
 
-    <main>
+    <main id="workspace-main">
       <div v-if="isHub && workspace === 'charts'" class="node-overview" aria-label="节点健康总览">
         <div v-for="n in nodes" :key="n.id" :class="['node-card', n.status]" role="button" tabindex="0"
           @click="selectNode(n.id)" @keydown.enter.prevent="selectNode(n.id)" @keydown.space.prevent="selectNode(n.id)">
@@ -432,7 +489,9 @@ onBeforeUnmount(() => {
       <div v-if="info?.db?.persistence?.error" class="banner">数据保存失败：{{ info.db.persistence.error }}</div>
       <div v-if="error" class="banner">{{ error }}</div>
       <p v-if="nodeNotice" class="node-notice" role="status">{{ nodeNotice }}</p>
-      <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :refresh="refreshAlarms" :can-manage="info?.user?.role === 'admin' && !selectedNode" :can-close="['admin', 'troubleshooter'].includes(info?.user?.role || '') && !selectedNode" @close="showAlarms = false" />
+      <h1 v-if="workspace === 'alarms' && info" class="mobile-page-title">告警 <small>{{ currentNode?.hostname || info.host.hostname }}</small></h1>
+      <p v-if="workspace === 'alarms' && info && !healthOn" class="empty">当前节点未启用告警。</p>
+      <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :refresh="refreshAlarms" :can-manage="info?.user?.role === 'admin' && !selectedNode" :can-close="['admin', 'troubleshooter'].includes(info?.user?.role || '') && !selectedNode" @close="closeAlarms" />
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
@@ -443,6 +502,7 @@ onBeforeUnmount(() => {
       <TemplatesPanel v-if="showTemplates && isHub" :role="info?.user?.role || 'viewer'" :nodes="nodes" @close="showTemplates = false" />
       <ConfigPanel ref="configPanel" v-if="showConfig && info?.user?.role === 'admin'" :can-manage="info?.user?.role === 'admin'" :is-hub="isHub" @close="showConfig = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">
+        <h1>登录 Monitor</h1>
         <p>请输入登录密码或访问令牌。</p>
         <p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>
         <input v-model="tokenInput" type="password" placeholder="登录密码或访问令牌" aria-label="登录密码或访问令牌" autocomplete="current-password" required autofocus />
@@ -458,6 +518,7 @@ onBeforeUnmount(() => {
         <button :aria-pressed="dashboardView === 'all'" @click="dashboardView = 'all'">全部指标</button>
         <button :aria-pressed="dashboardView === 'presets'" @click="dashboardView = 'presets'">常用聚合看板</button>
       </div>
+      <label v-if="info && !needToken && dashboardView === 'all'" class="mobile-groups">图表分组<select aria-label="跳转图表分组" :value="activeSection" @change="jumpGroup"><option value="" disabled>选择分组</option><option v-for="group in sections" :key="group.name" :value="group.name">{{ group.name }} · {{ group.charts.length }} 图表</option></select></label>
       <DashboardsPanel v-if="info && !needToken && dashboardView === 'presets'" :charts="charts" :window="windowSec" :end="chartEnd" :filter="filter" :node="selectedNode" />
       <template v-if="dashboardView === 'all'">
       <section v-for="s in sections" :key="s.name" :id="s.name">
@@ -473,6 +534,12 @@ onBeforeUnmount(() => {
       </template>
     </main>
   </div>
+  <nav v-if="info && !needToken" class="mobile-nav" aria-label="手机导航">
+    <button :aria-current="workspace === 'operations' && !toolsOpen ? 'page' : undefined" @click="navigate('operations')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" /></svg><span>总览</span></button>
+    <button :aria-current="workspace === 'charts' && !toolsOpen ? 'page' : undefined" @click="navigate('charts')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3v18h18M6 15l4-5 4 3 6-8" /></svg><span>图表</span></button>
+    <button :aria-current="workspace === 'alarms' && !toolsOpen ? 'page' : undefined" @click="navigate('alarms')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zM12 9v5m0 3v1" /></svg><span>告警 <b v-if="raised.critical + raised.warning">{{ raised.critical + raised.warning }}</b></span></button>
+    <button :aria-expanded="toolsOpen" :aria-current="toolsOpen ? 'page' : undefined" aria-haspopup="dialog" @click="toolsMenu?.open($event.currentTarget)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg><span>更多</span></button>
+  </nav>
 </template>
 
 <style scoped>
@@ -511,10 +578,10 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; pa
 .controls { display: flex; gap: 8px; margin-left: auto; }
 input, select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 4px 8px; font-size: 13px; }
 .layout { display: flex; }
-nav { width: 180px; flex: none; position: sticky; top: 49px; height: calc(100vh - 49px); overflow: auto; padding: 12px 8px; border-right: 1px solid #1e293b; }
-nav a { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; color: #cbd5e1; text-decoration: none; font-size: 13px; }
-nav a:hover, nav a.active { background: #1e293b; }
-nav small, .col small { color: #64748b; }
+.chart-nav { width: 180px; flex: none; position: sticky; top: 49px; height: calc(100vh - 49px); overflow: auto; padding: 12px 8px; border-right: 1px solid #1e293b; }
+.chart-nav a { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; color: #cbd5e1; text-decoration: none; font-size: 13px; }
+.chart-nav a:hover, .chart-nav a.active { background: #1e293b; }
+.chart-nav small, .col small { color: #64748b; }
 .collectors { margin-top: 20px; }
 .nav-title { font-size: 11px; text-transform: uppercase; color: #64748b; padding: 0 10px 6px; }
 .col { display: flex; justify-content: space-between; padding: 3px 10px; font-size: 12px; color: #94a3b8; }
@@ -528,10 +595,40 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #
 .token p { margin: 0; color: #cbd5e1; font-size: 13px; }
 .token button { background: #22c55e; color: #052e16; border: 0; border-radius: 6px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
 .oidc { color: #93c5fd; font-size: 13px; text-align: center; }
+.mobile-nav, .mobile-groups { display:none; }
+.mobile-page-title { font-size:22px; margin:14px 0; }.mobile-page-title small { display:block; font-size:12px; font-weight:400; color:#94a3b8; overflow-wrap:anywhere; margin-top:5px; }
+.logout { background:#172337; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:7px 10px; cursor:pointer; }
+.token h1 { font-size:22px; margin:0 0 4px; }
 @media (max-width: 760px) {
-  nav { display: none; }
-  header { position: static; }
-  .meta { flex-basis: 100%; }
-  main { padding: 8px; }
+  .chart-nav, .workspace-tabs, .desktop-detail { display: none; }
+  header { position:static; gap:8px; padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) 10px max(12px,env(safe-area-inset-left)); }
+  .brand { flex:1; min-width:0; display:block; font-size:17px; order:0; }
+  .host { display:block; margin:2px 0 0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .logout { order:1; font-size:12px; min-height:44px; }
+  .meta { order:2; flex-basis:100%; align-items:center; flex-wrap:wrap; gap:6px 10px; min-width:0; }
+  .meta .dot { margin-left:auto; }
+  .node-select { max-width:calc(100% - 60px); min-width:0; }
+  .node-select-btn { width:100%; max-width:100%; min-height:44px; }
+  .node-menu { width:min(290px,calc(100vw - 32px)); min-width:0; max-height:min(340px,55dvh); }
+  .node-item { white-space:normal; overflow-wrap:anywhere; min-height:44px; }
+  .nodes-count { display:none; }
+  .alarms-btn { min-height:44px; min-width:44px; }
+  .controls { order:3; width:100%; min-width:0; display:grid; grid-template-columns:minmax(0,1fr) 112px; }
+  .controls input, .controls select { width:100%; min-width:0; min-height:44px; }
+  .layout { padding-bottom:calc(76px + env(safe-area-inset-bottom)); }
+  main { padding:10px max(12px,env(safe-area-inset-right)) 16px max(12px,env(safe-area-inset-left)); }
+  .grid { gap:12px; }
+  .node-overview { flex-wrap:nowrap; overflow-x:auto; padding-bottom:6px; }
+  .node-card { min-width:220px; max-width:280px; flex-shrink:0; overflow-wrap:anywhere; }
+  .view-switch button { flex:1; padding:8px; min-height:44px; }
+  .mobile-groups { display:flex; align-items:center; gap:12px; color:#94a3b8; font-size:12px; margin-bottom:12px; }
+  .mobile-groups select { flex:1; min-width:0; min-height:44px; }
+  .token { margin:24px auto; padding:20px 16px; }.token input,.token button,.oidc { min-height:44px; }.token input { width:100%; min-width:0; }
+  .mobile-nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); position:fixed; inset:auto 0 0; width:100%; height:auto; padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); background:#0b1526f5; border-top:1px solid #2b3e53; z-index:20; }
+  .mobile-nav button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-height:52px; background:none; border:0; border-radius:10px; color:#94a3b8; font:inherit; font-size:11px; cursor:pointer; }
+  .mobile-nav button[aria-current=page] { color:#5eead4; background:#123333; }
+  .mobile-nav svg { width:21px; height:21px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linejoin:round; stroke-linecap:round; }
+  .mobile-nav b { display:inline-block; min-width:16px; padding:0 4px; border-radius:10px; background:#7f1d1d; color:#fecaca; font-size:10px; }
+  .mobile-nav button:focus-visible { outline:2px solid #5eead4; outline-offset:-2px; }
 }
 </style>

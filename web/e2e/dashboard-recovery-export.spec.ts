@@ -1,3 +1,4 @@
+import { workspace } from './mobile-navigation'
 import { test, expect, type Download, type Page } from '@playwright/test'
 import { draftKey, decodeDraft, encodeDraft } from '../src/dashboardDraft'
 import { newBoard, storageKey } from '../src/dashboardConfig'
@@ -28,8 +29,8 @@ test('unfinished drafts survive reload and workspace changes and disappear only 
   await expect(panel.getByLabel('看板说明', { exact: true })).toHaveValue('名称和分组还没有选择')
   await panel.getByLabel('看板名称', { exact: true }).fill('恢复后完成')
   await panel.getByRole('checkbox', { name: 'CPU 与负载', exact: true }).check()
-  await page.getByRole('button', { name: '运维总览', exact: true }).click()
-  await page.getByRole('button', { name: '指标图表', exact: true }).click()
+  await workspace(page, 'operations')
+  await workspace(page, 'charts')
   await panel.getByRole('button', { name: '恢复草稿', exact: true }).click()
   await expect(panel.getByLabel('看板名称', { exact: true })).toHaveValue('恢复后完成')
   await panel.getByRole('button', { name: '保存看板', exact: true }).click()

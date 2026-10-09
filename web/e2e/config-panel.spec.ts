@@ -1,3 +1,4 @@
+import { openTools } from './mobile-navigation'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
@@ -71,6 +72,7 @@ async function fixture(page: Page, opts: FixtureOpts = {}) {
 async function open(page: Page, opts: FixtureOpts = {}) {
   const f = await fixture(page, opts)
   await page.goto('/?view=charts&token=browser-test-token')
+  await openTools(page)
   await page.locator(toolbarButton).click()
   await expect(f.panel).toBeVisible()
   return f
@@ -248,9 +250,11 @@ test('toolbar close keeps unsaved config unless the user confirms', async ({ pag
   const area = f.panel.getByLabel('本机配置内容')
   await area.fill('hostname: unsaved\n')
   page.once('dialog', d => d.dismiss())
+  await openTools(page)
   await page.locator(toolbarButton).click()
   await expect(area).toHaveValue('hostname: unsaved\n')
   page.once('dialog', d => d.accept())
+  await openTools(page)
   await page.locator(toolbarButton).click()
   await expect(f.panel).toHaveCount(0)
   expect(f.managePuts).toHaveLength(0)

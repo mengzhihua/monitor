@@ -1,3 +1,4 @@
+import { openTools } from './mobile-navigation'
 import { expect, test } from '@playwright/test'
 
 const token = 'browser-test-token'
@@ -11,6 +12,7 @@ test('admin edits the local config file and keeps invalid yaml off disk', async 
   expect(viewer.status()).toBe(403)
 
   await page.goto('/?token=' + token)
+  await openTools(page)
   await page.getByRole('button', { name: '配置' }).click()
   await page.getByRole('button', { name: 'YAML', exact: true }).click()
   const editor = page.getByRole('textbox', { name: '本机配置内容' })
@@ -39,6 +41,7 @@ test('admin edits hostname and nginx from the form and can roll back', async ({ 
   const headers = { Authorization: 'Bearer browser-test-token' }
   const before = await (await request.get('/api/v1/manage/config', { headers })).json()
   await page.goto('/?token=browser-test-token')
+  await openTools(page)
   await page.getByRole('button', { name: '配置' }).click()
   await page.getByRole('button', { name: '表单', exact: true }).click()
   await page.getByRole('textbox', { name: '主机名' }).fill('browser-visual')
@@ -66,6 +69,7 @@ test('form conflicts retain edits and switching editor asks before discarding th
   const before = await (await request.get('/api/v1/manage/config', { headers })).json()
   try {
     await page.goto('/?token=' + token)
+    await openTools(page)
     await page.getByRole('button', { name: '配置' }).click()
     const hostname = page.getByRole('textbox', { name: '主机名' })
     await hostname.fill('keep-my-draft')

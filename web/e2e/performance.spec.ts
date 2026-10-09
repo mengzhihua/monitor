@@ -1,3 +1,4 @@
+import { openTools } from './mobile-navigation'
 import { expect, test, type Page } from '@playwright/test'
 
 const token = 'browser-test-token'
@@ -90,6 +91,7 @@ test('slow function requests never overlap and background panels stop polling', 
     await route.fulfill({ json: { time: 1, result: { columns: ['pid', 'cpu'], rows: [{ pid: 123, cpu: 2 }], total: 1 } } })
   })
   await page.goto('/?view=charts&token=' + token)
+  await openTools(page)
   await page.getByTitle('Functions（实时进程表等）', { exact: true }).click()
   await expect.poll(() => calls).toBe(1)
   await page.clock.fastForward(12000)

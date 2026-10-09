@@ -49,7 +49,7 @@ cross:
 	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN)/monitord-android-arm64 ./cmd/monitord
 
 clean:
-	rm -rf $(BIN) core/internal/api/ui/dist/assets core/internal/api/ui/dist/index.html core/internal/api/ui/dist/favicon.svg
+	rm -rf $(BIN) core/internal/api/ui/dist/assets core/internal/api/ui/dist/icons core/internal/api/ui/dist/index.html core/internal/api/ui/dist/favicon.svg core/internal/api/ui/dist/manifest.webmanifest
 
 .PHONY: verify-durability bench soak
 verify-durability: core
