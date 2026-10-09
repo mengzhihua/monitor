@@ -94,6 +94,7 @@ type Options struct {
 }
 
 type Server struct {
+	analysis           *aiState
 	operationPeerSlots chan struct{}
 	configMu           sync.Mutex
 	operations         *operations.Store
@@ -175,6 +176,10 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	if err != nil {
 		return nil, fmt.Errorf("open personal views store: %w", err)
 	}
+	s.analysis, err = newAIState(opt.OperationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("open AI settings store: %w", err)
+	}
 	s.routes()
 	if opt.SelfMonitor {
 		go s.selfMonitor()
@@ -197,6 +202,11 @@ func (s *Server) PublishNodeAlarm(nodeID string, e health.LogEntry) {
 
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("GET /api/v1/ai/settings", s.handleAISettings)
+	m.HandleFunc("PUT /api/v1/ai/settings", s.handleAISettings)
+	m.HandleFunc("DELETE /api/v1/ai/settings", s.handleAISettings)
+	m.HandleFunc("POST /api/v1/ai/preview", s.handleAIPreview)
+	m.HandleFunc("POST /api/v1/ai/analyze", s.handleAIAnalyze)
 	m.HandleFunc("GET /api/v1/operations", s.handleOperations)
 	m.HandleFunc("GET /api/v1/operations/notifications", s.handleNotificationDiagnostics)
 	m.HandleFunc("POST /api/v1/operations/notifications/test", s.handleNotificationTest)

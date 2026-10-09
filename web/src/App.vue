@@ -22,6 +22,8 @@ import ContextsPanel from './components/ContextsPanel.vue'
 import DashboardsPanel from './components/DashboardsPanel.vue'
 import ChartTimeline from './components/ChartTimeline.vue'
 import DashboardTools from './components/DashboardTools.vue'
+import AIAnalysisPanel from './components/AIAnalysisPanel.vue'
+import AppIcon from './components/AppIcon.vue'
 import { decodeTimeline, encodeTimeline, timelineKey, type ChartTimeline as TimelineState } from './chartTimeline'
 
 const initialView = new URL(location.href).searchParams.get('view')
@@ -101,6 +103,7 @@ const functions = ref<FunctionInfo[]>([])
 const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
+const showAI = ref(false)
 const showHub = ref(false)
 const showTemplates = ref(false)
 const showCloud = ref(false)
@@ -149,6 +152,7 @@ const tools = computed(() => [
   { id: 'cloud', label: 'Cloud', title: 'Cloud 控制台', description: '云节点控制台', active: showCloud.value, visible: isHub.value },
   { id: 'templates', label: '模板', title: 'Zabbix 模板 / 主机组 / 资产', description: '主机组与资产模板', active: showTemplates.value, visible: isHub.value },
   { id: 'config', label: '配置', title: '配置：本机与节点', description: '本机与节点配置', active: showConfig.value, visible: info.value?.user?.role === 'admin' },
+  { id: 'ai', label: 'AI 分析', title: 'AI 分析', description: '自定义模型分析监控快照', active: showAI.value, visible: true },
   { id: 'weights', label: '异常顾问', title: '异常顾问 / 关联分析', description: '异常与指标关联', active: showWeights.value, visible: true },
   { id: 'contexts', label: 'Context', title: 'Context 总览', description: '按指标类型浏览', active: showContexts.value, visible: true },
   { id: 'logout', label: '退出登录', title: '退出登录', description: '结束当前浏览器登录', active: false, visible: isMobile.value && !!auth.token },
@@ -163,6 +167,7 @@ function activateTool(id: string) {
     case 'cloud': showCloud.value = !showCloud.value; break
     case 'templates': showTemplates.value = !showTemplates.value; break
     case 'config': toggleConfig(); break
+    case 'ai': showAI.value = !showAI.value; break
     case 'weights': showWeights.value = !showWeights.value; break
     case 'contexts': showContexts.value = !showContexts.value; break
     case 'logout': void logout(); break
@@ -272,7 +277,7 @@ async function load(signal: AbortSignal) {
       alarms.value = []
       alarmLog.value = []
       functions.value = []
-      showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = showAlertRules.value = showTemplates.value = false
+      showAI.value = showFunctions.value = showLogs.value = showWeights.value = showHub.value = showCloud.value = showContexts.value = showAlarms.value = showConfig.value = showAlertRules.value = showTemplates.value = false
       error.value = ''
       return
     }
@@ -451,9 +456,9 @@ onBeforeUnmount(() => {
   </header>
 
   <div v-if="info" class="workspace-tabs" aria-label="工作区">
-    <button :class="{ selected: workspace === 'operations' }" @click="navigate('operations')">运维总览</button>
-    <button :class="{ selected: workspace === 'services' }" @click="navigate('services')">服务与拓扑</button>
-    <button :class="{ selected: workspace === 'charts' }" @click="navigate('charts')">指标图表</button>
+    <button :class="{ selected: workspace === 'operations' }" @click="navigate('operations')"><AppIcon name="operations" :size="16" />运维总览</button>
+    <button :class="{ selected: workspace === 'services' }" @click="navigate('services')"><AppIcon name="services" :size="16" />服务与拓扑</button>
+    <button :class="{ selected: workspace === 'charts' }" @click="navigate('charts')"><AppIcon name="charts" :size="16" />指标图表</button>
   </div>
   <div class="layout">
     <nav class="chart-nav" v-if="workspace === 'charts' && dashboardView === 'all'">
@@ -495,6 +500,7 @@ onBeforeUnmount(() => {
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
+      <AIAnalysisPanel v-if="showAI && info" :node="selectedNode" :charts="charts" :role="info.user?.role || 'viewer'" @close="showAI = false" />
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
@@ -535,16 +541,16 @@ onBeforeUnmount(() => {
     </main>
   </div>
   <nav v-if="info && !needToken" class="mobile-nav" aria-label="手机导航">
-    <button :aria-current="workspace === 'operations' && !toolsOpen ? 'page' : undefined" @click="navigate('operations')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" /></svg><span>总览</span></button>
-    <button :aria-current="workspace === 'charts' && !toolsOpen ? 'page' : undefined" @click="navigate('charts')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3v18h18M6 15l4-5 4 3 6-8" /></svg><span>图表</span></button>
-    <button :aria-current="workspace === 'alarms' && !toolsOpen ? 'page' : undefined" @click="navigate('alarms')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zM12 9v5m0 3v1" /></svg><span>告警 <b v-if="raised.critical + raised.warning">{{ raised.critical + raised.warning }}</b></span></button>
-    <button :aria-expanded="toolsOpen" :aria-current="toolsOpen ? 'page' : undefined" aria-haspopup="dialog" @click="toolsMenu?.open($event.currentTarget)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg><span>更多</span></button>
+    <button :aria-current="workspace === 'operations' && !toolsOpen ? 'page' : undefined" @click="navigate('operations')"><AppIcon name="operations" :size="21" /><span>总览</span></button>
+    <button :aria-current="workspace === 'charts' && !toolsOpen ? 'page' : undefined" @click="navigate('charts')"><AppIcon name="charts" :size="21" /><span>图表</span></button>
+    <button :aria-current="workspace === 'alarms' && !toolsOpen ? 'page' : undefined" @click="navigate('alarms')"><AppIcon name="alarms" :size="21" /><span>告警 <b v-if="raised.critical + raised.warning">{{ raised.critical + raised.warning }}</b></span></button>
+    <button :aria-expanded="toolsOpen" :aria-current="toolsOpen ? 'page' : undefined" aria-haspopup="dialog" @click="toolsMenu?.open($event.currentTarget)"><AppIcon name="more" :size="21" /><span>更多</span></button>
   </nav>
 </template>
 
 <style scoped>
 .workspace-tabs { display:flex; gap:6px; padding:12px 16px 0; }
-.workspace-tabs button { padding:8px 18px; background:#0f172a; border:1px solid #334155; border-radius:7px; color:#94a3b8; cursor:pointer; }
+.workspace-tabs button { display:inline-flex; align-items:center; gap:6px; padding:8px 18px; background:#0f172a; border:1px solid #334155; border-radius:7px; color:#94a3b8; cursor:pointer; }
 .workspace-tabs button.selected { color:#5eead4; border-color:#0d9488; background:#102d30; }
 .view-switch { display:flex; gap:8px; margin-bottom:18px; }
 .view-switch button { background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:8px; padding:8px 16px; cursor:pointer; }

@@ -43,6 +43,8 @@
 
 新增 **手机 H5 看板**：手机浏览器访问原监控地址，底部切换总览、图表、告警，“更多”打开服务拓扑及管理工具；支持图表触控读数、手机告警卡片、安全区适配和主屏幕入口，继续使用原有登录与权限。详见 [手机 H5 使用指南](docs/16-mobile-h5.md)。
 
+新增 **个人 AI 分析**：桌面工具栏或手机“更多 → AI 分析”中，自行配置兼容 Chat Completions 的服务地址、模型和 API Key。先选择指标、查看本地统计快照，再明确发送分析；支持取消、纯文本复制和下载。配置按登录身份隔离，密钥只保存在服务端，不向浏览器回显；管理员可启用本地模型。导航、资源卡片和图表操作统一使用 46 个本地 SVG 图标。接入方式、发送数据及边界见 [AI 分析指南](docs/17-ai-analysis.md)。
+
 ## 代码同步与发布包保留规则
 
 - 开发交付前分别拉取 GitHub 和 GitLab 的最新 `main`，合并两边改动并完成必要验证，再提交、推送到两个仓库的 `main`。推送后分别核对远端提交 SHA，只有两边与本地一致才算同步完成。
@@ -67,6 +69,7 @@
 | [docs/12-runtime-efficiency.md](docs/12-runtime-efficiency.md) | 历史搜索、跨 Hub 告警并发、HTTP 探测复用与快照导出一致性 |
 | [docs/13-alert-rule-workbench.md](docs/13-alert-rule-workbench.md) | 行业对标、本机规则编辑、持久化、并发保护、恢复与验收 |
 | [docs/16-mobile-h5.md](docs/16-mobile-h5.md) | 手机浏览器访问、底部导航、触控图表、主屏幕入口与验证边界 |
+| [docs/17-ai-analysis.md](docs/17-ai-analysis.md) | 个人 AI 配置、数据预览、分析与导出、权限及模型接入边界 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 

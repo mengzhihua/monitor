@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { api, ApiError } from '../api'
 import type { AvailabilityRow, ServiceReport, TopologyEdge } from '../api'
 import { usePolling } from '../polling'
+import AppIcon from './AppIcon.vue'
 
 const report = ref<ServiceReport | null>(null)
 const edges = ref<TopologyEdge[]>([])
@@ -36,7 +37,7 @@ function pie(sla: number) {
 
 <template>
   <section class="services" aria-label="服务与拓扑">
-    <h1>服务与拓扑</h1>
+    <h1><AppIcon name="services" :size="24" />服务与拓扑</h1>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-else-if="!report">正在读取…</p>
     <template v-else>
@@ -54,12 +55,12 @@ function pie(sla: number) {
           </div>
         </article>
       </div>
-      <h2>拓扑</h2>
+      <h2><AppIcon name="contexts" />拓扑</h2>
       <p v-if="!edges.length" class="muted">没有 LLDP 邻居或手工 topology 边。</p>
       <ul v-else class="topology">
         <li v-for="(e, i) in edges" :key="i"><span>{{ e.source }} → {{ e.target }}</span> <small>{{ e.kind }}</small></li>
       </ul>
-      <h2>可用性</h2>
+      <h2><AppIcon name="shield" />可用性</h2>
       <table v-if="rows.length" aria-label="告警可用性">
         <thead><tr><th>告警</th><th>图表</th><th>正常时间</th></tr></thead>
         <tbody>
@@ -80,6 +81,7 @@ function pie(sla: number) {
 .track { fill: #1e293b; }
 .slice { fill: #34d399; }
 h1, h2 { font-weight: 650; }
+h1 > .app-icon, h2 > .app-icon { margin-right:8px; color:#5eead4; }
 h2 { font-size: 16px; margin: 0; }
 table { width: 100%; border-collapse: collapse; }
 td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #1e293b; }

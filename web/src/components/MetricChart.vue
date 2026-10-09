@@ -11,6 +11,7 @@ import { chartCSV } from '../chartExport'
 import { historyEnd, localDateTime, summarizeSeries } from '../chartInspection'
 import { activateChart, retainChart } from '../chart_cache'
 import ChartComparison from './ChartComparison.vue'
+import AppIcon from './AppIcon.vue'
 
 const props = defineProps<{ chart: Chart; window: number; end?: number | null; detail?: boolean }>()
 
@@ -420,8 +421,8 @@ watch([() => props.window, defFingerprint, anchor], () => {
       <span class="units" :title="unitHelp(chart.units)">{{ chart.units }}</span>
     </div>
     <div class="chart-actions">
-      <button v-if="!detail" ref="zoomButton" type="button" @click="openDetail">放大图表</button>
-      <button type="button" :disabled="!snapshotReady || !sampleCount" title="导出当前已加载数据，空白单元格表示缺失；长时间范围可能为聚合采样。" @click="exportCSV">导出 CSV</button>
+      <button v-if="!detail" ref="zoomButton" type="button" @click="openDetail"><AppIcon name="expand" :size="14" />放大图表</button>
+      <button type="button" :disabled="!snapshotReady || !sampleCount" title="导出当前已加载数据，空白单元格表示缺失；长时间范围可能为聚合采样。" @click="exportCSV"><AppIcon name="download" :size="14" />导出 CSV</button>
     </div>
     <div v-if="detail" class="history-controls" aria-label="历史时段控制">
       <p class="range-label">{{ rangeLabel }}</p>
@@ -433,7 +434,7 @@ watch([() => props.window, defFingerprint, anchor], () => {
     </div>
     <ChartComparison v-if="detail && comparing && anchor !== null && snapshotReady" :chart="chart" :node="dataNode" :end="anchor" :duration="window" :current="summaries" :current-step="sampleStep" />
     <details class="metric-help">
-      <summary :title="help">中文指标说明</summary>
+      <summary :title="help"><AppIcon name="info" :size="14" />中文指标说明</summary>
       <p>{{ help }}</p>
       <ul><li v-for="dim in chart.dimensions.filter(d => !d.hidden)" :key="dim.id">{{ dimensionHelp(chart, dim) }}</li></ul>
     </details>
@@ -452,7 +453,7 @@ watch([() => props.window, defFingerprint, anchor], () => {
       <div class="table-scroll" tabindex="0" aria-label="采样统计横向滚动区"><table aria-label="各维度采样统计"><thead><tr><th>指标维度</th><th title="最后一行采样中的值，缺失显示 —，不向前填充。">末行值</th><th title="已加载非空采样的最小值，不包含缺失值。">最小值</th><th title="已加载非空采样的最大值，不包含缺失值。">最大值</th><th title="仅对已加载的有限数值取算术平均；缺失不按 0 计算。">平均值</th><th title="已加载行中的有效数值数量 / 总行数，不是采集成功率。">非空采样</th></tr></thead><tbody><tr v-for="s in summaries" :key="s.id"><th :title="s.help">{{ s.name }}</th><td>{{ s.last === null ? '—' : fmt(s.last) }}</td><td>{{ s.min === null ? '—' : fmt(s.min) }}</td><td>{{ s.max === null ? '—' : fmt(s.max) }}</td><td>{{ s.mean === null ? '—' : fmt(s.mean) }}</td><td>{{ s.count }} / {{ s.total }}</td></tr></tbody></table></div>
     </div>
     <dialog v-if="!detail" ref="dialog" class="chart-dialog" :aria-label="`${chart.title} 放大图表`" @close="closeDetail">
-      <div class="dialog-heading"><b>{{ chart.title }}</b><button type="button" autofocus @click="closeDetail">关闭放大图表</button></div>
+      <div class="dialog-heading"><b>{{ chart.title }}</b><button type="button" autofocus @click="closeDetail"><AppIcon name="close" :size="14" />关闭放大图表</button></div>
       <MetricChart v-if="zoomed" :chart="chart" :window="window" :end="anchor" detail />
       <p class="dialog-note">使用当前节点；在此窗口调整时间只影响本次放大查看，关闭后恢复看板的查看时间。CSV 只包含已加载采样；空白表示缺失，不代表 0。</p>
     </dialog>
@@ -464,6 +465,8 @@ watch([() => props.window, defFingerprint, anchor], () => {
 .history-controls { padding:10px; margin:10px 0; background:#111e30; border-radius:8px; } .range-label, .data-note { font-size:12px; line-height:1.6; color:#94a3b8; overflow-wrap:anywhere; } .history-controls form { display:flex; flex-wrap:wrap; align-items:end; gap:8px; } .history-controls label { display:flex; flex-direction:column; gap:4px; font-size:12px; min-width:0; max-width:100%; } .history-controls input { min-width:0; max-width:100%; box-sizing:border-box; padding:5px; background:#0b1120; color:#e2e8f0; border:1px solid #475569; border-radius:4px; color-scheme:dark; } .history-controls form button, .err button { padding:6px 8px; cursor:pointer; }
 .table-scroll { overflow-x:auto; } .sample-summary table { width:100%; border-collapse:collapse; font-size:12px; } .sample-summary th, .sample-summary td { text-align:right; padding:8px; border-bottom:1px solid #334155; white-space:nowrap; } .sample-summary th:first-child { text-align:left; max-width:220px; overflow:hidden; text-overflow:ellipsis; } .table-scroll:focus-visible { outline:2px solid #5eead4; }
 .chart-actions { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0; } .chart-actions button, .dialog-heading button { cursor:pointer; color:#cbd5e1; background:#172337; border:1px solid #334155; border-radius:6px; padding:4px 8px; font:inherit; font-size:12px; } .chart-actions button:disabled { opacity:.4; cursor:default; }
+.chart-actions button,.dialog-heading button { display:inline-flex; align-items:center; justify-content:center; gap:5px; }
+.metric-help summary > .app-icon { margin-right:5px; }
 .chart-dialog { width:min(1100px,calc(100vw - 40px)); max-height:calc(100dvh - 40px); box-sizing:border-box; padding:14px; background:#0b1120; color:#e2e8f0; border:1px solid #475569; border-radius:12px; } .chart-dialog::backdrop { background:#000a; }
 .dialog-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; overflow-wrap:anywhere; position:sticky; top:-14px; z-index:2; background:#0b1120; padding:8px 0; } .dialog-note { color:#94a3b8; font-size:12px; } button:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
 .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 12px; min-width: 0; }

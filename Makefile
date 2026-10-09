@@ -72,6 +72,7 @@ acceptance:
 	$(MAKE) all
 	$(MAKE) test
 	python3 scripts/verify-default-auth.py
+	python3 scripts/verify-ai-analysis.py
 	python3 scripts/verify-operations.py
 	python3 scripts/verify-notifications.py
 	python3 scripts/verify-notification-services.py

@@ -166,7 +166,9 @@ func (s *Server) alarmLog() []health.LogEntry {
 }
 
 func (s *Server) roomAllowed(u User, nodeID string) bool {
-	if len(u.Rooms) == 0 || nodeID == "" || nodeID == "local" || s.isLocal(nodeID) || s.opt.Nodes == nil {
+	// Match resolve(): an explicitly selected streamed node wins even when
+	// an Agent on this machine has the same host ID as its Hub.
+	if len(u.Rooms) == 0 || nodeID == "" || nodeID == "local" || s.opt.Nodes == nil {
 		return true
 	}
 	node, ok := s.opt.Nodes.Get(nodeID)

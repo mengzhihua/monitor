@@ -9,6 +9,7 @@ import OperationsViews from './OperationsViews.vue'
 import OperationsBatch from './OperationsBatch.vue'
 import NotificationDiagnostics from './NotificationDiagnostics.vue'
 import MaintenancePlans from './MaintenancePlans.vue'
+import AppIcon from './AppIcon.vue'
 
 const props = defineProps<{ role: string }>()
 const emit = defineEmits<{ drill: [node: string, chart: string] }>()
@@ -271,17 +272,17 @@ async function exportSnapshot() {
   <div class="operations" aria-label="运维总览">
     <div class="hero">
       <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。</p></div>
-      <div class="hero-actions"><button @click="refresh()">刷新总览</button><button :disabled="!snapshot || loading || exporting" @click="exportSnapshot">{{ exporting ? '正在导出…' : '导出当前快照' }}</button></div>
+      <div class="hero-actions"><button @click="refresh()"><AppIcon name="refresh" :size="16" />刷新总览</button><button :disabled="!snapshot || loading || exporting" @click="exportSnapshot"><AppIcon name="download" :size="16" />{{ exporting ? '正在导出…' : '导出当前快照' }}</button></div>
     </div>
     <p v-if="loading" role="status">正在读取节点和问题…</p>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <p v-if="exportError" class="notice error" role="alert">{{ exportError }}</p>
     <template v-if="snapshot">
       <div class="summary">
-        <div><span>受监控节点</span><strong>{{ snapshot.summary.nodes }}</strong><small>{{ snapshot.summary.live }} 在线</small></div>
-        <div :class="{ attention: snapshot.summary.offline || snapshot.summary.stale }"><span>需要检查的连接</span><strong>{{ (snapshot.summary.offline || 0) + (snapshot.summary.stale || 0) }}</strong><small>{{ snapshot.summary.offline }} 离线 · {{ snapshot.summary.stale }} 数据过期</small></div>
-        <div :class="{ critical: snapshot.summary.critical }"><span>严重问题</span><strong>{{ snapshot.summary.critical }}</strong><small>{{ snapshot.summary.warning }} 条警告</small></div>
-        <div :class="{ attention: snapshot.summary.unacknowledged }"><span>待确认问题</span><strong>{{ snapshot.summary.unacknowledged }}</strong><small>确认不影响告警求值与通知</small></div>
+        <div><span class="summary-label"><AppIcon name="server" />受监控节点</span><strong>{{ snapshot.summary.nodes }}</strong><small>{{ snapshot.summary.live }} 在线</small></div>
+        <div :class="{ attention: snapshot.summary.offline || snapshot.summary.stale }"><span class="summary-label"><AppIcon name="network" />需要检查的连接</span><strong>{{ (snapshot.summary.offline || 0) + (snapshot.summary.stale || 0) }}</strong><small>{{ snapshot.summary.offline }} 离线 · {{ snapshot.summary.stale }} 数据过期</small></div>
+        <div :class="{ critical: snapshot.summary.critical }"><span class="summary-label"><AppIcon name="warning" />严重问题</span><strong>{{ snapshot.summary.critical }}</strong><small>{{ snapshot.summary.warning }} 条警告</small></div>
+        <div :class="{ attention: snapshot.summary.unacknowledged }"><span class="summary-label"><AppIcon name="clock" />待确认问题</span><strong>{{ snapshot.summary.unacknowledged }}</strong><small>确认不影响告警求值与通知</small></div>
       </div>
       <p class="updated">快照时间 {{ formatTime(snapshot.now) }} · 前台每 15 秒刷新 · {{ snapshot.persistent ? '处理记录保存到服务端' : '处理记录仅在内存中，重启会丢失' }}</p>
       <div class="workflow-overview" aria-label="处理进度概况">
@@ -301,12 +302,12 @@ async function exportSnapshot() {
       </div>
       <OperationsViews :filters="{ query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter }" @apply="applyView" />
 
-      <h2>主机资源 <small>{{ nodeTotal }} 个节点</small></h2>
+      <h2><AppIcon name="server" />主机资源 <small>{{ nodeTotal }} 个节点</small></h2>
       <div class="node-grid">
         <article v-for="n in nodesVisible" :key="n.id" class="node-tile">
           <div class="row"><h3>{{ n.hostname }}</h3><span class="badge" :class="n.status">{{ statusName[n.status] }}</span></div>
           <p class="muted">{{ n.local ? '本机' : n.replica ? '副本' : n.peer ? '其他 Hub' : 'Agent' }} · {{ n.os }}/{{ n.arch }} · {{ n.charts_count }} 图表</p>
-          <div class="resources"><div><span>CPU</span><b :class="{ muted: n.cpu.value === null }">{{ formatMetric(n.cpu) }}</b><progress v-if="n.cpu.value !== null" :value="n.cpu.value" max="100" aria-label="CPU 使用率" /></div><div><span>内存</span><b :class="{ muted: n.memory.value === null }">{{ formatMetric(n.memory) }}</b><progress v-if="n.memory.value !== null" :value="n.memory.value" max="100" aria-label="内存使用率" /></div></div>
+          <div class="resources"><div><span><AppIcon name="cpu" :size="14" />CPU</span><b :class="{ muted: n.cpu.value === null }">{{ formatMetric(n.cpu) }}</b><progress v-if="n.cpu.value !== null" :value="n.cpu.value" max="100" aria-label="CPU 使用率" /></div><div><span><AppIcon name="memory" :size="14" />内存</span><b :class="{ muted: n.memory.value === null }">{{ formatMetric(n.memory) }}</b><progress v-if="n.memory.value !== null" :value="n.memory.value" max="100" aria-label="内存使用率" /></div></div>
           <small class="muted">CPU 样本 {{ formatTime(n.cpu.at) }}<br />内存样本 {{ formatTime(n.memory.at) }}</small>
           <div class="disks" aria-label="磁盘使用率">
             <template v-if="n.disks?.length">
@@ -324,7 +325,7 @@ async function exportSnapshot() {
       </div>
       <p v-if="!filteredNodes.length" class="empty">没有匹配的节点，可调整搜索条件。</p>
 
-      <div class="row section-title"><h2>问题中心 <small>{{ problemTotal }} 条</small></h2><span class="muted">严重优先，待确认优先</span></div>
+      <div class="row section-title"><h2><AppIcon name="alarms" />问题中心 <small>{{ problemTotal }} 条</small></h2><span class="muted">严重优先，待确认优先</span></div>
       <div class="families"><span v-for="[family, count] in families" :key="family">{{ family }} <b>{{ count }}</b></span></div>
       <p v-if="actionError" class="notice error" role="alert">{{ actionError }}</p>
       <p v-if="!canHandle" class="muted">当前账号只读；管理员和排障人员可以确认问题、指派责任人、更新进度及添加备注。</p>
@@ -385,6 +386,10 @@ h1 { font-size:28px; margin:8px 0; letter-spacing:-.03em; } h1 span { display:in
 h2 { font-size:17px; margin:26px 0 12px; } h2 small { font-size:12px; color:#94a3b8; font-weight:400; margin-left:8px; } h3 { font-size:14px; margin:0; overflow-wrap:anywhere; }
 p { font-size:13px; line-height:1.65; margin:8px 0; } .muted,.updated,.footnote { color:#94a3b8; } .updated { font-size:12px; margin:12px 0; }
 .hero-actions,.filters,.saved-views,.problem-actions,.families,.problem-title { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.hero-actions button { display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+h2 > .app-icon { margin-right:7px; color:#5eead4; }
+.summary-label,.resources span { display:flex; align-items:center; gap:6px; }
+.summary-label .app-icon { color:#5eead4; }.summary .attention .summary-label .app-icon { color:#fcd34d; }.summary .critical .summary-label .app-icon { color:#fda4af; }
 button,input,select { font:inherit; font-size:12px; border:1px solid #334155; border-radius:7px; background:#111d31; color:#e2e8f0; padding:8px 10px; max-width:100%; } button { cursor:pointer; } button:hover:not(:disabled) { border-color:#5eead4; color:#5eead4; } button:disabled { opacity:.5; cursor:default; } input:focus,select:focus,button:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
 .summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; } .summary>div { background:linear-gradient(120deg,#122238,#0f172a); border:1px solid #23334b; border-radius:12px; padding:18px; display:flex; flex-direction:column; gap:8px; } .summary span { font-size:12px; color:#cbd5e1; } .summary strong { font-size:34px; font-weight:600; } .summary small { font-size:11px; color:#94a3b8; } .summary .critical strong { color:#fda4af; } .summary .attention strong { color:#fcd34d; }
 .notice { background:#332b18; border:1px solid #625025; color:#fde68a; padding:10px 14px; border-radius:8px; } .notice.error { color:#fecaca; background:#3a1e2a; border-color:#7f1d1d; }

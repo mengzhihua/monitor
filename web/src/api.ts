@@ -285,7 +285,7 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`
   const r = await fetch(base + path, { headers, signal })
@@ -293,7 +293,7 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return r.json() as Promise<T>
 }
 
-async function send<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+export async function send<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`
   let init: RequestInit = { method, headers, signal }
