@@ -3,12 +3,17 @@
 package hostshell
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestLocalPTYResizeExitAndEnvironment(t *testing.T) {
@@ -45,6 +50,82 @@ func TestLocalPTYResizeExitAndEnvironment(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("child not reaped")
+	}
+}
+
+func TestLocalPTYCloseInterruptsBlockedInput(t *testing.T) {
+	s, err := Open(context.Background(), Target{ID: "blocked-input", Kind: "local", Argv: []string{"/bin/sh", "-c", "stty raw -echo; printf 'INPUT_BLOCK_READY'; exec sleep 600"}, Dir: t.TempDir()}, Credentials{}, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep regressions bounded even if Close itself stops being cancellable.
+	defer func() { go s.Close() }()
+	local := s.(*localSession)
+	if local.master == nil {
+		t.Fatal("Unix terminal has no pollable master")
+	}
+	control, err := local.master.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags int
+	var flagErr error
+	if err = control.Control(func(fd uintptr) { flags, flagErr = unix.FcntlInt(fd, unix.F_GETFL, 0) }); err != nil || flagErr != nil || flags&unix.O_NONBLOCK == 0 {
+		t.Fatalf("PTY must stay nonblocking: flags=%d err=%v control=%v", flags, flagErr, err)
+	}
+	if err = local.master.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	buf := make([]byte, 256)
+	for !strings.Contains(output.String(), "INPUT_BLOCK_READY") {
+		n, err := s.Read(buf)
+		output.Write(buf[:n])
+		if err != nil {
+			t.Fatalf("raw terminal did not become ready: %v", err)
+		}
+	}
+	if err = local.master.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	// The child never reads stdin. A megabyte must fill its small input queue;
+	// a real deadline first proves this descriptor uses the Go runtime poller.
+	input := bytes.Repeat([]byte("x"), 1<<20)
+	if err = local.master.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Write(input); !errors.Is(err, os.ErrDeadlineExceeded) || n == len(input) {
+		t.Fatalf("full PTY input did not respect its deadline: n=%d err=%v", n, err)
+	}
+	if err = local.master.SetWriteDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	wrote := make(chan error, 1)
+	go func() { _, err := s.Write(input); wrote <- err }()
+	select {
+	case err := <-wrote:
+		t.Fatalf("expected blocked PTY input before Close, got %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	closed := make(chan struct{})
+	go func() { s.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked on full PTY input")
+	}
+	select {
+	case err := <-wrote:
+		if err == nil {
+			t.Fatal("blocked Write unexpectedly succeeded after Close")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not wake blocked PTY Write")
+	}
+	select {
+	case <-local.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked-input child was not reaped")
 	}
 }
 

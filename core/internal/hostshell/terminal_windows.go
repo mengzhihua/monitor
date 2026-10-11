@@ -3,9 +3,13 @@
 package hostshell
 
 import (
+	"os"
+
 	pty "github.com/aymanbagabas/go-pty"
 	"golang.org/x/sys/windows"
 )
+
+func prepareLocalPTY(pty.Pty) (*os.File, error) { return nil, nil }
 
 // releaseLocalPTY is called exactly once by localSession.closePTY, serialized
 // against Resize. go-pty's Cmd.Wait only reaps the process and releases its

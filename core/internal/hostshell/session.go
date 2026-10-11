@@ -114,6 +114,7 @@ type Session interface {
 }
 type localSession struct {
 	pty     pty.Pty
+	master  *os.File // Unix-only pollable duplicate; owned independently of pty
 	cmd     *pty.Cmd
 	once    sync.Once
 	ptyMu   sync.Mutex // serialize Resize against native terminal release
@@ -123,6 +124,9 @@ type localSession struct {
 }
 
 func (s *localSession) Read(p []byte) (int, error) {
+	if s.master != nil {
+		return s.master.Read(p)
+	}
 	n, err := s.pty.Read(p)
 	if err != nil {
 		if terminal, ok := s.pty.(pty.ConPty); ok {
@@ -131,7 +135,12 @@ func (s *localSession) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
-func (s *localSession) Write(p []byte) (int, error) { return s.pty.Write(p) }
+func (s *localSession) Write(p []byte) (int, error) {
+	if s.master != nil {
+		return s.master.Write(p)
+	}
+	return s.pty.Write(p)
+}
 func (s *localSession) Resize(cols, rows int) error {
 	s.ptyMu.Lock()
 	defer s.ptyMu.Unlock()
@@ -145,6 +154,12 @@ func (s *localSession) Wait() error {
 	return s.waitErr
 }
 func (s *localSession) Close() error {
+	if s.master != nil {
+		// Evict the runtime poll wait before process/terminal teardown.
+		// Closing the original dependency-owned blocking descriptor cannot
+		// interrupt a thread already blocked in a Linux write syscall.
+		_ = s.master.Close()
+	}
 	if terminal, ok := s.pty.(pty.ConPty); ok {
 		// Force-close both pipes before waiting on once. An earlier normal
 		// exit may already be releasing ConPTY while waiting for output to
@@ -186,6 +201,11 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 			p.Close()
 			return nil, e
 		}
+		master, e := prepareLocalPTY(p)
+		if e != nil {
+			p.Close()
+			return nil, errors.New("local terminal does not support cancellable I/O")
+		}
 		cmd := p.Command(t.Argv[0], t.Argv[1:]...)
 		cmd.Dir = t.Dir
 		// Do not inherit monitoring tokens, webhook secrets or provider keys into the shell.
@@ -196,6 +216,9 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 		}
 		cmd.Env = append(cmd.Env, "TERM=xterm-256color")
 		if e = cmd.Start(); e != nil {
+			if master != nil {
+				master.Close()
+			}
 			p.Close()
 			return nil, errors.New("local shell could not start; check configured executable/directory")
 		}
@@ -205,7 +228,7 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 		}
 		// Ownership of the terminal transfers here. After a successful start,
 		// only result.closePTY releases it; never call p.Close elsewhere.
-		result := &localSession{pty: p, cmd: cmd, done: make(chan struct{})}
+		result := &localSession{pty: p, master: master, cmd: cmd, done: make(chan struct{})}
 		// Own the process wait from startup, even when the browser disconnects
 		// before the API starts waiting. Close alone must not leave a zombie.
 		go func() {
