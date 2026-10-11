@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo, Problem } from './api'
 import type { AIProblemSelection } from './ai'
 import { ApiError, api, auth, selection } from './api'
@@ -25,6 +25,7 @@ import ChartTimeline from './components/ChartTimeline.vue'
 import DashboardTools from './components/DashboardTools.vue'
 import AIAnalysisPanel from './components/AIAnalysisPanel.vue'
 import AppIcon from './components/AppIcon.vue'
+const ShellPanel = defineAsyncComponent(() => import('./components/ShellPanel.vue'))
 import { decodeTimeline, encodeTimeline, timelineKey, type ChartTimeline as TimelineState } from './chartTimeline'
 
 const initialView = new URL(location.href).searchParams.get('view')
@@ -104,6 +105,7 @@ const functions = ref<FunctionInfo[]>([])
 const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
+const showShell = ref(false)
 const showAI = ref(false)
 const aiProblem = shallowRef<AIProblemSelection | null>(null)
 const showHub = ref(false)
@@ -154,6 +156,7 @@ const tools = computed(() => [
   { id: 'cloud', label: 'Cloud', title: 'Cloud 控制台', description: '云节点控制台', active: showCloud.value, visible: isHub.value },
   { id: 'templates', label: '模板', title: 'Zabbix 模板 / 主机组 / 资产', description: '主机组与资产模板', active: showTemplates.value, visible: isHub.value },
   { id: 'config', label: '配置', title: '配置：本机与节点', description: '本机与节点配置', active: showConfig.value, visible: info.value?.user?.role === 'admin' },
+  { id: 'shell', label: 'WebShell', title: 'WebShell 主机终端', description: '本机 Shell 与 SSH 交互终端', active: showShell.value, visible: info.value?.user?.role === 'admin' && !!auth.token },
   { id: 'ai', label: 'AI 分析', title: 'AI 分析', description: '自定义模型分析监控快照', active: showAI.value, visible: true },
   { id: 'weights', label: '异常顾问', title: '异常顾问 / 关联分析', description: '异常与指标关联', active: showWeights.value, visible: true },
   { id: 'contexts', label: 'Context', title: 'Context 总览', description: '按指标类型浏览', active: showContexts.value, visible: true },
@@ -169,14 +172,23 @@ function activateTool(id: string) {
     case 'cloud': showCloud.value = !showCloud.value; break
     case 'templates': showTemplates.value = !showTemplates.value; break
     case 'config': toggleConfig(); break
+    case 'shell': showShell.value = !showShell.value; break
     case 'ai': aiProblem.value = null; showAI.value = !showAI.value; if (showAI.value) void scrollToAI(); break
     case 'weights': showWeights.value = !showWeights.value; break
     case 'contexts': showContexts.value = !showContexts.value; break
     case 'logout': void logout(); break
   }
-  if (isMobile.value && id !== 'ai') scrollToWorkspace()
+  if (isMobile.value && id !== 'ai' && id !== 'shell') scrollToWorkspace()
 }
 
+async function scrollToShell() {
+ await nextTick()
+ const panel = document.querySelector<HTMLElement>('section.shell-panel')
+ if (!panel) return
+ const header = document.querySelector<HTMLElement>('#app > header')
+ const offset = !isMobile.value && header ? header.getBoundingClientRect().height + 12 : 12
+ window.scrollTo({top:Math.max(0,window.scrollY + panel.getBoundingClientRect().top-offset),behavior:'auto'})
+}
 async function scrollToAI() {
   await nextTick()
   const panel = document.querySelector<HTMLElement>('section.ai-panel')
@@ -521,6 +533,7 @@ onBeforeUnmount(() => {
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
+      <ShellPanel v-if="showShell && info && !needToken && info.user?.role === 'admin'" :node="selectedNode" @ready="scrollToShell" @close="showShell = false" />
       <AIAnalysisPanel v-if="showAI && info" :node="selectedNode" :charts="charts" :problem="aiProblem" :role="info.user?.role || 'viewer'" @close="showAI = false; aiProblem = null" />
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />

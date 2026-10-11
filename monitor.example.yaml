@@ -886,3 +886,9 @@ export:
 #       -----BEGIN CERTIFICATE-----
 #       ...
 #       -----END CERTIFICATE-----
+
+# Optional interactive WebShell: off by default. Configure only trusted targets.
+# Full local/SSH/Windows examples and HTTPS proxy setup: docs/19-host-shell.md
+shell:
+  enabled: false
+  targets: []

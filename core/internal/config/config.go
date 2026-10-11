@@ -12,11 +12,13 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/export"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hostshell"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/sla"
 )
 
 type Config struct {
+	Shell hostshell.Config `yaml:"shell"`
 	// Mode: "agent" collects the local host; "hub" additionally accepts
 	// streaming agents (hub.api_keys) and serves them under node=<id>.
 	Mode   string `yaml:"mode"`

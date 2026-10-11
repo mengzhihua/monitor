@@ -24,6 +24,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hostshell"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/ingest"
 	"github.com/mengzhihua/monitor/core/internal/operations"
@@ -38,6 +39,7 @@ import (
 var uiFS embed.FS
 
 type Options struct {
+	Shell         hostshell.Config
 	OperationsDir string // persistent operations, personal views and AI state; empty for ephemeral tests
 	TicketWebhook string // POST handling JSON after a successful save; empty = off
 	// ConfigPath is this process's monitor.yaml. Empty means the file API is read-only/unavailable.
@@ -94,6 +96,7 @@ type Options struct {
 }
 
 type Server struct {
+	shell              *shellState
 	analysis           *aiState
 	operationPeerSlots chan struct{}
 	configMu           sync.Mutex
@@ -180,6 +183,10 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	if err != nil {
 		return nil, fmt.Errorf("open AI state: %w", err)
 	}
+	if err := opt.Shell.Validate(); err != nil {
+		return nil, err
+	}
+	s.shell = newShellState()
 	s.routes()
 	if opt.SelfMonitor {
 		go s.selfMonitor()
@@ -202,6 +209,9 @@ func (s *Server) PublishNodeAlarm(nodeID string, e health.LogEntry) {
 
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("GET /api/v1/shell/targets", s.handleShellTargets)
+	m.HandleFunc("POST /api/v1/shell/tickets", s.handleShellTicket)
+	m.HandleFunc("GET /api/v1/shell/connect", s.handleShellConnect)
 	m.HandleFunc("GET /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("PUT /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("DELETE /api/v1/ai/settings", s.handleAISettings)
@@ -360,7 +370,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if publicAPI(r.URL.Path) {
+		if publicAPI(r.URL.Path) || r.URL.Path == "/api/v1/shell/connect" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -272,6 +272,7 @@ func run() error {
 	}
 
 	apiOpt := api.Options{
+		Shell:         cfg.Shell,
 		Audit:         auditLog,
 		OperationsDir: filepath.Join(cfg.Global.DataDir, "operations"),
 		TicketWebhook: cfg.Web.TicketWebhook,
@@ -502,6 +503,7 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	srv.CloseShells()
 	_ = httpSrv.Shutdown(shutdownCtx)
 	select {
 	case <-schedDone:

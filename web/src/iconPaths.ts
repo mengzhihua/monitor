@@ -6,6 +6,7 @@ export const iconPaths = {
   more: 'M5 11h2v2H5z M11 11h2v2h-2z M17 11h2v2h-2z',
   services: 'M8 3h8v5H8z M3 16h7v5H3z M14 16h7v5h-7z M12 8v4 M6.5 16v-4h11v4',
   rules: 'M9 5h12 M9 12h12 M9 19h12 M3 5l1 1 2-3 M3 12l1 1 2-3 M3 19l1 1 2-3',
+  shell: 'M3 4h18v16H3z M6 8l4 4-4 4 M13 16h5',
   functions: 'M4 5h16v14H4z M7 9l3 3-3 3 M13 15h4',
   logs: 'M5 3h14v18H5z M8 7h8 M8 11h8 M8 15h5',
   hub: 'M9 9h6v6H9z M12 3v6 M12 15v6 M3 12h6 M15 12h6 M4 3h4 M16 3h4 M4 21h4 M16 21h4',

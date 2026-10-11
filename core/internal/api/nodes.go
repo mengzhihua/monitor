@@ -116,6 +116,9 @@ func publicAPI(path string) bool {
 // allows is the RBAC matrix: reads for everyone, Functions from
 // troubleshooter up, mutations admin only.
 func (ro Role) allows(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/shell/") {
+		return ro == RoleAdmin
+	}
 	// Personal AI settings and explicit read-only analyses never mutate monitoring data.
 	if (r.URL.Path == "/api/v1/ai/settings" && (r.Method == http.MethodPut || r.Method == http.MethodDelete)) ||
 		(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/ai/preview" || r.URL.Path == "/api/v1/ai/analyze" || r.URL.Path == "/api/v1/ai/resolutions" || r.URL.Path == "/api/v1/ai/resolutions/review")) ||

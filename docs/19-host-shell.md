@@ -1,0 +1,90 @@
+# WebShell 主机终端
+
+在仪表盘“更多功能 → WebShell”使用网页交互终端。支持部署监控服务的本机 Shell，以及服务端可直接连接的 SSH 主机；手机和桌面共用入口。首次安装默认关闭，已有监控登录保护保持开启。
+
+## 配置目标
+
+在运行 `monitord` 的服务端 `monitor.yaml` 中配置，保存后重启。配置面板的 YAML 编辑器也可修改该段，常规可视化表单会保留它。
+
+```yaml
+shell:
+  enabled: true
+  # HTTPS 反向代理部署时，填写浏览器访问的完整来源；不包含路径或尾部斜杠。
+  # 本机 HTTP 测试（127.0.0.1 或 ::1）不需要此项。
+  public_origin: https://monitor.example.com
+  targets:
+    - id: local-shell
+      name: 监控服务本机
+      kind: local
+      node: local
+      argv: [/bin/bash, --noprofile, --norc]
+      dir: /tmp
+    - id: app-ssh
+      name: 应用服务器
+      kind: ssh
+      # 绑定本 Hub 中的真实节点 ID，服务端再次核对机房权限。
+      # 未绑定监控节点时使用 local，表示由当前服务器管理的 SSH 目标。
+      node: your-agent-node-id
+      address: 192.168.1.20:22
+      user: operator
+      host_key_algorithm: ssh-ed25519
+      host_key: SHA256:替换为可信渠道核对的主机公钥指纹
+```
+
+SSH 指纹需在目标服务器控制台或其他可信渠道取得，例如在 Linux 主机执行 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256`，复制 `SHA256:...` 字段。主机配置有多种 HostKey 时，用 `host_key_algorithm` 指定该指纹对应的协商算法，无需修改 sshd。支持 `ssh-ed25519`、`ecdsa-sha2-nistp256/384/521`、`rsa-sha2-256/512`；未指定时沿用 SSH 库默认协商顺序，最终仍严格校验指纹。不会自动信任首次连接，指纹变化会拒绝连接。远端使用端口 22 以外的端口时同样填写 `host:port`；IPv6 使用 `[地址]:端口`。
+
+本机 Unix PTY 支持 Linux、macOS 和 FreeBSD；Windows 使用 ConPTY，需 Windows 10 1809 / Server 2019 或更新系统，可将 `argv` 配置为 PowerShell 的绝对路径，例如：
+
+```yaml
+argv: ['C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe', -NoLogo, -NoProfile]
+dir: 'C:\Users\Public'
+```
+
+本机终端运行在 **monitord 服务账号** 下，配置 `argv` 只限制启动程序，连接后仍具有该账号的系统权限。以 root / Administrator 运行服务时终端也有相应权限；它不是沙箱。进程初始环境只保留 PATH、HOME、用户、语言及 Windows 系统路径等必要变量，不直接继承模型/通知配置的环境密钥，但服务账号本来可读取的文件仍可访问。
+
+SSH 连接从 Web 服务所在机器发起，不经过 Agent 流通道，也不穿透 NAT 或自动跨 Hub 转发。只暴露管理员预设的固定目标，网页不能修改地址、SSH 用户、指纹或本机启动参数。最多配置 64 个目标。
+
+## 使用
+
+1. 用个人管理员身份登录监控仪表盘，打开 WebShell，核对目标名称、连接账号、地址、节点及 SSH 指纹。
+2. SSH 输入本次使用的密码，或 OpenSSH/PEM 私钥与可选口令。本机终端无需 SSH 凭据。
+3. 勾选已核对目标，再点击“连接终端”。支持终端直接输入、Ctrl+C、Ctrl+D、Tab、Esc、方向键和终端窗口缩放；手机也可在独立输入框输入后点击“发送命令”。粘贴多行内容会先询问，防止换行直接执行。
+4. 使用“断开连接”结束；关闭面板、切换仪表盘节点、离开页面或浏览器离线也会释放会话。重开面板不会自动连接或恢复凭据。
+
+SSH 凭据仅在当前页面和连接握手期间使用，不写入浏览器存储、配置或服务端审计；Go/浏览器内存不能保证立即物理擦除。加密 OpenSSH 私钥的 bcrypt 工作因子限制为 1–64（常见默认值为 16），拒绝异常耗时的密钥头。认证失败不会重试或自动降级主机指纹校验。终端输出以终端字符流展示，不作为 HTML 执行，不启用远端剪贴板写入或链接插件；“复制选中内容”需用户点击。
+
+会话每账号最多 1 个、全服务最多 4 个。票据 30 秒过期、单次使用，使用 WebSocket 子协议发送，不在 URL 中携带监控密码或 SSH 凭据。5 分钟无输入、总时长 30 分钟、单会话累计输出超过 32 MiB、连接断开或服务器关闭时结束会话。终端滚动缓存最多 1000 行；单次输入最多 16 KiB；输出队列有界，慢客户端不会无限堆积。服务器每 10 秒检查登录会话及机房权限，权限失效后断开。静态 TOTP 凭据在申请票据时沿用现有 `X-Monitor-OTP` 校验；不需要在已经认证的终端内每 30 秒再次提交 TOTP。
+
+默认审计记录票据申请、连接成功/失败、连接结束，包括操作者、来源 IP（代理部署时为后端连接来源）、目标及会话标识，不记录终端命令、输出、SSH 密码和私钥。审计关闭时页面会明确提示；此审计记录连接行为，不提供命令录像或不可篡改保证；目标 Shell 自身的历史文件及系统审计仍按目标系统配置管理。
+
+断开不会撤销已经执行的操作。远端或本机主动脱离终端的后台进程可能继续运行，须由操作者在目标系统管理。AI 方案不会自动连接 WebShell、自动复制或执行任何命令。
+
+## HTTPS 与反向代理
+
+非回环浏览器必须使用 HTTPS。直接 HTTPS 使用同源校验；HTTPS 在反向代理终止时必须配置上述 `public_origin`，并将后端绑定回环地址或受保护的内网，禁止绕过代理直接暴露该后端。不会盲目信任客户端提供的 `X-Forwarded-Proto`。
+
+代理需保留浏览器 Origin 和 WebSocket 子协议，允许 Upgrade，并保证读取超时大于心跳周期（10 秒）。例如 Nginx 的 `/api/v1/shell/connect` 同普通 WebSocket 转发：
+
+```nginx
+proxy_pass http://127.0.0.1:19999;
+proxy_http_version 1.1;
+proxy_set_header Host $host;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+proxy_read_timeout 60s;
+```
+
+只读、troubleshooter、匿名及分享身份无法访问终端。Node / Room 权限在目标列表、票据申请、连接和持续会话中重复检查。服务端只在本 Hub 的预设目标上发起连接；未知节点不会自动探测或回退连接。
+
+## 验证
+
+```bash
+make all
+make test
+cd web
+npm run test:e2e -- shell.spec.ts
+```
+
+后端测试使用隔离 PTY 和本地临时 SSH 服务，覆盖密码、加密私钥、指纹错误、PTY 缩放、真实输入输出、EOF、访问权限、票据过期/重放、关闭清理及审计。浏览器测试连接隔离的真实本机 Shell；SSH 网页凭据与错误展示用本地协议桩，SSH 传输由 Go 端测试覆盖。没有使用生产主机凭据，也没有连接用户的生产服务器。Windows ConPTY 的实际运行需 Windows 设备验收，跨平台构建不等同于设备验收。
+
+2026-10-11 本地验收：Go 1.27.1 下全包 vet / 竞态检查通过，最终调整后终端、API、配置和入口包再次通过竞态检查。前端类型检查与嵌入式构建通过，8 个服务端平台交叉构建通过，打包脚本 12 项测试、默认登录保护及 AI 真实采集验收通过。WebShell 专项 10 项通过；全量桌面/手机浏览器回归共 298 项通过、14 项按平台条件跳过，包含 320 像素真实终端及 Ctrl+C 中断。SSH 使用修复版本 `golang.org/x/crypto v0.58.0`；针对终端包的 govulncheck 未发现可触达的已知漏洞，此结果不是整个项目的安全审计。

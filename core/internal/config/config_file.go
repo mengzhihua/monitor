@@ -30,6 +30,9 @@ func Parse(b []byte) (*Config, error) {
 	if c.Mode != "" && c.Mode != "agent" && c.Mode != "hub" {
 		return nil, fmt.Errorf("config: unknown mode %q (agent|hub)", c.Mode)
 	}
+	if err := c.Shell.Validate(); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
