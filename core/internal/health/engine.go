@@ -527,10 +527,12 @@ func labelsMatch(want map[string]string, have map[string]string) bool {
 // evaluate runs one alarm: lookup → calc → warn/crit → transition.
 func (e *Engine) evaluate(a *Alarm, now time.Time) {
 	r := a.rule
-	value := math.NaN()
-	if r.Lookup != nil {
-		value = e.lookup(a.chart, r.Lookup, now)
+	lookupVal := math.NaN()
+	hasLookup := r.Lookup != nil
+	if hasLookup {
+		lookupVal = e.lookup(a.chart, r.Lookup, now)
 	}
+	value := lookupVal
 	lastT, last := a.chart.LastValues()
 	vars := e.variables(a, value, lastT, last, now)
 	if r.Calc != nil {
@@ -538,10 +540,33 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		vars = e.variables(a, value, lastT, last, now)
 	}
 
+	lookupNoData := hasLookup && math.IsNaN(lookupVal)
+	lookupInf := hasLookup && math.IsInf(lookupVal, 0)
+	finalBad := math.IsNaN(value) || math.IsInf(value, 0)
+	execErr := false
+	noData := false
+	if finalBad {
+		// Inf from lookup, or a calc that fails while samples exist, are
+		// evaluation errors. An empty lookup window (optionally cascading into
+		// a NaN calc) is no-data. Calc-only rules with NaN are exec errors.
+		if lookupInf || (r.Calc != nil && !lookupNoData) || (!hasLookup && r.Calc != nil) {
+			execErr = true
+		} else {
+			noData = true
+		}
+	}
+
 	var status Status
 	switch {
-	case math.IsNaN(value) || math.IsInf(value, 0):
-		status = StatusUndefined
+	case execErr, noData:
+		e.mu.RLock()
+		lastSt := a.Status
+		e.mu.RUnlock()
+		policy := r.NoDataState
+		if execErr {
+			policy = r.ExecErrState
+		}
+		status = applyEvalState(policy, lastSt)
 	case r.Crit != nil && truthy(r.Crit.Eval(vars)):
 		status = StatusCritical
 	case r.Warn != nil && truthy(r.Warn.Eval(vars)):
@@ -550,9 +575,10 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		status = StatusClear
 	}
 	// Recovery only changes a clear result on an alarm that is already raised.
-	// Steady clear and steady firing skip the extra expression.
+	// Steady clear and steady firing skip the extra expression. No-data and
+	// exec-error policies commit immediately and skip recovery / for gates.
 	recovered := true
-	if r.Recovery != nil && status == StatusClear {
+	if !execErr && !noData && r.Recovery != nil && status == StatusClear {
 		e.mu.RLock()
 		raised := a.Status == StatusWarning || a.Status == StatusCritical
 		e.mu.RUnlock()
@@ -566,8 +592,16 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 	old, oldValue := a.Status, a.Value
 	a.Value = value
 	a.LastUpdated = now.Unix()
-	status = gateRecovery(a, status, recovered)
-	status = gateRaised(a, status, now)
+	if execErr || noData {
+		// keep_last of a raised status must not reset sustain / hold timers
+		// during a brief gap; any other policy outcome clears them.
+		if !(status == old && (old == StatusWarning || old == StatusCritical)) {
+			a.clearSustain()
+		}
+	} else {
+		status = gateRecovery(a, status, recovered)
+		status = gateRaised(a, status, now)
+	}
 	if status != old {
 		a.Status = status
 		a.LastStatusChange = now.Unix()

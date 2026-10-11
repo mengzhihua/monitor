@@ -528,6 +528,8 @@ components:
         recovery: {type: string, description: "After warn and crit are both false, the alarm stays raised until this expression is true."}
         for: {type: string}
         keep_firing_for: {type: string}
+        no_data_state: {type: string, description: "When the lookup window has no samples: undefined (default), ok, alerting, or keep_last. Commits immediately."}
+        exec_err_state: {type: string, description: "When calc/lookup evaluation fails (NaN/Inf with data present): undefined (default), ok, alerting, or keep_last. Commits immediately."}
         delay: {type: string}
         repeat: {type: string}
         info: {type: string}
