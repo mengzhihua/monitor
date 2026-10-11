@@ -294,6 +294,13 @@ func (r *Registry) Charts() []*Chart {
 	return out
 }
 
+// LastCollectionTime reads freshness without allocating a copy of all values.
+func (c *Chart) LastCollectionTime() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastT
+}
+
 // LastValues returns the most recent post-algorithm values of a chart.
 func (c *Chart) LastValues() (int64, map[string]float64) {
 	c.mu.Lock()

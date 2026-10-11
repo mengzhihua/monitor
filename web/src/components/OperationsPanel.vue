@@ -12,7 +12,7 @@ import MaintenancePlans from './MaintenancePlans.vue'
 import AppIcon from './AppIcon.vue'
 
 const props = defineProps<{ role: string }>()
-const emit = defineEmits<{ drill: [node: string, chart: string] }>()
+const emit = defineEmits<{ drill: [node: string, chart: string]; solve: [problem: Problem] }>()
 const snapshot = ref<OperationsSnapshot | null>(null)
 const error = ref('')
 const actionError = ref('')
@@ -361,7 +361,7 @@ async function exportSnapshot() {
             <button :disabled="!!busy || (progress[p.id] ?? p.handling.status) === p.handling.status" @click="update(p, { action: 'progress', status: progress[p.id] ?? p.handling.status })">保存进度</button>
           </div>
         </div>
-        <div class="problem-actions"><button @click="emit('drill', p.node, p.chart)">定位图表</button><template v-if="canHandle"><input v-model="notes[p.id]" @input="edit(p)" :disabled="busy === p.id" :aria-label="p.name + ' 处理备注'" placeholder="处理备注（可选）" maxlength="512" /><button :disabled="!!busy" @click="update(p, { action: p.handling.acknowledged ? 'unacknowledge' : 'acknowledge' })">{{ busy === p.id ? '正在保存…' : p.handling.acknowledged ? '撤销确认' : '确认问题' }}</button><button :disabled="!!busy || !notes[p.id]?.trim()" @click="update(p, { action: 'comment' })">添加备注</button></template></div>
+        <div class="problem-actions"><button @click="emit('drill', p.node, p.chart)">定位图表</button><button @click="emit('solve', p)"><AppIcon name="ai" :size="16" />AI 解决问题</button><template v-if="canHandle"><input v-model="notes[p.id]" @input="edit(p)" :disabled="busy === p.id" :aria-label="p.name + ' 处理备注'" placeholder="处理备注（可选）" maxlength="512" /><button :disabled="!!busy" @click="update(p, { action: p.handling.acknowledged ? 'unacknowledge' : 'acknowledge' })">{{ busy === p.id ? '正在保存…' : p.handling.acknowledged ? '撤销确认' : '确认问题' }}</button><button :disabled="!!busy || !notes[p.id]?.trim()" @click="update(p, { action: 'comment' })">添加备注</button></template></div>
         <details v-if="p.handling.history.length"><summary>处理记录 · 最近 {{ p.handling.history.length }} 条</summary><ol><li v-for="(h,i) in [...p.handling.history].reverse()" :key="i"><span>{{ formatTime(h.at) }} · {{ h.actor }} · {{ describeAction(h) }}</span><p v-if="h.note">{{ h.note }}</p></li></ol></details>
       </article>
       <button v-if="nodeTotal > nodesVisible.length || problemTotal > problemsVisible.length" @click="visibleCount = Math.min(visibleCount + 50, 200); refresh()">再显示 50 条</button>

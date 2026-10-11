@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { ApiError, type Chart } from '../api'
-import { ai, type AIPreview, type AIResult, type AISettings, type AIDimension } from '../ai'
+import { ai, type AIPreview, type AIResult, type AISettings, type AIDimension, type AIProblemSelection } from '../ai'
 import AppIcon from './AppIcon.vue'
+import AIResolutionPanel from './AIResolutionPanel.vue'
 
-const props = defineProps<{ node: string; charts: Chart[]; role: string }>()
+const props = defineProps<{ node: string; charts: Chart[]; role: string; problem?: AIProblemSelection | null }>()
 const emit = defineEmits<{ close: [] }>()
 const settings = shallowRef<AISettings | null>(null)
 const baseURL = ref('')
@@ -31,6 +32,8 @@ const filter = ref('')
 const question = ref('请根据快照分析异常、可能原因和建议的核查步骤，明确指出数据不足及不能确认的结论。')
 const exportQuestion = ref('')
 const deleting = ref(false)
+const mode = ref<'analysis' | 'resolution'>('analysis')
+const targetProblem = shallowRef<AIProblemSelection | null>(null)
 const isAdmin = computed(() => props.role === 'admin')
 const options = [{ value: 60, label: '最近 1 分钟' }, { value: 300, label: '最近 5 分钟' }, { value: 900, label: '最近 15 分钟' }, { value: 3600, label: '最近 1 小时' }, { value: 21600, label: '最近 6 小时' }, { value: 86400, label: '最近 24 小时' }]
 const shownCharts = computed(() => {
@@ -51,7 +54,7 @@ function cancel(showNotice = true) {
   controller?.abort()
   controller = null
   busy.value = ''
-  if (running && showNotice) notice.value = analyzing ? '请求已取消。模型服务可能已经处理请求，费用以服务商记录为准。' : updating ? '配置请求已取消，服务端可能已经完成修改。请读取最新配置版本后继续。' : '请求已取消。'
+  if (running && showNotice) notice.value = analyzing ? (mode.value === 'resolution' ? '请求已取消。模型服务可能已经处理请求，费用以服务商记录为准；方案也可能已保存，请刷新方案列表确认。' : '请求已取消。模型服务可能已经处理请求，费用以服务商记录为准。') : updating ? '配置请求已取消，服务端可能已经完成修改。请读取最新配置版本后继续。' : '请求已取消。'
 }
 function invalidate() {
   cancel(false)
@@ -83,12 +86,13 @@ function errorMessage(e: unknown) {
     }
     if (e.status === 409) {
       conflict.value = true
+      if (busy.value === 'preview' && targetProblem.value) return '关联问题已恢复、进入新阶段或无法访问。请刷新运维总览并重新选择问题，或解除关联后继续分析。'
       if (busy.value === 'analyze' || busy.value === 'preview') return '快照已失效、已使用或配置已变更。请重新生成预览；若配置在其他页面修改过，请先刷新配置版本。'
       return '配置或快照版本已变化。当前配置草稿已保留，请读取最新配置后重新保存并生成预览。'
     }
-    if (e.status === 429) return '分析请求过于频繁或模型服务额度不足，请稍后手动重试。'
+    if (e.status === 429) return e.message.includes('AI resolution storage full') ? '方案存储已满，请在工作台查看全部节点的个人方案，下载并删除不需要的旧方案后再生成；仍失败时联系管理员检查总容量。' : '分析请求过于频繁或模型服务额度不足，请稍后手动重试。'
     if (e.status === 408 || e.status === 504) return '模型服务响应超时，未获得完整结果。请检查模型服务后手动重试。'
-    if (e.status === 502) return '模型服务连接失败或返回了无效结果，请核查服务地址、模型名和 API Key。'
+    if (e.status === 502) return mode.value === 'resolution' ? '模型服务连接失败或方案格式不完整，请检查模型配置及 JSON 格式支持，再重新生成预览。' : '模型服务连接失败或返回了无效结果，请核查服务地址、模型名和 API Key。'
     if (e.status === 403) return '当前账号无权使用该配置或访问该节点，请检查权限。'
     if (e.status === 410) return '快照已过期，请重新生成预览后再分析。'
   }
@@ -171,14 +175,19 @@ function defaults() {
   const preferred = ['system.cpu', 'system.ram', 'system.load'].filter(id => ids.includes(id))
   return preferred.length ? preferred : ids.slice(0, 3)
 }
-watch(() => props.node, () => { invalidate(); selectionChosen = false; selected.value = defaults(); filter.value = '' }, { immediate: true })
+watch(() => props.node, () => { invalidate(); targetProblem.value = null; selectionChosen = false; selected.value = defaults(); filter.value = '' }, { immediate: true })
+watch(() => props.problem, value => {
+  if (!value) return
+  invalidate(); targetProblem.value = value; mode.value = 'resolution'; selectionChosen = true; selected.value = [value.chart]
+  question.value = `请围绕告警“${value.name}”制定人工逐步排查、修复及复核方案，注明依据、适用条件、风险和回退方法。`
+}, { immediate: true })
 watch(() => props.charts, () => {
   const existing = new Set(props.charts.map(chart => chart.id))
   const valid = selected.value.filter(id => existing.has(id))
   if (valid.length !== selected.value.length) selected.value = valid
   if (!selected.value.length && !selectionChosen) selected.value = defaults()
 })
-watch([selected, duration, baseURL, model, apiKey, clearKey, allowPrivate], invalidate, { deep: true, flush: 'sync' })
+watch([selected, duration, baseURL, model, apiKey, clearKey, allowPrivate, mode], invalidate, { deep: true, flush: 'sync' })
 function toggleChart(id: string, event: Event) {
   selectionChosen = true
   const checked = (event.target as HTMLInputElement).checked
@@ -187,7 +196,7 @@ function toggleChart(id: string, event: Event) {
 function generatePreview() {
   if (!selected.value.length) return
   invalidate()
-  void request('preview', signal => ai.preview(props.node, [...selected.value], duration.value, signal), value => {
+  void request('preview', signal => ai.preview(props.node, [...selected.value], duration.value, signal, targetProblem.value?.id), value => {
     preview.value = value
     const delay = value.expires_at * 1000 - Date.now()
     expired.value = delay <= 0
@@ -202,7 +211,7 @@ function analyze() {
   result.value = null
   previewConsumed.value = true
   exportQuestion.value = prompt
-  void request('analyze', signal => ai.analyze(id, prompt, revision, signal), value => { result.value = value })
+  void request('analyze', signal => ai.analyze(id, prompt, revision, signal, mode.value === 'resolution' ? 'resolution' : undefined), value => { result.value = value })
 }
 const valueFormatter = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 })
 function number(value: number | null) {
@@ -283,6 +292,8 @@ onBeforeUnmount(() => { cancel(false); clearPrivateState(); clearTimeout(expiryT
     </details>
 
     <section class="step" aria-label="分析数据选择">
+      <div class="prompts" role="group" aria-label="AI 工作模式"><button type="button" :aria-pressed="mode === 'analysis'" :disabled="!!busy" @click="mode = 'analysis'">分析指标</button><button type="button" :aria-pressed="mode === 'resolution'" :disabled="!!busy" @click="mode = 'resolution'">生成修复方案</button></div>
+      <div v-if="targetProblem" class="scope"><strong>关联问题：{{ targetProblem.name }}</strong><p>生成预览时核对当前告警阶段。若问题已恢复或变更，请重新选择问题。</p><button type="button" :disabled="!!busy" @click="invalidate(); targetProblem = null">解除问题关联</button></div>
       <div class="step-title"><h3><AppIcon name="charts" />1. 选择监控数据</h3><span class="muted">最多 6 张图表</span></div>
       <div class="selection-controls"><label>查找图表<input v-model="filter" type="search" placeholder="按名称或 ID 查找" /></label><label>统计时间<select v-model.number="duration"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select></label></div>
       <div class="chart-options" role="group" aria-label="分析图表">
@@ -313,16 +324,18 @@ onBeforeUnmount(() => { cancel(false); clearPrivateState(); clearTimeout(expiryT
       <p v-if="!settings?.enabled || dirty" class="muted">请先保存有效的个人 AI 配置。未配置时仍可使用本地预览。</p>
       <p v-else-if="previewConsumed" class="muted">该快照已用于一次请求；取消、失败或再次分析时，请重新生成本地预览。</p>
       <p v-else-if="!preview || expired" class="muted">请先生成并核对有效的数据预览。</p>
-      <div class="actions"><button class="primary" type="button" :disabled="!canAnalyze" @click="analyze"><AppIcon name="send" />发送快照并分析</button><span class="muted">仅点击时发送；可能产生模型服务费用</span></div>
+      <div class="actions"><button class="primary" type="button" :disabled="!canAnalyze" @click="analyze"><AppIcon name="send" />{{ mode === 'resolution' ? '发送快照并生成方案' : '发送快照并分析' }}</button><span class="muted">仅点击时发送；可能产生模型服务费用</span></div>
+      <p v-if="mode === 'resolution'" class="muted">方案包含可能原因、步骤、预期结果、风险和回退方法，生成后保存到当前账号的工作台。</p>
     </section>
 
-    <section v-if="result" class="step result" aria-label="AI 分析结果">
+    <section v-if="result && !result.resolution" class="step result" aria-label="AI 分析结果">
       <div class="step-title"><h3>模型建议</h3><div class="actions"><button type="button" @click="copyResult"><AppIcon name="copy" />复制结果</button><button type="button" @click="downloadResult"><AppIcon name="download" />下载结果</button></div></div>
       <p class="muted">{{ result.model }} · {{ (result.duration_ms / 1000).toFixed(1) }} 秒 · {{ when(result.generated_at) }}<span v-if="result.usage"> · Tokens {{ result.usage.total_tokens }}（输入 {{ result.usage.prompt_tokens }} / 输出 {{ result.usage.completion_tokens }}）</span></p>
       <p class="warning">AI 输出可能不准确，请结合上方监控事实核实。系统不会执行其中的命令或变更。</p>
       <p v-if="result.truncated" class="warning">结果因长度限制被截断，内容可能不完整。</p>
       <pre class="answer">{{ result.text }}</pre>
     </section>
+    <AIResolutionPanel :node="node" :generated="result?.resolution || null" @expired="clearPrivateState" />
   </section>
 </template>
 
@@ -345,6 +358,7 @@ textarea { resize: vertical; } input[type=checkbox] { width: 18px; height: 18px;
 button { min-height: 44px; border: 1px solid #475569; border-radius: 7px; padding: 8px 12px; color: #e2e8f0; background: #16243b; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
 .heading-icon, h3 { display: flex; align-items: center; gap: 7px; } button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; } summary :deep(svg) { vertical-align: middle; margin-right: 3px; }
 button:disabled { opacity: .5; cursor: not-allowed; } button.primary { border-color: #0d9488; background: #115e59; color: #ccfbf1; } button.danger { border-color: #b91c1c; color: #fecaca; } .close { flex: 0 0 44px; width: 44px; font-size: 22px; padding: 0; }
+button[aria-pressed=true] { border-color:#2dd4bf; color:#ccfbf1; background:#115e59; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid #5eead4; outline-offset: 2px; }
 .actions, .prompts, .delete-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .prompts { margin: 0 0 12px; } .delete-confirm { padding: 10px; border: 1px solid #7f1d1d; border-radius: 7px; }
 .selection-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 240px); gap: 12px; margin-bottom: 10px; }

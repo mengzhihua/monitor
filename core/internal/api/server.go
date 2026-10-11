@@ -38,7 +38,7 @@ import (
 var uiFS embed.FS
 
 type Options struct {
-	OperationsDir string // persistent handling and personal views; empty only for ephemeral tests
+	OperationsDir string // persistent operations, personal views and AI state; empty for ephemeral tests
 	TicketWebhook string // POST handling JSON after a successful save; empty = off
 	// ConfigPath is this process's monitor.yaml. Empty means the file API is read-only/unavailable.
 	ConfigPath string
@@ -178,7 +178,7 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	}
 	s.analysis, err = newAIState(opt.OperationsDir)
 	if err != nil {
-		return nil, fmt.Errorf("open AI settings store: %w", err)
+		return nil, fmt.Errorf("open AI state: %w", err)
 	}
 	s.routes()
 	if opt.SelfMonitor {
@@ -207,6 +207,10 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("POST /api/v1/ai/preview", s.handleAIPreview)
 	m.HandleFunc("POST /api/v1/ai/analyze", s.handleAIAnalyze)
+	m.HandleFunc("GET /api/v1/ai/resolutions", s.handleAIResolutions)
+	m.HandleFunc("POST /api/v1/ai/resolutions", s.handleAIResolutions)
+	m.HandleFunc("DELETE /api/v1/ai/resolutions", s.handleAIResolutions)
+	m.HandleFunc("POST /api/v1/ai/resolutions/review", s.handleAIResolutionReview)
 	m.HandleFunc("GET /api/v1/operations", s.handleOperations)
 	m.HandleFunc("GET /api/v1/operations/notifications", s.handleNotificationDiagnostics)
 	m.HandleFunc("POST /api/v1/operations/notifications/test", s.handleNotificationTest)

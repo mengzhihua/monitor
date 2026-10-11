@@ -35,8 +35,13 @@ def main():
                 self.send_error(400)
                 return
             received.append(json.loads(self.rfile.read(length)))
+            content = 'Local model fixture: review real memory statistics.'
+            if '只输出一个 JSON 对象' in received[-1]['messages'][1]['content']:
+                content = json.dumps({'summary': 'Review real RAM evidence', 'hypotheses': [], 'steps': [
+                    {'id': 's1', 'title': 'Inspect RAM', 'kind': 'diagnostic', 'instruction': 'Inspect current RAM evidence', 'expected': 'Determine scope', 'risk': 'low', 'rollback': '', 'chart': 'system.ram', 'dimension': 'used'},
+                    {'id': 's2', 'title': 'Review', 'kind': 'verification', 'instruction': 'Read new samples', 'expected': 'New evidence', 'risk': 'low', 'rollback': '', 'chart': 'system.ram', 'dimension': ''}]})
             body = json.dumps({'model': 'local-acceptance', 'choices': [{'message': {
-                'content': 'Local model fixture: review real memory statistics.', 'role': 'assistant'},
+                'content': content, 'role': 'assistant'},
                 'finish_reason': 'stop'}], 'usage': {'total_tokens': 30}}).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -142,9 +147,25 @@ def main():
                     assert snapshot == preview['snapshot'], 'provider received different data from reviewed snapshot'
                     request('ai/analyze', body, expected=409)
                     assert len(received) == 1, 'consumed preview called provider twice'
+                    preview = request('ai/preview', {'node': '', 'charts': ['system.ram'], 'window': 60})
+                    generated = request('ai/analyze', {'preview_id': preview['id'], 'revision': settings['revision'], 'mode': 'resolution'})
+                    resolution = generated['resolution']
+                    assert resolution['baseline'] == preview['snapshot'] and resolution['progress'][0]['status'] == 'todo'
+                    request('ai/resolutions?id=' + resolution['id'], role='viewer', expected=404)
+                    resolution = request('ai/resolutions', {'id': resolution['id'], 'revision': 1, 'step_id': 's1', 'status': 'done', 'note': 'private manual handling note'})
+                    assert resolution['progress'][0]['status'] == 'done'
+                    request('ai/resolutions', {'id': resolution['id'], 'revision': 1, 'step_id': 's1', 'status': 'skipped'}, expected=409)
+                    resolution = request('ai/resolutions/review', {'id': resolution['id'], 'revision': 2})
+                    assert resolution['review']['outcome'] in ('observed', 'awaiting_new_data')
+                    assert len(received) == 2, 'manual handling or review unexpectedly contacted model'
+                    assert 'private manual handling note' not in json.dumps(received), 'operator note sent to provider'
                     stop()
                     start()
                     assert request('ai/settings') == settings, 'personal configuration lost on restart'
+                    restored = request('ai/resolutions?id=' + resolution['id'])
+                    assert restored == resolution, 'plan, progress or review lost on restart'
+                    request('ai/resolutions', {'id': resolution['id'], 'revision': 3}, 'DELETE')
+                    request('ai/resolutions?id=' + resolution['id'], expected=404)
                     deleted = request('ai/settings', {'revision': settings['revision']}, 'DELETE')
                     assert not deleted['enabled'] and not deleted['has_api_key']
                     assert key not in store.read_text(), 'deleted key remains in active settings file'
@@ -152,7 +173,7 @@ def main():
                     assert key not in log_path.read_text(), 'provider key logged'
                     print(json.dumps({'ai_analysis': 'passed', 'real_metric_preview': 'passed',
                                       'explicit_model_calls': len(received), 'identity_and_one_shot': 'passed',
-                                      'settings_restart_and_deletion': 'passed'}))
+                                      'settings_restart_and_deletion': 'passed', 'resolution_progress_review_and_restart': 'passed'}))
                 finally:
                     stop()
     finally:

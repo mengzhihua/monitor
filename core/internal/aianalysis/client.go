@@ -177,7 +177,7 @@ func (s *Store) complete(ctx context.Context, cfg Config, prompt string) (Result
 		return Result{}, ErrProvider
 	}
 	if cfg.APIKey != "" {
-		content = strings.ReplaceAll(content, cfg.APIKey, "[redacted]")
+		content = redactProviderContent(content, cfg.APIKey)
 	}
 	truncated := choice.FinishReason == "length" || len(content) > maxTextSize
 	if len(content) > maxTextSize {
@@ -197,6 +197,42 @@ func (s *Store) complete(ctx context.Context, cfg Config, prompt string) (Result
 		answer.Usage = nil
 	}
 	return Result{content, model, time.Since(started).Milliseconds(), truncated, answer.Usage}, nil
+}
+
+// A structured plan may encode a secret using JSON escapes. Redact the
+// decoded string values as well as literal text before the API can parse it.
+func redactProviderContent(content, key string) string {
+	var value any
+	if json.Unmarshal([]byte(content), &value) != nil {
+		return strings.ReplaceAll(content, key, "[redacted]")
+	}
+	changed := false
+	var redact func(any) any
+	redact = func(v any) any {
+		switch x := v.(type) {
+		case string:
+			if strings.Contains(x, key) {
+				changed = true
+				return strings.ReplaceAll(x, key, "[redacted]")
+			}
+		case []any:
+			for i, item := range x {
+				x[i] = redact(item)
+			}
+		case map[string]any:
+			for name, item := range x {
+				x[name] = redact(item)
+			}
+		}
+		return v
+	}
+	value = redact(value)
+	if changed {
+		if data, err := json.Marshal(value); err == nil {
+			return string(data)
+		}
+	}
+	return content
 }
 
 func safeProviderError(ctx context.Context) error {

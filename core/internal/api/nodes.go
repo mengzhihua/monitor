@@ -118,7 +118,8 @@ func publicAPI(path string) bool {
 func (ro Role) allows(r *http.Request) bool {
 	// Personal AI settings and explicit read-only analyses never mutate monitoring data.
 	if (r.URL.Path == "/api/v1/ai/settings" && (r.Method == http.MethodPut || r.Method == http.MethodDelete)) ||
-		(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/ai/preview" || r.URL.Path == "/api/v1/ai/analyze")) {
+		(r.Method == http.MethodPost && (r.URL.Path == "/api/v1/ai/preview" || r.URL.Path == "/api/v1/ai/analyze" || r.URL.Path == "/api/v1/ai/resolutions" || r.URL.Path == "/api/v1/ai/resolutions/review")) ||
+		(r.Method == http.MethodDelete && r.URL.Path == "/api/v1/ai/resolutions") {
 		return ro == RoleAdmin || ro == RoleTroubleshooter || ro == RoleViewer
 	}
 	if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/auth/oidc/logout" || r.URL.Path == "/api/v1/operations/views") {

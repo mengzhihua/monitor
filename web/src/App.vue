@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from './api'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo, Problem } from './api'
+import type { AIProblemSelection } from './ai'
 import { ApiError, api, auth, selection } from './api'
 import { live } from './live'
 import { usePolling } from './polling'
@@ -104,6 +105,7 @@ const showFunctions = ref(false)
 const showLogs = ref(false)
 const showWeights = ref(false)
 const showAI = ref(false)
+const aiProblem = shallowRef<AIProblemSelection | null>(null)
 const showHub = ref(false)
 const showTemplates = ref(false)
 const showCloud = ref(false)
@@ -167,12 +169,21 @@ function activateTool(id: string) {
     case 'cloud': showCloud.value = !showCloud.value; break
     case 'templates': showTemplates.value = !showTemplates.value; break
     case 'config': toggleConfig(); break
-    case 'ai': showAI.value = !showAI.value; break
+    case 'ai': aiProblem.value = null; showAI.value = !showAI.value; if (showAI.value) void scrollToAI(); break
     case 'weights': showWeights.value = !showWeights.value; break
     case 'contexts': showContexts.value = !showContexts.value; break
     case 'logout': void logout(); break
   }
-  if (isMobile.value) scrollToWorkspace()
+  if (isMobile.value && id !== 'ai') scrollToWorkspace()
+}
+
+async function scrollToAI() {
+  await nextTick()
+  const panel = document.querySelector<HTMLElement>('section.ai-panel')
+  if (!panel) return
+  const header = document.querySelector<HTMLElement>('#app > header')
+  const offset = !isMobile.value && header ? header.getBoundingClientRect().height + 12 : 12
+  window.scrollTo({ top: Math.max(0, window.scrollY + panel.getBoundingClientRect().top - offset), behavior: 'auto' })
 }
 
 const windows = [
@@ -229,6 +240,7 @@ async function forgetNode(n: NodeInfo) {
 async function selectNode(id: string) {
   if (id === selectedNode.value) return
   selectedNode.value = id
+  aiProblem.value = null
   selection.node = id
   try {
     if (id) sessionStorage.setItem(NODE_KEY, id)
@@ -242,6 +254,15 @@ async function selectNode(id: string) {
   showFunctions.value = false
   await refresh()
   if (!needToken.value) live.restart()
+}
+
+async function solveProblem(p: Problem) {
+  const node = p.hostname === info.value?.host.hostname && p.node === info.value?.host.id ? '' : p.node
+  await selectNode(node)
+  if (needToken.value || selectedNode.value !== node) return
+  aiProblem.value = { id: p.id, name: p.name, chart: p.chart }
+  showAI.value = true
+  await scrollToAI()
 }
 
 async function load(signal: AbortSignal) {
@@ -500,7 +521,7 @@ onBeforeUnmount(() => {
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel v-if="showLogs" @close="showLogs = false" />
-      <AIAnalysisPanel v-if="showAI && info" :node="selectedNode" :charts="charts" :role="info.user?.role || 'viewer'" @close="showAI = false" />
+      <AIAnalysisPanel v-if="showAI && info" :node="selectedNode" :charts="charts" :problem="aiProblem" :role="info.user?.role || 'viewer'" @close="showAI = false; aiProblem = null" />
       <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
       <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
@@ -516,7 +537,7 @@ onBeforeUnmount(() => {
         <button type="submit">进入</button>
         <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
-      <OperationsPanel v-if="info && !needToken && workspace === 'operations'" :role="info.user?.role || 'viewer'" @drill="drill" />
+      <OperationsPanel v-if="info && !needToken && workspace === 'operations'" :role="info.user?.role || 'viewer'" @drill="drill" @solve="solveProblem" />
       <ServicesPanel v-if="info && !needToken && workspace === 'services'" />
       <template v-if="workspace === 'charts'">
       <ChartTimeline v-if="info && !needToken" :end="chartEnd" :window="windowSec" :notice="timelineNotice" @update:end="value => chartEnd = value" />
