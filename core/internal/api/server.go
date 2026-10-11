@@ -212,6 +212,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/shell/targets", s.handleShellTargets)
 	m.HandleFunc("POST /api/v1/shell/tickets", s.handleShellTicket)
 	m.HandleFunc("GET /api/v1/shell/connect", s.handleShellConnect)
+	m.HandleFunc("GET /api/v1/shell/sessions", s.handleShellSessions)
+	m.HandleFunc("DELETE /api/v1/shell/sessions/{id}", s.handleShellRevoke)
 	m.HandleFunc("GET /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("PUT /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("DELETE /api/v1/ai/settings", s.handleAISettings)

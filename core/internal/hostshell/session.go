@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,21 +113,58 @@ type Session interface {
 	Wait() error
 }
 type localSession struct {
-	pty.Pty
-	cmd  *pty.Cmd
-	once sync.Once
+	pty     pty.Pty
+	cmd     *pty.Cmd
+	once    sync.Once
+	ptyMu   sync.Mutex // serialize Resize against native terminal release
+	closed  bool
+	done    chan struct{}
+	waitErr error // published by closing done
 }
 
-func (s *localSession) Wait() error {
-	err := s.cmd.Wait()
-	if runtime.GOOS == "windows" {
-		s.Close()
+func (s *localSession) Read(p []byte) (int, error) {
+	n, err := s.pty.Read(p)
+	if err != nil {
+		if terminal, ok := s.pty.(pty.ConPty); ok {
+			_ = terminal.OutputPipe().Close()
+		}
 	}
-	return err
+	return n, err
+}
+func (s *localSession) Write(p []byte) (int, error) { return s.pty.Write(p) }
+func (s *localSession) Resize(cols, rows int) error {
+	s.ptyMu.Lock()
+	defer s.ptyMu.Unlock()
+	if s.closed {
+		return os.ErrClosed
+	}
+	return s.pty.Resize(cols, rows)
+}
+func (s *localSession) Wait() error {
+	<-s.done
+	return s.waitErr
 }
 func (s *localSession) Close() error {
-	s.once.Do(func() { killProcess(s.cmd.Process); _ = s.Pty.Close() })
+	if terminal, ok := s.pty.(pty.ConPty); ok {
+		// Force-close both pipes before waiting on once. An earlier normal
+		// exit may already be releasing ConPTY while waiting for output to
+		// drain; disconnect must unblock it even when there is no reader.
+		_ = terminal.OutputPipe().Close()
+		_ = terminal.InputPipe().Close()
+	}
+	s.closePTY(true)
 	return nil
+}
+func (s *localSession) closePTY(kill bool) {
+	s.once.Do(func() {
+		if kill {
+			killProcess(s.cmd.Process)
+		}
+		s.ptyMu.Lock()
+		defer s.ptyMu.Unlock()
+		s.closed = true
+		_ = releaseLocalPTY(s.pty)
+	})
 }
 
 func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session, error) {
@@ -167,7 +203,21 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 		if u, ok := p.(pty.UnixPty); ok {
 			_ = u.Slave().Close()
 		}
-		return &localSession{Pty: p, cmd: cmd}, nil
+		// Ownership of the terminal transfers here. After a successful start,
+		// only result.closePTY releases it; never call p.Close elsewhere.
+		result := &localSession{pty: p, cmd: cmd, done: make(chan struct{})}
+		// Own the process wait from startup, even when the browser disconnects
+		// before the API starts waiting. Close alone must not leave a zombie.
+		go func() {
+			result.waitErr = cmd.Wait()
+			close(result.done)
+			if _, ok := p.(pty.ConPty); ok {
+				// Keep stdout readable to EOF on a normal Windows exit. The
+				// force-close path can still interrupt this terminal release.
+				result.closePTY(false)
+			}
+		}()
+		return result, nil
 	}
 	var auth ssh.AuthMethod
 	if c.PrivateKey != "" {

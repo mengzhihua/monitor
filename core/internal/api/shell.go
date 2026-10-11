@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -32,13 +31,13 @@ type shellTicket struct {
 type shellState struct {
 	mu      sync.Mutex
 	tickets map[string]shellTicket
-	active  map[string]context.CancelFunc
+	active  map[string]*shellSession
 	closed  bool
 	wg      sync.WaitGroup
 }
 
 func newShellState() *shellState {
-	return &shellState{tickets: map[string]shellTicket{}, active: map[string]context.CancelFunc{}}
+	return &shellState{tickets: map[string]shellTicket{}, active: map[string]*shellSession{}}
 }
 
 // CloseShells closes hijacked WebSockets/PTYs, which http.Server.Shutdown does not manage.
@@ -46,8 +45,8 @@ func (s *Server) CloseShells() {
 	s.shell.mu.Lock()
 	s.shell.closed = true
 	s.shell.tickets = map[string]shellTicket{}
-	for _, cancel := range s.shell.active {
-		cancel()
+	for _, session := range s.shell.active {
+		session.cancel(errShellShutdown)
 	}
 	s.shell.mu.Unlock()
 	s.shell.wg.Wait()
@@ -253,8 +252,15 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "valid shell ticket required", 401)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), shellMaximum)
-	defer cancel()
+	timeout, stopTimeout := context.WithTimeoutCause(context.Background(), shellMaximum, errShellMaximum)
+	defer stopTimeout()
+	ctx, cancel := context.WithCancelCause(timeout)
+	defer cancel(nil)
+	sessionID := shellID()
+	if sessionID == "" {
+		http.Error(w, "shell unavailable", 503)
+		return
+	}
 	s.shell.mu.Lock()
 	t, ok := s.shell.tickets[id]
 	delete(s.shell.tickets, id)
@@ -274,25 +280,45 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "shell session limit reached", 429)
 		return
 	}
-	s.shell.active[u.principal] = cancel
+	active := &shellSession{id: sessionID, target: t.target, started: time.Now(), ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	active.lastInput.Store(time.Now().UnixNano())
+	s.shell.active[u.principal] = active
 	s.shell.wg.Add(1)
 	s.shell.mu.Unlock()
-	defer func() { s.shell.mu.Lock(); delete(s.shell.active, u.principal); s.shell.mu.Unlock(); s.shell.wg.Done() }()
+	defer func() {
+		s.shell.mu.Lock()
+		delete(s.shell.active, u.principal)
+		close(active.done)
+		s.shell.mu.Unlock()
+		s.shell.wg.Done()
+	}()
 	upgrader := websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096, Subprotocols: []string{"monitor-shell"}, CheckOrigin: s.shellOrigin}
 	ws, e := upgrader.Upgrade(w, r, nil)
 	if e != nil {
 		return
 	}
 	defer ws.Close()
-	stop := context.AfterFunc(ctx, func() { ws.Close() })
-	defer stop()
+	closeDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(closeDone)
+		// WriteControl is safe beside the data writer. Bound shutdown even when
+		// a browser is not reading; close always releases blocked reads/writes.
+		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, shellCloseReason(ctx)), time.Now().Add(time.Second))
+		ws.Close()
+	})
+	defer func() {
+		if !stop() {
+			<-closeDone
+		}
+	}()
 	send := func(v any) error { _ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second)); return ws.WriteJSON(v) }
 	ws.SetReadLimit(96 << 10)
 	_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var first struct {
-		Type string `json:"type"`
-		Cols int    `json:"cols"`
-		Rows int    `json:"rows"`
+		Type        string `json:"type"`
+		Cols        int    `json:"cols"`
+		Rows        int    `json:"rows"`
+		FlowControl bool   `json:"flow_control"`
 		hostshell.Credentials
 	}
 	if ws.ReadJSON(&first) != nil || first.Type != "connect" || len(first.Password) > 4096 || len(first.PrivateKey) > 64<<10 || len(first.Passphrase) > 4096 {
@@ -302,31 +328,70 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 	first.Credentials = hostshell.Credentials{}
 	if e != nil {
 		_ = send(map[string]any{"type": "error", "message": e.Error()})
-		s.shellAudit(r, t, id, "shell_connect_failed", 502)
+		s.shellAudit(r, t, sessionID, "shell_connect_failed", 502)
 		return
 	}
-	defer ses.Close()
+	var workers sync.WaitGroup
+	defer func() { cancel(nil); ses.Close(); workers.Wait() }()
 	stopSession := context.AfterFunc(ctx, func() { ses.Close() })
 	defer stopSession()
-	s.shellAudit(r, t, id, "shell_connected", 101)
-	defer s.shellAudit(r, t, id, "shell_closed", 200)
-	if send(map[string]any{"type": "ready", "target": t.target.ID}) != nil {
+	s.shellAudit(r, t, sessionID, "shell_connected", 101)
+	defer s.shellAudit(r, t, sessionID, "shell_closed", 200)
+	active.connected.Store(true)
+	flow := newShellFlow()
+	ready := map[string]any{"type": "ready", "target": t.target.ID, "session_id": sessionID}
+	if first.FlowControl {
+		ready["flow_control"] = "ack"
+		ready["window_bytes"] = shellOutputWindow
+	}
+	if send(ready) != nil {
 		return
 	}
-	ws.SetReadLimit(20 << 10)
+	// A valid 16 KiB input can expand sixfold in JSON (e.g. NUL as \u0000).
+	// Bound the wire frame separately from the decoded input size below.
+	ws.SetReadLimit(6*(16<<10) + 1024)
 	_ = ws.SetReadDeadline(time.Now().Add(35 * time.Second))
 	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(35 * time.Second)) })
-	var lastInput atomic.Int64
-	lastInput.Store(time.Now().UnixNano())
+	type shellInput struct {
+		Type  string `json:"type"`
+		Data  string `json:"data"`
+		Cols  int    `json:"cols"`
+		Rows  int    `json:"rows"`
+		Bytes int64  `json:"bytes"`
+	}
+	// SSH peers and local programs can stop reading stdin. Keep the WebSocket
+	// reader responsive to close/pong/ACK while a bounded worker writes input.
+	inputs := make(chan shellInput, 8)
+	workers.Add(1)
 	go func() {
-		defer cancel()
+		defer workers.Done()
+		defer cancel(nil)
 		for {
-			var m struct {
-				Type string `json:"type"`
-				Data string `json:"data"`
-				Cols int    `json:"cols"`
-				Rows int    `json:"rows"`
+			select {
+			case <-ctx.Done():
+				return
+			case m := <-inputs:
+				if ctx.Err() != nil {
+					return
+				}
+				var err error
+				if m.Type == "input" {
+					_, err = ses.Write([]byte(m.Data))
+				} else {
+					err = ses.Resize(m.Cols, m.Rows)
+				}
+				if err != nil {
+					return
+				}
 			}
+		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		defer cancel(nil)
+		for {
+			var m shellInput
 			if ws.ReadJSON(&m) != nil {
 				return
 			}
@@ -335,26 +400,35 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 				if len(m.Data) == 0 || len(m.Data) > 16<<10 {
 					return
 				}
-				lastInput.Store(time.Now().UnixNano())
-				if _, e := ses.Write([]byte(m.Data)); e != nil {
-					return
-				}
+				active.lastInput.Store(time.Now().UnixNano())
 			case "resize":
 				if m.Cols < 2 || m.Cols > 400 || m.Rows < 2 || m.Rows > 200 {
 					return
 				}
-				if ses.Resize(m.Cols, m.Rows) != nil {
-					return
-				}
 			case "close":
 				return
+			case "ack":
+				if !first.FlowControl || !flow.acknowledge(m.Bytes) {
+					return
+				}
+				continue
 			default:
+				return
+			}
+			select {
+			case inputs <- m:
+			case <-ctx.Done():
+				return
+			default:
+				cancel(errShellInputOverflow)
 				return
 			}
 		}
 	}()
 	output := make(chan []byte, 8)
+	workers.Add(1)
 	go func() {
+		defer workers.Done()
 		defer close(output)
 		buf := make([]byte, 4096)
 		var total int
@@ -363,7 +437,7 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 			if n > 0 {
 				total += n
 				if total > 32<<20 {
-					cancel()
+					cancel(errShellOutputLimit)
 					return
 				}
 				b := append([]byte(nil), buf[:n]...)
@@ -379,12 +453,20 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	waited := make(chan error, 1)
-	go func() { waited <- ses.Wait() }()
+	workers.Add(1)
+	go func() { defer workers.Done(); waited <- ses.Wait() }()
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		readOutput := output
+		if first.FlowControl && !flow.writable() {
+			readOutput = nil
+		}
 		select {
-		case b, ok := <-output:
+		case b, ok := <-readOutput:
 			if !ok {
 				code := 0
 				select {
@@ -394,22 +476,34 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 					}
 				case <-time.After(time.Second):
 					code = 1
+				case <-ctx.Done():
+					return
 				}
 				_ = send(map[string]any{"type": "exit", "code": code})
 				return
 			}
 			_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if flow.sent.Load() == flow.acked.Load() {
+				flow.lastProgress.Store(time.Now().UnixNano())
+			}
+			flow.sent.Add(int64(len(b)))
 			if ws.WriteMessage(websocket.BinaryMessage, b) != nil {
 				return
 			}
+			active.outputBytes.Add(int64(len(b)))
+		case <-flow.wake:
 		case <-ticker.C:
 			current, valid := s.shellCurrentUser(t)
 			if !valid || !s.shellTargetAllowed(current, t.target) {
 				_ = send(map[string]any{"type": "error", "message": "shell permission expired"})
 				return
 			}
-			if time.Since(time.Unix(0, lastInput.Load())) > shellIdle {
+			if time.Since(time.Unix(0, active.lastInput.Load())) > shellIdle {
 				_ = send(map[string]any{"type": "error", "message": "shell idle timeout"})
+				return
+			}
+			if first.FlowControl && flow.sent.Load() > flow.acked.Load() && time.Since(time.Unix(0, flow.lastProgress.Load())) > 30*time.Second {
+				cancel(errShellOutputStalled)
 				return
 			}
 			_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
