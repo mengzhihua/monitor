@@ -145,7 +145,7 @@ func wantsAnomalyBit(opts string) bool {
 func (s *Server) serveDataByNode(w http.ResponseWriter, r *http.Request, api int) {
 	q := r.URL.Query()
 	q.Del("group_by")
-	views := s.dataViews()
+	views := s.dataViews(userOf(r))
 	if len(views) == 0 {
 		http.Error(w, "no nodes", http.StatusNotFound)
 		return
@@ -248,13 +248,16 @@ func (s *Server) serveDataByNode(w http.ResponseWriter, r *http.Request, api int
 	writeData(w, q, out)
 }
 
-func (s *Server) dataViews() []*view {
+func (s *Server) dataViews(u User) []*view {
 	views := []*view{}
 	if v, ok := s.resolve(""); ok {
 		views = append(views, v)
 	}
 	if s.opt.Nodes != nil {
 		for _, n := range s.opt.Nodes.List() {
+			if !s.roomAllowed(u, n.ID) {
+				continue
+			}
 			views = append(views, &view{id: n.ID, hostname: n.Host.Hostname, reg: n.Registry(), db: n.DB(), node: n})
 		}
 	}
@@ -275,7 +278,7 @@ func viewLabel(v *view) string {
 func (s *Server) serveDataByNodeDim(w http.ResponseWriter, r *http.Request, api int) {
 	q := r.URL.Query()
 	q.Del("group_by")
-	views := s.dataViews()
+	views := s.dataViews(userOf(r))
 	if len(views) == 0 {
 		http.Error(w, "no nodes", http.StatusNotFound)
 		return

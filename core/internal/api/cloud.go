@@ -31,7 +31,20 @@ func (s *Server) handleSpaces(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{"spaces": org.Spaces()})
+		spaces := org.Spaces()
+		if !unrestrictedRooms(userOf(r)) {
+			visible := spaces[:0]
+			for _, sp := range spaces {
+				for _, rm := range org.Rooms(sp.ID) {
+					if roomVisible(userOf(r), rm.ID) {
+						visible = append(visible, sp)
+						break
+					}
+				}
+			}
+			spaces = visible
+		}
+		writeJSON(w, map[string]any{"spaces": spaces})
 	case http.MethodPost:
 		var body struct {
 			Name string `json:"name"`
@@ -67,7 +80,23 @@ func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{"rooms": org.Rooms(q.Get("space_id"))})
+		rooms := org.Rooms(q.Get("space_id"))
+		visible := rooms[:0]
+		for _, rm := range rooms {
+			if roomVisible(userOf(r), rm.ID) {
+				if !unrestrictedRooms(userOf(r)) {
+					nodes := rm.Nodes[:0]
+					for _, id := range rm.Nodes {
+						if s.roomAllowed(userOf(r), id) {
+							nodes = append(nodes, id)
+						}
+					}
+					rm.Nodes = nodes
+				}
+				visible = append(visible, rm)
+			}
+		}
+		writeJSON(w, map[string]any{"rooms": visible})
 	case http.MethodPost:
 		var body struct {
 			Name    string `json:"name"`
@@ -114,12 +143,26 @@ func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClaimTokens(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	// Claim tokens grant enrollment credentials. Reading them requires the
+	// same administrator role as issuing them, including on GET requests.
+	if userOf(r).Role != RoleAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	org := s.requireOrg(w)
 	if org == nil {
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, map[string]any{"claims": org.Claims()})
+		claims := org.Claims()
+		visible := claims[:0]
+		for _, claim := range claims {
+			if roomVisible(userOf(r), claim.RoomID) {
+				visible = append(visible, claim)
+			}
+		}
+		writeJSON(w, map[string]any{"claims": visible})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -133,6 +176,10 @@ func (s *Server) handleClaimTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil && err != io.EOF {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !roomVisible(userOf(r), body.RoomID) {
+		http.Error(w, "forbidden: room", http.StatusForbidden)
 		return
 	}
 	ttl := 24 * time.Hour
@@ -394,6 +441,9 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		rooms := org.Rooms(sp.ID)
 		roomOut := make([]map[string]any, 0, len(rooms))
 		for _, rm := range rooms {
+			if !roomVisible(userOf(r), rm.ID) {
+				continue
+			}
 			var nodes []map[string]any
 			var warn, crit int
 			var alarms []any
@@ -408,7 +458,7 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			for _, nid := range ids {
-				if seen[nid] {
+				if seen[nid] || !s.roomAllowed(userOf(r), nid) {
 					continue
 				}
 				seen[nid] = true
@@ -427,12 +477,14 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 				"alarm_list": alarms,
 			})
 		}
-		spaceOut = append(spaceOut, map[string]any{"id": sp.ID, "name": sp.Name, "created": sp.Created, "rooms": roomOut})
+		if len(roomOut) > 0 || unrestrictedRooms(userOf(r)) {
+			spaceOut = append(spaceOut, map[string]any{"id": sp.ID, "name": sp.Name, "created": sp.Created, "rooms": roomOut})
+		}
 	}
 	var unassigned []map[string]any
 	if s.opt.Nodes != nil {
 		for _, n := range s.opt.Nodes.List() {
-			if assigned[n.ID] {
+			if assigned[n.ID] || !s.roomAllowed(userOf(r), n.ID) {
 				continue
 			}
 			item, _ := s.consoleNode(n.ID, now)
@@ -445,14 +497,18 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	aclk := map[string]any{"available": true, "protocol": "stream+mqtt", "storage": "full"}
 	if s.opt.Nodes != nil {
-		live := 0
+		live, total := 0, 0
 		for _, n := range s.opt.Nodes.List() {
+			if !s.roomAllowed(userOf(r), n.ID) {
+				continue
+			}
+			total++
 			if n.Info(now).Status == hub.StatusLive {
 				live++
 			}
 		}
 		aclk["online"] = s.opt.Nodes.IngestEnabled() && live > 0
-		aclk["nodes"] = len(s.opt.Nodes.List())
+		aclk["nodes"] = total
 		aclk["live"] = live
 		aclk["storage"] = s.opt.Nodes.Storage()
 	}

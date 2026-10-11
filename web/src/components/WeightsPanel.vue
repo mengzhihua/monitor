@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Weight } from '../api'
 import { api } from '../api'
 
@@ -14,11 +14,19 @@ const baselineAfter = ref(-3600)
 const baselineBefore = ref(-300)
 const rows = ref<Weight[]>([])
 const error = ref('')
+const loading = ref(false)
+let request: AbortController | undefined
 
 const correlating = computed(() => method.value === 'ks2' || method.value === 'volume')
 const maxScore = computed(() => Math.max(0, ...rows.value.map((w) => w.score)))
 
 async function load() {
+  request?.abort()
+  const current = request = new AbortController()
+  loading.value = true
+  rows.value = []
+  highlight.value = ''
+  error.value = ''
   try {
     const extra: Record<string, string | number> = { top: top.value }
     if (correlating.value) {
@@ -28,13 +36,14 @@ async function load() {
       extra.baseline_before = baselineBefore.value
       extra.group = group.value
     }
-    const r = await api.weights(method.value, extra)
+    const r = await api.weights(method.value, extra, current.signal)
+    if (current.signal.aborted || request !== current) return
     rows.value = r.weights ?? []
     highlight.value = rows.value[0]?.chart ?? rows.value[0]?.context ?? ''
     error.value = ''
   } catch (e) {
-    error.value = (e as Error).message
-  }
+    if (!current.signal.aborted && request === current) error.value = (e as Error).message
+  } finally { if (request === current) loading.value = false }
 }
 
 function pick(w: Weight) {
@@ -49,14 +58,15 @@ function barWidth(score: number) {
 }
 
 onMounted(load)
+onBeforeUnmount(() => request?.abort())
 </script>
 
 <template>
-  <div class="panel">
+  <section class="panel" aria-label="关联分析">
     <div class="head">
       <h3>
         关联分析
-        <select v-model="method" @change="load">
+        <select aria-label="关联分析方法" v-model="method" @change="load">
           <option value="anomaly-rate">anomaly-rate</option>
           <option value="kmeans">kmeans</option>
           <option value="ks2">ks2</option>
@@ -79,7 +89,8 @@ onMounted(load)
       <button class="x" @click="emit('close')" title="关闭">×</button>
     </div>
     <p v-if="correlating" class="hint">故障窗 [after, before] 对比基线 [baseline_after, baseline_before]；点击一行筛选对应图表。</p>
-    <div v-if="error" class="err">{{ error }}</div>
+    <div v-if="error" class="err" role="alert">{{ error }}</div>
+    <p v-else-if="loading" role="status">正在读取关联分析…</p>
     <table v-else>
       <thead>
         <tr>
@@ -100,7 +111,7 @@ onMounted(load)
         <tr v-if="!rows.length"><td :colspan="group === 'dimension' ? 3 : 2" class="dim">暂无异常（ks2/volume 需要足够历史样本）</td></tr>
       </tbody>
     </table>
-  </div>
+  </section>
 </template>
 
 <style scoped>

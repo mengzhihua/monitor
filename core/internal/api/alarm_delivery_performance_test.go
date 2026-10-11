@@ -9,17 +9,17 @@ import (
 )
 
 func TestLiveAlarmDeliveryScopeAndSharedEncoding(t *testing.T) {
-	first := &liveConn{node: "agent", send: make(chan []byte, 1)}
-	second := &liveConn{node: "agent", charts: map[string]bool{"unrelated": true}, send: make(chan []byte, 1)}
-	local := &liveConn{send: make(chan []byte, 1)}
-	slow := &liveConn{node: "agent", send: make(chan []byte)}
+	first := &liveConn{node: "agent", send: make(chan liveFrame, 1)}
+	second := &liveConn{node: "agent", charts: map[string]bool{"unrelated": true}, send: make(chan liveFrame, 1)}
+	local := &liveConn{send: make(chan liveFrame, 1)}
+	slow := &liveConn{node: "agent", send: make(chan liveFrame)}
 	s := &Server{live: &liveHub{conns: map[*liveConn]struct{}{first: {}, second: {}, local: {}, slow: {}}}}
 	e := health.LogEntry{AlarmID: 42, Chart: "system.cpu", Name: "high", Status: health.StatusUndefined, Value: math.NaN(), OldValue: math.Inf(1)}
 	s.PublishNodeAlarm("agent", e)
 	if len(first.send) != 1 || len(second.send) != 1 || len(local.send) != 0 {
 		t.Fatal("alarm scope must follow the node, regardless of chart subscriptions")
 	}
-	a, b := <-first.send, <-second.send
+	a, b := (<-first.send).payload, (<-second.send).payload
 	if &a[0] != &b[0] {
 		t.Fatal("alarm recipients did not share one encoding")
 	}
@@ -36,7 +36,7 @@ func TestLiveUnobservedAlarmDoesNotAllocate(t *testing.T) {
 	for _, clients := range []bool{false, true} {
 		h := &liveHub{conns: map[*liveConn]struct{}{}}
 		if clients {
-			h.conns[&liveConn{node: "other", send: make(chan []byte, 1)}] = struct{}{}
+			h.conns[&liveConn{node: "other", send: make(chan liveFrame, 1)}] = struct{}{}
 		}
 		s := &Server{live: h}
 		e := health.LogEntry{AlarmID: 1, Name: "high", Status: health.StatusWarning}
@@ -49,7 +49,7 @@ func TestLiveUnobservedAlarmDoesNotAllocate(t *testing.T) {
 func BenchmarkLiveAlarmDelivery(b *testing.B) {
 	for _, scenario := range []string{"no_clients", "other_node", "subscribed"} {
 		b.Run(scenario, func(b *testing.B) {
-			c := &liveConn{send: make(chan []byte, 1)}
+			c := &liveConn{send: make(chan liveFrame, 1)}
 			h := &liveHub{conns: map[*liveConn]struct{}{}}
 			if scenario != "no_clients" {
 				h.conns[c] = struct{}{}

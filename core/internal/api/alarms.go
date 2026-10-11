@@ -186,7 +186,7 @@ func (s *Server) handleAlarmVariables(w http.ResponseWriter, r *http.Request) {
 	if v.node == nil && s.opt.Health != nil {
 		vars = s.opt.Health.ChartVariables(chart, r.URL.Query().Get("alarm"))
 	} else if c, ok := v.reg.Chart(chart); ok {
-		_, last := c.LastValues()
+		_, last := c.LatestValues()
 		for k, val := range last {
 			vars[k] = val
 		}

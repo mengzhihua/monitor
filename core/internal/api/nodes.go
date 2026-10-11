@@ -31,7 +31,7 @@ type User struct {
 	Name      string `json:"name"`
 	Token     string `json:"-"`
 	Role      Role   `json:"role"`
-	// Rooms limits node= access. Empty means every room.
+	// Rooms limits remote node reads, lists and live subscriptions. Empty means every room.
 	Rooms []string `json:"rooms,omitempty"`
 	// TOTP is a base32 secret. Empty means this credential has no second factor.
 	TOTP string `json:"-"`
@@ -191,13 +191,20 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var allowed func(string) bool
+	if !unrestrictedRooms(userOf(r)) {
+		allowed = func(id string) bool { return s.roomAllowed(userOf(r), id) }
+	}
 	s.live.handle(w, r, v.id, func(id string) (string, bool) {
+		if !s.roomAllowed(userOf(r), id) {
+			return "", false
+		}
 		v, ok := s.resolve(id)
 		if !ok {
 			return "", false
 		}
 		return v.id, true
-	})
+	}, allowed)
 }
 
 func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
@@ -253,6 +260,12 @@ func (s *Server) nodesPayload(r *http.Request, api int) map[string]any {
 			seen[n.ID] = true
 		}
 		for _, inf := range s.opt.Cluster.PeerInfos() {
+			// resolve() treats this ID as the local host unless a directly
+			// streamed node already owns it. Such a peer entry is not an
+			// addressable remote node and must not inherit local permissions.
+			if inf.ID == s.reg.Host.ID {
+				continue
+			}
 			if seen[inf.ID] {
 				continue
 			}
@@ -267,10 +280,30 @@ func (s *Server) nodesPayload(r *http.Request, api int) map[string]any {
 			if out[i].Local || out[i].ID == "" {
 				continue
 			}
-			sp, rm := s.opt.Org.Membership(out[i].ID)
-			out[i].SpaceID, out[i].RoomID = sp, rm
+			sp, rm, conflict := s.opt.Org.MembershipStatus(out[i].ID)
+			// A local Org has no entry for most peer-owned nodes. Keep the
+			// room advertised by that peer instead of making it unassigned.
+			if out[i].Peer == "" || rm != "" || conflict {
+				out[i].SpaceID, out[i].RoomID, out[i].RoomConflict = sp, rm, conflict
+			}
 		}
 	}
+	if s.opt.Cluster != nil {
+		for i := range out {
+			if out[i].Replica && out[i].RoomID == "" && !out[i].RoomConflict {
+				if peer, ok := s.opt.Cluster.PeerInfo(out[i].ID); ok {
+					out[i].SpaceID, out[i].RoomID, out[i].RoomConflict = peer.SpaceID, peer.RoomID, peer.RoomConflict
+				}
+			}
+		}
+	}
+	visible := out[:0]
+	for _, inf := range out {
+		if inf.Local || s.roomAllowed(userOf(r), inf.ID) {
+			visible = append(visible, inf)
+		}
+	}
+	out = visible
 	if c := r.URL.Query().Get("contexts"); c == "true" || c == "1" {
 		for i := range out {
 			var v *view

@@ -141,6 +141,18 @@ func (c *Cluster) Has(id string) bool {
 	return ok
 }
 
+// PeerInfo returns the catalog entry for one remote node without copying the
+// entire cluster catalog for an access-control check.
+func (c *Cluster) PeerInfo(id string) (Info, bool) {
+	if c.Empty() {
+		return Info{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	n, ok := c.index[id]
+	return n.Info, ok
+}
+
 // Proxy reverse-proxies r to the peer that last advertised id. Returns true
 // if the request was handled (including errors written to w).
 func (c *Cluster) Proxy(w http.ResponseWriter, r *http.Request, id string) bool {

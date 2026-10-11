@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
 
 export interface ContextInfo {
@@ -9,50 +9,55 @@ const emit = defineEmits<{ close: []; pick: [id: string] }>()
 const rows = ref<{ id: string; info: ContextInfo }[]>([])
 const error = ref('')
 const q = ref('')
+const request = new AbortController()
+const loading = ref(true)
 
 async function load() {
   try {
-    const r = await api.contexts()
+    const r = await api.contexts(request.signal)
+    if (request.signal.aborted) return
     rows.value = Object.entries(r.contexts ?? {}).map(([id, info]) => ({ id, info }))
       .sort((a, b) => (a.info.priority ?? 0) - (b.info.priority ?? 0) || a.id.localeCompare(b.id))
     error.value = ''
   } catch (e) {
-    error.value = (e as Error).message
-  }
+    if (!request.signal.aborted) error.value = (e as Error).message
+  } finally { if (!request.signal.aborted) loading.value = false }
 }
 
 onMounted(load)
+onBeforeUnmount(() => request.abort())
 
-function shown() {
+const shown = computed(() => {
   const s = q.value.trim().toLowerCase()
   if (!s) return rows.value
   return rows.value.filter((r) => (r.id + ' ' + r.info.title + ' ' + r.info.family).toLowerCase().includes(s))
-}
+})
 </script>
 
 <template>
-  <div class="panel">
+  <section class="panel" aria-label="Contexts">
     <div class="head">
       <h3>Contexts <small>{{ rows.length }}</small></h3>
       <input v-model="q" placeholder="筛选 context…" />
       <button class="x" @click="emit('close')" title="关闭">×</button>
     </div>
-    <div v-if="error" class="err">{{ error }}</div>
+    <div v-if="error" class="err" role="alert">{{ error }}</div>
+    <p v-else-if="loading" role="status">正在读取 Contexts…</p>
     <table v-else>
       <thead>
         <tr><th>Context</th><th>Family</th><th class="num">图</th><th>单位</th></tr>
       </thead>
       <tbody>
-        <tr v-for="r in shown()" :key="r.id" @click="emit('pick', r.id)">
+        <tr v-for="r in shown" :key="r.id" @click="emit('pick', r.id)">
           <td>{{ r.info.title || r.id }} <span class="dim">{{ r.id }}</span></td>
           <td class="dim">{{ r.info.family }}</td>
           <td class="num">{{ r.info.charts?.length ?? 0 }}</td>
           <td class="dim">{{ r.info.units }}</td>
         </tr>
-        <tr v-if="!shown().length"><td colspan="4" class="dim">暂无 context</td></tr>
+        <tr v-if="!shown.length"><td colspan="4" class="dim">暂无 context</td></tr>
       </tbody>
     </table>
-  </div>
+  </section>
 </template>
 
 <style scoped>

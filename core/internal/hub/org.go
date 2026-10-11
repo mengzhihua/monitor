@@ -65,12 +65,18 @@ type Org struct {
 	path string
 	now  func() time.Time
 
-	mu      sync.Mutex
-	spaces  map[string]*Space
-	rooms   map[string]*Room
-	claims  map[string]*Claim
-	configs map[string]*NodeConfig
-	keys    []string
+	mu          sync.Mutex
+	spaces      map[string]*Space
+	rooms       map[string]*Room
+	claims      map[string]*Claim
+	configs     map[string]*NodeConfig
+	keys        []string
+	memberships map[string]roomMembership
+}
+
+type roomMembership struct {
+	spaceID, roomID string
+	conflict        bool
 }
 
 type orgFile struct {
@@ -88,7 +94,7 @@ func OpenOrg(dir string) (*Org, error) {
 	}
 	o := &Org{path: filepath.Join(dir, "org.json"), now: time.Now,
 		spaces: map[string]*Space{}, rooms: map[string]*Room{},
-		claims: map[string]*Claim{}, configs: map[string]*NodeConfig{}}
+		claims: map[string]*Claim{}, configs: map[string]*NodeConfig{}, memberships: map[string]roomMembership{}}
 	b, err := os.ReadFile(o.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -106,6 +112,7 @@ func OpenOrg(dir string) (*Org, error) {
 	for _, r := range f.Rooms {
 		o.rooms[r.ID] = r
 	}
+	o.rebuildMembershipsLocked()
 	for _, c := range f.Claims {
 		o.claims[c.Token] = c
 	}
@@ -218,16 +225,27 @@ func (o *Org) CreateSpace(name string) (Space, error) {
 func (o *Org) DeleteSpace(id string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if _, ok := o.spaces[id]; !ok {
+	space, ok := o.spaces[id]
+	if !ok {
 		return errors.New("unknown space")
 	}
+	removed := map[string]*Room{}
 	for rid, r := range o.rooms {
 		if r.SpaceID == id {
+			removed[rid] = r
 			delete(o.rooms, rid)
 		}
 	}
 	delete(o.spaces, id)
-	return o.saveLocked()
+	if err := o.saveLocked(); err != nil {
+		o.spaces[id] = space
+		for rid, r := range removed {
+			o.rooms[rid] = r
+		}
+		return err
+	}
+	o.rebuildMembershipsLocked()
+	return nil
 }
 
 func (o *Org) CreateRoom(spaceID, name string) (Room, error) {
@@ -248,11 +266,17 @@ func (o *Org) CreateRoom(spaceID, name string) (Room, error) {
 func (o *Org) DeleteRoom(id string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if _, ok := o.rooms[id]; !ok {
+	room, ok := o.rooms[id]
+	if !ok {
 		return errors.New("unknown room")
 	}
 	delete(o.rooms, id)
-	return o.saveLocked()
+	if err := o.saveLocked(); err != nil {
+		o.rooms[id] = room
+		return err
+	}
+	o.rebuildMembershipsLocked()
+	return nil
 }
 
 func (o *Org) SetRoomNodes(id string, nodes []string) (Room, error) {
@@ -262,23 +286,84 @@ func (o *Org) SetRoomNodes(id string, nodes []string) (Room, error) {
 	if !ok {
 		return Room{}, errors.New("unknown room")
 	}
-	r.Nodes = append([]string(nil), nodes...)
+	previous := o.moveRoomNodesLocked(r, nodes)
+	if err := o.saveLocked(); err != nil {
+		for room, old := range previous {
+			room.Nodes = old
+		}
+		return Room{}, err
+	}
+	o.rebuildMembershipsLocked()
 	cp := *r
 	cp.Nodes = append([]string(nil), r.Nodes...)
-	return cp, o.saveLocked()
+	return cp, nil
 }
 
 func (o *Org) Membership(nodeID string) (spaceID, roomID string) {
+	spaceID, roomID, _ = o.MembershipStatus(nodeID)
+	return
+}
+
+// MembershipStatus is constant-time even for live stream authorization. Legacy
+// duplicate memberships remain visible to administrators but cannot select a
+// random room for an authorization decision.
+func (o *Org) MembershipStatus(nodeID string) (spaceID, roomID string, conflict bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	m := o.memberships[nodeID]
+	return m.spaceID, m.roomID, m.conflict
+}
+
+func (o *Org) rebuildMembershipsLocked() {
+	o.memberships = make(map[string]roomMembership)
 	for _, r := range o.rooms {
 		for _, n := range r.Nodes {
-			if n == nodeID {
-				return r.SpaceID, r.ID
+			if n == "" {
+				continue
+			}
+			previous, exists := o.memberships[n]
+			if exists && (previous.conflict || previous.roomID != r.ID) {
+				o.memberships[n] = roomMembership{conflict: true}
+			} else {
+				o.memberships[n] = roomMembership{spaceID: r.SpaceID, roomID: r.ID}
 			}
 		}
 	}
-	return "", ""
+}
+
+// moveRoomNodesLocked makes assigning a node an atomic move, never an ambiguous
+// second membership. Return original slices for rollback if persistence fails.
+func (o *Org) moveRoomNodesLocked(target *Room, nodes []string) map[*Room][]string {
+	unique := make([]string, 0, len(nodes))
+	wanted := make(map[string]bool, len(nodes))
+	for _, id := range nodes {
+		if id != "" && !wanted[id] {
+			wanted[id] = true
+			unique = append(unique, id)
+		}
+	}
+	previous := map[*Room][]string{target: target.Nodes}
+	for _, room := range o.rooms {
+		if room == target {
+			continue
+		}
+		var kept []string
+		for i, id := range room.Nodes {
+			if wanted[id] {
+				if kept == nil {
+					kept = append(make([]string, 0, len(room.Nodes)), room.Nodes[:i]...)
+				}
+			} else if kept != nil {
+				kept = append(kept, id)
+			}
+		}
+		if kept != nil {
+			previous[room] = room.Nodes
+			room.Nodes = kept
+		}
+	}
+	target.Nodes = unique
+	return previous
 }
 
 func (o *Org) IssueClaim(spaceID, roomID string, ttl time.Duration) (Claim, error) {
@@ -331,30 +416,32 @@ func (o *Org) RedeemClaim(token, nodeID string) (Claim, error) {
 	if c.Expires > 0 && now > c.Expires {
 		return Claim{}, errors.New("claim token expired")
 	}
+	room, ok := o.rooms[c.RoomID]
+	if !ok || room.SpaceID != c.SpaceID {
+		return Claim{}, errors.New("claim room no longer exists")
+	}
 	for _, existing := range o.claims {
 		if existing.NodeID == nodeID && existing.APIKey != "" {
 			return Claim{}, errors.New("node_id is already claimed")
 		}
 	}
 	key := randomID("key")
+	previousClaim, previousKeys := *c, len(o.keys)
 	c.APIKey = key
 	c.NodeID = nodeID
 	c.UsedAt = now
 	o.keys = append(o.keys, key)
-	if r, ok := o.rooms[c.RoomID]; ok {
-		found := false
-		for _, n := range r.Nodes {
-			if n == nodeID {
-				found = true
-				break
-			}
+	previousRooms := o.moveRoomNodesLocked(room, append(append([]string(nil), room.Nodes...), nodeID))
+	if err := o.saveLocked(); err != nil {
+		*c = previousClaim
+		o.keys = o.keys[:previousKeys]
+		for r, nodes := range previousRooms {
+			r.Nodes = nodes
 		}
-		if !found {
-			r.Nodes = append(r.Nodes, nodeID)
-		}
+		return Claim{}, err
 	}
-	out := *c
-	return out, o.saveLocked()
+	o.rebuildMembershipsLocked()
+	return *c, nil
 }
 
 // ErrConfigConflict means the desired config changed after the caller read it.

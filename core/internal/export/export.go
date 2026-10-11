@@ -129,7 +129,7 @@ type point struct {
 func (e *Engine) snapshot() []point {
 	var out []point
 	for _, c := range e.reg.Charts() {
-		ts, vals := c.LastValues()
+		ts, vals := c.LatestValues()
 		if ts == 0 {
 			continue
 		}
@@ -207,7 +207,7 @@ func (e *Engine) flushJSON(ctx context.Context, d Destination) error {
 	}
 	charts := map[string]any{}
 	for _, c := range e.reg.Charts() {
-		ts, vals := c.LastValues()
+		ts, vals := c.LatestValues()
 		if ts == 0 {
 			continue
 		}

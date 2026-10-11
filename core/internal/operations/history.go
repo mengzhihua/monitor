@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -35,6 +36,9 @@ type HistoryQuery struct {
 	Cursor   string
 	Snapshot string
 	All      bool // Only used by the bounded export endpoint, never by list pagination.
+	// ScopeNodes is supplied by the server, never by a request filter. Nil is
+	// unrestricted; an empty non-nil slice grants access to no nodes.
+	ScopeNodes []string
 }
 
 type HistoryRecord struct {
@@ -109,7 +113,17 @@ func (s *Store) QueryHistory(q HistoryQuery) (HistoryPage, error) {
 		// contents merely to detect edits; Apply invalidates this generation.
 		s.historyVersion = digest(rand.Text())
 	}
-	if (q.Snapshot != "" && q.Snapshot != s.historyVersion) || (q.Cursor != "" && cursor.Snapshot != s.historyVersion) {
+	snapshot := s.historyVersion
+	allowed := nodeScope(q.ScopeNodes)
+	if q.ScopeNodes != nil {
+		nodes := append([]string{}, q.ScopeNodes...)
+		slices.Sort(nodes)
+		nodes = slices.Compact(nodes)
+		// Membership changes invalidate cursors and exports even without a
+		// history write. Offsets must never address a different visible set.
+		snapshot = digest([]any{s.historyVersion, nodes})
+	}
+	if (q.Snapshot != "" && q.Snapshot != snapshot) || (q.Cursor != "" && cursor.Snapshot != snapshot) {
 		return HistoryPage{}, ErrHistoryChanged
 	}
 	ordered := s.orderedHistoryLocked()
@@ -117,8 +131,9 @@ func (s *Store) QueryHistory(q HistoryQuery) (HistoryPage, error) {
 	if q.All {
 		capacity = len(ordered)
 	}
-	out := HistoryPage{Records: make([]HistoryRecord, 0, min(capacity, len(ordered))), Stored: len(ordered), Capacity: 5000, ActionsPerRecord: 20, Snapshot: s.historyVersion, Filter: q.HistoryFilter}
-	if q.HistoryFilter == (HistoryFilter{}) {
+	out := HistoryPage{Records: make([]HistoryRecord, 0, min(capacity, len(ordered))), Capacity: 5000, ActionsPerRecord: 20, Snapshot: snapshot, Filter: q.HistoryFilter}
+	if q.ScopeNodes == nil && q.HistoryFilter == (HistoryFilter{}) {
+		out.Stored = len(ordered)
 		// From defaults to zero, so retain the existing exclusion of negative
 		// legacy timestamps. They form a suffix of the shared descending order.
 		ordered = ordered[:sort.Search(len(ordered), func(i int) bool { return updatedAt(ordered[i]) < 0 })]
@@ -134,6 +149,10 @@ func (s *Store) QueryHistory(q HistoryQuery) (HistoryPage, error) {
 		// The order is shared, but matches are not cached per filter. Count all
 		// matches for pagination/export while copying only the requested page.
 		for _, r := range ordered {
+			if allowed != nil && !allowed[r.Problem.Node] {
+				continue
+			}
+			out.Stored++
 			if !matchesHistory(r, q.HistoryFilter) {
 				continue
 			}
@@ -152,6 +171,17 @@ func (s *Store) QueryHistory(q HistoryQuery) (HistoryPage, error) {
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return out, nil
+}
+
+func nodeScope(nodes []string) map[string]bool {
+	if nodes == nil {
+		return nil
+	}
+	allowed := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		allowed[node] = true
+	}
+	return allowed
 }
 
 // orderedHistoryLocked borrows records from the current immutable state. Both

@@ -286,13 +286,26 @@ func (s *Store) ApplyBatch(items []BatchItem, actor string, change Change) ([]Re
 
 // Recent includes handled episodes that no longer appear in active alarms.
 func (s *Store) Recent() []Record {
+	return s.RecentForNodes(nil)
+}
+
+// RecentForNodes applies authorization before the overview limit, so hidden
+// activity cannot expose notes or crowd visible older entries off the page.
+func (s *Store) RecentForNodes(nodes []string) []Record {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ordered := s.orderedHistoryLocked()
-	out := make([]Record, min(100, len(ordered)))
-	copy(out, ordered)
-	for i := range out {
-		out[i].History = append([]Action{}, out[i].History...)
+	allowed := nodeScope(nodes)
+	out := make([]Record, 0, min(100, len(ordered)))
+	for _, r := range ordered {
+		if allowed != nil && !allowed[r.Problem.Node] {
+			continue
+		}
+		r.History = append([]Action{}, r.History...)
+		out = append(out, r)
+		if len(out) == 100 {
+			break
+		}
 	}
 	return out
 }

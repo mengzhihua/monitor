@@ -152,6 +152,9 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		out := map[string]any{}
 		if s.opt.Nodes != nil {
 			for _, nd := range s.opt.Nodes.List() {
+				if !s.roomAllowed(userOf(r), nd.ID) {
+					continue
+				}
 				out[nd.ID] = s.inventoryView(nd.ID)
 			}
 		}
