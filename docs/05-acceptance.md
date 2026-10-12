@@ -442,6 +442,8 @@ make bench
 make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
+# 24h 内存浸泡（记录 RSS / heap / TSDB series 增长）：
+python3 scripts/soak.py --seconds 86400 --sample-every 30 --output reports/soak-24h.json
 cd web && npx playwright install chromium && npm run test:e2e
 cd ../app && flutter analyze && flutter test
 flutter test integration_test/secure_storage_test.dart -d macos

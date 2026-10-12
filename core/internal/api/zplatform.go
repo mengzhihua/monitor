@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
@@ -100,18 +101,32 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown command", http.StatusBadRequest)
 		return
 	}
+	started := time.Now()
 	cmd := exec.CommandContext(r.Context(), argv[0], argv[1:]...)
 	out, err := cmd.CombinedOutput()
+	elapsed := time.Since(started)
 	msg := strings.TrimSpace(string(out))
 	if len(msg) > 4000 {
 		msg = msg[:4000]
 	}
 	code := 0
 	if err != nil {
-		code = 1
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			code = 1
+		}
 	}
-	s.auditEvent(r, "command:"+body.Name, userOf(r).Name)
-	writeJSON(w, map[string]any{"name": body.Name, "exit": code, "output": msg})
+	u := userOf(r)
+	if s.audit != nil {
+		exit := code
+		s.audit.Append(audit.Entry{
+			TS: time.Now().Unix(), User: u.Name, Role: string(u.Role), Remote: remoteHost(r),
+			Method: r.Method, Path: r.URL.Path, Action: "command:" + body.Name, Target: body.Name, Status: 200,
+			Command: body.Name, Argv: strings.Join(argv, " "), ExitCode: &exit, DurationMs: elapsed.Milliseconds(), Output: msg,
+		})
+	}
+	writeJSON(w, map[string]any{"name": body.Name, "exit": code, "output": msg, "duration_ms": elapsed.Milliseconds()})
 }
 
 func validateArgv(argv []string) error {
