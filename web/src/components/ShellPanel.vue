@@ -139,7 +139,6 @@ async function ensureTerminal(requestEpoch: number) {
 }
 function focusTerminal() { if (!coarsePointer()) term?.focus() }
 function closeReason(reason: string): string {
- const idleMin = Math.max(1, Math.round((config.value?.idle_seconds || 300) / 60))
  const maxMin = Math.max(1, Math.round((config.value?.max_seconds || 1800) / 60))
  const reasons: Record<string,string> = {
   session_revoked:'会话已从其他页面终止。勾选确认后可手动重连。',
