@@ -198,7 +198,7 @@ export interface SilenceState { all: boolean; until?: number; alarms: Record<str
 export interface AlertRuleSpec {
   name: string; on: string; class?: string; type?: string; component?: string
   lookup?: string; calc?: string; every?: string; units?: string; warn?: string; crit?: string
-  for?: string; keep_firing_for?: string; recovery?: string; delay?: string; repeat?: string; info?: string; to?: string; chart_labels?: Record<string, string>; disabled?: boolean
+  for?: string; keep_firing_for?: string; no_data_state?: string; exec_err_state?: string; recovery?: string; delay?: string; repeat?: string; info?: string; to?: string; chart_labels?: Record<string, string>; disabled?: boolean
   macros?: Record<string, string>
 }
 export interface AlertRuleConfig {

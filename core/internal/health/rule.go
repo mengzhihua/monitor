@@ -35,33 +35,37 @@ import (
 //     recovery: $this < 70              # stay raised until this is also true
 //     for: 1m                            # condition must hold before the status rises
 //     keep_firing_for: 5m               # stay raised after the condition clears
+//     no_data_state: keep_last          # undefined|ok|alerting|keep_last when lookup has no samples
+//     exec_err_state: alerting          # same vocabulary when calc/lookup evaluation fails
 //     delay: down 15m multiplier 1.5 max 1h
 //     repeat: warning 30m critical 10m
 //     info: average CPU utilization over the last 10 minutes
 //     macros: { CPU_WARN: "85" }         # {$NAME} expansions, override health.macros
 //     to: sysadmin
 type RuleSpec struct {
-	Name       string            `yaml:"name" json:"name"`
-	On         string            `yaml:"on" json:"on"`
-	Class      string            `yaml:"class" json:"class,omitempty"`
-	Type       string            `yaml:"type" json:"type,omitempty"`
-	Compon     string            `yaml:"component" json:"component,omitempty"`
-	Lookup     string            `yaml:"lookup" json:"lookup,omitempty"`
-	Calc       string            `yaml:"calc" json:"calc,omitempty"`
-	Every      string            `yaml:"every" json:"every,omitempty"`
-	Units      string            `yaml:"units" json:"units,omitempty"`
-	Warn       string            `yaml:"warn" json:"warn,omitempty"`
-	Crit       string            `yaml:"crit" json:"crit,omitempty"`
-	Recovery   string            `yaml:"recovery,omitempty" json:"recovery,omitempty"`
-	For        string            `yaml:"for,omitempty" json:"for,omitempty"`
-	KeepFiring string            `yaml:"keep_firing_for,omitempty" json:"keep_firing_for,omitempty"`
-	Delay      string            `yaml:"delay" json:"delay,omitempty"`
-	Repeat     string            `yaml:"repeat" json:"repeat,omitempty"`
-	Info       string            `yaml:"info" json:"info,omitempty"`
-	To         string            `yaml:"to" json:"to,omitempty"`
-	Labels     map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
-	Disabled   bool              `yaml:"disabled" json:"disabled,omitempty"`
-	Macros     map[string]string `yaml:"macros" json:"macros,omitempty"` // rule-level {$NAME} overrides
+	Name         string            `yaml:"name" json:"name"`
+	On           string            `yaml:"on" json:"on"`
+	Class        string            `yaml:"class" json:"class,omitempty"`
+	Type         string            `yaml:"type" json:"type,omitempty"`
+	Compon       string            `yaml:"component" json:"component,omitempty"`
+	Lookup       string            `yaml:"lookup" json:"lookup,omitempty"`
+	Calc         string            `yaml:"calc" json:"calc,omitempty"`
+	Every        string            `yaml:"every" json:"every,omitempty"`
+	Units        string            `yaml:"units" json:"units,omitempty"`
+	Warn         string            `yaml:"warn" json:"warn,omitempty"`
+	Crit         string            `yaml:"crit" json:"crit,omitempty"`
+	Recovery     string            `yaml:"recovery,omitempty" json:"recovery,omitempty"`
+	For          string            `yaml:"for,omitempty" json:"for,omitempty"`
+	KeepFiring   string            `yaml:"keep_firing_for,omitempty" json:"keep_firing_for,omitempty"`
+	NoDataState  string            `yaml:"no_data_state,omitempty" json:"no_data_state,omitempty"`
+	ExecErrState string            `yaml:"exec_err_state,omitempty" json:"exec_err_state,omitempty"`
+	Delay        string            `yaml:"delay" json:"delay,omitempty"`
+	Repeat       string            `yaml:"repeat" json:"repeat,omitempty"`
+	Info         string            `yaml:"info" json:"info,omitempty"`
+	To           string            `yaml:"to" json:"to,omitempty"`
+	Labels       map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
+	Disabled     bool              `yaml:"disabled" json:"disabled,omitempty"`
+	Macros       map[string]string `yaml:"macros" json:"macros,omitempty"` // rule-level {$NAME} overrides
 }
 
 type ruleFile struct {
@@ -104,20 +108,22 @@ type Repeat struct {
 
 // Rule is a compiled RuleSpec.
 type Rule struct {
-	Spec       RuleSpec
-	Lookup     *Lookup
-	Every      time.Duration
-	Calc       *Expr
-	Warn       *Expr
-	Crit       *Expr
-	Recovery   *Expr
-	Delay      Delay
-	Repeat     Repeat
-	For        time.Duration // pending time before a raise commits; 0 = immediate
-	KeepFiring time.Duration // hold a raised status after the condition clears; 0 = immediate
-	Info       string        // Spec.Info with macros expanded
-	Units      string        // Spec.Units with macros expanded
-	Source     string
+	Spec         RuleSpec
+	Lookup       *Lookup
+	Every        time.Duration
+	Calc         *Expr
+	Warn         *Expr
+	Crit         *Expr
+	Recovery     *Expr
+	Delay        Delay
+	Repeat       Repeat
+	For          time.Duration // pending time before a raise commits; 0 = immediate
+	KeepFiring   time.Duration // hold a raised status after the condition clears; 0 = immediate
+	NoDataState  EvalStatePolicy
+	ExecErrState EvalStatePolicy
+	Info         string // Spec.Info with macros expanded
+	Units        string // Spec.Units with macros expanded
+	Source       string
 
 	expandedHash string // hash of the macro-resolved spec (set by CompileWith)
 }
@@ -132,8 +138,8 @@ var ErrUnknownMacro = errors.New("unknown macro")
 // Rule-level macros win over global ones; a leftover placeholder is an error.
 func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
 	fields := []*string{&spec.Lookup, &spec.Calc, &spec.Warn, &spec.Crit,
-		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.Delay,
-		&spec.Repeat, &spec.Info, &spec.Units}
+		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.NoDataState,
+		&spec.ExecErrState, &spec.Delay, &spec.Repeat, &spec.Info, &spec.Units}
 	// Expand iteratively so a macro value may itself contain {$OTHER}. An
 	// acyclic chain resolves within #macros rounds; the +1 leaves room for
 	// the no-change pass that terminates expansion.
@@ -227,6 +233,12 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 		return nil, err
 	}
 	if r.KeepFiring, err = parseSustain(source, spec.Name, "keep_firing_for", spec.KeepFiring); err != nil {
+		return nil, err
+	}
+	if r.NoDataState, err = parseEvalState(source, spec.Name, "no_data_state", spec.NoDataState); err != nil {
+		return nil, err
+	}
+	if r.ExecErrState, err = parseEvalState(source, spec.Name, "exec_err_state", spec.ExecErrState); err != nil {
 		return nil, err
 	}
 	if r.Delay, err = ParseDelay(spec.Delay); err != nil {

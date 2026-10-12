@@ -721,6 +721,8 @@ health:
   #   recovery: '$this < 70'         # stay raised until warn/crit are false and this is true
   #   for: 1m                         # status stays put until warn/crit holds this long; empty = immediate
   #   keep_firing_for: 5m            # stay raised this long after the condition clears
+  #   no_data_state: undefined       # undefined|ok|alerting|keep_last when lookup has no samples
+  #   exec_err_state: undefined      # same vocabulary when calc/lookup evaluation fails
   #   delay: down 15m multiplier 1.5 max 1h
   #   repeat: warning 1h critical 15m
   #   info: system memory utilization

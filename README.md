@@ -39,7 +39,7 @@
 
 告警查询现按所选维度读取，求和复用同一次 TSDB 查询；Web 合并重复告警读取，历史日志按面板需要加载，无订阅时跳过推送编码。可复测的耗时和分配数据见 [告警查询与页面刷新优化](docs/12-runtime-efficiency.md#2026-10-09告警查询与页面刷新)。
 
-新增 **本机告警规则** 工作台：JSON 编辑、保存前语法与图表范围预览、规则持久化、并发冲突保护，以及禁用、删除和恢复配置规则。行业对标、权限、生效边界和后续差距见 [告警规则工作台](docs/13-alert-rule-workbench.md)。
+新增 **本机告警规则** 工作台：JSON 编辑、保存前语法与图表范围预览、规则持久化、并发冲突保护，以及禁用、删除和恢复配置规则。支持 `no_data_state` / `exec_err_state`（无数据与求值错误策略）。行业对标、权限、生效边界和后续差距见 [告警规则工作台](docs/13-alert-rule-workbench.md)。
 
 新增 **手机 H5 看板**：手机浏览器访问原监控地址，底部切换总览、图表、告警，“更多”打开服务拓扑及管理工具；支持图表触控读数、手机告警卡片、安全区适配和主屏幕入口，继续使用原有登录与权限。详见 [手机 H5 使用指南](docs/16-mobile-h5.md)。
 
@@ -454,6 +454,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 | --- | --- |
 | 通知 | `health.inhibit`：源告警处于 `critical`（或 `warning`）时，目标告警继续展示，警告和严重通知被抑制，诊断原因 `dependency`。`targets: ["*"]` 不抑制同源告警名。可按 chart、context、family、class、type、component 或 `label:<key>` 要求双方相同 |
 | 持续触发 | 规则 `for`：警告或严重需连续成立后才改变状态。`keep_firing_for`：条件恢复后仍保持已升高状态。`delay` 只推迟通知。等待升高时告警带 `pending_status` 和 `pending_until`。告警面板显示等待或恢复倒计时 |
+| 无数据 / 求值错误 | 规则 `no_data_state` / `exec_err_state`：`undefined`（默认）、`ok`、`alerting`、`keep_last`。空查找窗口走无数据；有样本时 calc/lookup 得到 NaN/Inf 走求值错误。策略结果立即提交，不经过 `for` / `keep_firing_for` |
 | 恢复表达式 | 规则 `recovery`：警告和严重表达式都不成立后，该表达式为真才回到正常。等待期间告警带 `recovery_hold`，面板显示「等待恢复」 |
 | 无代理采集 | SNMPv3、自定义 OID、SNMP 表 LLD、SSH/Telnet 检查、Jolokia、HTTP Agent、带 Cookie 的多步 Web 场景、依赖项与值预处理 |
 | 动作 | `health.actions` 多步升级和恢复操作；`correlation` 在原因告警升高时抑制症状通知；`commands` 白名单；脚本通知 |

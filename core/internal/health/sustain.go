@@ -6,7 +6,8 @@ import "time"
 // rise at the previous status until the new warning or critical state has
 // been continuous. keep_firing_for holds a raised status after the condition
 // returns to clear. Notification delay is unchanged and starts only after
-// the status itself commits. No-data stays immediate.
+// the status itself commits. No-data and exec-error policy outcomes are
+// applied in evaluate() before this gate and commit immediately.
 func gateRaised(a *Alarm, want Status, now time.Time) Status {
 	if want <= StatusUndefined || a == nil || a.rule == nil {
 		if a != nil {
