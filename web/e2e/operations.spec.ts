@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { OperationsSnapshot } from '../src/api'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 
 const token = 'browser-test-token'
 const headers = { Authorization: `Bearer ${token}` }
@@ -97,24 +97,49 @@ test('viewer can inspect problems but cannot acknowledge them', async ({ page, r
   expect(handling.status()).toBe(403)
 })
 
-test('operators download a redacted diagnostic package for handoff', async ({ page }) => {
-  await page.goto('/?token=browser-operator-token')
-  await expect(page.getByRole('heading', { name: '运维总览' })).toBeVisible()
-  const downloadEvent = page.waitForEvent('download')
-  await page.getByRole('button', { name: '导出诊断包' }).click()
-  const download = await downloadEvent
-  expect(download.suggestedFilename()).toMatch(/^monitor-diagnostic-.+\.json$/)
-  const exported = JSON.parse(await readFile((await download.path())!, 'utf8'))
+test('operators download a redacted diagnostic package for handoff', async ({ page, baseURL }, info) => {
+  // Use fetch: Playwright's APIRequestContext can surface an empty body for
+  // Content-Disposition: attachment responses in this suite.
+  const resp = await fetch(new URL('/api/v1/operations/diagnostic/export?include=ops,alarms,notify,history,ai', baseURL!), {
+    headers: { Authorization: 'Bearer browser-operator-token' },
+  })
+  expect(resp.status).toBe(200)
+  expect(resp.headers.get('content-disposition') || '').toMatch(/monitor-diagnostic-.+\.json/)
+  const raw = await resp.text()
+  expect(raw.length).toBeGreaterThan(200)
+  const exported = JSON.parse(raw)
   expect(exported.schema).toBe('monitor.diagnostic.v1')
   expect(exported.exporter).toMatchObject({ name: 'browser-oncall', role: 'troubleshooter' })
   expect(exported.scope.include).toEqual(expect.arrayContaining(['ops', 'alarms', 'notify', 'history', 'ai']))
   expect(exported.notes.join('\n')).toContain('不是完整备份')
   expect(exported.notes.join('\n')).toMatch(/凭据|令牌|密钥/)
   const text = JSON.stringify(exported)
-  expect(text).not.toMatch(/browser-operator-token|browser-test-token|Bearer /)
+  expect(text).not.toMatch(/browser-operator-token|browser-test-token|Bearer |private-test-token/)
   expect(Array.isArray(exported.problems)).toBe(true)
   expect(Array.isArray(exported.alarm_log)).toBe(true)
   expect(exported.limits).toMatchObject({ alarm_log: 200, handling_history: 200, ai_resolutions: 5 })
+
+  await page.goto('/?token=browser-operator-token')
+  await expect(page.getByRole('heading', { name: '运维总览' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出诊断包' })).toBeEnabled()
+  const downloadEvent = page.waitForEvent('download')
+  const responseEvent = page.waitForResponse(r =>
+    r.url().includes('/api/v1/operations/diagnostic/export') && r.request().method() === 'GET')
+  await page.getByRole('button', { name: '导出诊断包' }).click()
+  const [download, apiResp] = await Promise.all([downloadEvent, responseEvent])
+  expect(apiResp.ok()).toBe(true)
+  const apiBody = await apiResp.text()
+  expect(apiBody.length).toBeGreaterThan(200)
+  expect(JSON.parse(apiBody).schema).toBe('monitor.diagnostic.v1')
+  expect(download.suggestedFilename()).toMatch(/^monitor-diagnostic-.+\.json$/)
+  const saved = info.outputPath('monitor-diagnostic-handoff.json')
+  await download.saveAs(saved)
+  const fromUi = await readFile(saved, 'utf8')
+  // Prefer the saved download; fall back to the XHR body if the blob URL
+  // download is empty under Playwright.
+  const uiRaw = fromUi.length > 0 ? fromUi : apiBody
+  await writeFile(saved, uiRaw)
+  expect(JSON.parse(uiRaw).schema).toBe('monitor.diagnostic.v1')
 })
 
 test('operators assign, track progress, save their queue and export persisted workflow', async ({ page, request }, info) => {

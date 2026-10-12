@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -33,9 +34,11 @@ type diagnosticLogEntry struct {
 	Family     string        `json:"family,omitempty"`
 	Status     health.Status `json:"status"`
 	OldStatus  health.Status `json:"old_status"`
-	Value      float64       `json:"value"`
-	OldValue   float64       `json:"old_value"`
-	Units      string        `json:"units,omitempty"`
+	// Value/OldValue use pointers so NaN/Inf from UNINITIALIZED transitions
+	// become JSON null (encoding/json cannot marshal NaN).
+	Value    *float64 `json:"value"`
+	OldValue *float64 `json:"old_value"`
+	Units    string   `json:"units,omitempty"`
 	Info       string        `json:"info,omitempty"`
 	Delay      int64         `json:"delay,omitempty"`
 	Repeat     bool          `json:"repeat,omitempty"`
@@ -113,7 +116,7 @@ func redactAlarmLog(entries []health.LogEntry, from, until int64, limit int) []d
 		out = append(out, diagnosticLogEntry{
 			UniqueID: e.UniqueID, AlarmID: e.AlarmID, When: e.When, Hostname: e.Hostname,
 			Name: e.Name, Chart: e.Chart, Context: e.Context, Family: e.Family,
-			Status: e.Status, OldStatus: e.OldStatus, Value: e.Value, OldValue: e.OldValue,
+			Status: e.Status, OldStatus: e.OldStatus, Value: finiteOrNil(e.Value), OldValue: finiteOrNil(e.OldValue),
 			Units: e.Units, Info: e.Info, Delay: e.Delay, Repeat: e.Repeat,
 			Notified: e.Notified, NotifiedAt: e.NotifiedAt, Manual: e.Manual, User: e.User, Comment: e.Comment,
 		})
@@ -317,13 +320,26 @@ func (s *Server) handleDiagnosticExport(w http.ResponseWriter, r *http.Request) 
 		}
 		return '-'
 	}, name)
+	payload, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		s.log.Error("diagnostic export encode failed", "err", err)
+		http.Error(w, "diagnostic export encode failed", http.StatusInternalServerError)
+		return
+	}
+	payload = append(payload, '\n')
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="monitor-diagnostic-%s-%s.json"`, safe, time.Now().UTC().Format("20060102T150405Z")))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(bundle); err != nil {
+	w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+	if _, err := w.Write(payload); err != nil {
 		s.log.Debug("diagnostic export disconnected", "err", err)
 	}
+}
+
+func finiteOrNil(v float64) *float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return nil
+	}
+	return &v
 }
 
 func keysOf(m map[string]bool) []string {

@@ -370,7 +370,13 @@ export const api = {
     if (!r.ok) throw new ApiError(r.status, `${r.status} ${await r.text()}`)
     const disposition = r.headers.get('Content-Disposition') || ''
     const match = /filename="([^"]+)"/.exec(disposition)
-    return { blob: await r.blob(), filename: match?.[1] || `monitor-diagnostic-${Date.now()}.json` }
+    // Read the full body before building the Blob so Playwright/object-URL downloads
+    // are not handed an empty stream under chunked Transfer-Encoding.
+    const body = await r.arrayBuffer()
+    return {
+      blob: new Blob([body], { type: 'application/json;charset=utf-8' }),
+      filename: match?.[1] || `monitor-diagnostic-${Date.now()}.json`,
+    }
   },
   acknowledge: (body: { id: string; action: string; note: string; revision: number }) =>
     post<HandlingRecord>('/api/v1/operations/acknowledgements', body),

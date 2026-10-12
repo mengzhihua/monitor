@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +81,9 @@ func TestDiagnosticExportRBACAndRedaction(t *testing.T) {
 		t.Fatalf("viewer status=%d body=%s", resp.StatusCode, body)
 	}
 
-	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/v1/operations/diagnostic/export?include=ops,alarms,notify,history,ai", nil)
+	// Tick uses now+1s; widen until so the UNINITIALIZED→WARNING entry is included.
+	until := time.Now().Unix() + 3600
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/api/v1/operations/diagnostic/export?include=ops,alarms,notify,history,ai&from=1&until="+strconv.FormatInt(until, 10), nil)
 	req.Header.Set("Authorization", "Bearer operator")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -90,6 +93,9 @@ func TestDiagnosticExportRBACAndRedaction(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("operator status=%d body=%s", resp.StatusCode, raw)
+	}
+	if len(raw) == 0 {
+		t.Fatal("empty diagnostic body")
 	}
 	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "monitor-diagnostic-diag-host-") || !strings.HasSuffix(cd, `.json"`) {
 		t.Fatalf("disposition=%q", cd)
@@ -119,9 +125,15 @@ func TestDiagnosticExportRBACAndRedaction(t *testing.T) {
 			t.Fatalf("bundle leaked %q: %s", bad, secret)
 		}
 	}
+	if len(bundle.AlarmLog) == 0 {
+		t.Fatal("expected alarm_log after first transition")
+	}
 	for _, e := range bundle.AlarmLog {
 		if e.Name == "" {
 			t.Fatal(e)
+		}
+		if e.OldValue != nil {
+			t.Fatalf("expected null old_value for UNINITIALIZED transition, got %v", *e.OldValue)
 		}
 	}
 	// Recipient must not be serialized on diagnostic log entries.
