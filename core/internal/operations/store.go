@@ -44,8 +44,8 @@ func (c Change) Validate() error {
 		return fmt.Errorf("%w: note must be at most 2048 UTF-8 bytes", ErrInvalidChange)
 	}
 	switch c.Action {
-	case "acknowledge", "unacknowledge", "comment", "unassign":
-		if c.Assignee != "" || c.Status != "" || (c.Action == "comment" && strings.TrimSpace(c.Note) == "") {
+	case "acknowledge", "unacknowledge", "comment", "unassign", "auto_command":
+		if c.Assignee != "" || c.Status != "" || ((c.Action == "comment" || c.Action == "auto_command") && strings.TrimSpace(c.Note) == "") {
 			return ErrInvalidChange
 		}
 	case "assign":
@@ -282,6 +282,33 @@ func (s *Store) ApplyBatch(items []BatchItem, actor string, change Change) ([]Re
 	s.historyVersion = ""
 	s.historyOrder = nil
 	return records, nil
+}
+
+// AppendSystem records an automated history note, retrying briefly on revision
+// races with concurrent operator edits. It never changes ack/assignee/status.
+func (s *Store) AppendSystem(id, actor string, change Change, target Target) (Record, error) {
+	if err := change.Validate(); err != nil {
+		return Record{}, err
+	}
+	if change.Action != "auto_command" && change.Action != "comment" {
+		return Record{}, ErrInvalidChange
+	}
+	var last error
+	for i := 0; i < 8; i++ {
+		r := s.Get(id)
+		rec, err := s.Apply(id, actor, change, r.Revision, target)
+		if err == nil {
+			return rec, nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			return Record{}, err
+		}
+		last = err
+	}
+	if last == nil {
+		last = ErrConflict
+	}
+	return Record{}, last
 }
 
 // Recent includes handled episodes that no longer appear in active alarms.

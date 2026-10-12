@@ -144,7 +144,7 @@ function matchingActivity(records: OperationsSnapshot['activity'], search: strin
   return records.filter(r => !q || `${r.problem.hostname} ${r.problem.name} ${r.problem.chart} ${r.assignee} ${r.history.map(h => `${h.actor} ${h.assignee || ''} ${h.previous_assignee || ''} ${h.note}`).join(' ')}`.toLowerCase().includes(q))
 }
 const statusName: Record<string, string> = { live: '在线', stale: '数据过期', offline: '离线' }
-const actionName: Record<string, string> = { acknowledge: '确认问题', unacknowledge: '撤销确认', comment: '补充备注', assign: '指派责任人', unassign: '取消指派', progress: '更新进度' }
+const actionName: Record<string, string> = { acknowledge: '确认问题', unacknowledge: '撤销确认', comment: '补充备注', assign: '指派责任人', unassign: '取消指派', progress: '更新进度', auto_command: '自动动作' }
 const progressName: Record<HandlingStatus, string> = { open: '待处理', investigating: '排查中', watching: '观察中' }
 function describeAction(h: HandlingAction) {
   const label = actionName[h.action] || h.action

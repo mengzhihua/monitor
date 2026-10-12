@@ -149,9 +149,10 @@ func run() error {
 	}
 	sched := collect.NewScheduler(reg, log.With("component", "collect"), collect.Options{Names: cfg.Collectors.Enabled, Disabled: localDisabled, Modules: cfg.ModuleDecoders()})
 
+	runner := &autoCommandRunner{commands: cfg.Commands, log: log.With("component", "auto-action")}
 	var eng *health.Engine
 	if cfg.HealthEnabled() {
-		eng, err = newHealth(cfg, *cfgPath, reg, db, log.With("component", "health"))
+		eng, err = newHealth(cfg, *cfgPath, reg, db, log.With("component", "health"), runner)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
@@ -274,6 +275,7 @@ func run() error {
 		}
 		defer auditLog.Close()
 	}
+	runner.audit = auditLog
 
 	apiOpt := api.Options{
 		Shell:         cfg.Shell,
@@ -412,6 +414,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	runner.record = srv.RecordAutoAction
 	if cfg.Trapper.Listen != "" {
 		if _, err := trapper.Start(ctx.Done(), cfg.Trapper.Listen, cfg.Trapper.Allowed, cfg.Trapper.PSK, reg); err != nil {
 			return fmt.Errorf("trapper: %w", err)
@@ -603,7 +606,88 @@ func hostIdentity(cfg *config.Config) (*registry.Host, error) {
 	}, nil
 }
 
-func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, log *slog.Logger) (*health.Engine, error) {
+// autoCommandRunner runs whitelisted remediation commands for health actions,
+// capturing exit code / duration / truncated output for audit + handling history.
+type autoCommandRunner struct {
+	commands []config.Command
+	audit    *audit.Log
+	record   func(health.ActionCommand, int, int64, string)
+	timeout  time.Duration
+	log      *slog.Logger
+}
+
+const autoCommandOutputMax = 4096
+
+func (r *autoCommandRunner) Run(inv health.ActionCommand) {
+	if r == nil || inv.Name == "" {
+		return
+	}
+	timeout := r.timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	for _, c := range r.commands {
+		if c.Name != inv.Name || len(c.Argv) == 0 || !filepath.IsAbs(c.Argv[0]) || strings.ContainsAny(strings.Join(c.Argv, ""), "\n\r") {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		started := time.Now()
+		cmd := exec.CommandContext(ctx, c.Argv[0], c.Argv[1:]...)
+		out, err := cmd.CombinedOutput()
+		elapsed := time.Since(started)
+		cancel()
+		msg := strings.TrimSpace(string(out))
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && msg == "" {
+			msg = "command timed out"
+		}
+		if len(msg) > autoCommandOutputMax {
+			msg = msg[:autoCommandOutputMax]
+		}
+		code := 0
+		if err != nil {
+			if ee, ok := err.(*exec.ExitError); ok {
+				code = ee.ExitCode()
+			} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				code = -1
+			} else {
+				code = 1
+			}
+		}
+		if r.audit != nil {
+			exit := code
+			r.audit.Append(audit.Entry{
+				TS: time.Now().Unix(), User: "system", Role: "system",
+				Action: "action:" + inv.Name, Target: inv.AlarmName + "/" + inv.Chart, Status: 200,
+				Command: inv.Name, Argv: strings.Join(c.Argv, " "), ExitCode: &exit,
+				DurationMs: elapsed.Milliseconds(), Output: msg,
+				Note: fmt.Sprintf("alarm=%s chart=%s recovery=%v", inv.AlarmName, inv.Chart, inv.Recovery),
+			})
+		}
+		if r.record != nil {
+			r.record(inv, code, elapsed.Milliseconds(), msg)
+		}
+		if r.log != nil && code != 0 {
+			r.log.Warn("auto action failed", "command", inv.Name, "alarm", inv.AlarmName, "exit", code, "duration_ms", elapsed.Milliseconds())
+		}
+		return
+	}
+	if r.log != nil {
+		r.log.Warn("auto action unknown command", "command", inv.Name, "alarm", inv.AlarmName)
+	}
+	if r.audit != nil {
+		exit := 127
+		r.audit.Append(audit.Entry{
+			TS: time.Now().Unix(), User: "system", Role: "system",
+			Action: "action:" + inv.Name, Target: inv.AlarmName + "/" + inv.Chart, Status: 404,
+			Command: inv.Name, ExitCode: &exit, Note: "unknown or invalid command",
+		})
+	}
+	if r.record != nil {
+		r.record(inv, 127, 0, "unknown or invalid command")
+	}
+}
+
+func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, log *slog.Logger, runner *autoCommandRunner) (*health.Engine, error) {
 	var sets [][]*health.Rule
 	if cfg.HealthBuiltin() {
 		builtin, err := health.DefaultRulesWith(cfg.Health.Macros)
@@ -744,7 +828,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		Macros:           cfg.Health.Macros,
 		Actions:          cfg.Health.Actions,
 		Correlation:      cfg.Health.Correlation,
-		RunCommand:       commandRunner(cfg.Commands),
+		RunCommand:       runner.Run,
 	})
 }
 
@@ -754,19 +838,6 @@ func apiCommands(in []config.Command) []api.Command {
 		out = append(out, api.Command{Name: c.Name, Argv: c.Argv})
 	}
 	return out
-}
-
-func commandRunner(commands []config.Command) func(string) {
-	return func(name string) {
-		for _, c := range commands {
-			if c.Name != name || len(c.Argv) == 0 || !filepath.IsAbs(c.Argv[0]) || strings.ContainsAny(strings.Join(c.Argv, ""), "\n\r") {
-				continue
-			}
-			cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
-			_ = cmd.Run()
-			return
-		}
-	}
 }
 
 func reportDir(cfg *config.Config) string {

@@ -29,7 +29,7 @@ func TestHealthStartupRestoresRuleOverridesOverCurrentConfiguration(t *testing.T
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	open := func() *health.Engine {
 		t.Helper()
-		e, err := newHealth(cfg, path, reg, nil, logger)
+		e, err := newHealth(cfg, path, reg, nil, logger, &autoCommandRunner{})
 		if err != nil {
 			t.Fatal(err)
 		}

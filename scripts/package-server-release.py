@@ -210,31 +210,46 @@ def validate_receipt(root: Path, targets: list[str], version: str, commit: str) 
         raise PackageError("Missing or mismatched controlled-build receipt; run with --build") from exc
 
 
-def launcher(os_name: str) -> tuple[str, bytes]:
+def launcher_files(root: Path, os_name: str) -> tuple[str, dict[str, tuple[bytes, int]]]:
+    """Return (primary launch name, {relative_name: (bytes, mode)})."""
     if os_name == "windows":
-        return "start.cmd", (
+        start = (
             '@echo off\r\ncd /d "%~dp0"\r\n'
+            'if not exist data mkdir data\r\n'
             'echo Open http://127.0.0.1:20099/ ; password: data\\web-password\r\n'
-            'monitord.exe -listen 127.0.0.1:20099 -data-dir .\\data\r\n'
-            'if errorlevel 1 pause\r\n'
+            'start /b "" monitord.exe -listen 127.0.0.1:20099 -data-dir .\\data >nul\r\n'
+            'for /f "tokens=2" %%P in (\'wmic process where "name=\'monitord.exe\' and CommandLine like \'%%data%%\' get ProcessId /value ^| find "ProcessId"\') do echo %%P>data\\monitord.pid\r\n'
+            'echo Started. Stop with stop.cmd\r\n'
         ).encode("ascii")
-    return ("运行.command" if os_name == "darwin" else "start.sh"), (
-        '#!/bin/sh\nset -eu\ncd -- "$(dirname -- "$0")"\n'
-        'printf "%s\\n" "Open http://127.0.0.1:20099/ ; password: data/web-password"\n'
-        'exec ./monitord -listen 127.0.0.1:20099 -data-dir ./data\n'
-    ).encode("utf-8")
+        stop = (
+            '@echo off\r\ncd /d "%~dp0"\r\n'
+            'if not exist data\\monitord.pid (echo pidfile missing & exit /b 1)\r\n'
+            'set /p PID=<data\\monitord.pid\r\n'
+            'wmic process where "ProcessId=%PID% and CommandLine like \'%%data%%\'" get ProcessId 2>nul | find "%PID%" >nul\r\n'
+            'if errorlevel 1 (echo pid %PID% is not this instance & exit /b 1)\r\n'
+            'taskkill /PID %PID% /T\r\n'
+            'del data\\monitord.pid\r\n'
+            'echo stopped pid %PID%\r\n'
+        ).encode("ascii")
+        return "start.cmd", {"start.cmd": (start, 0o755), "stop.cmd": (stop, 0o755)}
+    start_name = "运行.command" if os_name == "darwin" else "start.sh"
+    start = regular_file(root, "packaging/start.sh").read_bytes()
+    stop = regular_file(root, "packaging/stop.sh").read_bytes()
+    return start_name, {start_name: (start, 0o755), "stop.sh": (stop, 0o755)}
 
 
 def quickstart(version: str, os_name: str, architecture: str, launch_name: str) -> bytes:
     signing = "macOS 包没有 Developer ID 签名或公证；Universal 包使用临时签名（ad-hoc）。\n" if os_name == "darwin" else ""
     android = "Android 包是命令行服务端，需要可执行原生二进制的设备环境；不是 APK。\n" if os_name == "android" else ""
+    stop_hint = "stop.cmd" if os_name == "windows" else "./stop.sh"
     return (
         f"Monitor {version} 服务端 + 内嵌 Web\n目标：{os_name}/{architecture}\n\n"
         f"启动：{launch_name}（Unix 可执行 ./{launch_name}）。\n"
+        f"停止：{stop_hint}（按 pidfile 校验命令行后只停本实例，不用 pkill）。\n"
         "浏览器：http://127.0.0.1:20099/\n"
         "首次启动会在本包目录的 data/web-password 创建随机登录密码。\n"
         "启动器只监听本机，使用本包目录独立的 data；不要与已有运行实例共用数据。\n"
-        "若端口占用，请手动指定其他 -listen 地址。按 Ctrl+C 正常停止。\n\n"
+        "若端口占用，请设置 MONITOR_LISTEN 或手动指定其他 -listen 地址。\n\n"
         "包内 monitor.example.yaml 仅是示例，不会自动加载；按需复制为 monitor.yaml。\n"
         "已有安装升级前先停止旧服务并备份原始配置和完整数据，阅读 docs/08-release-2.0.md。\n"
         "升级原安装应保留原有配置/数据路径，勿用空白示例覆盖。\n"
@@ -344,13 +359,15 @@ def package(root: Path, output_root: Path, targets: list[str], universal: bool, 
             }
             if os_name == "darwin":
                 build["notarized"] = False
-            launch_name, launch_data = launcher(os_name)
+            launch_name, launchers = launcher_files(root, os_name)
             entries: dict[str, tuple[Path | bytes, int]] = {name: (path, 0o644) for name, path in documents.items()}
             entries.update({
-                binary_name: (sources[target], 0o755), launch_name: (launch_data, 0o755),
+                binary_name: (sources[target], 0o755),
                 "使用说明.txt": (quickstart(version, os_name, arch, launch_name), 0o644),
                 "BUILD.json": (json_bytes(build), 0o644),
             })
+            for name, (data, mode) in launchers.items():
+                entries[name] = (data, mode)
             label = target.replace("darwin-", "macos-")
             folder = f"monitor-{version}-{label}"
             archive = staging / (folder + (".zip" if os_name == "windows" else ".tar.gz"))

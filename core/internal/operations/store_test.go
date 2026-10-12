@@ -74,6 +74,23 @@ func TestWorkflowMigratesLegacyAndSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestAppendSystemAutoCommand(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.AppendSystem("ep1", "system", Change{Action: "auto_command", Note: "auto action fix: exit=1 duration_ms=12\nboom"}, Target{Name: "disk_full", Chart: "disk.space", Severity: "CRITICAL", Since: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Revision != 1 || len(r.History) != 1 || r.History[0].Action != "auto_command" || r.History[0].Actor != "system" {
+		t.Fatalf("%+v", r)
+	}
+	if _, err := s.AppendSystem("ep1", "system", Change{Action: "assign", Assignee: "x"}, Target{}); !errors.Is(err, ErrInvalidChange) {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkflowValidationAndFailedWrite(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

@@ -117,6 +117,7 @@ type Alarm struct {
 	lastDelayAt       time.Time
 	lastNotifyAttempt int64 // scheduler time, independent of successful delivery
 	actionFired       int   // last escalation step whose command already ran; -1 = recovery
+	prevStatusChange  int64 // LastStatusChange before the latest transition (recovery episode key)
 }
 
 // LogEntry records a status transition (or a repeat notification).
@@ -183,10 +184,22 @@ type Options struct {
 	// Macros are global {$NAME} user macros; rule-level `macros:` override them.
 	Macros map[string]string
 	// Actions are multi-step escalation policies. RunCommand executes a
-	// whitelisted command name; it must not call back into the engine.
+	// whitelisted command; it must not call back into the engine.
 	Actions     []Action
-	RunCommand  func(name string)
+	RunCommand  func(ActionCommand)
 	Correlation []CorrelationRule
+}
+
+// ActionCommand is one auto-remediation invocation fired by an escalation step.
+type ActionCommand struct {
+	Name          string // whitelisted command name
+	AlarmID       uint64
+	AlarmName     string
+	Chart         string
+	Hostname      string
+	EpisodeStatus Status // handling-episode severity (raised status, even for recovery)
+	EpisodeSince  int64  // LastStatusChange of that raised episode
+	Recovery      bool
 }
 
 // AnomalySource is implemented by the ML collector (duck-typed; no import cycle).
@@ -606,6 +619,7 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		status = gateRaised(a, status, now)
 	}
 	if status != old {
+		a.prevStatusChange = a.LastStatusChange
 		a.Status = status
 		a.LastStatusChange = now.Unix()
 		a.actionFired = 0
