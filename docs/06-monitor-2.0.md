@@ -214,7 +214,7 @@ Web 入口与「导出当前快照」并列：快照仍是客户端按当前筛�
 
 最多保存 200 个不同名称。同名再次提交会替换状态、说明和数值，并清除过期标记。省略 `value` 时，隐藏维度保留上一次有限样本。提交后立刻写入图表 `check.<name>`（context `check.status`，family `checks`）。维度 `status` 取值为 0 正常、1 警告、2 严重、3 过期。
 
-超过 TTL 没有新结果时，采集器 `checks` 把该检查标成过期。内置告警 `external_check_status` 绑定 context `check.status`：警告为 WARNING，严重或过期为 CRITICAL。`GET /api/v1/checks` 返回 `{now, checks}`。Function `checks` 列出同一份结果。
+超过 TTL 没有新结果时，采集器 `checks` 把该检查标成过期。内置告警 `external_check_status` 绑定 context `check.status`：警告为 WARNING，严重或过期为 CRITICAL。`GET /api/v1/checks` 返回 `{now, checks}`。Function `checks` 列出同一份结果。检查状态持久化到 `<data_dir>/checks/checks.json`（0600），重启后恢复；不是完整审计，删除后图表仍可能保留到下次清理。
 
 管理员和排障账号可以提交，只读账号只能查看。带非 local 的 `node` 返回 400。若 `collectors.enabled` 白名单没有 `checks`，提交仍然立刻出图；空闲后的过期标记要等该采集器运行才会刷新。进程重启后内存中的检查结果不保留。
 

@@ -44,6 +44,12 @@ type oidcPending struct {
 
 const oidcCookie = "monitor_oidc_state"
 
+func clearOIDCCookie(w http.ResponseWriter, secure bool) {
+	for _, path := range []string{"/api/v1/auth/oidc", "/api/v1/auth/oidc/"} {
+		http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: "", Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	}
+}
+
 type oidcState struct {
 	discoveryMu sync.Mutex
 	cfg         OIDCConfig
@@ -158,7 +164,11 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.oidc.pending[state] = oidcPending{Expires: time.Now().Add(10 * time.Minute), Verifier: verifier}
 	s.oidc.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: state, Path: "/api/v1/auth/oidc/", HttpOnly: true, Secure: strings.HasPrefix(s.oidc.cfg.RedirectURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	// Canonical path without a trailing slash. Also clear the legacy trailing-
+	// slash path so browsers do not accumulate duplicate monitor_oidc_state cookies.
+	secure := strings.HasPrefix(s.oidc.cfg.RedirectURL, "https://")
+	clearOIDCCookie(w, secure)
+	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: state, Path: "/api/v1/auth/oidc", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	q := url.Values{
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
 		"code_challenge_method": {"S256"},
@@ -184,7 +194,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid oidc browser state", http.StatusBadRequest)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: "", Path: "/api/v1/auth/oidc/", HttpOnly: true, Secure: strings.HasPrefix(s.oidc.cfg.RedirectURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	clearOIDCCookie(w, strings.HasPrefix(s.oidc.cfg.RedirectURL, "https://"))
 	s.oidc.mu.Lock()
 	exp, ok := s.oidc.pending[state]
 	if ok {

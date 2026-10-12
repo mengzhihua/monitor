@@ -23,6 +23,12 @@ type Entry struct {
 	Status int    `json:"status,omitempty"`
 	// Note carries an operator comment when one is supplied (e.g. alarm close).
 	Note string `json:"note,omitempty"`
+	// Optional fields for whitelisted command runs (POST /api/v1/commands).
+	Command    string `json:"command,omitempty"`
+	Argv       string `json:"argv,omitempty"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	Output     string `json:"output,omitempty"`
 }
 
 // Log is an in-memory ring over an append-only JSONL file. When the memory
