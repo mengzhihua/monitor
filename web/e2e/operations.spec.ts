@@ -80,16 +80,41 @@ test('viewer can inspect problems but cannot acknowledge them', async ({ page, r
   await expect(page.getByText('当前账号只读', { exact: false })).toBeVisible()
   await expect(page.locator('.problem').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '确认问题', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '导出诊断包' })).toHaveCount(0)
   const resp = await request.post('/api/v1/operations/acknowledgements', {
     headers: { Authorization: 'Bearer browser-viewer-token' }, data: { id: 'forbidden' },
   })
   expect(resp.status()).toBe(403)
+  const diagnostic = await request.get('/api/v1/operations/diagnostic/export', {
+    headers: { Authorization: 'Bearer browser-viewer-token' },
+  })
+  expect(diagnostic.status()).toBe(403)
   await expect(page.getByRole('button', { name: '保存责任人', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '保存进度', exact: true })).toHaveCount(0)
   const handling = await request.post('/api/v1/operations/handling', {
     headers: { Authorization: 'Bearer browser-viewer-token' }, data: { action: 'progress', status: 'watching' },
   })
   expect(handling.status()).toBe(403)
+})
+
+test('operators download a redacted diagnostic package for handoff', async ({ page }) => {
+  await page.goto('/?token=browser-operator-token')
+  await expect(page.getByRole('heading', { name: '运维总览' })).toBeVisible()
+  const downloadEvent = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出诊断包' }).click()
+  const download = await downloadEvent
+  expect(download.suggestedFilename()).toMatch(/^monitor-diagnostic-.+\.json$/)
+  const exported = JSON.parse(await readFile((await download.path())!, 'utf8'))
+  expect(exported.schema).toBe('monitor.diagnostic.v1')
+  expect(exported.exporter).toMatchObject({ name: 'browser-oncall', role: 'troubleshooter' })
+  expect(exported.scope.include).toEqual(expect.arrayContaining(['ops', 'alarms', 'notify', 'history', 'ai']))
+  expect(exported.notes.join('\n')).toContain('不是完整备份')
+  expect(exported.notes.join('\n')).toMatch(/凭据|令牌|密钥/)
+  const text = JSON.stringify(exported)
+  expect(text).not.toMatch(/browser-operator-token|browser-test-token|Bearer /)
+  expect(Array.isArray(exported.problems)).toBe(true)
+  expect(Array.isArray(exported.alarm_log)).toBe(true)
+  expect(exported.limits).toMatchObject({ alarm_log: 200, handling_history: 200, ai_resolutions: 5 })
 })
 
 test('operators assign, track progress, save their queue and export persisted workflow', async ({ page, request }, info) => {

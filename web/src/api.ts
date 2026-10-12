@@ -362,6 +362,16 @@ export const api = {
     if (!r.ok) throw new ApiError(r.status, `${r.status} ${await r.text()}`)
     return r.blob()
   },
+  exportDiagnostic: async (params: Record<string, string> = {}, signal?: AbortSignal) => {
+    const headers: Record<string, string> = {}
+    if (auth.token) headers.Authorization = `Bearer ${auth.token}`
+    const q = new URLSearchParams(params)
+    const r = await fetch(base + '/api/v1/operations/diagnostic/export' + (q.toString() ? '?' + q : ''), { headers, signal })
+    if (!r.ok) throw new ApiError(r.status, `${r.status} ${await r.text()}`)
+    const disposition = r.headers.get('Content-Disposition') || ''
+    const match = /filename="([^"]+)"/.exec(disposition)
+    return { blob: await r.blob(), filename: match?.[1] || `monitor-diagnostic-${Date.now()}.json` }
+  },
   acknowledge: (body: { id: string; action: string; note: string; revision: number }) =>
     post<HandlingRecord>('/api/v1/operations/acknowledgements', body),
   handleProblems: (body: HandlingChange & { note: string; items: { id: string; revision: number }[] }) => post<{ count: number; records: HandlingRecord[] }>('/api/v1/operations/handling/batch', body),
