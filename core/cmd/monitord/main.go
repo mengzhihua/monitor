@@ -96,12 +96,30 @@ func run() error {
 	logLevel := flag.String("log-level", "info", "debug|info|warn|error")
 	listCollectors := flag.Bool("list-collectors", false, "print registered collector names as JSON and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	btReport := flag.Bool("bluetooth-report", false, "probe connected Bluetooth devices once, print the link/codec report and exit")
+	btReportJSON := flag.Bool("bluetooth-report-json", false, "same as -bluetooth-report but print JSON")
+	btSnapshot := flag.String("bluetooth-snapshot", "", "directory of recorded Bluetooth command output to replay instead of probing this host")
 	backupDir := flag.String("backup-dir", "", "offline backup to a new directory and exit")
 	restoreFrom := flag.String("restore-from", "", "restore backup into a new data directory and exit")
 	flag.Parse()
 
 	if *listCollectors {
 		return json.NewEncoder(os.Stdout).Encode(collect.Available())
+	}
+	if *btReport || *btReportJSON {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		report, err := collect.BluetoothReportNow(ctx, *btSnapshot)
+		if err != nil {
+			return err
+		}
+		if *btReportJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(report)
+		}
+		_, err = fmt.Print(collect.FormatBluetoothReport(report))
+		return err
 	}
 	if *showVersion {
 		// Keep "monitord <ver> <os>/<arch>" stable for packaging checks.
