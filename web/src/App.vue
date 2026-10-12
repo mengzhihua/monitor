@@ -156,7 +156,7 @@ const tools = computed(() => [
   { id: 'cloud', label: 'Cloud', title: 'Cloud 控制台', description: '云节点控制台', active: showCloud.value, visible: isHub.value },
   { id: 'templates', label: '模板', title: 'Zabbix 模板 / 主机组 / 资产', description: '主机组与资产模板', active: showTemplates.value, visible: isHub.value },
   { id: 'config', label: '配置', title: '配置：本机与节点', description: '本机与节点配置', active: showConfig.value, visible: info.value?.user?.role === 'admin' },
-  { id: 'shell', label: 'WebShell', title: 'WebShell 主机终端', description: '本机 Shell 与 SSH 交互终端', active: showShell.value, visible: info.value?.user?.role === 'admin' && !!auth.token },
+  { id: 'shell', label: 'WebShell', title: 'WebShell 主机终端', description: '本机 Shell 与 SSH 交互终端', active: showShell.value, visible: info.value?.user?.role === 'admin' && !!info.value?.user?.personal && !!auth.token },
   { id: 'ai', label: 'AI 分析', title: 'AI 分析', description: '自定义模型分析监控快照', active: showAI.value, visible: true },
   { id: 'weights', label: '异常顾问', title: '异常顾问 / 关联分析', description: '异常与指标关联', active: showWeights.value, visible: true },
   { id: 'contexts', label: 'Context', title: 'Context 总览', description: '按指标类型浏览', active: showContexts.value, visible: true },
@@ -540,7 +540,7 @@ onBeforeUnmount(() => {
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
       <LogsPanel :key="'logs:' + selectedNode" v-if="showLogs" @close="showLogs = false" />
-      <ShellPanel v-if="showShell && info && !needToken && info.user?.role === 'admin'" :node="selectedNode" @ready="scrollToShell" @close="showShell = false" />
+      <ShellPanel v-if="showShell && info && !needToken && info.user?.role === 'admin' && info.user?.personal" :node="selectedNode" @ready="scrollToShell" @close="showShell = false" />
       <AIAnalysisPanel v-if="showAI && info" :node="selectedNode" :charts="charts" :problem="aiProblem" :role="info.user?.role || 'viewer'" @close="showAI = false; aiProblem = null" />
       <WeightsPanel :key="'weights:' + selectedNode" v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
       <ContextsPanel :key="'contexts:' + selectedNode" v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />

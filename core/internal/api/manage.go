@@ -152,7 +152,8 @@ func (s *shareStore) user(tok string) (User, bool) {
 		}
 		return User{}, false
 	}
-	return User{Name: st.Name, Role: st.Role, Token: tok, principal: st.principal}, true
+	// LDAP issueUser sets principal; one-off share links leave it empty.
+	return User{Name: st.Name, Role: st.Role, Token: tok, principal: st.principal, Personal: st.principal != ""}, true
 }
 
 func (s *shareStore) issueUser(name string, role Role, ttl time.Duration, principal string) shareTok {

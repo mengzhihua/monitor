@@ -59,10 +59,16 @@ func shellID() string {
 	}
 	return hex.EncodeToString(b[:])
 }
+func shellPersonalAdmin(u User) bool {
+	return u.Role == RoleAdmin && u.Personal && u.principal != ""
+}
+
 func (s *Server) shellAccount(w http.ResponseWriter, r *http.Request) (User, bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	u := userOf(r)
-	if u.Role != RoleAdmin || u.principal == "" || r.URL.Query().Has("token") {
+	// Shared web.token, troubleshooter/viewer, anonymous, share links, and
+	// ?token= query logins cannot open WebShell — personal admin only.
+	if !shellPersonalAdmin(u) || r.URL.Query().Has("token") {
 		http.Error(w, "shell requires a personal administrator login", 403)
 		return u, false
 	}
@@ -216,17 +222,15 @@ func (s *Server) handleShellTicket(w http.ResponseWriter, r *http.Request) {
 func (s *Server) shellCurrentUser(t shellTicket) (User, bool) {
 	r := &http.Request{Header: http.Header{}, URL: &url.URL{}}
 	r.Header.Set("Authorization", "Bearer "+t.token)
-	if s.opt.Token != "" && t.user.principal == viewPrincipal("legacy", s.opt.Token) {
-		return User{Name: "admin", Role: RoleAdmin, principal: t.user.principal}, true
-	}
 	for _, u := range s.opt.Users {
 		if t.user.principal == viewPrincipal("static", u.Token) {
 			u.principal = t.user.principal
-			return u, u.Role == RoleAdmin
+			u.Personal = true
+			return u, shellPersonalAdmin(u)
 		}
 	}
 	u, ok := s.authenticate(r)
-	return u, ok && u.principal == t.user.principal && u.Role == RoleAdmin
+	return u, ok && u.principal == t.user.principal && shellPersonalAdmin(u)
 }
 func (s *Server) shellAudit(r *http.Request, t shellTicket, id, action string, status int) {
 	s.audit.Append(audit.Entry{TS: time.Now().Unix(), User: t.user.Name, Role: string(t.user.Role), Remote: remoteHost(r), Method: r.Method, Path: "/api/v1/shell/connect", Action: action, Target: t.target.ID + "/" + id, Status: status})

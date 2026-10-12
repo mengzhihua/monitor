@@ -116,7 +116,7 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := base64.RawURLEncoding.EncodeToString(b[:])
-	user := User{Name: name, Role: Role(s.saml.cfg.Role), principal: viewPrincipal("saml", name)}
+	user := User{Name: name, Role: Role(s.saml.cfg.Role), principal: viewPrincipal("saml", name), Personal: true}
 	s.saml.mu.Lock()
 	s.saml.sess[tok] = oidcSession{User: user, Expires: time.Now().Add(8 * time.Hour)}
 	s.saml.mu.Unlock()

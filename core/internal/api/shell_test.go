@@ -22,7 +22,15 @@ func shellTestServer(t *testing.T) (*Server, *httptest.Server) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	s, _ := aiTestServer(t, Options{Token: "shell-fixture-admin", Users: []User{{Name: "viewer", Token: "shell-viewer", Role: RoleViewer}, {Name: "oncall", Token: "shell-oncall", Role: RoleTroubleshooter}}, Audit: log, Shell: hostshell.Config{Enabled: true, Targets: []hostshell.Target{{ID: "local-test", Name: "Local", Kind: "local", Argv: []string{"/bin/sh"}, Dir: t.TempDir()}}}})
+	s, _ := aiTestServer(t, Options{
+		Token: "shell-shared-token",
+		Users: []User{
+			{Name: "admin", Token: "shell-fixture-admin", Role: RoleAdmin},
+			{Name: "viewer", Token: "shell-viewer", Role: RoleViewer},
+			{Name: "oncall", Token: "shell-oncall", Role: RoleTroubleshooter},
+		},
+		Audit: log, Shell: hostshell.Config{Enabled: true, Targets: []hostshell.Target{{ID: "local-test", Name: "Local", Kind: "local", Argv: []string{"/bin/sh"}, Dir: t.TempDir()}}},
+	})
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		closed := make(chan struct{})
@@ -82,7 +90,8 @@ func shellDial(t *testing.T, ts *httptest.Server, ticket string) (*websocket.Con
 func TestShellAccessOriginTicketsAndDisabled(t *testing.T) {
 	s, ts := shellTestServer(t)
 	shellRequest(t, ts, "/api/v1/shell/targets", "", "", "", 401)
-	for _, tok := range []string{"shell-viewer", "shell-oncall"} {
+	// Shared web.token and non-admin roles cannot open WebShell.
+	for _, tok := range []string{"shell-shared-token", "shell-viewer", "shell-oncall"} {
 		shellRequest(t, ts, "/api/v1/shell/targets", tok, "", "", 403)
 		shellRequest(t, ts, "/api/v1/shell/tickets", tok, `{"target":"local-test"}`, ts.URL, 403)
 	}
@@ -245,7 +254,7 @@ func TestShellShutdownClosesHijackedConnection(t *testing.T) {
 func TestShellRoomRevocationAndIdentityCollision(t *testing.T) {
 	s, ts := shellTestServer(t)
 	s.opt.Token = ""
-	s.opt.Users = append(s.opt.Users, User{Name: "restricted-admin", Token: "shell-fixture-admin", Role: RoleAdmin, Rooms: []string{"allowed"}})
+	s.opt.Users = []User{{Name: "restricted-admin", Token: "shell-fixture-admin", Role: RoleAdmin, Rooms: []string{"allowed"}}}
 	nodes, err := hub.Open(s.db, t.TempDir(), hub.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +288,7 @@ func TestShellRoomRevocationAndIdentityCollision(t *testing.T) {
 func TestShellTicketPreservesValidatedSecondFactorAndRejectsCredentialRotation(t *testing.T) {
 	s, ts := shellTestServer(t)
 	secret := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
-	s.opt.TOTPSecret = secret
+	s.opt.Users[0].TOTP = secret
 	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-fixture-admin", `{"target":"local-test"}`, ts.URL, 401)
 	r, _ := http.NewRequest("POST", ts.URL+"/api/v1/shell/tickets", strings.NewReader(`{"target":"local-test"}`))
 	r.Header.Set("Authorization", "Bearer shell-fixture-admin")
@@ -301,7 +310,7 @@ func TestShellTicketPreservesValidatedSecondFactorAndRejectsCredentialRotation(t
 	if _, valid := s.shellCurrentUser(ticket); !valid {
 		t.Fatal("validated second factor lost")
 	}
-	s.opt.Token = "rotated-fixture-token"
+	s.opt.Users[0].Token = "rotated-fixture-token"
 	if ws, resp, err := shellDial(t, ts, got.Ticket); err == nil {
 		ws.Close()
 		t.Fatal("rotated credential accepted")
