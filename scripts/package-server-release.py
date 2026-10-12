@@ -176,7 +176,7 @@ def build_binaries(root: Path, targets: list[str], go: str) -> None:
         if os_name == "android":
             env["CGO_ENABLED"] = "0"
         print(f"Building {target} for Monitor {version}", flush=True)
-        command([go, "build", "-trimpath", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/monitord"], root / "core", env)
+        command([go, "build", "-trimpath", "-ldflags", f"-s -w -X main.version={version} -X main.commit={commit} -X main.releaseBuild=1", "-o", str(binary), "./cmd/monitord"], root / "core", env)
         inspect_binary(binary, target, version, commit, go)
         binaries[target] = {"version": version, "source_commit": commit, "sha256": sha256(binary)}
     if source_metadata(root)[:2] != (version, commit):

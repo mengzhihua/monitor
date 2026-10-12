@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -39,7 +40,47 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
-var version = "3.0.15" // release builds override via -ldflags "-X main.version=..."
+// version is the release semver in source; builds override via
+// -ldflags "-X main.version=...". Untagged builds append -dev+short-hash.
+var version = "3.0.15"
+
+// commit is the full git SHA when stamped via ldflags or read from build VCS info.
+var commit = ""
+
+// releaseBuild is "1" for tag/release stamps that must keep a bare semver.
+var releaseBuild = "0"
+
+func init() { applyBuildIdentity() }
+
+func applyBuildIdentity() {
+	if commit == "" {
+		commit = vcsRevision()
+	}
+	if releaseBuild == "1" || commit == "" {
+		return
+	}
+	if strings.Contains(version, "-dev+") || strings.Contains(version, "+") {
+		return
+	}
+	short := commit
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	version = version + "-dev+" + short
+}
+
+func vcsRevision() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -63,6 +104,7 @@ func run() error {
 		return json.NewEncoder(os.Stdout).Encode(collect.Available())
 	}
 	if *showVersion {
+		// Keep "monitord <ver> <os>/<arch>" stable for packaging checks.
 		fmt.Printf("monitord %s %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
@@ -283,6 +325,7 @@ func run() error {
 		OperationsDir: filepath.Join(cfg.Global.DataDir, "operations"),
 		TicketWebhook: cfg.Web.TicketWebhook,
 		Version:       version,
+		Commit:        commit,
 		Mode:          cfg.Mode,
 		StartedAt:     time.Now(),
 		AllowFrom:     cfg.Web.AllowFrom,

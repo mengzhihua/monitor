@@ -1,5 +1,17 @@
 VERSION ?= $(shell cat VERSION)
-LDFLAGS  = -s -w -X main.version=$(VERSION)
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null)
+GIT_COMMIT_SHORT := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
+GIT_EXACT_TAG := $(shell git describe --exact-match --match 'v$(VERSION)' --tags 2>/dev/null)
+RELEASE_BUILD := 0
+BUILD_VERSION := $(VERSION)
+ifneq ($(GIT_EXACT_TAG),v$(VERSION))
+  ifneq ($(GIT_COMMIT_SHORT),)
+    BUILD_VERSION := $(VERSION)-dev+$(GIT_COMMIT_SHORT)
+  endif
+else
+  RELEASE_BUILD := 1
+endif
+LDFLAGS  = -s -w -X main.version=$(BUILD_VERSION) -X main.commit=$(GIT_COMMIT) -X main.releaseBuild=$(RELEASE_BUILD)
 BIN      = core/bin
 
 .PHONY: all web core test lint run cross clean check-version package-server

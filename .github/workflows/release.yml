@@ -210,7 +210,8 @@ PY
           name="monitord-${v}-${{ matrix.label }}"
           ext=""; [ "$GOOS" = windows ] && ext=".exe"
           mkdir -p "dist/$name"
-          (cd core && go build -trimpath -ldflags "-s -w -X main.version=$v" -o "../dist/$name/monitord$ext" ./cmd/monitord)
+          commit=$(git rev-parse HEAD)
+          (cd core && go build -trimpath -ldflags "-s -w -X main.version=$v -X main.commit=$commit -X main.releaseBuild=1" -o "../dist/$name/monitord$ext" ./cmd/monitord)
           cp monitor.example.yaml README.md "dist/$name/"
           cp -r plugins.d "dist/$name/plugins.d"
           cd dist

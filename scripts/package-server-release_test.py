@@ -159,7 +159,7 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(release, "source_metadata", return_value=("2.0.0", COMMIT, EPOCH)), patch.object(release, "inspect_binary"), patch.object(release, "command") as run:
                 release.build_binaries(root, ["linux-amd64"], "go")
             args, cwd, env = run.call_args.args
-            self.assertEqual(args[args.index("-ldflags") + 1], "-s -w -X main.version=2.0.0")
+            self.assertEqual(args[args.index("-ldflags") + 1], f"-s -w -X main.version=2.0.0 -X main.commit={COMMIT} -X main.releaseBuild=1")
             self.assertEqual(cwd, root / "core")
             self.assertEqual((env["GOOS"], env["GOARCH"]), ("linux", "amd64"))
             release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)
