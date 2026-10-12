@@ -35,6 +35,8 @@ type samlState struct {
 	cert *x509.Certificate
 	mu   sync.Mutex
 	sess map[string]oidcSession
+	// seenAssertion remembers Assertion@ID values to reject replays until expiry.
+	seenAssertion map[string]time.Time
 }
 
 func newSAML(cfg *SAMLConfig) (*samlState, error) {
@@ -55,7 +57,7 @@ func newSAML(cfg *SAMLConfig) (*samlState, error) {
 	}
 	c := *cfg
 	c.Role = role
-	return &samlState{cfg: c, cert: cert, sess: map[string]oidcSession{}}, nil
+	return &samlState{cfg: c, cert: cert, sess: map[string]oidcSession{}, seenAssertion: map[string]time.Time{}}, nil
 }
 
 func (s *samlState) session(tok string) (User, bool) {
@@ -146,12 +148,30 @@ func (s *samlState) verify(body []byte) (string, error) {
 	if name == "" {
 		return "", errors.New("missing NameID")
 	}
+	expire := time.Now().Add(8 * time.Hour)
 	if until := attrLocal(validated, "Conditions", "NotOnOrAfter"); until != "" {
 		t, err := time.Parse(time.RFC3339, until)
 		if err != nil || !time.Now().Before(t) {
 			return "", errors.New("assertion expired")
 		}
+		expire = t
 	}
+	id := strings.TrimSpace(validated.SelectAttrValue("ID", ""))
+	if id == "" {
+		return "", errors.New("missing Assertion ID")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for k, until := range s.seenAssertion {
+		if !now.Before(until) {
+			delete(s.seenAssertion, k)
+		}
+	}
+	if _, ok := s.seenAssertion[id]; ok {
+		return "", errors.New("assertion replay")
+	}
+	s.seenAssertion[id] = expire
 	return name, nil
 }
 

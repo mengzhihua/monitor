@@ -46,17 +46,27 @@ python3 scripts/auth-fixtures/verify_psk.py --hub-bin core/bin/monitord
 
 ## SAML
 
-`verify_saml.py` checks that `/api/v1/auth/saml/login` redirects when `web.saml` is configured (soft-skips with 404 otherwise).
+CI runs `verify_saml_e2e.py`: starts monitord with a fixture IdP cert, posts a signed Assertion (login ok), an unsigned one (401), and replays the signed Assertion (401).
 
-Generate a signed Assertion and matching IdP certificate (same signing path as Go unit tests):
+```bash
+# after building core/bin/monitord
+python3 scripts/auth-fixtures/verify_saml_e2e.py --bin core/bin/monitord
+```
+
+Generate a signed Assertion and matching IdP certificate manually:
 
 ```bash
 cd core && go run ../scripts/auth-fixtures/gen_saml_response.go \
   -out ../scripts/auth-fixtures/signed-assertion.xml \
   -cert ../scripts/auth-fixtures/idp.pem
+# second Assertion ID with the same key:
+go run ../scripts/auth-fixtures/gen_saml_response.go \
+  -out ../scripts/auth-fixtures/signed-assertion-2.xml \
+  -cert ../scripts/auth-fixtures/idp.pem \
+  -key ../scripts/auth-fixtures/idp.pem.key -id _fixture2
 ```
 
-Configure `web.saml.idp_cert` from `idp.pem`, then serve the signed Assertion:
+`verify_saml.py` only checks that `/api/v1/auth/saml/login` redirects when configured (soft-skips with 404). Optional browser-style stub:
 
 ```bash
 python3 scripts/auth-fixtures/saml_idp.py --listen 127.0.0.1:18080 \
@@ -64,4 +74,4 @@ python3 scripts/auth-fixtures/saml_idp.py --listen 127.0.0.1:18080 \
 python3 scripts/auth-fixtures/verify_saml.py --monitor http://127.0.0.1:19999
 ```
 
-Without `--signed-response`, the stub posts a base64-encoded **unsigned** Assertion so ACS rejection is easy to observe. These scripts are for isolated lab use; they do not talk to production IdPs.
+These scripts are for isolated lab / CI use; they do not talk to production IdPs.
