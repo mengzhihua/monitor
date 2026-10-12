@@ -62,8 +62,8 @@ type CheckBook struct {
 }
 
 type checkDisk struct {
-	Version int                `json:"version"`
-	Items   []checkDiskItem    `json:"items"`
+	Version int             `json:"version"`
+	Items   []checkDiskItem `json:"items"`
 }
 
 type checkDiskItem struct {
@@ -201,7 +201,8 @@ func (b *CheckBook) Report(name, status, message string, value *float64, ttl tim
 	message = oneLine(message, checkMessageMax)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if _, ok := b.items[name]; !ok && len(b.items) >= checkMax {
+	prev, existed := b.items[name]
+	if !existed && len(b.items) >= checkMax {
 		return errCheckFull
 	}
 	var copied *float64
@@ -212,15 +213,30 @@ func (b *CheckBook) Report(name, status, message string, value *float64, ttl tim
 	b.items[name] = &storedCheck{
 		name: name, status: status, message: message, value: copied, ttl: ttl, updated: now,
 	}
-	return b.persistLocked()
+	if err := b.persistLocked(); err != nil {
+		// Roll back so a failed disk write cannot leave memory ahead of disk.
+		if existed {
+			b.items[name] = prev
+		} else {
+			delete(b.items, name)
+		}
+		return err
+	}
+	return nil
 }
 
 // Remove drops one check. The chart already written stays until restart.
 func (b *CheckBook) Remove(name string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	prev, ok := b.items[name]
+	if !ok {
+		return
+	}
 	delete(b.items, name)
-	_ = b.persistLocked()
+	if err := b.persistLocked(); err != nil {
+		b.items[name] = prev
+	}
 }
 
 // List returns a snapshot, marking checks past their TTL as expired.
