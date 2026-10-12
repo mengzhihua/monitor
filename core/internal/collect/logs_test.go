@@ -75,10 +75,18 @@ func TestSchedulerRecordsPerCollectorTiming(t *testing.T) {
 	// Allow the Collect goroutine to finish.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, st := range s.Status() {
+		for _, r := range s.cols {
+			r.mu.Lock()
+			st, totalNS := r.status, r.totalRunNS
+			r.mu.Unlock()
 			if st.Name == "checks" && st.Runs > 0 {
-				if st.TotalRun < 0 || st.MaxRun < 0 {
-					t.Fatalf("bad timing %+v", st)
+				if st.TotalRun < 0 || st.MaxRun < 0 || totalNS < 0 {
+					t.Fatalf("bad timing %+v ns=%d", st, totalNS)
+				}
+				// Fast Collect can measure 0ns on some platforms (Windows CI);
+				// the exposed total must still match the nanosecond accumulator.
+				if st.TotalRun != totalNS/int64(time.Millisecond) {
+					t.Fatalf("total_run_ms=%d ns=%d status=%+v", st.TotalRun, totalNS, st)
 				}
 				return
 			}

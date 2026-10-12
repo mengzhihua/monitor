@@ -66,8 +66,11 @@ func shellPersonalAdmin(u User) bool {
 func (s *Server) shellAccount(w http.ResponseWriter, r *http.Request) (User, bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	u := userOf(r)
-	// Shared web.token, troubleshooter/viewer, anonymous, share links, and
-	// ?token= query logins cannot open WebShell — personal admin only.
+	// Personal admin only (named/OIDC/SAML/LDAP). Shared web.token,
+	// troubleshooter/viewer, anonymous and share links are rejected.
+	// Also refuse credentials placed on the shell API query string itself
+	// (`/api/v1/shell/...?token=`); the SPA may still authenticate via the
+	// Authorization header after importing ?token= from the page URL.
 	if !shellPersonalAdmin(u) || r.URL.Query().Has("token") {
 		http.Error(w, "shell requires a personal administrator login", 403)
 		return u, false
@@ -89,17 +92,8 @@ func (s *Server) shellNode(t hostshell.Target) string {
 	return t.Node
 }
 func (s *Server) shellTargetAllowed(u User, t hostshell.Target) bool {
-	if len(t.Users) > 0 {
-		allowed := false
-		for _, name := range t.Users {
-			if name == u.Name {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return false
-		}
+	if len(t.Users) > 0 && !s.shellUserAllowed(u, t.Users) {
+		return false
 	}
 	n := s.shellNode(t)
 	if !s.roomAllowed(u, n) {
@@ -114,6 +108,31 @@ func (s *Server) shellTargetAllowed(u User, t hostshell.Target) bool {
 		return false
 	}
 	return true
+}
+
+// shellUserAllowed matches target.users against a login name only when that
+// name uniquely identifies one configured personal administrator. Duplicate
+// display names (supported for session isolation) cannot unlock a target via
+// the shared name alone.
+func (s *Server) shellUserAllowed(u User, allow []string) bool {
+	listed := false
+	for _, name := range allow {
+		if name == u.Name {
+			listed = true
+			break
+		}
+	}
+	if !listed {
+		return false
+	}
+	matches := 0
+	for _, other := range s.opt.Users {
+		if other.Role != RoleAdmin || other.Name != u.Name {
+			continue
+		}
+		matches++
+	}
+	return matches == 1
 }
 func (s *Server) shellOrigin(r *http.Request) bool {
 	v := r.Header.Get("Origin")
