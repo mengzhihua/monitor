@@ -262,6 +262,10 @@ func run() error {
 		})
 	}
 
+	if err := collect.OpenChecks(filepath.Join(cfg.Global.DataDir, "checks")); err != nil {
+		return fmt.Errorf("external checks: %w", err)
+	}
+
 	var auditLog *audit.Log
 	if cfg.AuditEnabled() {
 		auditLog, err = audit.Open(filepath.Join(cfg.Global.DataDir, "operations"), cfg.Web.Audit.MaxEntries)

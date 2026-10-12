@@ -2,7 +2,11 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -53,13 +57,121 @@ type storedCheck struct {
 // CheckBook is the process-wide set of external service checks.
 type CheckBook struct {
 	mu    sync.Mutex
+	path  string // empty = memory only
 	items map[string]*storedCheck
+}
+
+type checkDisk struct {
+	Version int                `json:"version"`
+	Items   []checkDiskItem    `json:"items"`
+}
+
+type checkDiskItem struct {
+	Name    string   `json:"name"`
+	Status  string   `json:"status"`
+	Message string   `json:"message,omitempty"`
+	Value   *float64 `json:"value,omitempty"`
+	TTL     string   `json:"ttl"`
+	Updated int64    `json:"updated"`
+	Expired bool     `json:"expired,omitempty"`
 }
 
 var serviceChecks = &CheckBook{items: map[string]*storedCheck{}}
 
 // Checks returns the shared book used by the API and the checks collector.
 func Checks() *CheckBook { return serviceChecks }
+
+// OpenChecks loads persisted passive checks from dir/checks.json (0600).
+// dir="" keeps the existing in-memory book (tests). Missing file is OK.
+func OpenChecks(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "checks.json")
+	b := &CheckBook{path: path, items: map[string]*storedCheck{}}
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if len(raw) > 0 {
+		var disk checkDisk
+		if err := json.Unmarshal(raw, &disk); err != nil {
+			return fmt.Errorf("checks.json: %w", err)
+		}
+		if disk.Version != 0 && disk.Version != 1 {
+			return fmt.Errorf("checks.json: unsupported version %d", disk.Version)
+		}
+		for _, item := range disk.Items {
+			ttl, err := time.ParseDuration(item.TTL)
+			if err != nil || ttl < checkMinTTL || ttl > checkMaxTTL {
+				continue
+			}
+			if !validCheckName(item.Name) {
+				continue
+			}
+			switch item.Status {
+			case "ok", "warning", "critical":
+			default:
+				continue
+			}
+			var copied *float64
+			if item.Value != nil {
+				v := *item.Value
+				if math.IsNaN(v) || math.IsInf(v, 0) {
+					continue
+				}
+				copied = &v
+			}
+			updated := time.Unix(item.Updated, 0)
+			if item.Updated <= 0 {
+				updated = time.Now()
+			}
+			b.items[item.Name] = &storedCheck{
+				name: item.Name, status: item.Status, message: item.Message,
+				value: copied, ttl: ttl, updated: updated, expired: item.Expired,
+			}
+		}
+	}
+	serviceChecks = b
+	return nil
+}
+
+func (b *CheckBook) persistLocked() error {
+	if b.path == "" {
+		return nil
+	}
+	disk := checkDisk{Version: 1, Items: make([]checkDiskItem, 0, len(b.items))}
+	for _, c := range b.items {
+		disk.Items = append(disk.Items, checkDiskItem{
+			Name: c.name, Status: c.status, Message: c.message, Value: c.value,
+			TTL: c.ttl.String(), Updated: c.updated.Unix(), Expired: c.expired,
+		})
+	}
+	raw, err := json.Marshal(disk)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(b.path), ".checks-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(raw); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), b.path)
+}
 
 // Report records a check. An existing name is replaced. A new name is
 // rejected once checkMax distinct checks are stored.
@@ -100,14 +212,15 @@ func (b *CheckBook) Report(name, status, message string, value *float64, ttl tim
 	b.items[name] = &storedCheck{
 		name: name, status: status, message: message, value: copied, ttl: ttl, updated: now,
 	}
-	return nil
+	return b.persistLocked()
 }
 
 // Remove drops one check. The chart already written stays until restart.
 func (b *CheckBook) Remove(name string) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	delete(b.items, name)
-	b.mu.Unlock()
+	_ = b.persistLocked()
 }
 
 // List returns a snapshot, marking checks past their TTL as expired.

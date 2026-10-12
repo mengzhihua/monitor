@@ -14,6 +14,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -832,6 +833,7 @@ func (s *Server) contextsPayload(v *view, api int) map[string]any {
 // (instance label = hostname, node label = node id).
 func (s *Server) writePrometheus(w http.ResponseWriter, u User) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	s.writeProcessMetrics(w)
 	seen := map[string]bool{}
 	s.writePromCharts(w, s.reg.Host.Hostname, "", s.reg.Charts(), seen)
 	if s.opt.Nodes != nil {
@@ -842,6 +844,29 @@ func (s *Server) writePrometheus(w http.ResponseWriter, u User) {
 			s.writePromCharts(w, n.Host.Hostname, n.ID, n.Registry().Charts(), seen)
 		}
 	}
+}
+
+func (s *Server) writeProcessMetrics(w http.ResponseWriter) {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	series := 0
+	if s.db != nil {
+		if tiers := s.db.Tiers(); len(tiers) > 0 {
+			// Tier 0 is the highest-resolution store used for live charts.
+			series = tiers[0].Series
+		}
+	}
+	host := s.reg.Host.Hostname
+	fmt.Fprintf(w, "# HELP monitor_process_heap_alloc_bytes Go heap bytes currently allocated.\n# TYPE monitor_process_heap_alloc_bytes gauge\n")
+	fmt.Fprintf(w, "monitor_process_heap_alloc_bytes{instance=%q} %d\n", host, ms.HeapAlloc)
+	fmt.Fprintf(w, "# HELP monitor_process_heap_sys_bytes Bytes of heap memory obtained from the OS.\n# TYPE monitor_process_heap_sys_bytes gauge\n")
+	fmt.Fprintf(w, "monitor_process_heap_sys_bytes{instance=%q} %d\n", host, ms.HeapSys)
+	fmt.Fprintf(w, "# HELP monitor_process_goroutines Number of goroutines.\n# TYPE monitor_process_goroutines gauge\n")
+	fmt.Fprintf(w, "monitor_process_goroutines{instance=%q} %d\n", host, runtime.NumGoroutine())
+	fmt.Fprintf(w, "# HELP monitor_tsdb_series Number of series in the highest-resolution TSDB tier.\n# TYPE monitor_tsdb_series gauge\n")
+	fmt.Fprintf(w, "monitor_tsdb_series{instance=%q} %d\n", host, series)
+	fmt.Fprintf(w, "# HELP monitor_charts Number of registered charts on this process.\n# TYPE monitor_charts gauge\n")
+	fmt.Fprintf(w, "monitor_charts{instance=%q} %d\n", host, len(s.reg.Charts()))
 }
 
 func (s *Server) writePrometheusFor(w http.ResponseWriter, v *view) {

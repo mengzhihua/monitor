@@ -21,6 +21,12 @@ type Entry struct {
 	Action string `json:"action"` // e.g. "POST /api/v1/alarms/close", "login", "login_failed"
 	Target string `json:"target,omitempty"`
 	Status int    `json:"status,omitempty"`
+	// Optional fields for whitelisted command runs (POST /api/v1/commands).
+	Command    string `json:"command,omitempty"`
+	Argv       string `json:"argv,omitempty"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	Output     string `json:"output,omitempty"`
 }
 
 // Log is an in-memory ring over an append-only JSONL file. When the memory
