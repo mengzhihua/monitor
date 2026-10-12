@@ -81,7 +81,7 @@ func BenchmarkLiveBroadcast(b *testing.B) {
 			if !subscribed {
 				chart = "system.ram"
 			}
-			c := &liveConn{charts: map[string]bool{chart: true}, send: make(chan []byte, 1)}
+			c := &liveConn{charts: map[string]bool{chart: true}, send: make(chan liveFrame, 1)}
 			h := &liveHub{conns: map[*liveConn]struct{}{c: {}}}
 			values := map[string]float64{"user": 12, "system": 4, "idle": 84, "wait": 0, "nice": 0, "irq": 0, "softirq": 0, "steal": 0}
 			b.ReportAllocs()

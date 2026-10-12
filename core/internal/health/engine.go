@@ -533,7 +533,10 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		lookupVal = e.lookup(a.chart, r.Lookup, now)
 	}
 	value := lookupVal
-	lastT, last := a.chart.LastValues()
+	// Calculated rules must not combine a fresh collection timestamp with a
+	// dimension cached from an earlier sample. Historical lookups above retain
+	// their explicit window semantics.
+	lastT, last := a.chart.LatestValues()
 	vars := e.variables(a, value, lastT, last, now)
 	if r.Calc != nil {
 		value = r.Calc.Eval(vars)
@@ -1610,7 +1613,7 @@ func (e *Engine) ChartVariables(chartID, alarmName string) map[string]any {
 		out[k] = v
 	}
 	if c, ok := e.reg.Chart(chartID); ok {
-		_, last := c.LastValues()
+		_, last := c.LatestValues()
 		for k, v := range last {
 			out[k] = v
 		}

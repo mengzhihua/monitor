@@ -34,11 +34,19 @@ type liveHub struct {
 
 type liveConn struct {
 	ws      *websocket.Conn
-	send    chan []byte
+	send    chan liveFrame
 	mu      sync.RWMutex
 	node    string          // "" = local host
 	charts  map[string]bool // nil = all
 	resolve func(string) (string, bool)
+	allowed func(string) bool
+}
+
+// Carry routing metadata beside the shared encoding so checking queued data
+// after a room change never needs to decode or copy a metric payload.
+type liveFrame struct {
+	node    string
+	payload []byte
 }
 
 type liveMsg struct {
@@ -107,7 +115,7 @@ func (h *liveHub) broadcastNode(node, chartID string, ts int64, values map[strin
 			}
 		}
 		select {
-		case c.send <- b:
+		case c.send <- liveFrame{node: node, payload: b}:
 		default: // slow client: drop the sample rather than block collection
 		}
 	}
@@ -134,7 +142,7 @@ func (h *liveHub) broadcastAlarm(node string, e health.LogEntry) {
 			}
 		}
 		select {
-		case c.send <- b:
+		case c.send <- liveFrame{node: node, payload: b}:
 		default:
 		}
 	}
@@ -142,11 +150,9 @@ func (h *liveHub) broadcastAlarm(node string, e health.LogEntry) {
 
 func (c *liveConn) wants(node, chart string) bool {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.node != node {
-		return false
-	}
-	return chart == "" || c.charts == nil || c.charts[chart]
+	wants := c.node == node && (chart == "" || c.charts == nil || c.charts[chart])
+	c.mu.RUnlock()
+	return wants && (c.allowed == nil || c.allowed(node))
 }
 
 func (c *liveConn) setNode(node string) {
@@ -172,12 +178,12 @@ func (c *liveConn) setCharts(list []string) {
 
 // handle serves an upgraded live connection scoped to node ("" = local);
 // resolve validates in-band node switches and returns the canonical id.
-func (h *liveHub) handle(w http.ResponseWriter, r *http.Request, node string, resolve func(string) (string, bool)) {
+func (h *liveHub) handle(w http.ResponseWriter, r *http.Request, node string, resolve func(string) (string, bool), allowed func(string) bool) {
 	ws, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	c := &liveConn{ws: ws, send: make(chan []byte, 256), node: node, resolve: resolve}
+	c := &liveConn{ws: ws, send: make(chan liveFrame, 256), node: node, resolve: resolve, allowed: allowed}
 	if q := r.URL.Query().Get("charts"); q != "" {
 		c.setCharts(strings.Split(q, ","))
 	}
@@ -217,7 +223,7 @@ func (h *liveHub) reader(c *liveConn) {
 					c.setNode(n)
 				} else if b, err := json.Marshal(map[string]string{"error": "unknown node " + *req.Node}); err == nil {
 					select {
-					case c.send <- b:
+					case c.send <- liveFrame{payload: b}:
 					default:
 					}
 				}
@@ -232,13 +238,18 @@ func (h *liveHub) writer(c *liveConn) {
 	defer c.ws.Close()
 	for {
 		select {
-		case b, ok := <-c.send:
+		case frame, ok := <-c.send:
 			if !ok {
 				_ = c.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 				return
 			}
+			// Recheck queued data too: moving a node to another room must
+			// stop an existing subscription without waiting for reconnect.
+			if c.allowed != nil && !c.allowed(frame.node) {
+				continue
+			}
 			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.ws.WriteMessage(websocket.TextMessage, b); err != nil {
+			if err := c.ws.WriteMessage(websocket.TextMessage, frame.payload); err != nil {
 				return
 			}
 		case <-ping.C:

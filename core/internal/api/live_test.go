@@ -7,10 +7,10 @@ import (
 )
 
 func TestLiveBroadcastFiltersBeforeEncoding(t *testing.T) {
-	local := &liveConn{send: make(chan []byte, 4)}
-	selected := &liveConn{charts: map[string]bool{"system.cpu": true}, send: make(chan []byte, 4)}
-	remote := &liveConn{node: "remote", send: make(chan []byte, 4)}
-	slow := &liveConn{send: make(chan []byte)}
+	local := &liveConn{send: make(chan liveFrame, 4)}
+	selected := &liveConn{charts: map[string]bool{"system.cpu": true}, send: make(chan liveFrame, 4)}
+	remote := &liveConn{node: "remote", send: make(chan liveFrame, 4)}
+	slow := &liveConn{send: make(chan liveFrame)}
 	h := &liveHub{conns: map[*liveConn]struct{}{local: {}, selected: {}, remote: {}, slow: {}}}
 	values := map[string]float64{"used": 23}
 	h.broadcast("system.ram", 100, values)
@@ -18,7 +18,7 @@ func TestLiveBroadcastFiltersBeforeEncoding(t *testing.T) {
 		t.Fatal("sample delivered outside the chart/node subscription")
 	}
 	var got liveMsg
-	if err := json.Unmarshal(<-local.send, &got); err != nil || got.Node != "" || got.Chart != "system.ram" || got.T != 100 || got.Values["used"] != 23 {
+	if err := json.Unmarshal((<-local.send).payload, &got); err != nil || got.Node != "" || got.Chart != "system.ram" || got.T != 100 || got.Values["used"] != 23 {
 		t.Fatalf("local message = %+v, error = %v", got, err)
 	}
 	selected.setCharts([]string{"system.ram"})
@@ -27,7 +27,7 @@ func TestLiveBroadcastFiltersBeforeEncoding(t *testing.T) {
 	if len(local.send) != 0 || len(selected.send) != 1 || len(remote.send) != 1 {
 		t.Fatal("updated subscription was not applied")
 	}
-	if err := json.Unmarshal(<-remote.send, &got); err != nil || got.Node != "remote" || got.T != 101 {
+	if err := json.Unmarshal((<-remote.send).payload, &got); err != nil || got.Node != "remote" || got.T != 101 {
 		t.Fatalf("remote message = %+v, error = %v", got, err)
 	}
 	<-selected.send
@@ -38,7 +38,7 @@ func TestLiveBroadcastFiltersBeforeEncoding(t *testing.T) {
 }
 
 func TestLiveUnsubscribedSampleDoesNotAllocate(t *testing.T) {
-	c := &liveConn{charts: map[string]bool{"system.cpu": true}, send: make(chan []byte, 1)}
+	c := &liveConn{charts: map[string]bool{"system.cpu": true}, send: make(chan liveFrame, 1)}
 	h := &liveHub{conns: map[*liveConn]struct{}{c: {}}}
 	values := map[string]float64{"used": 23}
 	if allocations := testing.AllocsPerRun(100, func() { h.broadcast("system.ram", 100, values) }); allocations != 0 {

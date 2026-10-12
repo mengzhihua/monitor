@@ -181,6 +181,13 @@ function activateTool(id: string) {
   if (isMobile.value && id !== 'ai' && id !== 'shell') scrollToWorkspace()
 }
 
+async function openCloudNode(id: string) {
+  showCloud.value = false
+  const node = nodes.value.find(n => n.id === id)
+  await drill(node?.local ? '' : id, '')
+  if (isMobile.value) scrollToWorkspace()
+}
+
 async function scrollToShell() {
  await nextTick()
  const panel = document.querySelector<HTMLElement>('section.shell-panel')
@@ -532,13 +539,13 @@ onBeforeUnmount(() => {
       <AlarmsPanel :key="selectedNode" v-if="showAlarms && healthOn" :alarms="alarms" :log="alarmLog" :refresh="refreshAlarms" :can-manage="info?.user?.role === 'admin' && !selectedNode" :can-close="['admin', 'troubleshooter'].includes(info?.user?.role || '') && !selectedNode" @close="closeAlarms" />
       <AlertRulesPanel ref="alertRulesPanel" v-if="showAlertRules && info" :role="info.user?.role || 'viewer'" @close="showAlertRules = false" @changed="refresh()" />
       <FunctionsPanel v-if="showFunctions && functions.length" :functions="functions" @close="showFunctions = false" />
-      <LogsPanel v-if="showLogs" @close="showLogs = false" />
+      <LogsPanel :key="'logs:' + selectedNode" v-if="showLogs" @close="showLogs = false" />
       <ShellPanel v-if="showShell && info && !needToken && info.user?.role === 'admin'" :node="selectedNode" @ready="scrollToShell" @close="showShell = false" />
       <AIAnalysisPanel v-if="showAI && info" :node="selectedNode" :charts="charts" :problem="aiProblem" :role="info.user?.role || 'viewer'" @close="showAI = false; aiProblem = null" />
-      <WeightsPanel v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
-      <ContextsPanel v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
+      <WeightsPanel :key="'weights:' + selectedNode" v-if="showWeights" @close="showWeights = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showWeights = false }" />
+      <ContextsPanel :key="'contexts:' + selectedNode" v-if="showContexts" @close="showContexts = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showContexts = false }" />
       <HubPanel v-if="showHub && isHub" @close="showHub = false" />
-      <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="(id) => { workspace = 'charts'; dashboardView = 'all'; filter = id; showCloud = false }" />
+      <CloudPanel v-if="showCloud && isHub" @close="showCloud = false" @pick="openCloudNode" />
       <TemplatesPanel v-if="showTemplates && isHub" :role="info?.user?.role || 'viewer'" :nodes="nodes" @close="showTemplates = false" />
       <ConfigPanel ref="configPanel" v-if="showConfig && info?.user?.role === 'admin'" :can-manage="info?.user?.role === 'admin'" :is-hub="isHub" @close="showConfig = false" />
       <form v-if="needToken" class="token" @submit.prevent="submitToken">

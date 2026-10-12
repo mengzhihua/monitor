@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ConsoleResponse, ConsoleNode } from '../api'
 import { api } from '../api'
 
 const emit = defineEmits<{ close: []; pick: [id: string] }>()
 const data = ref<ConsoleResponse | null>(null)
 const error = ref('')
+let disposed = false
 
 async function load() {
   try {
-    data.value = await api.console()
+    const result = await api.console()
+    if (disposed) return
+    data.value = result
     error.value = ''
   } catch (e) {
-    error.value = (e as Error).message
+    if (!disposed) error.value = (e as Error).message
   }
 }
 
@@ -21,6 +24,7 @@ function statusClass(n: ConsoleNode) {
 }
 
 onMounted(() => { void load() })
+onBeforeUnmount(() => { disposed = true })
 </script>
 
 <template>
@@ -56,7 +60,7 @@ onMounted(() => { void load() })
             <span v-else-if="rm.alarms.warning" class="pill warn">warn {{ rm.alarms.warning }}</span>
           </div>
           <ul>
-            <li v-for="n in rm.nodes" :key="n.id" @click="emit('pick', n.hostname || n.id)">
+            <li v-for="n in rm.nodes" :key="n.id" role="button" tabindex="0" @click="emit('pick', n.id)" @keydown.enter.prevent="emit('pick', n.id)" @keydown.space.prevent="emit('pick', n.id)">
               <i :class="['dot', statusClass(n)]"></i>
               <span>{{ n.hostname || n.id }}</span>
               <small>{{ n.protocol || (n.aclk ? 'aclk' : '—') }} · {{ n.charts_count ?? 0 }} charts</small>
@@ -74,7 +78,7 @@ onMounted(() => { void load() })
       <div v-if="data.unassigned?.length" class="space">
         <h4>未分配</h4>
         <ul>
-          <li v-for="n in data.unassigned" :key="n.id" @click="emit('pick', n.hostname || n.id)">
+          <li v-for="n in data.unassigned" :key="n.id" role="button" tabindex="0" @click="emit('pick', n.id)" @keydown.enter.prevent="emit('pick', n.id)" @keydown.space.prevent="emit('pick', n.id)">
             <i :class="['dot', statusClass(n)]"></i>
             <span>{{ n.hostname || n.id }}</span>
           </li>

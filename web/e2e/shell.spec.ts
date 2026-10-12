@@ -57,3 +57,85 @@ test('viewer cannot see WebShell and server rejects terminal access',async({page
  await page.goto('/?token=browser-viewer-token');await expect(page.locator('header')).toContainText('browser-test');if(await page.getByRole('button',{name:'更多',exact:true}).isVisible())await page.getByRole('button',{name:'更多',exact:true}).click();await expect(page.getByRole('button',{name:'WebShell',exact:true})).toHaveCount(0)
  const resp=await request.get('/api/v1/shell/targets',{headers:{Authorization:'Bearer browser-viewer-token'}});expect(resp.status()).toBe(403)
 })
+
+test('another page can inspect and explicitly terminate its own lingering session',async({page,context})=>{
+ const first=await openShell(page)
+ await first.getByRole('checkbox').check();await first.getByRole('button',{name:'连接终端',exact:true}).click();await expect(first.getByText('已连接',{exact:true})).toBeVisible()
+ const secondPage=await context.newPage()
+ try {
+  const second=await openShell(secondPage);const sessions=second.getByRole('region',{name:'我的终端会话'})
+  await expect(sessions.getByRole('button',{name:'终止会话',exact:true})).toHaveCount(1)
+  await second.getByRole('checkbox').check();await second.getByRole('button',{name:'连接终端',exact:true}).click()
+  await expect(second.getByRole('alert')).toContainText('遗留连接')
+  secondPage.once('dialog',dialog=>dialog.dismiss());await sessions.getByRole('button',{name:'终止会话',exact:true}).click()
+  await expect(first.getByText('已连接',{exact:true})).toBeVisible()
+  secondPage.once('dialog',dialog=>dialog.accept());await sessions.getByRole('button',{name:'终止会话',exact:true}).click()
+  await expect(sessions.getByRole('button',{name:'终止会话',exact:true})).toHaveCount(0)
+  await expect(first.getByRole('status')).toContainText('其他页面终止')
+  await second.getByRole('checkbox').check();await second.getByRole('button',{name:'连接终端',exact:true}).click();await expect(second.getByText('已连接',{exact:true})).toBeVisible()
+  await second.getByRole('button',{name:'断开连接',exact:true}).click()
+ } finally {await secondPage.close()}
+})
+
+test('failed command sends preserve the draft and successful sends retain input focus',async({page})=>{
+ const panel=await openShell(page)
+ await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click();await expect(panel.getByText('已连接',{exact:true})).toBeVisible()
+ const input=panel.getByLabel('手机命令输入');const draft='中'.repeat(6000)
+ await input.fill(draft);await panel.getByRole('button',{name:'发送命令',exact:true}).click()
+ await expect(panel.getByRole('alert')).toContainText('输入内容已保留');await expect(input).toHaveValue(draft)
+ // Exercise the actual transport rejection path instead of only a length guard.
+ await page.evaluate(()=>{
+  const original=WebSocket.prototype.send
+  WebSocket.prototype.send=function(data){if(typeof data==='string' && JSON.parse(data).type==='input'){WebSocket.prototype.send=original;throw new Error('fixture network race')}return original.call(this,data)}
+ })
+ await input.fill("printf 'RETRY_%s\\n' OK");await panel.getByRole('button',{name:'发送命令',exact:true}).click()
+ await expect(panel.getByRole('alert')).toContainText('发送失败');await expect(input).toHaveValue("printf 'RETRY_%s\\n' OK")
+ await panel.getByRole('button',{name:'发送命令',exact:true}).click()
+ await expect(panel.getByLabel('交互终端输出',{exact:true})).toContainText('RETRY_OK');await expect(input).toHaveValue('');await expect(input).toBeFocused()
+ await input.fill('unsent draft');await panel.getByRole('button',{name:'断开连接',exact:true}).click();await expect(input).toHaveValue('unsent draft')
+})
+
+test('large output acknowledges bytes only after rendering and stays within the negotiated window',async({page})=>{
+ const output=Buffer.from(`${'rendered output line\r\n'.repeat(40000)}FLOW_RENDER_COMPLETE\r\n`)
+ let sent=0;let acknowledged=0;let connected=false;const acks:number[]=[]
+ await page.route('**/api/v1/shell/tickets',r=>r.fulfill({json:{ticket:'flow-ticket',expires_at:Math.floor(Date.now()/1000)+30}}))
+ await page.routeWebSocket('**/api/v1/shell/connect',socket=>{
+  function pump(){while(sent<output.length && sent-acknowledged<65536){const end=Math.min(sent+4096,output.length,acknowledged+65536);socket.send(output.subarray(sent,end));sent=end}}
+  socket.onMessage(message=>{
+   const data=JSON.parse(String(message))
+   if(data.type==='connect'){connected=data.flow_control===true;socket.send(JSON.stringify({type:'ready',session_id:'flow-session',flow_control:'ack',window_bytes:65536}));pump()}
+   if(data.type==='ack'){acks.push(data.bytes);acknowledged=data.bytes;pump()}
+  })
+ })
+ const panel=await openShell(page);await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click()
+ await expect(panel.getByLabel('交互终端输出',{exact:true})).toContainText('FLOW_RENDER_COMPLETE')
+ await expect.poll(()=>acknowledged).toBe(output.length)
+ expect(connected).toBe(true);expect(acks.length).toBeGreaterThan(10);expect(acks.every((value,index)=>value>0 && (index===0 || value>acks[index-1]!))).toBe(true)
+ await panel.getByRole('button',{name:'断开连接',exact:true}).click()
+})
+
+test('uncontrolled legacy output is bounded and forced-close reasons are explained',async({page})=>{
+ let connection=0
+ await page.route('**/api/v1/shell/tickets',r=>r.fulfill({json:{ticket:'legacy-ticket',expires_at:Math.floor(Date.now()/1000)+30}}))
+ await page.routeWebSocket('**/api/v1/shell/connect',socket=>socket.onMessage(message=>{
+  const data=JSON.parse(String(message));if(data.type!=='connect')return
+  socket.send(JSON.stringify({type:'ready'}))
+  if(++connection===1)socket.send(Buffer.alloc(300*1024,65))
+  else socket.close({code:1000,reason:'max_duration'})
+ }))
+ const panel=await openShell(page);await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click()
+ await expect(panel.getByRole('alert')).toContainText('限制内存占用');await expect(panel.getByText('未连接',{exact:true})).toBeVisible()
+ await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click();await expect(panel.getByRole('status')).toContainText('30 分钟时限')
+})
+
+test('session snapshots refresh on demand and a pending termination remains visible',async({page})=>{
+ let reads=0;let closing=false
+ const target={id:'browser-local-shell',name:'Lingering shell',kind:'local',node:'local'}
+ await page.route('**/api/v1/shell/sessions',r=>{reads++;return r.fulfill({json:{sessions:[{id:'fixture-session',target,started_at:1760000000,last_input_at:1760000001,output_bytes:1024,state:closing?'closing':'connected'}],now:1760000010,max_sessions:1,global_limit:4}})})
+ await page.route('**/api/v1/shell/sessions/fixture-session',r=>{expect(r.request().method()).toBe('DELETE');closing=true;return r.fulfill({status:202,json:{closing:true}})})
+ const panel=await openShell(page);const sessions=panel.getByRole('region',{name:'我的终端会话'})
+ await expect(sessions).toContainText('Lingering shell');expect(reads).toBe(1)
+ page.once('dialog',dialog=>dialog.accept());await sessions.getByRole('button',{name:'终止会话',exact:true}).click()
+ await expect(sessions).toContainText('正在清理');await expect(sessions.getByRole('button',{name:'终止会话',exact:true})).toBeDisabled();expect(reads).toBe(1)
+ await sessions.getByRole('button',{name:'刷新会话',exact:true}).click();await expect.poll(()=>reads).toBe(2)
+})

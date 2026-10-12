@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -212,6 +213,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/shell/targets", s.handleShellTargets)
 	m.HandleFunc("POST /api/v1/shell/tickets", s.handleShellTicket)
 	m.HandleFunc("GET /api/v1/shell/connect", s.handleShellConnect)
+	m.HandleFunc("GET /api/v1/shell/sessions", s.handleShellSessions)
+	m.HandleFunc("DELETE /api/v1/shell/sessions/{id}", s.handleShellRevoke)
 	m.HandleFunc("GET /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("PUT /api/v1/ai/settings", s.handleAISettings)
 	m.HandleFunc("DELETE /api/v1/ai/settings", s.handleAISettings)
@@ -342,7 +345,7 @@ func (s *Server) routes() {
 	}
 	m.HandleFunc("GET /api/v1/hub/console", s.handleConsole)
 	m.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		s.writePrometheus(w)
+		s.writePrometheus(w, userOf(r))
 	})
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	m.Handle("/", s.uiHandler())
@@ -486,6 +489,15 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 	var nodes []*hub.Node
 	if s.opt.Nodes != nil {
 		nodes = s.opt.Nodes.List()
+		if !unrestrictedRooms(userOf(r)) {
+			visible := nodes[:0]
+			for _, node := range nodes {
+				if s.roomAllowed(userOf(r), node.ID) {
+					visible = append(visible, node)
+				}
+			}
+			nodes = visible
+		}
 		out["nodes_count"] = len(nodes) + 1
 		out["streaming_enabled"] = s.opt.Nodes.IngestEnabled()
 	}
@@ -686,7 +698,7 @@ func (s *Server) handleAllMetrics(w http.ResponseWriter, r *http.Request) {
 	default:
 		out := map[string]any{}
 		for _, c := range v.reg.Charts() {
-			ts, vals := c.LastValues()
+			ts, vals := c.LatestValues()
 			dims := map[string]any{}
 			for _, d := range c.Dims() {
 				if v, ok := vals[d.ID]; ok {
@@ -714,16 +726,22 @@ func promName(s string) string {
 
 func (s *Server) writeAllMetricsCSV(w http.ResponseWriter, v *view) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	fmt.Fprintln(w, "chart,dimension,value,timestamp")
+	csvWriter := csv.NewWriter(w)
+	defer csvWriter.Flush()
+	if err := csvWriter.Write([]string{"chart", "dimension", "value", "timestamp"}); err != nil {
+		return
+	}
 	for _, c := range v.reg.Charts() {
-		ts, vals := c.LastValues()
+		ts, vals := c.LatestValues()
 		keys := make([]string, 0, len(vals))
 		for k := range vals {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintf(w, "%s,%s,%g,%d\n", c.ID, k, vals[k], ts)
+			if err := csvWriter.Write([]string{csvText(c.ID), csvText(k), strconv.FormatFloat(vals[k], 'g', -1, 64), strconv.FormatInt(ts, 10)}); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -732,7 +750,7 @@ func (s *Server) writeAllMetricsShell(w http.ResponseWriter, v *view) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintf(w, "# hostname=%s\n", v.hostname)
 	for _, c := range v.reg.Charts() {
-		_, vals := c.LastValues()
+		_, vals := c.LatestValues()
 		keys := make([]string, 0, len(vals))
 		for k := range vals {
 			keys = append(keys, k)
@@ -811,12 +829,15 @@ func (s *Server) contextsPayload(v *view, api int) map[string]any {
 
 // writePrometheus exposes the local host and, on a hub, every remote node
 // (instance label = hostname, node label = node id).
-func (s *Server) writePrometheus(w http.ResponseWriter) {
+func (s *Server) writePrometheus(w http.ResponseWriter, u User) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	seen := map[string]bool{}
 	s.writePromCharts(w, s.reg.Host.Hostname, "", s.reg.Charts(), seen)
 	if s.opt.Nodes != nil {
 		for _, n := range s.opt.Nodes.List() {
+			if !s.roomAllowed(u, n.ID) {
+				continue
+			}
 			s.writePromCharts(w, n.Host.Hostname, n.ID, n.Registry().Charts(), seen)
 		}
 	}
@@ -832,7 +853,7 @@ func (s *Server) writePromCharts(w http.ResponseWriter, host, node string, chart
 	// context (per-core cpu, per-disk io, ...) are grouped by metric name.
 	sort.SliceStable(charts, func(i, j int) bool { return charts[i].Context < charts[j].Context })
 	for _, c := range charts {
-		ts, vals := c.LastValues()
+		ts, vals := c.LatestValues()
 		if len(vals) == 0 {
 			continue
 		}

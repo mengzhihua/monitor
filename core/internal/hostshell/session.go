@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,21 +113,73 @@ type Session interface {
 	Wait() error
 }
 type localSession struct {
-	pty.Pty
-	cmd  *pty.Cmd
-	once sync.Once
+	pty     pty.Pty
+	master  *os.File // Unix-only pollable duplicate; owned independently of pty
+	cmd     *pty.Cmd
+	once    sync.Once
+	ptyMu   sync.Mutex // serialize Resize against native terminal release
+	closed  bool
+	done    chan struct{}
+	waitErr error // published by closing done
 }
 
-func (s *localSession) Wait() error {
-	err := s.cmd.Wait()
-	if runtime.GOOS == "windows" {
-		s.Close()
+func (s *localSession) Read(p []byte) (int, error) {
+	if s.master != nil {
+		return s.master.Read(p)
 	}
-	return err
+	n, err := s.pty.Read(p)
+	if err != nil {
+		if terminal, ok := s.pty.(pty.ConPty); ok {
+			_ = terminal.OutputPipe().Close()
+		}
+	}
+	return n, err
+}
+func (s *localSession) Write(p []byte) (int, error) {
+	if s.master != nil {
+		return s.master.Write(p)
+	}
+	return s.pty.Write(p)
+}
+func (s *localSession) Resize(cols, rows int) error {
+	s.ptyMu.Lock()
+	defer s.ptyMu.Unlock()
+	if s.closed {
+		return os.ErrClosed
+	}
+	return s.pty.Resize(cols, rows)
+}
+func (s *localSession) Wait() error {
+	<-s.done
+	return s.waitErr
 }
 func (s *localSession) Close() error {
-	s.once.Do(func() { killProcess(s.cmd.Process); _ = s.Pty.Close() })
+	if s.master != nil {
+		// Evict the runtime poll wait before process/terminal teardown.
+		// Closing the original dependency-owned blocking descriptor cannot
+		// interrupt a thread already blocked in a Linux write syscall.
+		_ = s.master.Close()
+	}
+	if terminal, ok := s.pty.(pty.ConPty); ok {
+		// Force-close both pipes before waiting on once. An earlier normal
+		// exit may already be releasing ConPTY while waiting for output to
+		// drain; disconnect must unblock it even when there is no reader.
+		_ = terminal.OutputPipe().Close()
+		_ = terminal.InputPipe().Close()
+	}
+	s.closePTY(true)
 	return nil
+}
+func (s *localSession) closePTY(kill bool) {
+	s.once.Do(func() {
+		if kill {
+			killProcess(s.cmd.Process)
+		}
+		s.ptyMu.Lock()
+		defer s.ptyMu.Unlock()
+		s.closed = true
+		_ = releaseLocalPTY(s.pty)
+	})
 }
 
 func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session, error) {
@@ -150,6 +201,11 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 			p.Close()
 			return nil, e
 		}
+		master, e := prepareLocalPTY(p)
+		if e != nil {
+			p.Close()
+			return nil, errors.New("local terminal does not support cancellable I/O")
+		}
 		cmd := p.Command(t.Argv[0], t.Argv[1:]...)
 		cmd.Dir = t.Dir
 		// Do not inherit monitoring tokens, webhook secrets or provider keys into the shell.
@@ -160,6 +216,9 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 		}
 		cmd.Env = append(cmd.Env, "TERM=xterm-256color")
 		if e = cmd.Start(); e != nil {
+			if master != nil {
+				master.Close()
+			}
 			p.Close()
 			return nil, errors.New("local shell could not start; check configured executable/directory")
 		}
@@ -167,7 +226,21 @@ func Open(ctx context.Context, t Target, c Credentials, cols, rows int) (Session
 		if u, ok := p.(pty.UnixPty); ok {
 			_ = u.Slave().Close()
 		}
-		return &localSession{Pty: p, cmd: cmd}, nil
+		// Ownership of the terminal transfers here. After a successful start,
+		// only result.closePTY releases it; never call p.Close elsewhere.
+		result := &localSession{pty: p, master: master, cmd: cmd, done: make(chan struct{})}
+		// Own the process wait from startup, even when the browser disconnects
+		// before the API starts waiting. Close alone must not leave a zombie.
+		go func() {
+			result.waitErr = cmd.Wait()
+			close(result.done)
+			if _, ok := p.(pty.ConPty); ok {
+				// Keep stdout readable to EOF on a normal Windows exit. The
+				// force-close path can still interrupt this terminal release.
+				result.closePTY(false)
+			}
+		}()
+		return result, nil
 	}
 	var auth ssh.AuthMethod
 	if c.PrivateKey != "" {

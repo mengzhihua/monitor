@@ -168,19 +168,78 @@ func (s *Server) alarmLog() []health.LogEntry {
 func (s *Server) roomAllowed(u User, nodeID string) bool {
 	// Match resolve(): an explicitly selected streamed node wins even when
 	// an Agent on this machine has the same host ID as its Hub.
-	if len(u.Rooms) == 0 || nodeID == "" || nodeID == "local" || s.opt.Nodes == nil {
+	if unrestrictedRooms(u) || nodeID == "" || nodeID == "local" {
 		return true
 	}
-	node, ok := s.opt.Nodes.Get(nodeID)
-	if !ok {
+	if s.opt.Nodes != nil {
+		if node, ok := s.opt.Nodes.Get(nodeID); ok {
+			_, room := node.Membership()
+			if s.opt.Org != nil {
+				var conflict bool
+				_, room, conflict = s.opt.Org.MembershipStatus(nodeID)
+				if conflict {
+					return false
+				}
+			}
+			if room == "" && node.IsReplica() {
+				// Ring replicas do not own room assignments. An empty local
+				// membership cannot erase the authoritative peer's room.
+				if s.opt.Cluster == nil {
+					return false
+				}
+				peer, ok := s.opt.Cluster.PeerInfo(nodeID)
+				if !ok || peer.RoomConflict {
+					return false
+				}
+				room = peer.RoomID
+			}
+			return roomVisible(u, room)
+		}
+	}
+	if s.isLocal(nodeID) {
 		return true
 	}
-	room := node.Info(time.Now()).RoomID
-	if room == "" {
+	if s.opt.Cluster != nil {
+		if inf, ok := s.opt.Cluster.PeerInfo(nodeID); ok {
+			if inf.RoomConflict {
+				return false
+			}
+			room := inf.RoomID
+			if s.opt.Org != nil {
+				_, localRoom, conflict := s.opt.Org.MembershipStatus(nodeID)
+				if conflict {
+					return false
+				}
+				if localRoom != "" {
+					room = localRoom
+				}
+			}
+			return roomVisible(u, room)
+		}
+	}
+	// A scoped identity cannot authorize an unknown or removed remote node.
+	return false
+}
+
+func unrestrictedRooms(u User) bool {
+	if len(u.Rooms) == 0 {
 		return true
 	}
 	for _, allowed := range u.Rooms {
-		if allowed == room || allowed == "*" {
+		if allowed == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func roomVisible(u User, room string) bool {
+	// Preserve access to known unassigned nodes in existing installations.
+	if room == "" || unrestrictedRooms(u) {
+		return true
+	}
+	for _, allowed := range u.Rooms {
+		if allowed == room {
 			return true
 		}
 	}

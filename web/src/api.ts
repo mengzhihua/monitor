@@ -381,13 +381,13 @@ export const api = {
   functions: (signal?: AbortSignal) => get<FunctionInfo[]>(`/api/v1/functions${q({})}`, signal),
   function: (name: string, args: Record<string, string> = {}, signal?: AbortSignal) =>
     get<FunctionResponse>(`/api/v1/function${q({ function: name, ...args })}`, signal),
-  weights: (method = 'anomaly-rate', extra: Record<string, string | number> = {}) =>
-    get<WeightsResponse>(`/api/v1/weights${q({ method, ...extra })}`),
+  weights: (method = 'anomaly-rate', extra: Record<string, string | number> = {}, signal?: AbortSignal) =>
+    get<WeightsResponse>(`/api/v1/weights${q({ method, ...extra })}`, signal),
   logs: (args: Record<string, string> = {}, signal?: AbortSignal) =>
     get<FunctionResponse>(`/api/v1/logs${q(args)}`, signal),
   data: (chart: string, after: number, before = 0, points = 0, signal?: AbortSignal) =>
     get<DataResponse>(`/api/v1/data${q({ chart, after, before, points })}`, signal),
-  contexts: () => get<{ contexts: Record<string, { family: string; title: string; units: string; charts: string[]; dimensions: string[]; priority: number }> }>(`/api/v1/contexts${q({})}`),
+  contexts: (signal?: AbortSignal) => get<{ contexts: Record<string, { family: string; title: string; units: string; charts: string[]; dimensions: string[]; priority: number }> }>(`/api/v1/contexts${q({})}`, signal),
   alarmSummary: () => get<{ status: Record<string, number>; classes?: Record<string, number> }>(`/api/v1/alarm_summary${q({})}`),
   manageHealth: () => get<{ enabled: boolean; silent: boolean; maintenance: boolean; maint_until?: number }>('/api/v1/manage/health'),
   setHealth: (body: Record<string, unknown>) => send<unknown>('PUT', '/api/v1/manage/health', body),

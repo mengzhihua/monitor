@@ -60,6 +60,7 @@ func (s *Server) handleOperationsHistory(w http.ResponseWriter, r *http.Request)
 		historyError(w, err)
 		return
 	}
+	q.ScopeNodes = s.operationsHistoryScope(r)
 	page, err := s.operations.QueryHistory(q)
 	if err != nil {
 		historyError(w, err)
@@ -91,6 +92,7 @@ func (s *Server) handleOperationsHistoryExport(w http.ResponseWriter, r *http.Re
 		historyError(w, err)
 		return
 	}
+	q.ScopeNodes = s.operationsHistoryScope(r)
 	page, err := s.operations.QueryHistory(q)
 	if err != nil {
 		historyError(w, err)

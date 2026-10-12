@@ -337,8 +337,39 @@ func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 		}
 		return a.ID < b.ID
 	})
-	out.Activity = s.operations.Recent()
+	out.Activity = s.operations.RecentForNodes(s.operationsScope(userOf(r), infos))
 	return out
+}
+
+// Scope history by current membership, independently of user-supplied filters.
+// Unknown/forgotten remote nodes are absent for a room-restricted identity;
+// unrestricted operators retain access to the complete saved history.
+func (s *Server) operationsScope(u User, infos []hub.Info) []string {
+	if unrestrictedRooms(u) {
+		return nil
+	}
+	nodes := make([]string, 0, len(infos)+2)
+	nodes = append(nodes, "", "local")
+	if s.reg.Host.ID != "" && s.roomAllowed(u, s.reg.Host.ID) {
+		nodes = append(nodes, s.reg.Host.ID)
+	}
+	for _, info := range infos {
+		nodes = append(nodes, info.ID)
+	}
+	return nodes
+}
+
+func (s *Server) operationsHistoryScope(r *http.Request) []string {
+	u := userOf(r)
+	if unrestrictedRooms(u) {
+		return nil
+	}
+	request := r.Clone(r.Context())
+	url := *r.URL
+	url.RawQuery = ""
+	request.URL = &url
+	infos := s.nodesPayload(request, 1)["nodes"].([]hub.Info)
+	return s.operationsScope(u, infos)
 }
 
 func (s *Server) peerAlarms(ctx context.Context, peer, id string) ([]health.Alarm, error) {

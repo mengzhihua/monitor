@@ -24,7 +24,17 @@ func shellTestServer(t *testing.T) (*Server, *httptest.Server) {
 	}
 	s, _ := aiTestServer(t, Options{Token: "shell-fixture-admin", Users: []User{{Name: "viewer", Token: "shell-viewer", Role: RoleViewer}, {Name: "oncall", Token: "shell-oncall", Role: RoleTroubleshooter}}, Audit: log, Shell: hostshell.Config{Enabled: true, Targets: []hostshell.Target{{ID: "local-test", Name: "Local", Kind: "local", Argv: []string{"/bin/sh"}, Dir: t.TempDir()}}}})
 	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(func() { s.CloseShells(); ts.Close(); log.Close() })
+	t.Cleanup(func() {
+		closed := make(chan struct{})
+		go func() { s.CloseShells(); close(closed) }()
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Error("shell cleanup did not release its workers")
+		}
+		ts.Close()
+		log.Close()
+	})
 	return s, ts
 }
 func shellRequest(t *testing.T, ts *httptest.Server, path, token, body, origin string, want int) string {

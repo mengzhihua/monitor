@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { HealthOverlay, NodeInfo, NodeInventoryView, Room, Space, Template } from '../api'
 import { api } from '../api'
 
 const props = defineProps<{ role: string; nodes: NodeInfo[] }>()
 const emit = defineEmits<{ close: [] }>()
-const canManage = props.role === 'admin'
+const canManage = computed(() => props.role === 'admin')
 
 const tab = ref<'templates' | 'inventory'>('templates')
 const error = ref('')
@@ -28,49 +28,66 @@ const inventory = ref<Record<string, NodeInventoryView>>({})
 const invNode = ref('')
 const invDraft = ref<Record<string, string>>({})
 const invView = ref<NodeInventoryView | null>(null)
+const invLoading = ref(false)
+const invSaving = ref(false)
+let disposed = false
+let loadGeneration = 0
+let listRequest: AbortController | undefined
+let inventoryRequest: AbortController | undefined
+let previewRequest: AbortController | undefined
+let invRequest: AbortController | undefined
+
+function cancelInventoryEdit() {
+  invRequest?.abort()
+  invRequest = undefined
+  invNode.value = ''
+  invView.value = null
+  invDraft.value = {}
+  invLoading.value = false
+}
 
 async function load() {
+  const generation = ++loadGeneration
+  listRequest?.abort()
+  const request = listRequest = new AbortController()
   try {
-    const [t, sp] = await Promise.all([api.templates(), api.spaces()])
+    const [t, sp, rm] = await Promise.all([api.templates(request.signal), api.spaces(), api.rooms()])
+    if (disposed || request.signal.aborted || generation !== loadGeneration) return
     list.value = t.templates || []
     spaces.value = sp.spaces || []
-    const rm = await api.rooms()
     rooms.value = rm.rooms || []
-    error.value = ''
-  } catch (e) { error.value = (e as Error).message }
+  } catch (e) {
+    if (!disposed && !request.signal.aborted && generation === loadGeneration) error.value = (e as Error).message
+  }
 }
 
 function rulesToYaml(tpl: Template): string {
   if (!tpl.rules?.length) return ''
+  // JSON flow values are valid YAML and preserve strings, nested maps and booleans.
   const lines = ['alarms:']
   for (const rule of tpl.rules) {
-    const r = rule as unknown as Record<string, unknown>
-    const keys = Object.keys(r).filter((k) => r[k] !== undefined && r[k] !== '' && k !== 'macros')
-    if (!keys.length) continue
-    const first = keys[0]!
-    lines.push(`  - ${first}: ${yamlScalar(r[first])}`)
-    for (const k of keys.slice(1)) lines.push(`    ${k}: ${yamlScalar(r[k])}`)
-    if (r.macros && Object.keys(r.macros).length) {
-      lines.push('    macros:')
-      for (const [mk, mv] of Object.entries(r.macros)) lines.push(`      ${mk}: ${yamlScalar(mv)}`)
-    }
+    const fields = Object.entries(rule).filter(([, value]) => value !== undefined)
+    if (!fields.length) { lines.push('  - {}'); continue }
+    fields.forEach(([key, value], index) => {
+      lines.push(`${index === 0 ? '  - ' : '    '}${JSON.stringify(key)}: ${JSON.stringify(value)}`)
+    })
   }
   return lines.join('\n')
 }
-function yamlScalar(v: unknown): string {
-  const s = String(v)
-  return s.startsWith('$') || s.includes(':') || s.includes('#') ? JSON.stringify(s) : s
-}
 
 function edit(tpl?: Template) {
+  if (saving.value || !canManage.value) return
+  error.value = ''
   editing.value = tpl || null
   draft.value = tpl
     ? JSON.parse(JSON.stringify(tpl))
     : { name: '', description: '', macros: {}, tags: {}, assign: { rooms: [], nodes: [], labels: {} }, removed: [], disabled: [] }
+  draft.value!.assign ||= {}
   rulesYaml.value = tpl ? rulesToYaml(tpl) : ''
 }
 
 async function saveWithYaml() {
+  if (saving.value || !canManage.value) return
   const t = draft.value
   if (!t?.name) { error.value = '模板名称必填'; return }
   saving.value = true
@@ -85,13 +102,16 @@ async function saveWithYaml() {
     }
     body.if_updated = t.updated
     await api.putTemplateRaw(body, t.id)
+    if (disposed) return
     error.value = ''
     editing.value = null
+    draft.value = null
+    rulesYaml.value = ''
     await Promise.all([load(), loadInventory()])
-  } catch (e) { error.value = (e as Error).message } finally { saving.value = false }
+  } catch (e) { if (!disposed) error.value = (e as Error).message } finally { saving.value = false }
 }
 async function del(tpl: Template) {
-  if (!tpl.id || !window.confirm(`删除模板 ${tpl.name}？`)) return
+  if (saving.value || !canManage.value || !tpl.id || !window.confirm(`删除模板 ${tpl.name}？`)) return
   try { await api.deleteTemplate(tpl.id); await Promise.all([load(), loadInventory()]) } catch (e) { error.value = (e as Error).message }
 }
 
@@ -116,33 +136,74 @@ function toggleList(key: 'removed' | 'disabled', v: string) {
 }
 
 async function runPreview() {
-  if (!previewNode.value) return
-  try { preview.value = await api.templateEffective(previewNode.value) } catch (e) { error.value = (e as Error).message }
+  previewRequest?.abort()
+  preview.value = null
+  const node = previewNode.value
+  if (!node) return
+  const request = previewRequest = new AbortController()
+  try {
+    const result = await api.templateEffective(node, request.signal)
+    if (!disposed && !request.signal.aborted && previewRequest === request) preview.value = result
+  } catch (e) {
+    if (!disposed && !request.signal.aborted && previewRequest === request) error.value = (e as Error).message
+  }
 }
 
 async function loadInventory() {
-  try { inventory.value = (await api.inventory()).inventory || {} } catch (e) { error.value = (e as Error).message }
+  inventoryRequest?.abort()
+  const request = inventoryRequest = new AbortController()
+  try {
+    const result = await api.inventory(request.signal)
+    if (!disposed && !request.signal.aborted) inventory.value = result.inventory || {}
+  } catch (e) { if (!disposed && !request.signal.aborted) error.value = (e as Error).message }
 }
 async function editInv(nodeID: string) {
+  if (invSaving.value) return
+  cancelInventoryEdit()
   invNode.value = nodeID
+  invLoading.value = true
+  error.value = ''
+  const request = invRequest = new AbortController()
   try {
-    invView.value = await api.nodeInventory(nodeID)
-    invDraft.value = { ...(invView.value.manual || {}) }
-  } catch (e) { error.value = (e as Error).message }
+    const result = await api.nodeInventory(nodeID, request.signal)
+    if (disposed || request.signal.aborted || invRequest !== request) return
+    if (result.node_id !== nodeID) throw new Error('资产响应与所选节点不一致，请重新读取。')
+    invView.value = result
+    invDraft.value = { ...(result.manual || {}) }
+  } catch (e) {
+    if (!disposed && !request.signal.aborted && invRequest === request) error.value = (e as Error).message
+  } finally { if (invRequest === request) invLoading.value = false }
 }
 async function saveInv() {
+  const view = invView.value
+  if (invSaving.value || invLoading.value || !view || view.node_id !== invNode.value) return
+  invSaving.value = true
+  error.value = ''
   try {
-    invView.value = await api.putInventory(invNode.value, invDraft.value, invView.value?.updated)
-    invDraft.value = { ...(invView.value.manual || {}) }
+    // Bind the mutation to the loaded record, never to a mutable selection.
+    const result = await api.putInventory(view.node_id, { ...invDraft.value }, view.updated)
+    if (disposed || invView.value !== view) return
+    if (result.node_id !== view.node_id) throw new Error('保存响应与所选节点不一致，请重新读取。')
+    invView.value = result
+    invDraft.value = { ...(result.manual || {}) }
     await loadInventory()
-  } catch (e) { error.value = (e as Error).message }
+  } catch (e) { if (!disposed) error.value = (e as Error).message }
+  finally { invSaving.value = false }
 }
 
 onMounted(() => { void load(); void loadInventory() })
+onBeforeUnmount(() => {
+  disposed = true
+  ++loadGeneration
+  listRequest?.abort()
+  inventoryRequest?.abort()
+  previewRequest?.abort()
+  cancelInventoryEdit()
+})
 </script>
 
 <template>
-  <div class="panel">
+  <section class="panel" aria-label="模板与资产">
     <div class="head">
       <h3>模板与资产 <small>Zabbix templates / host groups / inventory</small></h3>
       <div class="tabs">
@@ -151,12 +212,12 @@ onMounted(() => { void load(); void loadInventory() })
       </div>
       <button class="x" @click="emit('close')" title="关闭">×</button>
     </div>
-    <div v-if="error" class="err">{{ error }}</div>
+    <div v-if="error" class="err" role="alert">{{ error }}</div>
 
     <template v-if="tab === 'templates'">
       <div class="row">
-        <button v-if="canManage" @click="edit()">新建模板</button>
-        <select v-model="previewNode" @change="runPreview">
+        <button v-if="canManage" :disabled="saving" @click="edit()">新建模板</button>
+        <select aria-label="节点有效配置预览" v-model="previewNode" @change="runPreview">
           <option value="">节点有效配置预览…</option>
           <option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.hostname || n.id }}</option>
         </select>
@@ -181,15 +242,15 @@ onMounted(() => { void load(); void loadInventory() })
               {{ kvEntries(t.assign?.labels).map(([k, v]) => `${k}=${v}`).join(',') || '—' }}
             </td>
             <td v-if="canManage" class="ops">
-              <button @click="edit(t)">编辑</button>
-              <button @click="del(t)">删除</button>
+              <button :disabled="saving" @click="edit(t)">编辑</button>
+              <button :disabled="saving" @click="del(t)">删除</button>
             </td>
           </tr>
           <tr v-if="!list.length"><td colspan="5" class="dim">暂无模板</td></tr>
         </tbody>
       </table>
 
-      <div v-if="draft" class="editor">
+      <fieldset v-if="draft" class="editor" :disabled="saving">
         <div class="nav-title">{{ editing ? '编辑模板' : '新建模板' }}</div>
         <label>名称 <input v-model="draft.name" :disabled="!canManage" /></label>
         <label>描述 <input v-model="draft.description" :disabled="!canManage" /></label>
@@ -205,7 +266,7 @@ onMounted(() => { void load(); void loadInventory() })
         <button v-if="canManage" class="mini" @click="addKV((draft!.macros ||= {}))">+ 宏</button>
 
         <div class="nav-title">告警规则（YAML，同告警规则编辑器）</div>
-        <textarea v-model="rulesYaml" rows="8" placeholder="alarms:&#10;  - on: system.cpu&#10;    calc: $this &gt; {$CPU_MAX}&#10;    warn: $this &gt; {$CPU_MAX}" :disabled="!canManage"></textarea>
+        <textarea aria-label="模板告警规则" v-model="rulesYaml" rows="8" placeholder="alarms:&#10;  - on: system.cpu&#10;    calc: $this &gt; {$CPU_MAX}&#10;    warn: $this &gt; {$CPU_MAX}" :disabled="!canManage"></textarea>
 
         <div class="nav-title">禁用基准规则（removed）/ 采集器（disabled）</div>
         <div class="row">
@@ -250,7 +311,7 @@ onMounted(() => { void load(); void loadInventory() })
           <button v-if="canManage" :disabled="saving" @click="saveWithYaml">{{ saving ? '保存中…' : '保存' }}</button>
           <button @click="draft = null">取消</button>
         </div>
-      </div>
+      </fieldset>
     </template>
 
     <template v-else>
@@ -262,12 +323,13 @@ onMounted(() => { void load(); void loadInventory() })
             <td class="dim">{{ kvEntries(v.auto).map(([k, x]) => `${k}=${x}`).join(' ') }}</td>
             <td class="dim">{{ kvEntries(v.tags).map(([k, x]) => `${k}=${x}`).join(' ') || '—' }}</td>
             <td class="dim">{{ kvEntries(v.manual).map(([k, x]) => `${k}=${x}`).join(' ') || '—' }}</td>
-            <td class="ops"><button @click="editInv(id)">编辑</button></td>
+            <td class="ops"><button :disabled="invSaving" @click="editInv(id)">编辑</button></td>
           </tr>
           <tr v-if="!Object.keys(inventory).length"><td colspan="5" class="dim">暂无节点</td></tr>
         </tbody>
       </table>
-      <div v-if="invView" class="editor">
+      <p v-if="invLoading" role="status">正在读取所选节点资产…</p>
+      <fieldset v-if="invView" class="editor" :disabled="invSaving">
         <div class="nav-title">资产字段 — {{ invView.auto?.hostname || invNode }}（手工覆盖模板/自动）</div>
         <div v-for="[k] in kvEntries(invDraft)" :key="k" class="kv">
           <input :value="k" @change="setKV(invDraft, k, ($event.target as HTMLInputElement).value, invDraft[k]!)" />
@@ -275,10 +337,10 @@ onMounted(() => { void load(); void loadInventory() })
           <button @click="delKV(invDraft, k)">×</button>
         </div>
         <button class="mini" @click="addKV(invDraft)">+ 字段</button>
-        <div class="row"><button @click="saveInv">保存</button><button @click="invView = null">取消</button></div>
-      </div>
+        <div class="row"><button @click="saveInv">{{ invSaving ? '保存中…' : '保存' }}</button><button @click="cancelInventoryEdit">取消</button></div>
+      </fieldset>
     </template>
-  </div>
+  </section>
 </template>
 
 <style scoped>
@@ -307,7 +369,7 @@ button.mini { font-size: 12px; padding: 2px 8px; }
 .assign { display: flex; gap: 16px; flex-wrap: wrap; }
 .assign label { display: block; font-size: 13px; }
 .preview { background: #1e293b; border-radius: 6px; padding: 8px; margin: 8px 0; }
-.editor { border-top: 1px solid #1e293b; margin-top: 12px; padding-top: 8px; }
+.editor { min-width: 0; border: 0; margin-inline: 0; padding-inline: 0; border-top: 1px solid #1e293b; margin-top: 12px; padding-top: 8px; }
 .editor label { display: block; margin: 6px 0; font-size: 13px; }
 .editor label input { width: 100%; box-sizing: border-box; }
 @media (max-width: 700px) { .panel { inset: 49px 0 0 0; width: auto; border-radius: 0; } }

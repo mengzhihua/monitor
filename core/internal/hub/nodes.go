@@ -114,28 +114,29 @@ type Node struct {
 
 // Info is the JSON view of a node.
 type Info struct {
-	ID          string            `json:"id"`
-	Hostname    string            `json:"hostname"`
-	OS          string            `json:"os"`
-	Arch        string            `json:"arch"`
-	Labels      map[string]string `json:"labels"`
-	UpdateEvery int               `json:"update_every"`
-	Version     string            `json:"version"`
-	Status      string            `json:"status"`
-	Local       bool              `json:"local"`
-	FirstSeen   int64             `json:"first_seen"`
-	LastSeen    int64             `json:"last_seen"`
-	LastData    int64             `json:"last_data,omitempty"`
-	ChartsCount int               `json:"charts_count"`
-	Alarms      map[string]int    `json:"alarms"`
-	Functions   []string          `json:"functions,omitempty"`
-	Peer        string            `json:"peer,omitempty"` // cluster: originating hub URL
-	SpaceID     string            `json:"space_id,omitempty"`
-	RoomID      string            `json:"room_id,omitempty"`
-	Replica     bool              `json:"replica,omitempty"`
-	ACLK        bool              `json:"aclk,omitempty"`
-	Protocol    string            `json:"protocol,omitempty"`
-	Contexts    map[string]any    `json:"contexts,omitempty"`
+	ID           string            `json:"id"`
+	Hostname     string            `json:"hostname"`
+	OS           string            `json:"os"`
+	Arch         string            `json:"arch"`
+	Labels       map[string]string `json:"labels"`
+	UpdateEvery  int               `json:"update_every"`
+	Version      string            `json:"version"`
+	Status       string            `json:"status"`
+	Local        bool              `json:"local"`
+	FirstSeen    int64             `json:"first_seen"`
+	LastSeen     int64             `json:"last_seen"`
+	LastData     int64             `json:"last_data,omitempty"`
+	ChartsCount  int               `json:"charts_count"`
+	Alarms       map[string]int    `json:"alarms"`
+	Functions    []string          `json:"functions,omitempty"`
+	Peer         string            `json:"peer,omitempty"` // cluster: originating hub URL
+	SpaceID      string            `json:"space_id,omitempty"`
+	RoomID       string            `json:"room_id,omitempty"`
+	RoomConflict bool              `json:"room_conflict,omitempty"`
+	Replica      bool              `json:"replica,omitempty"`
+	ACLK         bool              `json:"aclk,omitempty"`
+	Protocol     string            `json:"protocol,omitempty"`
+	Contexts     map[string]any    `json:"contexts,omitempty"`
 }
 
 // Nodes is the hub-side node set.
@@ -326,6 +327,20 @@ func (nd *Node) SetMembership(spaceID, roomID string) {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
 	nd.spaceID, nd.roomID = spaceID, roomID
+}
+
+// Membership reads only the access-control metadata, without constructing the
+// chart, alarm and function summaries used by Info.
+func (nd *Node) Membership() (spaceID, roomID string) {
+	nd.mu.Lock()
+	defer nd.mu.Unlock()
+	return nd.spaceID, nd.roomID
+}
+
+func (nd *Node) IsReplica() bool {
+	nd.mu.Lock()
+	defer nd.mu.Unlock()
+	return nd.replica
 }
 
 // AcceptReplica installs (or refreshes) a ring-replicated copy of a node that
