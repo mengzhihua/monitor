@@ -17,6 +17,8 @@ shell:
       name: 监控服务本机
       kind: local
       node: local
+      # 可选：仅这些个人管理员登录名可见并连接；省略则所有个人 admin 可用。
+      users: [alice, bob]
       argv: [/bin/bash, --noprofile, --norc]
       dir: /tmp
     - id: app-ssh
@@ -27,9 +29,12 @@ shell:
       node: your-agent-node-id
       address: 192.168.1.20:22
       user: operator
+      users: [oncall-lead]
       host_key_algorithm: ssh-ed25519
       host_key: SHA256:替换为可信渠道核对的主机公钥指纹
 ```
+
+`users` 匹配监控登录名（`web.users[].name` / OIDC·SAML·LDAP 显示名），不是 SSH 的 `user`。列表最多 64 个、不可重复。未列出的个人管理员在目标列表中看不到该项，申请票据返回不可用。仍须通过个人管理员身份与机房权限检查；共享 `web.token` 不能打开 WebShell。
 
 SSH 指纹需在目标服务器控制台或其他可信渠道取得，例如在 Linux 主机执行 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256`，复制 `SHA256:...` 字段。主机配置有多种 HostKey 时，用 `host_key_algorithm` 指定该指纹对应的协商算法，无需修改 sshd。支持 `ssh-ed25519`、`ecdsa-sha2-nistp256/384/521`、`rsa-sha2-256/512`；未指定时沿用 SSH 库默认协商顺序，最终仍严格校验指纹。不会自动信任首次连接，指纹变化会拒绝连接。远端使用端口 22 以外的端口时同样填写 `host:port`；IPv6 使用 `[地址]:端口`。
 

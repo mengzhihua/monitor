@@ -15,6 +15,22 @@
 | [Grafana 无数据 / 求值错误](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rule-evaluation/nodata-and-error-states/) | 规则字段 `no_data_state` / `exec_err_state`：`undefined`（默认，等同历史 UNDEFINED）、`ok`（CLEAR）、`alerting`（CRITICAL）、`keep_last`（保留上次状态）。策略结果立即提交，不经过 `for` / `keep_firing_for` | 无独立 Error 状态枚举；`alerting` 映射为 CRITICAL 而非 WARNING；远端转移日志不单独标注策略来源 |
 | [Zabbix Recovery expression](https://www.zabbix.com/documentation/7.0/en/manual/config/triggers/trigger) | 可选 `recovery`。警告和严重表达式都不成立后，还要恢复表达式为真才回到正常。等待时告警带 `recovery_hold`，面板显示「等待恢复」 | 不提供 Zabbix 的 OK event generation = None、手动关闭问题，也不把恢复表达式单独当成一条新的严重级别 |
 
+### `alerting` → CRITICAL 映射
+
+Grafana 的 `Alerting` 状态在本项目中**一律写成 `CRITICAL`**，不会落成 `WARNING`。对照如下：
+
+| 来源 | 配置 / 条件 | Monitor 状态 |
+| --- | --- | --- |
+| `no_data_state: alerting` | 规则窗口内无样本 | **CRITICAL**（立即提交，跳过 `for`） |
+| `exec_err_state: alerting` | 表达式求值失败 | **CRITICAL**（立即提交，跳过 `for`） |
+| `no_data_state` / `exec_err_state: ok` | 同上 | CLEAR |
+| `no_data_state` / `exec_err_state: undefined`（默认） | 同上 | UNDEFINED |
+| `no_data_state` / `exec_err_state: keep_last` | 同上 | 保留上次已提交状态 |
+| 被动检查 `external_check_status` | `check.status` 为严重或过期 | CRITICAL；警告为 WARNING |
+| 规则 `warn` / `crit` 表达式 | 正常求值路径 | WARNING / CRITICAL（仍受 `for` 约束） |
+
+实现见 `internal/health/eval_state.go`（`EvalStateAlerting` → `CRITICAL`）与内置告警 `external_check_status`。面板、问题中心与通知通道都按提交后的 CRITICAL 处理，没有单独的 Error 枚举。
+
 优先后续补齐：规则变更审计与历史回退，以及带权限、确认与失败反馈的远端规则分发。`delay` 仍然只推迟通知，从状态提交之后才开始计算；当前规则快照不是历史版本库。
 
 ## 使用方式

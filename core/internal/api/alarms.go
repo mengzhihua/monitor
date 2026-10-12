@@ -232,6 +232,7 @@ func (s *Server) handleAlarmClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	withAuditTarget(r, strconv.FormatUint(body.AlarmID, 10))
+	withAuditNote(r, body.Comment)
 	u := userOf(r)
 	if err := s.opt.Health.CloseAlarm(body.AlarmID, u.Name, body.Comment); err != nil {
 		switch {

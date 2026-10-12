@@ -64,13 +64,15 @@ func (l *logsCollector) Init(reg *registry.Registry) error {
 			return err
 		}
 	}
-	if !logsAvailable(l.cfg.Files) {
-		return fmt.Errorf("no journald, event log or readable log files")
-	}
+	// Stay enabled without journald / Event Log / readable files so the logs
+	// function and charts remain available (empty results) on trimmed hosts
+	// and in CI smoke environments that strip journalctl from PATH.
 	l.seenFile = map[string]int64{}
 	l.lastUnix = time.Now().Unix()
 	l.pendingSev = map[string]float64{}
-	l.startFollow()
+	if logsAvailable(l.cfg.Files) {
+		l.startFollow()
+	}
 	for _, c := range []*registry.Chart{
 		{ID: "logs.written", Title: "Log entries written", Units: "entries/s", Priority: 900, Type: registry.Area,
 			Dimensions: []*registry.Dimension{{ID: "written"}}},

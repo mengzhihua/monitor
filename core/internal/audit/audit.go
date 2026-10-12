@@ -21,6 +21,8 @@ type Entry struct {
 	Action string `json:"action"` // e.g. "POST /api/v1/alarms/close", "login", "login_failed"
 	Target string `json:"target,omitempty"`
 	Status int    `json:"status,omitempty"`
+	// Note carries an operator comment when one is supplied (e.g. alarm close).
+	Note string `json:"note,omitempty"`
 	// Optional fields for whitelisted command runs (POST /api/v1/commands).
 	Command    string `json:"command,omitempty"`
 	Argv       string `json:"argv,omitempty"`

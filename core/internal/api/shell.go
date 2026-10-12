@@ -89,6 +89,18 @@ func (s *Server) shellNode(t hostshell.Target) string {
 	return t.Node
 }
 func (s *Server) shellTargetAllowed(u User, t hostshell.Target) bool {
+	if len(t.Users) > 0 {
+		allowed := false
+		for _, name := range t.Users {
+			if name == u.Name {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return false
+		}
+	}
 	n := s.shellNode(t)
 	if !s.roomAllowed(u, n) {
 		return false

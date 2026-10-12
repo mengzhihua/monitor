@@ -251,6 +251,29 @@ func TestShellShutdownClosesHijackedConnection(t *testing.T) {
 	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-fixture-admin", `{"target":"local-test"}`, ts.URL, 503)
 }
 
+func TestShellTargetUsersRestriction(t *testing.T) {
+	s, ts := shellTestServer(t)
+	s.opt.Token = ""
+	s.opt.Users = []User{
+		{Name: "alice", Token: "shell-alice", Role: RoleAdmin},
+		{Name: "bob", Token: "shell-bob", Role: RoleAdmin},
+	}
+	s.opt.Shell.Targets = []hostshell.Target{
+		{ID: "alice-only", Name: "Alice shell", Kind: "local", Argv: []string{"/bin/sh"}, Dir: t.TempDir(), Users: []string{"alice"}},
+		{ID: "shared", Name: "Shared", Kind: "local", Argv: []string{"/bin/sh"}, Dir: t.TempDir()},
+	}
+	aliceList := shellRequest(t, ts, "/api/v1/shell/targets", "shell-alice", "", "", 200)
+	if !strings.Contains(aliceList, "alice-only") || !strings.Contains(aliceList, "shared") {
+		t.Fatalf("alice should see both targets: %s", aliceList)
+	}
+	bobList := shellRequest(t, ts, "/api/v1/shell/targets", "shell-bob", "", "", 200)
+	if strings.Contains(bobList, "alice-only") || !strings.Contains(bobList, "shared") {
+		t.Fatalf("bob should only see shared: %s", bobList)
+	}
+	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-bob", `{"target":"alice-only"}`, ts.URL, 404)
+	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-alice", `{"target":"alice-only"}`, ts.URL, 200)
+}
+
 func TestShellRoomRevocationAndIdentityCollision(t *testing.T) {
 	s, ts := shellTestServer(t)
 	s.opt.Token = ""

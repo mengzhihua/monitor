@@ -96,7 +96,7 @@ func TestAlarmCloseAPI(t *testing.T) {
 	}
 
 	// troubleshooter closes the raised alarm.
-	resp = postClose(t, ts.URL+"/api/v1/alarms/close", "operator", `{"alarm_id":`+jsonNumber(alarmID)+`,"comment":"ok"}`)
+	resp = postClose(t, ts.URL+"/api/v1/alarms/close", "operator", `{"alarm_id":`+jsonNumber(alarmID)+`,"comment":"acked by ops"}`)
 	var a health.Alarm
 	if resp.StatusCode != 200 {
 		t.Fatalf("close: %d", resp.StatusCode)
@@ -109,13 +109,16 @@ func TestAlarmCloseAPI(t *testing.T) {
 		t.Fatalf("status %s want CLEAR", a.Status)
 	}
 
-	// The mutation was audited with user/role/status and the alarm id target.
+	// The mutation was audited with user/role/status, alarm id, and close note.
 	entries := al.Query(0, 0, "")
 	var found bool
 	for _, e := range entries {
 		if e.Action == "POST /api/v1/alarms/close" && e.User == "ops" && e.Role == "troubleshooter" && e.Status == 200 {
 			if e.Target != jsonNumber(alarmID) {
 				t.Fatalf("audit target = %q, want %d", e.Target, alarmID)
+			}
+			if e.Note != "acked by ops" {
+				t.Fatalf("audit note = %q, want close comment", e.Note)
 			}
 			found = true
 		}
