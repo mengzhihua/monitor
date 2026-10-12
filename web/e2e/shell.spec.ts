@@ -63,7 +63,7 @@ test('shared token and viewer cannot open WebShell',async({page,request})=>{
  }
 })
 
-test('target users whitelist hides restricted shells from other admins',async({page,request})=>{
+test('target users whitelist hides restricted shells from other admins',async({page,request,baseURL})=>{
  test.skip(process.platform === 'win32', 'local shell fixture is Unix-only')
  const allowed=await request.get('/api/v1/shell/targets',{headers:{Authorization:'Bearer browser-admin-token'}})
  expect(allowed.status()).toBe(200)
@@ -74,7 +74,8 @@ test('target users whitelist hides restricted shells from other admins',async({p
  const deniedBody=await denied.json()
  expect(deniedBody.targets.map((t:{id:string})=>t.id)).toContain('browser-local-shell')
  expect(deniedBody.targets.map((t:{id:string})=>t.id)).not.toContain('browser-admin-only-shell')
- const ticket=await request.post('/api/v1/shell/tickets',{headers:{Authorization:'Bearer browser-admin-b-token','Content-Type':'application/json'},data:{target:'browser-admin-only-shell'}})
+ // Origin is required before target ACL; without it tickets return 403.
+ const ticket=await request.post('/api/v1/shell/tickets',{headers:{Authorization:'Bearer browser-admin-b-token','Content-Type':'application/json',Origin:baseURL!},data:{target:'browser-admin-only-shell'}})
  expect(ticket.status()).toBe(404)
  await page.goto('/?token=browser-admin-b-token')
  if(await page.getByRole('button',{name:'更多',exact:true}).isVisible())await page.getByRole('button',{name:'更多',exact:true}).click()
