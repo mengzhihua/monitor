@@ -44,8 +44,8 @@ func (c Change) Validate() error {
 		return fmt.Errorf("%w: note must be at most 2048 UTF-8 bytes", ErrInvalidChange)
 	}
 	switch c.Action {
-	case "acknowledge", "unacknowledge", "comment", "unassign", "auto_command":
-		if c.Assignee != "" || c.Status != "" || ((c.Action == "comment" || c.Action == "auto_command") && strings.TrimSpace(c.Note) == "") {
+	case "acknowledge", "unacknowledge", "comment", "unassign", "auto_command", "inhibited":
+		if c.Assignee != "" || c.Status != "" || ((c.Action == "comment" || c.Action == "auto_command" || c.Action == "inhibited") && strings.TrimSpace(c.Note) == "") {
 			return ErrInvalidChange
 		}
 	case "assign":
@@ -290,7 +290,7 @@ func (s *Store) AppendSystem(id, actor string, change Change, target Target) (Re
 	if err := change.Validate(); err != nil {
 		return Record{}, err
 	}
-	if change.Action != "auto_command" && change.Action != "comment" {
+	if change.Action != "auto_command" && change.Action != "inhibited" && change.Action != "comment" {
 		return Record{}, ErrInvalidChange
 	}
 	var last error

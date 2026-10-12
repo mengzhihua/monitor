@@ -89,6 +89,13 @@ func TestAppendSystemAutoCommand(t *testing.T) {
 	if _, err := s.AppendSystem("ep1", "system", Change{Action: "assign", Assignee: "x"}, Target{}); !errors.Is(err, ErrInvalidChange) {
 		t.Fatal(err)
 	}
+	r2, err := s.AppendSystem("ep2", "system", Change{Action: "inhibited", Note: "auto action fix inhibited: same_chart"}, Target{Name: "warm", Chart: "system.ram", Severity: "WARNING", Since: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.History[0].Action != "inhibited" || r2.History[0].Note == "" {
+		t.Fatalf("%+v", r2)
+	}
 }
 
 func TestWorkflowValidationAndFailedWrite(t *testing.T) {

@@ -67,6 +67,49 @@ func TestActionChartFilterSkipsOtherCharts(t *testing.T) {
 	}
 }
 
+func TestSameChartInhibitRecordsWouldBeCommand(t *testing.T) {
+	noted := make(chan struct {
+		cmd    ActionCommand
+		reason string
+	}, 2)
+	e := diagnosticsEngine(t, Options{
+		InhibitSameChart: true,
+		Notifiers:        []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Actions: []Action{{
+			Name: "remediate", Severities: []string{"WARNING"}, Alarms: []string{"warm"},
+			Steps: []ActionStep{{Role: "sysadmin", Command: "note"}},
+		}},
+		Roles: map[string][]string{"sysadmin": {"slack"}},
+		RunCommand: func(ActionCommand) {
+			t.Fatal("inhibited warning must not run the command")
+		},
+		OnActionInhibited: func(c ActionCommand, reason string) {
+			noted <- struct {
+				cmd    ActionCommand
+				reason string
+			}{c, reason}
+		},
+	})
+	e.alarms["hot|system.ram"] = &Alarm{ID: 1, Name: "hot", Chart: "system.ram", Status: StatusCritical, LastStatusChange: 1}
+	e.alarms["warm|system.ram"] = &Alarm{ID: 2, Name: "warm", Chart: "system.ram", Status: StatusWarning, LastStatusChange: 5}
+	e.notifyAt(LogEntry{Name: "warm", Chart: "system.ram", Status: StatusWarning, When: 5, Recipient: "sysadmin"}, 5)
+	d := e.NotificationDiagnostics()
+	if d.Suppressed != 1 || d.Recent[0].Reason != "inhibited" {
+		t.Fatalf("%+v", d)
+	}
+	got := <-noted
+	if got.cmd.Name != "note" || got.cmd.AlarmID != 2 || got.cmd.AlarmName != "warm" || got.reason != "same_chart" {
+		t.Fatalf("%+v", got)
+	}
+	// Repeat notify must not spam inhibit history for the same step.
+	e.notifyAt(LogEntry{Name: "warm", Chart: "system.ram", Status: StatusWarning, When: 5, Recipient: "sysadmin"}, 6)
+	select {
+	case extra := <-noted:
+		t.Fatalf("duplicate inhibit note %+v", extra)
+	default:
+	}
+}
+
 func TestCorrelationSuppressesSymptom(t *testing.T) {
 	e := diagnosticsEngine(t, Options{
 		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},

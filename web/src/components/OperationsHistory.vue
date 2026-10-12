@@ -18,7 +18,7 @@ let queryController: AbortController | undefined
 let exportController: AbortController | undefined
 let disposed = false
 const progressName: Record<HandlingStatus, string> = { open: '待处理', investigating: '排查中', watching: '观察中' }
-const actionName: Record<string, string> = { acknowledge: '确认问题', unacknowledge: '撤销确认', comment: '补充备注', assign: '指派责任人', unassign: '取消指派', progress: '更新进度' }
+const actionName: Record<string, string> = { acknowledge: '确认问题', unacknowledge: '撤销确认', comment: '补充备注', assign: '指派责任人', unassign: '取消指派', progress: '更新进度', auto_command: '自动动作', inhibited: '动作已抑制' }
 const formatTime = (t: number) => t > 0 ? new Date(t * 1000).toLocaleString() : '时间未知'
 function describeAction(h: HandlingAction) {
   if (h.action === 'assign' || h.action === 'unassign') return `${actionName[h.action]}：${h.previous_assignee || '未分配'} → ${h.assignee || '未分配'}`

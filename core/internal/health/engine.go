@@ -105,19 +105,20 @@ type Alarm struct {
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
 	LastNotified int64 `json:"last_notified,omitempty"`
 
-	rule              *Rule
-	chart             *registry.Chart
-	nextRun           time.Time
-	pending           *LogEntry // transition waiting for its delay to expire
-	sustainStatus     Status
-	sustainSince      time.Time
-	holdUntil         time.Time
-	notifiedSt        Status // status last reported to notifiers (or silently settled)
-	delayMult         float64
-	lastDelayAt       time.Time
-	lastNotifyAttempt int64 // scheduler time, independent of successful delivery
-	actionFired       int   // last escalation step whose command already ran; -1 = recovery
-	prevStatusChange  int64 // LastStatusChange before the latest transition (recovery episode key)
+	rule               *Rule
+	chart              *registry.Chart
+	nextRun            time.Time
+	pending            *LogEntry // transition waiting for its delay to expire
+	sustainStatus      Status
+	sustainSince       time.Time
+	holdUntil          time.Time
+	notifiedSt         Status // status last reported to notifiers (or silently settled)
+	delayMult          float64
+	lastDelayAt        time.Time
+	lastNotifyAttempt  int64 // scheduler time, independent of successful delivery
+	actionFired        int   // last escalation step whose command already ran; -1 = recovery
+	actionInhibitNoted int   // last step index recorded as inhibited (avoids repeat spam)
+	prevStatusChange   int64 // LastStatusChange before the latest transition (recovery episode key)
 }
 
 // LogEntry records a status transition (or a repeat notification).
@@ -185,9 +186,13 @@ type Options struct {
 	Macros map[string]string
 	// Actions are multi-step escalation policies. RunCommand executes a
 	// whitelisted command; it must not call back into the engine.
-	Actions     []Action
-	RunCommand  func(ActionCommand)
-	Correlation []CorrelationRule
+	Actions    []Action
+	RunCommand func(ActionCommand)
+	// OnActionInhibited records a command step that same-chart (or similar)
+	// inhibit skipped before applyActionLocked. It must not call back into
+	// the engine.
+	OnActionInhibited func(ActionCommand, string)
+	Correlation       []CorrelationRule
 }
 
 // ActionCommand is one auto-remediation invocation fired by an escalation step.
@@ -623,6 +628,7 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		a.Status = status
 		a.LastStatusChange = now.Unix()
 		a.actionFired = 0
+		a.actionInhibitNoted = 0
 		entry := e.newEntry(a, old, oldValue, now)
 		e.mu.Unlock()
 		e.transition(a, entry, now)
@@ -867,6 +873,7 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 			if a.Chart == entry.Chart && a.Name != entry.Name && a.Status == StatusCritical {
 				e.diagnostics.Suppressed++
 				e.addNotificationResultLocked(entry, "", "suppressed", "inhibited", 0, 0)
+				e.noteInhibitedActionLocked(&entry, at, "same_chart")
 				return
 			}
 		}

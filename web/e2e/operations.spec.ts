@@ -114,7 +114,14 @@ test('operators download a redacted diagnostic package for handoff', async ({ pa
   expect(exported.notes.join('\n')).toContain('不是完整备份')
   expect(exported.notes.join('\n')).toMatch(/凭据|令牌|密钥/)
   const text = JSON.stringify(exported)
-  expect(text).not.toMatch(/browser-operator-token|browser-test-token|Bearer |private-test-token/)
+  // Secrets from e2e-server notify fixtures and login tokens must never appear.
+  for (const secret of [
+    'browser-operator-token', 'browser-admin-token', 'browser-admin-b-token',
+    'browser-test-token', 'browser-viewer-token', 'Bearer ',
+    'private-test-token', 'private-test-key', 'private-test-response',
+  ]) {
+    expect(text).not.toContain(secret)
+  }
   expect(Array.isArray(exported.problems)).toBe(true)
   expect(Array.isArray(exported.alarm_log)).toBe(true)
   expect(exported.limits).toMatchObject({ alarm_log: 200, handling_history: 200, ai_resolutions: 5 })

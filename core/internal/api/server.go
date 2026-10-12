@@ -350,6 +350,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		s.writePrometheus(w, userOf(r))
 	})
+	m.HandleFunc("GET /api/v1/debug/pprof/heap", s.handleDebugHeap)
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	m.Handle("/", s.uiHandler())
 }

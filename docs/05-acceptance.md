@@ -442,8 +442,11 @@ make bench
 make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
-# 24h 内存浸泡（记录 RSS / heap / TSDB series 增长）：
-python3 scripts/soak.py --seconds 86400 --sample-every 30 --output reports/soak-24h.json
+# 24h 内存浸泡（记录 RSS / heap / TSDB series 增长；可选抓取 pprof）：
+python3 scripts/soak.py --seconds 86400 --sample-every 30 --heap-dir reports/heaps --output reports/soak-24h.json
+# 对已运行实例抓两次 heap 做对比：
+# python3 scripts/capture-heap.py --url http://127.0.0.1:19999 --token "$TOKEN" \
+#   --output reports/heap-a.pb --second reports/heap-b.pb --sleep 60
 cd web && npx playwright install chromium && npm run test:e2e
 cd ../app && flutter analyze && flutter test
 flutter test integration_test/secure_storage_test.dart -d macos

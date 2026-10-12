@@ -263,6 +263,27 @@ func (s *Server) RecordAutoAction(cmd health.ActionCommand, exit int, durationMs
 	if len(note) > autoActionNoteMax {
 		note = note[:autoActionNoteMax]
 	}
+	s.appendAutoHistory(cmd, "auto_command", note)
+}
+
+// RecordInhibitedAction notes that a would-be auto command was skipped because
+// same-chart inhibit (or another wired inhibit reason) blocked the action path.
+func (s *Server) RecordInhibitedAction(cmd health.ActionCommand, reason string) {
+	if s == nil || s.operations == nil || cmd.Name == "" || cmd.AlarmName == "" {
+		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "inhibited"
+	}
+	note := fmt.Sprintf("auto action %s inhibited: %s", cmd.Name, reason)
+	if len(note) > autoActionNoteMax {
+		note = note[:autoActionNoteMax]
+	}
+	s.appendAutoHistory(cmd, "inhibited", note)
+}
+
+func (s *Server) appendAutoHistory(cmd health.ActionCommand, action, note string) {
 	a := health.Alarm{
 		ID: cmd.AlarmID, Name: cmd.AlarmName, Chart: cmd.Chart,
 		Status: cmd.EpisodeStatus, LastStatusChange: cmd.EpisodeSince,
@@ -272,8 +293,8 @@ func (s *Server) RecordAutoAction(cmd health.ActionCommand, exit int, durationMs
 		Hostname: cmd.Hostname, Chart: cmd.Chart, Name: cmd.AlarmName,
 		Severity: cmd.EpisodeStatus.String(), Since: cmd.EpisodeSince,
 	}
-	if _, err := s.operations.AppendSystem(id, "system", operations.Change{Action: "auto_command", Note: note}, target); err != nil {
-		s.log.Warn("auto action history", "command", cmd.Name, "alarm", cmd.AlarmName, "err", err)
+	if _, err := s.operations.AppendSystem(id, "system", operations.Change{Action: action, Note: note}, target); err != nil {
+		s.log.Warn("auto action history", "action", action, "command", cmd.Name, "alarm", cmd.AlarmName, "err", err)
 	}
 }
 
