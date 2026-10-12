@@ -441,6 +441,53 @@ func TestShellRejectsInvalidOutputAcknowledgements(t *testing.T) {
 	}
 }
 
+func TestShellResizeLatestWinsWhilePTYInputIsBlocked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix PTY fixture")
+	}
+	s, ts := shellTestServer(t)
+	s.opt.Shell.Targets[0].Argv = []string{"/bin/sh", "-c", "stty -icanon -echo; printf INPUT_READY; sleep 30"}
+	ws, id, _ := shellSessionConnect(t, ts, "shell-fixture-admin", true)
+	var output strings.Builder
+	for !strings.Contains(output.String(), "INPUT_READY") {
+		kind, data, err := ws.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == websocket.BinaryMessage {
+			output.Write(data)
+		}
+	}
+	// Fill the stdin worker queue so further input would overflow; resizes must
+	// still land on the dedicated latest-wins channel.
+	for i := 0; i < 8; i++ {
+		if err := ws.WriteJSON(map[string]any{"type": "input", "data": strings.Repeat("x", 16<<10)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for cols := 40; cols <= 120; cols += 5 {
+		if err := ws.WriteJSON(map[string]any{"type": "resize", "cols": cols, "rows": 24}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ws.WriteJSON(map[string]any{"type": "close"}); err != nil {
+		t.Fatal(err)
+	}
+	shellSessionWaitClosed(t, ws, "")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		list, _ := shellSessionList(t, ts, "shell-fixture-admin")
+		if len(list) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resize under blocked input kept session %s alive", id)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = shellGetTicket(t, ts)
+}
+
 func TestShellControlCloseWhilePTYInputIsBlocked(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix PTY fixture")

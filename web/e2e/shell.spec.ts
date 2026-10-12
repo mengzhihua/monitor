@@ -12,6 +12,7 @@ test('real local WebShell requires an explicit connection and executes in a PTY'
  await expect(panel.getByRole('button',{name:'连接终端',exact:true})).toBeDisabled()
  await expect(panel.locator('.xterm')).toHaveCount(0)
  await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click();await expect(panel.getByText('已连接',{exact:true})).toBeVisible()
+ await expect(panel.getByRole('region',{name:'我的终端会话'})).toContainText('当前页面')
  await panel.getByLabel('手机命令输入').fill("printf 'SHELL_%s_OK\\n' WEB; stty size")
  await panel.getByRole('button',{name:'发送命令',exact:true}).click()
  await expect(panel.getByLabel('交互终端输出',{exact:true})).toContainText('SHELL_WEB_OK')
@@ -110,7 +111,10 @@ test('large output acknowledges bytes only after rendering and stays within the 
  const panel=await openShell(page);await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click()
  await expect(panel.getByLabel('交互终端输出',{exact:true})).toContainText('FLOW_RENDER_COMPLETE')
  await expect.poll(()=>acknowledged).toBe(output.length)
- expect(connected).toBe(true);expect(acks.length).toBeGreaterThan(10);expect(acks.every((value,index)=>value>0 && (index===0 || value>acks[index-1]!))).toBe(true)
+ expect(connected).toBe(true)
+ // ACKs are coalesced per animation frame; require progress and full coverage, not a high frame count.
+ expect(acks.length).toBeGreaterThan(1);expect(acks.at(-1)).toBe(output.length)
+ expect(acks.every((value,index)=>value>0 && (index===0 || value>acks[index-1]!))).toBe(true)
  await panel.getByRole('button',{name:'断开连接',exact:true}).click()
 })
 
@@ -136,6 +140,19 @@ test('session snapshots refresh on demand and a pending termination remains visi
  const panel=await openShell(page);const sessions=panel.getByRole('region',{name:'我的终端会话'})
  await expect(sessions).toContainText('Lingering shell');expect(reads).toBe(1)
  page.once('dialog',dialog=>dialog.accept());await sessions.getByRole('button',{name:'终止会话',exact:true}).click()
- await expect(sessions).toContainText('正在清理');await expect(sessions.getByRole('button',{name:'终止会话',exact:true})).toBeDisabled();expect(reads).toBe(1)
- await sessions.getByRole('button',{name:'刷新会话',exact:true}).click();await expect.poll(()=>reads).toBe(2)
+ await expect(sessions).toContainText('正在清理');await expect(sessions.getByRole('button',{name:'终止会话',exact:true})).toBeDisabled()
+ // 202 closing schedules delayed refreshes; do not require an immediate extra read.
+ await expect.poll(()=>reads,{timeout:5000}).toBeGreaterThan(1)
+ await sessions.getByRole('button',{name:'刷新会话',exact:true}).click();await expect.poll(()=>reads).toBeGreaterThan(2)
+})
+
+test('mobile command box asks before sending pasted newlines',async({page})=>{
+ const panel=await openShell(page)
+ await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click();await expect(panel.getByText('已连接',{exact:true})).toBeVisible()
+ const input=panel.getByLabel('手机命令输入')
+ page.once('dialog',dialog=>{expect(dialog.message()).toContain('换行');return dialog.dismiss()})
+ await input.fill("printf 'A'\nprintf 'B'")
+ await panel.getByRole('button',{name:'发送命令',exact:true}).click()
+ await expect(input).toHaveValue("printf 'A'\nprintf 'B'")
+ await panel.getByRole('button',{name:'断开连接',exact:true}).click()
 })
