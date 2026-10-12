@@ -1035,7 +1035,7 @@ func (e *Engine) Notified() int64 { return e.notified.Load() }
 
 // lookup runs the alarm's database query and reduces it to one number.
 func (e *Engine) lookup(c *registry.Chart, l *Lookup, now time.Time) float64 {
-	before := now.Unix()
+	before := now.Add(l.At).Unix()
 	after := before - int64(l.After/time.Second)
 	dims := c.Dims()
 	selected := map[string]bool{}

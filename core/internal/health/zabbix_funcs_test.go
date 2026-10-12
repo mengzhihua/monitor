@@ -108,6 +108,20 @@ func TestLookupNodata(t *testing.T) {
 	}
 }
 
+func TestLookupAtOffsetsWindow(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		_ = reg.Collect("system.ram", now.Add(-2*time.Hour), map[string]float64{"used": 10, "free": 90})
+		_ = reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 90, "free": 10})
+	}
+	if v := lookupValue(t, "last -5m of used", seed, now); v != 90 {
+		t.Fatalf("current window: got %v want 90", v)
+	}
+	if v := lookupValue(t, "last -5m at -2h of used", seed, now); v != 10 {
+		t.Fatalf("at -2h window: got %v want 10", v)
+	}
+}
+
 func TestLookupFirstChangeStddevCount(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	seed := func(reg *registry.Registry, now time.Time) {

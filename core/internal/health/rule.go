@@ -75,7 +75,8 @@ type ruleFile struct {
 // Lookup describes the database query feeding $this.
 type Lookup struct {
 	Method     tsdb.GroupFunc
-	After      time.Duration // positive; window is [now-After, now]
+	After      time.Duration // positive; window length ending at now+At
+	At         time.Duration // Netdata `at`: window end offset from now (usually ≤ 0)
 	Dimensions []string      // empty = all
 	Percentage bool          // result as % of the sum of all dimensions
 	AbsValue   bool
@@ -274,11 +275,11 @@ func (r *Rule) Hash() string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// ParseLookup parses "<method> <-duration> [unaligned] [absolute] [percentage] [anomaly-bit] [of dim1,dim2]".
+// ParseLookup parses "<method> <-duration> [at <-duration>] [unaligned] [absolute] [percentage] [anomaly-bit] [of dim1,dim2]".
 //
 // Classic methods reduce raw samples: average|avg|mean, min, max, sum
 // (rate-integrated), median, last, min2max (max-min). Zabbix-style functions
-// (Kind) are also accepted; the window is [now-After, now] and the result is
+// (Kind) are also accepted; the window is [now+At-After, now+At] and the result is
 // summed across the selected `of` dimensions unless noted:
 //
 //	nodata -5m                     1 if no non-NaN point exists in the window, else 0 (never NaN)
@@ -337,13 +338,29 @@ func ParseLookup(s string) (*Lookup, error) {
 			l.Percentage = true
 		case "anomaly-bit", "anomaly_bit", "anomalybit":
 			l.AnomalyBit = true
-		case "horizon", "target", "gt", "ge", "lt", "le", "eq", "ne":
+		case "at", "horizon", "target", "gt", "ge", "lt", "le", "eq", "ne":
 			if i+1 >= len(f) {
 				return nil, fmt.Errorf("missing value after %q", f[i])
 			}
 			v := f[i+1]
 			i++
 			switch opt {
+			case "at":
+				// Netdata: window ends at now+offset (offset usually negative, e.g. at -1h).
+				sign := time.Duration(1)
+				raw := v
+				switch {
+				case strings.HasPrefix(raw, "-"):
+					sign = -1
+					raw = raw[1:]
+				case strings.HasPrefix(raw, "+"):
+					raw = raw[1:]
+				}
+				d, err := parseDuration(raw)
+				if err != nil || d < 0 {
+					return nil, fmt.Errorf("bad at offset %q", v)
+				}
+				l.At = sign * d
 			case "horizon":
 				h, err := parseDuration(v)
 				if err != nil || h <= 0 {
@@ -377,7 +394,7 @@ func ParseLookup(s string) (*Lookup, error) {
 			}
 			i = len(f)
 		default:
-			return nil, fmt.Errorf("unknown option %q", f[i])
+			return nil, fmt.Errorf("unsupported lookup option %q (supported: unaligned, absolute, percentage, anomaly-bit, at <offset>, horizon, target, count ops, of dims)", f[i])
 		}
 	}
 	if l.Kind == "forecast" && l.Horizon <= 0 {
