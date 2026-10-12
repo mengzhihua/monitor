@@ -361,7 +361,10 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	// SSH peers and local programs can stop reading stdin. Keep the WebSocket
 	// reader responsive to close/pong/ACK while a bounded worker writes input.
+	// Resizes use a separate latest-wins slot so viewport churn does not fill
+	// the stdin queue and trip input_overflow during blocked writes.
 	inputs := make(chan shellInput, 8)
+	resizes := make(chan shellInput, 1)
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -374,13 +377,14 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 				if ctx.Err() != nil {
 					return
 				}
-				var err error
-				if m.Type == "input" {
-					_, err = ses.Write([]byte(m.Data))
-				} else {
-					err = ses.Resize(m.Cols, m.Rows)
+				if _, err := ses.Write([]byte(m.Data)); err != nil {
+					return
 				}
-				if err != nil {
+			case m := <-resizes:
+				if ctx.Err() != nil {
+					return
+				}
+				if err := ses.Resize(m.Cols, m.Rows); err != nil {
 					return
 				}
 			}
@@ -401,8 +405,26 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				active.lastInput.Store(time.Now().UnixNano())
+				select {
+				case inputs <- m:
+				case <-ctx.Done():
+					return
+				default:
+					cancel(errShellInputOverflow)
+					return
+				}
 			case "resize":
 				if m.Cols < 2 || m.Cols > 400 || m.Rows < 2 || m.Rows > 200 {
+					return
+				}
+				// Drop any pending resize so only the newest size is applied.
+				select {
+				case <-resizes:
+				default:
+				}
+				select {
+				case resizes <- m:
+				case <-ctx.Done():
 					return
 				}
 			case "close":
@@ -411,16 +433,7 @@ func (s *Server) handleShellConnect(w http.ResponseWriter, r *http.Request) {
 				if !first.FlowControl || !flow.acknowledge(m.Bytes) {
 					return
 				}
-				continue
 			default:
-				return
-			}
-			select {
-			case inputs <- m:
-			case <-ctx.Done():
-				return
-			default:
-				cancel(errShellInputOverflow)
 				return
 			}
 		}
