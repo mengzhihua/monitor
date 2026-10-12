@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,13 +13,27 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/health"
 )
 
-func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
-	dir := t.TempDir()
-	script := filepath.Join(dir, "fix.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hello-auto\nexit 3\n"), 0o755); err != nil {
-		t.Fatal(err)
+func pythonAbs(t *testing.T) string {
+	t.Helper()
+	for _, name := range []string{"python3", "python"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		if abs, err := filepath.Abs(path); err == nil && filepath.IsAbs(abs) {
+			return abs
+		}
+		if filepath.IsAbs(path) {
+			return path
+		}
 	}
-	log, err := audit.Open(dir, 100)
+	t.Skip("python3/python not found")
+	return ""
+}
+
+func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
+	py := pythonAbs(t)
+	log, err := audit.Open(t.TempDir(), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +45,7 @@ func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
 	var gotOut string
 	var gotInv health.ActionCommand
 	r := &autoCommandRunner{
-		commands: []config.Command{{Name: "fix", Argv: []string{script}}},
+		commands: []config.Command{{Name: "fix", Argv: []string{py, "-c", "import sys; print('hello-auto'); sys.exit(3)"}}},
 		audit:    log,
 		timeout:  5 * time.Second,
 		record: func(inv health.ActionCommand, exit int, durationMs int64, output string) {
@@ -68,15 +81,9 @@ func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
 }
 
 func TestAutoCommandRunnerTimesOut(t *testing.T) {
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("sleep not found")
-	}
-	if !filepath.IsAbs(sleep) {
-		t.Skip("sleep path not absolute")
-	}
+	py := pythonAbs(t)
 	r := &autoCommandRunner{
-		commands: []config.Command{{Name: "slow", Argv: []string{sleep, "5"}}},
+		commands: []config.Command{{Name: "slow", Argv: []string{py, "-c", "import time; time.sleep(5)"}}},
 		timeout:  200 * time.Millisecond,
 	}
 	var exit int
@@ -109,18 +116,10 @@ func TestAutoCommandRunnerUnknownCommand(t *testing.T) {
 }
 
 func TestAutoCommandTruncatesOutput(t *testing.T) {
-	dir := t.TempDir()
-	script := filepath.Join(dir, "big.sh")
-	// Avoid a huge source file: print many lines from the shell.
-	if err := os.WriteFile(script, []byte("#!/bin/sh\npython3 -c 'print(\"x\"*8000)'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 required")
-	}
+	py := pythonAbs(t)
 	var out string
 	r := &autoCommandRunner{
-		commands: []config.Command{{Name: "big", Argv: []string{script}}},
+		commands: []config.Command{{Name: "big", Argv: []string{py, "-c", "print('x'*8000)"}}},
 		timeout:  5 * time.Second,
 		record:   func(_ health.ActionCommand, _ int, _ int64, output string) { out = output },
 	}
