@@ -54,3 +54,27 @@ func filePerm(t *testing.T, path string) os.FileMode {
 	}
 	return st.Mode().Perm()
 }
+
+func TestCheckBookReportRollsBackWhenPersistFails(t *testing.T) {
+	prev := serviceChecks
+	t.Cleanup(func() { serviceChecks = prev })
+
+	dir := t.TempDir()
+	if err := OpenChecks(dir); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Second)
+	if err := Checks().Report("ok-check", "ok", "fine", nil, time.Minute, now); err != nil {
+		t.Fatal(err)
+	}
+	// Point persistence at a non-writable path so the next Report fails after
+	// the in-memory map would otherwise already hold the new value.
+	Checks().path = filepath.Join(dir, "missing-parent", "checks.json")
+	if err := Checks().Report("new-check", "warning", "should not stick", nil, time.Minute, now); err == nil {
+		t.Fatal("expected persist failure")
+	}
+	rows := Checks().List(now)
+	if len(rows) != 1 || rows[0].Name != "ok-check" {
+		t.Fatalf("memory drifted after failed persist: %+v", rows)
+	}
+}

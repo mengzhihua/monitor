@@ -24,29 +24,29 @@ const diagnosticAICap = 5
 // diagnosticLogEntry is a redacted alarm transition for handoff packages.
 // Recipient role names stay out of the download so the file is safer to share.
 type diagnosticLogEntry struct {
-	UniqueID   uint64        `json:"unique_id"`
-	AlarmID    uint64        `json:"alarm_id"`
-	When       int64         `json:"when"`
-	Hostname   string        `json:"hostname"`
-	Name       string        `json:"name"`
-	Chart      string        `json:"chart"`
-	Context    string        `json:"context,omitempty"`
-	Family     string        `json:"family,omitempty"`
-	Status     health.Status `json:"status"`
-	OldStatus  health.Status `json:"old_status"`
+	UniqueID  uint64        `json:"unique_id"`
+	AlarmID   uint64        `json:"alarm_id"`
+	When      int64         `json:"when"`
+	Hostname  string        `json:"hostname"`
+	Name      string        `json:"name"`
+	Chart     string        `json:"chart"`
+	Context   string        `json:"context,omitempty"`
+	Family    string        `json:"family,omitempty"`
+	Status    health.Status `json:"status"`
+	OldStatus health.Status `json:"old_status"`
 	// Value/OldValue use pointers so NaN/Inf from UNINITIALIZED transitions
 	// become JSON null (encoding/json cannot marshal NaN).
-	Value    *float64 `json:"value"`
-	OldValue *float64 `json:"old_value"`
-	Units    string   `json:"units,omitempty"`
-	Info       string        `json:"info,omitempty"`
-	Delay      int64         `json:"delay,omitempty"`
-	Repeat     bool          `json:"repeat,omitempty"`
-	Notified   bool          `json:"notified"`
-	NotifiedAt int64         `json:"notified_at,omitempty"`
-	Manual     bool          `json:"manual,omitempty"`
-	User       string        `json:"user,omitempty"`
-	Comment    string        `json:"comment,omitempty"`
+	Value      *float64 `json:"value"`
+	OldValue   *float64 `json:"old_value"`
+	Units      string   `json:"units,omitempty"`
+	Info       string   `json:"info,omitempty"`
+	Delay      int64    `json:"delay,omitempty"`
+	Repeat     bool     `json:"repeat,omitempty"`
+	Notified   bool     `json:"notified"`
+	NotifiedAt int64    `json:"notified_at,omitempty"`
+	Manual     bool     `json:"manual,omitempty"`
+	User       string   `json:"user,omitempty"`
+	Comment    string   `json:"comment,omitempty"`
 }
 
 type diagnosticExport struct {

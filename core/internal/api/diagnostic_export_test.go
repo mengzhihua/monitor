@@ -39,7 +39,7 @@ func diagnosticTestServer(t *testing.T) (*Server, *httptest.Server) {
 	}
 	eng, err := health.New(reg, db, health.Options{
 		Rules: rules, Hostname: "diag-host", LogDir: t.TempDir(),
-		Roles: map[string][]string{"sysadmin": {"webhook"}},
+		Roles:     map[string][]string{"sysadmin": {"webhook"}},
 		Notifiers: []health.Notifier{&health.WebhookNotifier{URL: "http://127.0.0.1:9/private-hook"}},
 	})
 	if err != nil {

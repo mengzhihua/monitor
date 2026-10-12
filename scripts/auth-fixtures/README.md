@@ -46,11 +46,13 @@ python3 scripts/auth-fixtures/verify_psk.py --hub-bin core/bin/monitord
 
 ## SAML
 
-`scripts/auth-fixtures/saml_idp.py` is a minimal stub IdP that signs a short-lived assertion for ACS testing. Run:
+`verify_saml.py` checks that `/api/v1/auth/saml/login` redirects when `web.saml` is configured (soft-skips with 404 otherwise).
+
+`saml_idp.py` is a lab stub IdP. By default it posts a **base64-encoded but unsigned** Assertion so you can confirm ACS rejects it. Successful signed ACS login is covered by `core/internal/api/saml_test.go`; to drive ACS from the stub, pass a pre-signed Response XML:
 
 ```bash
-python3 scripts/auth-fixtures/saml_idp.py --listen 127.0.0.1:18080
-# configure web.saml against that IdP, then:
+python3 scripts/auth-fixtures/saml_idp.py --listen 127.0.0.1:18080 \
+  --signed-response /path/to/signed-response.xml
 python3 scripts/auth-fixtures/verify_saml.py --monitor http://127.0.0.1:19999
 ```
 

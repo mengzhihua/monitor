@@ -154,7 +154,8 @@ test('operators assign, track progress, save their queue and export persisted wo
   await page.goto('/?token=browser-operator-token')
   const problem = page.locator(`[data-problem-id="${p.id}"]`)
   await expect(problem.locator('.owner')).toHaveText('责任人：未分配')
-  await expect(problem.getByLabel('browser_ram_notice 责任人').locator('option')).toHaveCount(3)
+  // 未分配 + admin + browser-admin + browser-oncall (e2e-server fixture).
+  await expect(problem.getByLabel('browser_ram_notice 责任人').locator('option')).toHaveCount(4)
   await problem.getByRole('button', { name: '分配给我', exact: true }).click()
   await expect(problem.locator('.owner')).toHaveText('责任人：browser-oncall')
   await problem.getByLabel('browser_ram_notice 处理备注').fill('排查完成，观察内存回落。')

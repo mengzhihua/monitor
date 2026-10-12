@@ -27,14 +27,14 @@ type Config struct {
 	Targets      []Target `yaml:"targets"`
 }
 type Target struct {
-	ID               string   `yaml:"id" json:"id"`
-	Name             string   `yaml:"name" json:"name"`
-	Node             string   `yaml:"node" json:"node"`
-	Kind             string   `yaml:"kind" json:"kind"`
-	Address          string   `yaml:"address" json:"address,omitempty"`
-	User             string   `yaml:"user" json:"user,omitempty"`
-	HostKey          string   `yaml:"host_key" json:"host_key,omitempty"`
-	HostKeyAlgorithm string   `yaml:"host_key_algorithm" json:"host_key_algorithm,omitempty"`
+	ID               string `yaml:"id" json:"id"`
+	Name             string `yaml:"name" json:"name"`
+	Node             string `yaml:"node" json:"node"`
+	Kind             string `yaml:"kind" json:"kind"`
+	Address          string `yaml:"address" json:"address,omitempty"`
+	User             string `yaml:"user" json:"user,omitempty"`
+	HostKey          string `yaml:"host_key" json:"host_key,omitempty"`
+	HostKeyAlgorithm string `yaml:"host_key_algorithm" json:"host_key_algorithm,omitempty"`
 	// Users lists personal admin login names allowed to open this target.
 	// Empty means every personal administrator who passes room checks may use it.
 	Users []string `yaml:"users" json:"users,omitempty"`
