@@ -832,6 +832,7 @@ func (s *Server) contextsPayload(v *view, api int) map[string]any {
 // (instance label = hostname, node label = node id).
 func (s *Server) writePrometheus(w http.ResponseWriter, u User) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	s.writeCollectorTimingMetrics(w)
 	seen := map[string]bool{}
 	s.writePromCharts(w, s.reg.Host.Hostname, "", s.reg.Charts(), seen)
 	if s.opt.Nodes != nil {
@@ -841,6 +842,26 @@ func (s *Server) writePrometheus(w http.ResponseWriter, u User) {
 			}
 			s.writePromCharts(w, n.Host.Hostname, n.ID, n.Registry().Charts(), seen)
 		}
+	}
+}
+
+// writeCollectorTimingMetrics exposes per-collector Collect durations so
+// operators can find slow modules without scraping /api/v1/collectors.
+func (s *Server) writeCollectorTimingMetrics(w http.ResponseWriter) {
+	if s.sched == nil {
+		return
+	}
+	host := s.reg.Host.Hostname
+	fmt.Fprintf(w, "# HELP monitor_collector_last_run_ms Last Collect duration in milliseconds.\n# TYPE monitor_collector_last_run_ms gauge\n")
+	fmt.Fprintf(w, "# HELP monitor_collector_max_run_ms Longest Collect duration since process start, milliseconds.\n# TYPE monitor_collector_max_run_ms gauge\n")
+	fmt.Fprintf(w, "# HELP monitor_collector_runs Total Collect invocations since process start.\n# TYPE monitor_collector_runs counter\n")
+	for _, st := range s.sched.Status() {
+		if !st.Enabled && st.Runs == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "monitor_collector_last_run_ms{collector=%q,instance=%q} %d\n", st.Name, host, st.LastRun)
+		fmt.Fprintf(w, "monitor_collector_max_run_ms{collector=%q,instance=%q} %d\n", st.Name, host, st.MaxRun)
+		fmt.Fprintf(w, "monitor_collector_runs{collector=%q,instance=%q} %d\n", st.Name, host, st.Runs)
 	}
 }
 

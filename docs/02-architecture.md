@@ -220,7 +220,8 @@ data/
 - 静默：按 host/chart/alert/label 维度、时间窗口；维护窗口。
 - 通知路由：`to: role` → 角色→渠道映射；Hub 模式下节点可 `notify.local = false` 交给 Hub 集中通知。
 - 手动关闭（Zabbix close problem）：`POST /api/v1/alarms/close {alarm_id, comment}`（admin/troubleshooter）把已触发告警置为 CLEAR 并走正常通知路径；规则继续评估，条件仍成立时下次评估重新触发。仅限本机引擎，`node=` 远端返回 501。日志条目带 `manual/user/comment`。
-- 审计日志：`web.audit`（默认开启，`<data_dir>/operations/audit-log.jsonl`，上限 `max_entries`）记录非 GET 的 `/api/` 变更（用户/角色/远端/动作/状态码）与 `login`/`login_failed` 认证事件；采集上报类端点（ingest、checks、stream、ring）不记录。`GET /api/v1/audit?after=&limit=&user=` 仅 admin。
+- 审计日志：`web.audit`（默认开启，`<data_dir>/operations/audit-log.jsonl`，上限 `max_entries`）记录非 GET 的 `/api/` 变更（用户/角色/远端/动作/状态码）与 `login`/`login_failed` 认证事件；手动关闭告警时把备注写入 `note`。采集上报类端点（ingest、checks、stream、ring）不记录。`GET /api/v1/audit?after=&limit=&user=` 仅 admin。
+- 采集器耗时：`GET /api/v1/collectors` 的 `last_run_ms` / `max_run_ms` / `total_run_ms`，以及 `/metrics` 的 `monitor_collector_last_run_ms` / `monitor_collector_max_run_ms` / `monitor_collector_runs`，按采集器名标注，便于定位偏慢模块。
 - **Zabbix Z2 模板/主机组/资产**（仅 hub）：`internal/hub/templates.go` 持久化 `templates.json`（原子写，`Updated` CAS）。`Template` 含宏 `{$NAME}`、规则集、`Removed`（隐藏基准规则）、`Disabled`（停用采集器）、`Tags`（资产标签）与 `Assign`（rooms/nodes/labels 任一匹配；labels 内部 AND）。`Effective(nodeID, roomID, labels)` 按模板名排序合并：同名宏/规则后者胜，Removed/Disabled 取并集，Rev = 最大 Updated。
   - 下发：hub 在节点连入与 `PushConfig` 时在 `TypeConfig` 帧上附带 `Health *HealthOverlay`；`GET /api/v1/agent/config` 同样返回 `health` 字段供断线重连拉取。
   - agent：`OnConfig(disabled, health)` → `engine.SetOverlay(OverlayLayer)`（`template-overlay.json` 持久化，编译失败整体拒绝）+ `sched.SetEnabled` 取 disabled 并集。overlay 规则以 `template:<name>` source 参与合并，运行时覆盖仍最优先；模板宏在全局宏之上编译 overlay 与运行时规则。

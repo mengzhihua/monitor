@@ -35,8 +35,11 @@ type Target struct {
 	User             string   `yaml:"user" json:"user,omitempty"`
 	HostKey          string   `yaml:"host_key" json:"host_key,omitempty"`
 	HostKeyAlgorithm string   `yaml:"host_key_algorithm" json:"host_key_algorithm,omitempty"`
-	Argv             []string `yaml:"argv" json:"-"`
-	Dir              string   `yaml:"dir" json:"-"`
+	// Users lists personal admin login names allowed to open this target.
+	// Empty means every personal administrator who passes room checks may use it.
+	Users []string `yaml:"users" json:"users,omitempty"`
+	Argv  []string `yaml:"argv" json:"-"`
+	Dir   string   `yaml:"dir" json:"-"`
 }
 
 // Config validation also runs on a Hub editing a Windows agent's YAML.
@@ -62,6 +65,16 @@ func (c Config) Validate() error {
 		seen[t.ID] = true
 		if len(t.Name) > 128 || strings.ContainsAny(t.Name+t.Node, "\x00\r\n") || len(t.Node) > 128 {
 			return fmt.Errorf("shell target %s: invalid name/node", t.ID)
+		}
+		if len(t.Users) > 64 {
+			return fmt.Errorf("shell target %s: at most 64 users", t.ID)
+		}
+		seenUser := map[string]bool{}
+		for _, name := range t.Users {
+			if name == "" || len(name) > 128 || strings.ContainsAny(name, "\x00\r\n") || seenUser[name] {
+				return fmt.Errorf("shell target %s: invalid or duplicate users entry", t.ID)
+			}
+			seenUser[name] = true
 		}
 		switch t.Kind {
 		case "local":

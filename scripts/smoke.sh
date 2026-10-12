@@ -9,10 +9,35 @@ BIN=${BIN:-core/bin/monitord}
 
 PORT=${PORT:-19998}
 DATA=$(mktemp -d)
-touch "$DATA/monitor.yaml"
-"$BIN" -config "$DATA/monitor.yaml" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
+# Fixture log file so the logs collector/function work without journald.
+mkdir -p "$DATA/logs"
+# Fixed RFC3164-ish line so parsing does not depend on locale month names.
+printf 'Oct 12 08:00:00 smokehost app: monitor smoke fixture\n' >"$DATA/logs/smoke.log"
+cat >"$DATA/monitor.yaml" <<EOF
+collectors:
+  modules:
+    logs:
+      follow: false
+      files:
+        - $DATA/logs/smoke.log
+EOF
+# Hide journalctl so smoke proves the file fallback path (no journald required).
+SMOKE_BINDIR=$(mktemp -d)
+cleanup() {
+  kill ${PID:-} ${HPID:-} 2>/dev/null || true
+  wait ${PID:-} 2>/dev/null || true
+  wait ${HPID:-} 2>/dev/null || true
+  rm -rf "$DATA" "$SMOKE_BINDIR" ${HUBDATA:+"$HUBDATA"}
+}
+trap cleanup EXIT
+cat >"$SMOKE_BINDIR/journalctl" <<'EOF'
+#!/bin/sh
+echo "smoke: journalctl must not be used" >&2
+exit 127
+EOF
+chmod +x "$SMOKE_BINDIR/journalctl"
+PATH="$SMOKE_BINDIR:$PATH" "$BIN" -config "$DATA/monitor.yaml" -listen "127.0.0.1:$PORT" -data-dir "$DATA" -log-level warn &
 PID=$!
-trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$DATA"' EXIT
 
 for i in $(seq 1 30); do
   curl -sf "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break
@@ -63,7 +88,11 @@ curl -sf "http://127.0.0.1:$PORT/api/v1/data?chart=system.ram&after=-5" | grep '
 curl -sf "http://127.0.0.1:$PORT/api/v1/badge.svg?chart=system.ram" | grep '<svg' >/dev/null || fail "badge.svg"
 curl -sf "http://127.0.0.1:$PORT/api/v1/weights?method=anomaly-rate" | grep '"weights"' >/dev/null || fail "weights"
 curl -sf "http://127.0.0.1:$PORT/api/v1/functions" | grep -E 'processes|mounts|disks|network-interfaces' >/dev/null || fail "functions"
-curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=logs" | grep '"cursor"' >/dev/null || fail "logs function"
+logs=$(curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=logs&source=file") || fail "logs function"
+echo "$logs" | grep '"cursor"' >/dev/null || fail "logs function columns: $logs"
+echo "$logs" | grep -i 'smoke fixture' >/dev/null || fail "logs file fallback missing fixture: $logs"
+metrics=$(curl -sf "http://127.0.0.1:$PORT/metrics") || fail "metrics early"
+echo "$metrics" | grep 'monitor_collector_last_run_ms{collector=' >/dev/null || fail "collector timing metrics"
 curl -sf "http://127.0.0.1:$PORT/api/v1/function?function=network-connections" | grep '"inode"' >/dev/null || fail "network-connections inode"
 collectors=$(curl -sf "http://127.0.0.1:$PORT/api/v1/collectors") || fail "collectors"
 echo "$collectors" | grep '"name":"macos"' >/dev/null || fail "collector macos missing"
@@ -106,7 +135,6 @@ EOF
 # read by Go as \tmp\... and the password file lands outside the temp dir.
 "$BIN" -config "$HUBDATA/monitor.yaml" -listen "127.0.0.1:$HUBPORT" -data-dir "$HUBDATA/data" -log-level warn &
 HPID=$!
-trap 'kill $PID $HPID 2>/dev/null || true; wait $PID 2>/dev/null || true; wait $HPID 2>/dev/null || true; rm -rf "$DATA" "$HUBDATA"' EXIT
 for i in $(seq 1 30); do
   curl -sf "http://127.0.0.1:$HUBPORT/healthz" >/dev/null 2>&1 && break
   sleep 0.5

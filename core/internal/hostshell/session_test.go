@@ -34,6 +34,16 @@ func TestConfigRejectsUnpinnedAndArbitraryTargets(t *testing.T) {
 	if (Config{PublicOrigin: "http://example.com"}).Validate() == nil {
 		t.Fatal("insecure origin accepted")
 	}
+	withUsers := valid
+	withUsers.Users = []string{"alice", "bob"}
+	if e := (Config{Targets: []Target{withUsers}}).Validate(); e != nil {
+		t.Fatal(e)
+	}
+	dupUsers := valid
+	dupUsers.Users = []string{"alice", "alice"}
+	if (Config{Targets: []Target{dupUsers}}).Validate() == nil {
+		t.Fatal("duplicate users accepted")
+	}
 }
 func TestHostKeyAlgorithmMustBeModernAndExplicit(t *testing.T) {
 	target, _ := sshFixture(t)

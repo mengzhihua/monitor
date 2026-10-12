@@ -37,7 +37,10 @@ func auditSkip(path string) bool {
 // auditTargetSlot is a request-scoped slot the handler can fill with the
 // audited object (e.g. an alarm id from the JSON body, which the middleware
 // cannot see).
-type auditTargetSlot struct{ target string }
+type auditTargetSlot struct {
+	target string
+	note   string
+}
 
 type auditTargetKey struct{}
 
@@ -46,6 +49,13 @@ type auditTargetKey struct{}
 func withAuditTarget(r *http.Request, target string) {
 	if slot, ok := r.Context().Value(auditTargetKey{}).(*auditTargetSlot); ok {
 		slot.target = target
+	}
+}
+
+// withAuditNote stores an operator comment for the audit entry.
+func withAuditNote(r *http.Request, note string) {
+	if slot, ok := r.Context().Value(auditTargetKey{}).(*auditTargetSlot); ok {
+		slot.note = note
 	}
 }
 
@@ -78,6 +88,7 @@ func (s *Server) auditWrap(u User, r *http.Request, next http.Handler) http.Hand
 			TS: time.Now().Unix(), User: u.Name, Role: string(u.Role),
 			Remote: remoteHost(req), Method: req.Method, Path: req.URL.Path,
 			Action: req.Method + " " + req.URL.Path, Target: target, Status: sw.status,
+			Note: slot.note,
 		})
 	})
 }

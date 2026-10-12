@@ -112,6 +112,11 @@ type Status struct {
 	Runs     uint64 `json:"runs"`
 	Failures uint64 `json:"failures"`
 	LastRun  int64  `json:"last_run_ms"`
+	// MaxRun is the longest successful or failed Collect duration observed
+	// since process start (milliseconds). Used to spot chronically slow modules.
+	MaxRun int64 `json:"max_run_ms"`
+	// TotalRun accumulates Collect wall time (milliseconds) across all runs.
+	TotalRun int64 `json:"total_run_ms"`
 }
 
 type running struct {
@@ -418,9 +423,14 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 			defer cancel()
 			start := time.Now()
 			err := r.c.Collect(cctx, s.reg, now)
+			elapsed := time.Since(start).Milliseconds()
 			r.mu.Lock()
 			r.status.Runs++
-			r.status.LastRun = time.Since(start).Milliseconds()
+			r.status.LastRun = elapsed
+			r.status.TotalRun += elapsed
+			if elapsed > r.status.MaxRun {
+				r.status.MaxRun = elapsed
+			}
 			if err != nil {
 				r.status.Failures++
 				r.status.Error = err.Error()
