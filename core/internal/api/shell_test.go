@@ -272,6 +272,20 @@ func TestShellTargetUsersRestriction(t *testing.T) {
 	}
 	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-bob", `{"target":"alice-only"}`, ts.URL, 404)
 	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-alice", `{"target":"alice-only"}`, ts.URL, 200)
+
+	// Duplicate display names cannot unlock a restricted target via the shared name.
+	s.opt.Users = []User{
+		{Name: "shared-display-name", Token: "shell-dup-a", Role: RoleAdmin},
+		{Name: "shared-display-name", Token: "shell-dup-b", Role: RoleAdmin},
+	}
+	s.opt.Shell.Targets = []hostshell.Target{
+		{ID: "dup-only", Name: "Dup", Kind: "local", Argv: []string{"/bin/sh"}, Dir: t.TempDir(), Users: []string{"shared-display-name"}},
+	}
+	list := shellRequest(t, ts, "/api/v1/shell/targets", "shell-dup-a", "", "", 200)
+	if strings.Contains(list, "dup-only") {
+		t.Fatalf("ambiguous display name must not unlock target: %s", list)
+	}
+	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-dup-a", `{"target":"dup-only"}`, ts.URL, 404)
 }
 
 func TestShellRoomRevocationAndIdentityCollision(t *testing.T) {

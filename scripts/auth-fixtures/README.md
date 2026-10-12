@@ -48,12 +48,20 @@ python3 scripts/auth-fixtures/verify_psk.py --hub-bin core/bin/monitord
 
 `verify_saml.py` checks that `/api/v1/auth/saml/login` redirects when `web.saml` is configured (soft-skips with 404 otherwise).
 
-`saml_idp.py` is a lab stub IdP. By default it posts a **base64-encoded but unsigned** Assertion so you can confirm ACS rejects it. Successful signed ACS login is covered by `core/internal/api/saml_test.go`; to drive ACS from the stub, pass a pre-signed Response XML:
+Generate a signed Assertion and matching IdP certificate (same signing path as Go unit tests):
+
+```bash
+cd core && go run ../scripts/auth-fixtures/gen_saml_response.go \
+  -out ../scripts/auth-fixtures/signed-assertion.xml \
+  -cert ../scripts/auth-fixtures/idp.pem
+```
+
+Configure `web.saml.idp_cert` from `idp.pem`, then serve the signed Assertion:
 
 ```bash
 python3 scripts/auth-fixtures/saml_idp.py --listen 127.0.0.1:18080 \
-  --signed-response /path/to/signed-response.xml
+  --signed-response scripts/auth-fixtures/signed-assertion.xml
 python3 scripts/auth-fixtures/verify_saml.py --monitor http://127.0.0.1:19999
 ```
 
-These scripts are for isolated lab use; they do not talk to production IdPs.
+Without `--signed-response`, the stub posts a base64-encoded **unsigned** Assertion so ACS rejection is easy to observe. These scripts are for isolated lab use; they do not talk to production IdPs.

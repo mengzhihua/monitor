@@ -75,10 +75,18 @@ func TestSchedulerRecordsPerCollectorTiming(t *testing.T) {
 	// Allow the Collect goroutine to finish.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, st := range s.Status() {
+		for _, r := range s.cols {
+			r.mu.Lock()
+			st, totalNS := r.status, r.totalRunNS
+			r.mu.Unlock()
 			if st.Name == "checks" && st.Runs > 0 {
-				if st.TotalRun < 0 || st.MaxRun < 0 {
-					t.Fatalf("bad timing %+v", st)
+				if st.TotalRun < 0 || st.MaxRun < 0 || totalNS < 0 {
+					t.Fatalf("bad timing %+v ns=%d", st, totalNS)
+				}
+				// Sub-millisecond runs still accumulate nanoseconds even when
+				// the exposed millisecond total stays 0.
+				if totalNS == 0 && st.Runs > 0 {
+					t.Fatalf("expected non-zero nanosecond total after runs: %+v", st)
 				}
 				return
 			}
