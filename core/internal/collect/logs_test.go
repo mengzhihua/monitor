@@ -83,10 +83,10 @@ func TestSchedulerRecordsPerCollectorTiming(t *testing.T) {
 				if st.TotalRun < 0 || st.MaxRun < 0 || totalNS < 0 {
 					t.Fatalf("bad timing %+v ns=%d", st, totalNS)
 				}
-				// Sub-millisecond runs still accumulate nanoseconds even when
-				// the exposed millisecond total stays 0.
-				if totalNS == 0 && st.Runs > 0 {
-					t.Fatalf("expected non-zero nanosecond total after runs: %+v", st)
+				// Fast Collect can measure 0ns on some platforms (Windows CI);
+				// the exposed total must still match the nanosecond accumulator.
+				if st.TotalRun != totalNS/int64(time.Millisecond) {
+					t.Fatalf("total_run_ms=%d ns=%d status=%+v", st.TotalRun, totalNS, st)
 				}
 				return
 			}
