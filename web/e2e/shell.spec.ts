@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 async function openShell(page:Page) {
- await page.goto('/?token=browser-test-token')
+ await page.goto('/?token=browser-admin-token')
  await expect(page.locator('header')).toContainText('browser-test')
  if (await page.getByRole('button',{name:'更多',exact:true}).isVisible()) await page.getByRole('button',{name:'更多',exact:true}).click()
  await page.getByRole('button',{name:'WebShell',exact:true}).click()
@@ -42,7 +42,7 @@ test('SSH credentials are ephemeral and host-key failures are clear',async({page
  let credential='';await page.routeWebSocket('**/api/v1/shell/connect',socket=>socket.onMessage(message=>{
   const data=JSON.parse(String(message));if(data.type==='connect'){credential=data.password;socket.send(JSON.stringify({type:'error',message:'SSH authentication or host key validation failed'}));socket.close()}
  }))
- await page.goto('/?token=browser-test-token');if(await page.getByRole('button',{name:'更多',exact:true}).isVisible())await page.getByRole('button',{name:'更多',exact:true}).click();await page.getByRole('button',{name:'WebShell',exact:true}).click()
+ await page.goto('/?token=browser-admin-token');if(await page.getByRole('button',{name:'更多',exact:true}).isVisible())await page.getByRole('button',{name:'更多',exact:true}).click();await page.getByRole('button',{name:'WebShell',exact:true}).click()
  const panel=page.getByRole('region',{name:'WebShell 主机终端'});await panel.getByLabel('SSH 密码',{exact:true}).fill('temporary-ssh-secret');await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'连接终端',exact:true}).click()
  await expect(panel.getByRole('alert')).toContainText('指纹校验失败');expect(credential).toBe('temporary-ssh-secret');await expect(panel.getByLabel('SSH 密码',{exact:true})).toHaveValue('')
  const storage=await page.evaluate(()=>JSON.stringify({session:{...sessionStorage},local:{...localStorage}}));expect(storage).not.toContain('temporary-ssh-secret')
@@ -50,13 +50,17 @@ test('SSH credentials are ephemeral and host-key failures are clear',async({page
 test('disabled configuration and 320px layout remain usable without connecting',async({page},info)=>{
  await page.setViewportSize({width:320,height:780})
  await page.route('**/api/v1/shell/targets',r=>r.fulfill({json:{enabled:false,secure:true,audit_enabled:true,targets:[]}}))
- await page.goto('/?token=browser-test-token');await page.getByRole('button',{name:'更多',exact:true}).click();await page.getByRole('button',{name:'WebShell',exact:true}).click()
+ await page.goto('/?token=browser-admin-token');await page.getByRole('button',{name:'更多',exact:true}).click();await page.getByRole('button',{name:'WebShell',exact:true}).click()
  const panel=page.getByRole('region',{name:'WebShell 主机终端'});await expect(panel.getByRole('button',{name:'连接终端',exact:true})).toBeDisabled();await panel.locator('summary').click();await expect(panel).toContainText('enabled: true');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
  await panel.scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('webshell-320.png'),scale:'css'})
 })
-test('viewer cannot see WebShell and server rejects terminal access',async({page,request})=>{
- await page.goto('/?token=browser-viewer-token');await expect(page.locator('header')).toContainText('browser-test');if(await page.getByRole('button',{name:'更多',exact:true}).isVisible())await page.getByRole('button',{name:'更多',exact:true}).click();await expect(page.getByRole('button',{name:'WebShell',exact:true})).toHaveCount(0)
- const resp=await request.get('/api/v1/shell/targets',{headers:{Authorization:'Bearer browser-viewer-token'}});expect(resp.status()).toBe(403)
+test('shared token and viewer cannot open WebShell',async({page,request})=>{
+ for (const token of ['browser-viewer-token','browser-test-token','browser-operator-token']) {
+  await page.goto('/?token='+token);await expect(page.locator('header')).toContainText('browser-test')
+  if(await page.getByRole('button',{name:'更多',exact:true}).isVisible())await page.getByRole('button',{name:'更多',exact:true}).click()
+  await expect(page.getByRole('button',{name:'WebShell',exact:true})).toHaveCount(0)
+  const resp=await request.get('/api/v1/shell/targets',{headers:{Authorization:'Bearer '+token}});expect(resp.status()).toBe(403)
+ }
 })
 
 test('another page can inspect and explicitly terminate its own lingering session',async({page,context})=>{

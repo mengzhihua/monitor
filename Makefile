@@ -30,6 +30,7 @@ lint:
 	cd core && test -z "$$(gofmt -l .)" && go vet ./...
 
 check-version:
+	# Local builds compare VERSION to package/main.go; CI sets REQUIRE_GIT_TAG_VERSION=1.
 	python3 scripts/check-release-version.py
 
 # Rebuild embedded UI before cross-compilation, including under make -j.

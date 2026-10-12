@@ -11,7 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 scripts/check-release-version.py
+        with: { fetch-depth: 0, fetch-tags: true }
+      - name: VERSION must match latest stable git tag
+        env: { REQUIRE_GIT_TAG_VERSION: "1" }
+        run: python3 scripts/check-release-version.py
       - run: python3 scripts/package-server-release_test.py
       - uses: actions/setup-node@v4
         with:

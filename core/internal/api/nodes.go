@@ -31,6 +31,9 @@ type User struct {
 	Name      string `json:"name"`
 	Token     string `json:"-"`
 	Role      Role   `json:"role"`
+	// Personal marks a named/OIDC/SAML/LDAP login. Shared web.token and
+	// anonymous callers are not personal; WebShell requires Personal admin.
+	Personal bool `json:"personal,omitempty"`
 	// Rooms limits remote node reads, lists and live subscriptions. Empty means every room.
 	Rooms []string `json:"rooms,omitempty"`
 	// TOTP is a base32 secret. Empty means this credential has no second factor.
@@ -74,6 +77,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 		if !s.otpOK(s.opt.TOTPSecret, r.Header.Get("X-Monitor-OTP"), time.Now()) {
 			return User{}, false
 		}
+		// Shared web.token / generated default password: admin role, not personal.
 		return User{Name: "admin", Role: RoleAdmin, principal: viewPrincipal("legacy", s.opt.Token)}, true
 	}
 	for _, u := range s.opt.Users {
@@ -82,6 +86,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 				return User{}, false
 			}
 			u.principal = viewPrincipal("static", u.Token)
+			u.Personal = true
 			return u, true
 		}
 	}

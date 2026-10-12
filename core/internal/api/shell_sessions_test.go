@@ -113,9 +113,12 @@ func TestShellSessionInventoryRevokeAndSameNameIsolation(t *testing.T) {
 	}
 	s, ts := shellTestServer(t)
 	s.opt.Token = ""
-	s.opt.Users = append(s.opt.Users,
-		User{Name: "shared-display-name", Token: "shell-fixture-admin", Role: RoleAdmin},
-		User{Name: "shared-display-name", Token: "shell-other-admin", Role: RoleAdmin})
+	s.opt.Users = []User{
+		{Name: "shared-display-name", Token: "shell-fixture-admin", Role: RoleAdmin},
+		{Name: "shared-display-name", Token: "shell-other-admin", Role: RoleAdmin},
+		{Name: "viewer", Token: "shell-viewer", Role: RoleViewer},
+		{Name: "oncall", Token: "shell-oncall", Role: RoleTroubleshooter},
+	}
 	for _, token := range []string{"shell-viewer", "shell-oncall"} {
 		shellRequest(t, ts, "/api/v1/shell/sessions", token, "", "", http.StatusForbidden)
 		shellSessionDelete(t, ts, token, "unknown", ts.URL, http.StatusForbidden)
@@ -181,7 +184,7 @@ func TestShellSessionInventoryRevokeAndSameNameIsolation(t *testing.T) {
 func TestShellConnectingSessionRevokeRechecksRoom(t *testing.T) {
 	s, ts := shellTestServer(t)
 	s.opt.Token = ""
-	s.opt.Users = append(s.opt.Users, User{Name: "room-admin", Token: "shell-fixture-admin", Role: RoleAdmin, Rooms: []string{"allowed"}})
+	s.opt.Users = []User{{Name: "room-admin", Token: "shell-fixture-admin", Role: RoleAdmin, Rooms: []string{"allowed"}}}
 	nodes, err := hub.Open(s.db, t.TempDir(), hub.Options{})
 	if err != nil {
 		t.Fatal(err)

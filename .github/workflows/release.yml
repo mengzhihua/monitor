@@ -102,6 +102,32 @@ jobs:
             echo "release tag $tag is older than source VERSION $source_version" >&2; exit 1
           fi
           version="${tag#v}"
+          # Keep VERSION (and Dashboard defaults) aligned with the tag so CI's
+          # REQUIRE_GIT_TAG_VERSION check does not drift after auto-tags.
+          # Commits pushed with GITHUB_TOKEN do not re-trigger workflows.
+          if [[ -z "$INPUT_TAG" && "$GITHUB_REF" == refs/heads/main && "$source_version" != "$version" ]]; then
+            git checkout -B main "$GITHUB_SHA"
+            printf '%s\n' "$version" > VERSION
+            VERSION_VALUE="$version" python3 - <<'PY'
+import json, os, pathlib, re
+version = os.environ["VERSION_VALUE"]
+for file in ("web/package.json", "web/package-lock.json"):
+    path = pathlib.Path(file)
+    data = json.loads(path.read_text())
+    data["version"] = version
+    if file.endswith("package-lock.json"):
+        data["packages"][""]["version"] = version
+    path.write_text(json.dumps(data, indent=2) + "\n")
+main = pathlib.Path("core/cmd/monitord/main.go")
+text, n = re.subn(r'^var version = "[^"]+"', f'var version = "{version}"', main.read_text(), count=1, flags=re.M)
+if n != 1:
+    raise SystemExit("could not stamp core/cmd/monitord/main.go")
+main.write_text(text)
+PY
+            git add VERSION web/package.json web/package-lock.json core/cmd/monitord/main.go
+            git commit -m "release: sync VERSION to $tag"
+            git push origin HEAD:main
+          fi
           # Monotonic build number: major*1e6 + minor*1e4 + patch (minor < 100,
           # patch < 10000). Must match scripts/build-android-server.sh.
           echo "tag=$tag" >> "$GITHUB_OUTPUT"

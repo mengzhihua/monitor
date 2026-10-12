@@ -20,7 +20,7 @@ export interface Info {
   plugins?: PluginStatus[]
   db?: { persistence?: { last_checkpoint: number; finished: number; interval_seconds: number; error?: string } }
   alarms: AlarmSummary | null
-  user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer' }
+  user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer'; personal?: boolean }
   nodes_count?: number
   streaming_enabled?: boolean
   stream?: { enabled: boolean; connected: boolean; destination?: string; last_error?: string; sent: number; replicated: number; dropped: number; protocol?: string; claimed?: boolean }

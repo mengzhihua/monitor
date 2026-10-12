@@ -1,15 +1,43 @@
 #!/usr/bin/env python3
-"""Fail a release build when server and embedded Dashboard source versions drift."""
+"""Fail when server/Dashboard source versions drift, or when VERSION disagrees with git tags."""
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+
+STABLE_TAG = re.compile(r"^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$")
+SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?")
+
+
+def latest_stable_tag(root: Path) -> str | None:
+    """Return the highest stable vMAJOR.MINOR.PATCH tag, or None if unavailable."""
+    try:
+        out = subprocess.run(
+            ["git", "tag", "-l", "v[0-9]*"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    versions = []
+    for tag in out:
+        match = STABLE_TAG.fullmatch(tag.strip())
+        if match:
+            versions.append(match.group(1))
+    if not versions:
+        return None
+    versions.sort(key=lambda v: [int(p) for p in v.split(".")])
+    return versions[-1]
 
 
 def main():
     root = Path(__file__).resolve().parents[1]
     version = (root / "VERSION").read_text().strip()
-    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?", version):
+    if not SEMVER.fullmatch(version):
         raise ValueError("VERSION must be a semantic version without the v prefix")
     package = json.loads((root / "web/package.json").read_text())
     lock = json.loads((root / "web/package-lock.json").read_text())
@@ -24,7 +52,21 @@ def main():
     for name, actual in versions.items():
         if actual != version:
             raise ValueError(f"{name}: {actual!r} differs from VERSION {version!r}")
-    print(f"Server and Dashboard source versions match: {version}")
+
+    require_tag = os.environ.get("REQUIRE_GIT_TAG_VERSION", "").lower() in {"1", "true", "yes"}
+    tag_version = latest_stable_tag(root)
+    if tag_version is None:
+        if require_tag:
+            raise ValueError("no stable git tag (vMAJOR.MINOR.PATCH) found; fetch tags or set VERSION from the release tag")
+        print(f"Server and Dashboard source versions match: {version} (no git tag to compare)")
+        return
+
+    if version != tag_version:
+        raise ValueError(
+            f"VERSION {version!r} differs from latest stable git tag v{tag_version}; "
+            "bump VERSION/package.json/main.go to match the tag, or create the matching tag"
+        )
+    print(f"Server and Dashboard source versions match git tag v{tag_version}: {version}")
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@
 
 本轮 Web 看板收尾更新整合中文指标说明、收藏与分组导航、编辑草稿恢复、整个看板统一历史时间、图表放大与采样统计、相邻时段对比及 CSV 导出。个人看板导入先预览内容与当前节点覆盖情况，再勾选保存为副本；保留未采集的图表配置。使用方式及验收范围见 [Web 看板更新说明](docs/09-dashboard-final-update.md)。
 
-运维工作台最初随 **2.0.1 服务端与 Web 正式版本**交付，后续能力继续迭代。当前版本以 [GitHub Releases](https://github.com/mengzhihua/monitor/releases) 为准，合入 `main` 后由 Release 工作流发布下一个稳定补丁包。Flutter 客户端保持独立版本。早期升级与回退步骤见 [2.0.1 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。
+运维工作台最初随 **2.0.1 服务端与 Web 正式版本**交付，后续能力继续迭代。当前版本以 [GitHub Releases](https://github.com/mengzhihua/monitor/releases) 为准，合入 `main` 后由 Release 工作流发布下一个稳定补丁包。Flutter 客户端保持独立版本。早期升级与回退步骤见 [2.0.1 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。`VERSION` / `web/package.json` / `main.go` 必须与最新稳定 git tag（`vMAJOR.MINOR.PATCH`）一致，否则 CI 直接失败；Release 在自动打 tag 后会同步写回这些文件。
 
 本轮性能与发布收尾将进程快照、历史查询优化与最新看板整合，并补齐跨平台打包依赖和验收入口，详见 [最终整合更新](docs/10-final-integration.md)。
 

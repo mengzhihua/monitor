@@ -39,7 +39,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
-var version = "3.0.0" // release builds override via -ldflags "-X main.version=..."
+var version = "3.0.15" // release builds override via -ldflags "-X main.version=..."
 
 func main() {
 	if err := run(); err != nil {
