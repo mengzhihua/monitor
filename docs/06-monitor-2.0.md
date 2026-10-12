@@ -95,6 +95,32 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 
 查询结果同时显示存储用量、阶段总操作次数和历史是否裁剪。阶段超过 20 次操作后，已被裁剪的旧操作无法搜索或导出；导出不等于包含配置、认证、TSDB 的可恢复备份，也不清理服务端记录。本轮沿用现有 v2 文件格式，没有新增数据迁移。
 
+### 诊断包导出（交接分享）
+
+运维总览顶部「导出诊断包」面向需要把现场上下文快速交给有经验同事的场景。服务端组装一份 `schema=monitor.diagnostic.v1` 的 JSON 附件下载，默认文件名形如 `monitor-diagnostic-<主机>-<UTC时间>.json`。仅管理员与排障人员可导出；只读账号看不到按钮，直接调用接口返回 `403`。
+
+默认打包最近 24 小时内、当前服务端可见范围内的：
+
+| 区块 | 内容 | 上限 |
+| --- | --- | --- |
+| `problems` / `nodes` / `summary` | 运维总览问题与主机资源摘要 | 与总览一致 |
+| `alarm_log` | 本机告警转移记录（不含收件人角色名） | 最近 200 条 |
+| `notifications` | 本机通知诊断快照 | 进程内最近 500 条结果口径 |
+| `handling_history` | 处理阶段历史 | 最近 200 条匹配记录 |
+| `ai_resolutions` | 当前登录绑定的个人 AI 方案全文 | 最多 5 份 |
+| `silence` | 当前静默状态 | — |
+
+查询参数：
+
+- `include`：逗号分隔子集 `ops,alarms,notify,history,ai`；省略则全部启用
+- `node`：按主机过滤问题/节点/处理历史/个人 AI 方案；告警转移与通知诊断仍只覆盖本机引擎
+- `problem_id`：逗号分隔阶段 ID，进一步收窄问题与处理历史
+- `from` / `until`：Unix 秒；均省略时默认最近 24 小时；`from > until` 返回 `400`
+
+脱敏与边界写在包内 `notes`：省略登录凭据、通知地址/令牌、SSH 凭据、WebShell 终端输出和 AI 密钥；通知结果表示通道接受或失败，不证明收件人已读；这不是完整备份，也不含 TSDB 原始序列或可恢复配置。远端节点的告警转移日志不会被 Hub 代导出。响应 `Cache-Control: no-store`。
+
+Web 入口与「导出当前快照」并列：快照仍是客户端按当前筛选拼装的总览 JSON；诊断包由服务端统一脱敏并附带告警转移、通知诊断与可选 AI 方案，更适合外发协助。
+
 远端告警仅代表 Hub 最近收到的状态；离线节点保留历史问题，不当作已经恢复。告警引擎未启用、暂停或尚无规则时明确提示覆盖缺口。主机连接在线也不代表所有服务正常。
 
 未修改数据的总览与历史查询复用同一有序索引，分页只复制返回的记录及操作历史；成功保存后使索引失效，下次读取时重建；失败写入不改变快照。筛选仍计算全部匹配记录，导出范围不变。基准方法和内存边界见 [读取性能验收](05-acceptance.md#2026-09-24运维历史与总览读取优化)。
@@ -106,6 +132,7 @@ GET 返回当前账号的集合版本，POST 必须提交该版本和完整视�
 | `GET /api/v1/operations` | 已认证用户 | `now`、节点资源/新鲜度、活动问题、处理记录、汇总及是否持久保存；是全局总览，不受图表 `node=` 选择影响 |
 | `GET /api/v1/operations/history` | 已认证用户 | 筛选 `q`、`node`、`assignee`、`actor`、`status`、`severity`、`acknowledged`、`from`、`until`；`limit` 为 1–100，默认 25；使用返回的 `next_cursor` 继续相同条件查询 |
 | `GET /api/v1/operations/history/export` | 已认证用户 | 相同筛选条件，加列表返回的 `snapshot` 和 `format=json/csv`；不接受分页游标，导出全部匹配记录 |
+| `GET /api/v1/operations/diagnostic/export` | admin / troubleshooter | 脱敏诊断包 JSON（`monitor.diagnostic.v1`）；见 [诊断包导出](#诊断包导出交接分享)；`include` / `node` / `problem_id` / `from` / `until` |
 | `POST /api/v1/operations/acknowledgements` | admin / troubleshooter | JSON：`id`、`action`（`acknowledge` / `unacknowledge` / `comment`）、`note`、`revision` |
 | `POST /api/v1/operations/handling` | admin / troubleshooter | 上述基础动作，加 `assign`（带 `assignee`）、`unassign`、`progress`（带 `status`：`open` / `investigating` / `watching`） |
 

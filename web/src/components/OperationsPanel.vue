@@ -35,14 +35,20 @@ const batchError = ref('')
 const batchMessage = ref('')
 const batchCompleted = ref(0)
 const exporting = ref(false)
+const exportingDiagnostic = ref(false)
 const exportError = ref('')
+const canExportDiagnostic = computed(() => props.role === 'admin' || props.role === 'troubleshooter')
 let overviewRequest: AbortController | undefined
 let exportRequest: AbortController | undefined
+let diagnosticRequest: AbortController | undefined
 let searchTimer: number | undefined
 function cancelExport() {
   exportRequest?.abort()
   exportRequest = undefined
   exporting.value = false
+  diagnosticRequest?.abort()
+  diagnosticRequest = undefined
+  exportingDiagnostic.value = false
 }
 function listQuery(limit = visibleCount.value) {
   return {
@@ -236,7 +242,7 @@ function applyView(v: OperationsView) {
   ownerFilter.value = v.ownerFilter; progressFilter.value = v.progressFilter
 }
 async function exportSnapshot() {
-  if (!snapshot.value || exporting.value || loading.value || disposed) return
+  if (!snapshot.value || exporting.value || exportingDiagnostic.value || loading.value || disposed) return
   const request = exportRequest = new AbortController()
   const filters = { query: query.value, severity: severity.value, node_status: nodeStatus.value,
     pending_only: pendingOnly.value, owner: ownerFilter.value, progress: progressFilter.value }
@@ -266,13 +272,40 @@ async function exportSnapshot() {
     }
   }
 }
+async function exportDiagnostic() {
+  if (!canExportDiagnostic.value || exporting.value || exportingDiagnostic.value || loading.value || disposed) return
+  const request = diagnosticRequest = new AbortController()
+  exportingDiagnostic.value = true
+  exportError.value = ''
+  try {
+    const { blob, filename } = await api.exportDiagnostic({ include: 'ops,alarms,notify,history,ai' }, request.signal)
+    if (disposed || request.signal.aborted || diagnosticRequest !== request) return
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (e) {
+    if (disposed || request.signal.aborted || diagnosticRequest !== request) return
+    if (e instanceof ApiError && [401, 403].includes(e.status)) {
+      exportError.value = '当前账号不能导出诊断包；需要管理员或排障人员登录。'
+    } else exportError.value = '诊断包导出失败，本次未生成文件。请检查连接后重试。'
+  } finally {
+    if (diagnosticRequest === request) {
+      diagnosticRequest = undefined
+      exportingDiagnostic.value = false
+    }
+  }
+}
 </script>
 
 <template>
   <div class="operations" aria-label="运维总览">
     <div class="hero">
-      <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。</p></div>
-      <div class="hero-actions"><button @click="refresh()"><AppIcon name="refresh" :size="16" />刷新总览</button><button :disabled="!snapshot || loading || exporting" @click="exportSnapshot"><AppIcon name="download" :size="16" />{{ exporting ? '正在导出…' : '导出当前快照' }}</button></div>
+      <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。可将脱敏诊断包发给有经验的同事协助排查。</p></div>
+      <div class="hero-actions">
+        <button @click="refresh()"><AppIcon name="refresh" :size="16" />刷新总览</button>
+        <button :disabled="!snapshot || loading || exporting || exportingDiagnostic" @click="exportSnapshot"><AppIcon name="download" :size="16" />{{ exporting ? '正在导出…' : '导出当前快照' }}</button>
+        <button v-if="canExportDiagnostic" :disabled="loading || exporting || exportingDiagnostic" @click="exportDiagnostic" title="打包当前问题、告警转移、通知诊断、处理历史与个人 AI 方案，便于分享给他人协助"><AppIcon name="download" :size="16" />{{ exportingDiagnostic ? '正在打包…' : '导出诊断包' }}</button>
+      </div>
     </div>
     <p v-if="loading" role="status">正在读取节点和问题…</p>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>

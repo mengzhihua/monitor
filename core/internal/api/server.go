@@ -233,6 +233,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/operations/views", s.handleOperationsViews)
 	m.HandleFunc("GET /api/v1/operations/history", s.handleOperationsHistory)
 	m.HandleFunc("GET /api/v1/operations/history/export", s.handleOperationsHistoryExport)
+	m.HandleFunc("GET /api/v1/operations/diagnostic/export", s.handleDiagnosticExport)
 	m.HandleFunc("POST /api/v1/operations/acknowledgements", s.handleAcknowledgement)
 	m.HandleFunc("POST /api/v1/operations/handling", s.handleHandling)
 	m.HandleFunc("POST /api/v1/operations/handling/batch", s.handleHandlingBatch)
