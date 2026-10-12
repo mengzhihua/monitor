@@ -6,6 +6,7 @@
 
 | 脚本 | 用途 | 输出 |
 | --- | --- | --- |
+| `build.sh` | 无 make 时构建 Web / monitord / 交叉编译（VERSION 与 `-dev+hash` 规则同 Makefile） | `core/bin/monitord` 等 |
 | `build-android-server.sh` | 编译 Android Go 二进制并调用独立 Kotlin 工程的 Gradle | `android/app/src/main/jniLibs/`、`android/app/build/outputs/apk/` |
 | `package-macos-app.sh` | 将已有 Universal `.app` 拆分架构并打包 | 调用者指定的目录，发布流程使用 `dist/` |
 | `package-server-release.py` | 受控构建 8 个服务端目标并生成白名单归档、macOS Universal、提交清单和 SHA-256 | `dist/monitor-<版本>-<提交>/` |
@@ -31,7 +32,8 @@
 | `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
-| `soak.py` | 指定时长的持续采集和查询测量 | `python3 scripts/soak.py --seconds 120` |
+| `soak.py` | 指定时长的持续采集和查询测量；可选 `--heap-dir` 抓取 start/mid/end heap profile | `python3 scripts/soak.py --seconds 120` |
+| `capture-heap.py` | 对运行中的 monitord 抓取管理员鉴权的 heap profile（可抓两次做 diff） | `python3 scripts/capture-heap.py --url http://127.0.0.1:19999 --token "$TOKEN" --output reports/heap.pb` |
 | `benchmark-runtime.py` | macOS/Linux 默认采集器下的固定12请求/秒负载、接口延迟及主进程 CPU/RSS | `python3 scripts/benchmark-runtime.py --output reports/runtime.json` |
 | `benchmark-browser.mjs` | 遍历100张模拟图表后的画布、DOM、事件监听器和 GC 后 JS 堆 | `node scripts/benchmark-browser.mjs --output reports/browser.json` |
 | `e2e-server.mjs` | 为 Playwright 启动临时服务 | 由 `web/playwright.config.ts` 调用，无需手动启动 |

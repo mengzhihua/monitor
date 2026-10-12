@@ -114,7 +114,14 @@ test('operators download a redacted diagnostic package for handoff', async ({ pa
   expect(exported.notes.join('\n')).toContain('不是完整备份')
   expect(exported.notes.join('\n')).toMatch(/凭据|令牌|密钥/)
   const text = JSON.stringify(exported)
-  expect(text).not.toMatch(/browser-operator-token|browser-test-token|Bearer |private-test-token/)
+  // Secrets from e2e-server notify fixtures and login tokens must never appear.
+  for (const secret of [
+    'browser-operator-token', 'browser-admin-token', 'browser-admin-b-token',
+    'browser-test-token', 'browser-viewer-token', 'Bearer ',
+    'private-test-token', 'private-test-key', 'private-test-response',
+  ]) {
+    expect(text).not.toContain(secret)
+  }
   expect(Array.isArray(exported.problems)).toBe(true)
   expect(Array.isArray(exported.alarm_log)).toBe(true)
   expect(exported.limits).toMatchObject({ alarm_log: 200, handling_history: 200, ai_resolutions: 5 })
@@ -154,8 +161,8 @@ test('operators assign, track progress, save their queue and export persisted wo
   await page.goto('/?token=browser-operator-token')
   const problem = page.locator(`[data-problem-id="${p.id}"]`)
   await expect(problem.locator('.owner')).toHaveText('责任人：未分配')
-  // 未分配 + admin + browser-admin + browser-oncall (e2e-server fixture).
-  await expect(problem.getByLabel('browser_ram_notice 责任人').locator('option')).toHaveCount(4)
+  // 未分配 + admin + browser-admin + browser-admin-b + browser-oncall (e2e-server fixture).
+  await expect(problem.getByLabel('browser_ram_notice 责任人').locator('option')).toHaveCount(5)
   await problem.getByRole('button', { name: '分配给我', exact: true }).click()
   await expect(problem.locator('.owner')).toHaveText('责任人：browser-oncall')
   await problem.getByLabel('browser_ram_notice 处理备注').fill('排查完成，观察内存回落。')

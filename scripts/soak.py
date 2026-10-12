@@ -3,14 +3,16 @@
 
 Use --seconds 86400 (24h) to investigate RSS / heap growth over a full day.
 Process metrics come from /metrics (monitor_process_heap_* / monitor_tsdb_series).
+Optional --heap-dir captures admin heap profiles at start/mid/end for go tool pprof.
 """
-import argparse, json, pathlib, re, signal, socket, statistics, subprocess, tempfile, time, urllib.request
+import argparse, json, pathlib, re, signal, socket, statistics, subprocess, tempfile, time, urllib.error, urllib.request
 
 p = argparse.ArgumentParser()
 p.add_argument('--seconds', type=int, default=120)
 p.add_argument('--bin', default='core/bin/monitord')
 p.add_argument('--output')
 p.add_argument('--sample-every', type=float, default=2.0, help='seconds between samples')
+p.add_argument('--heap-dir', help='directory for start/mid/end heap.pprof captures (admin API)')
 a = p.parse_args()
 if a.seconds < 10:
     p.error('use at least 10 seconds')
@@ -36,6 +38,7 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
     heap = []
     series = []
     errors = []
+    heap_files = []
     charts = 0
     try:
         for _ in range(200):
@@ -49,6 +52,26 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
         def authed(path):
             return urllib.request.Request(base + path, headers={'Authorization': 'Bearer ' + token})
 
+        def capture_heap(label):
+            if not a.heap_dir:
+                return
+            dest_dir = pathlib.Path(a.heap_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / f'heap-{label}.pprof'
+            try:
+                with urllib.request.urlopen(authed('/api/v1/debug/pprof/heap'), timeout=60) as r:
+                    data = r.read()
+                if len(data) < 32:
+                    errors.append(f'heap {label}: too small')
+                    return
+                dest.write_bytes(data)
+                heap_files.append(str(dest))
+            except (OSError, urllib.error.URLError) as exc:
+                errors.append(f'heap {label}: {exc}')
+
+        capture_heap('start')
+        mid_at = time.monotonic() + a.seconds / 2
+        mid_done = False
         deadline = time.monotonic() + a.seconds
         while time.monotonic() < deadline:
             try:
@@ -80,7 +103,11 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
                     raise RuntimeError('agent exited')
             except Exception as e:
                 errors.append(str(e))
+            if not mid_done and time.monotonic() >= mid_at:
+                capture_heap('mid')
+                mid_done = True
             time.sleep(min(a.sample_every, max(0, deadline - time.monotonic())))
+        capture_heap('end')
     finally:
         proc.send_signal(signal.SIGINT)
         try:
@@ -114,6 +141,7 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
         'tsdb_series_last': series[-1] if series else None,
         'tsdb_series_max': max(series, default=0),
         'disk_bytes': sum(f.stat().st_size for f in (root / 'data').rglob('*') if f.is_file()),
+        'heap_profiles': heap_files,
         'errors': sorted(set(errors)),
         'scope': 'local agent; use --seconds 86400 for a 24h soak; not a distributed Hub load test',
     }

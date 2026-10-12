@@ -228,12 +228,62 @@ func (e *Engine) fireCommandLocked(alarm *Alarm, entry *LogEntry, command string
 		return
 	}
 	alarm.actionFired = idx
+	inv := actionInvocation(alarm, entry, command, e.opt.Hostname)
+	run := e.opt.RunCommand
+	go run(inv)
+}
+
+// noteInhibitedActionLocked records a command step that would have run if
+// inhibit had not returned before applyActionLocked. Same-chart inhibit is the
+// required path; dependency/correlation remain notify-only unless wired later.
+func (e *Engine) noteInhibitedActionLocked(entry *LogEntry, at int64, reason string) {
+	if e.opt.OnActionInhibited == nil || len(e.actions) == 0 || entry == nil || entry.Status == StatusClear {
+		return
+	}
+	var alarm *Alarm
+	for _, a := range e.alarms {
+		if a.Name == entry.Name && a.Chart == entry.Chart {
+			alarm = a
+			break
+		}
+	}
+	if alarm == nil {
+		return
+	}
+	for _, action := range e.actions {
+		if !action.matches(entry.Name, entry.Chart, entry.Status) {
+			continue
+		}
+		since := entry.When
+		if alarm.LastStatusChange > 0 {
+			since = alarm.LastStatusChange
+		}
+		elapsed := time.Duration(at-since) * time.Second
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		step, idx, ok := selectStep(action.steps, elapsed)
+		if !ok || step.command == "" {
+			return
+		}
+		if alarm.actionInhibitNoted == idx {
+			return
+		}
+		alarm.actionInhibitNoted = idx
+		inv := actionInvocation(alarm, entry, step.command, e.opt.Hostname)
+		cb := e.opt.OnActionInhibited
+		go cb(inv, reason)
+		return
+	}
+}
+
+func actionInvocation(alarm *Alarm, entry *LogEntry, command, hostname string) ActionCommand {
 	inv := ActionCommand{
 		Name:      command,
 		AlarmID:   alarm.ID,
 		AlarmName: alarm.Name,
 		Chart:     alarm.Chart,
-		Hostname:  e.opt.Hostname,
+		Hostname:  hostname,
 	}
 	if entry != nil && entry.Status == StatusClear && entry.OldStatus > StatusClear {
 		inv.Recovery = true
@@ -242,13 +292,12 @@ func (e *Engine) fireCommandLocked(alarm *Alarm, entry *LogEntry, command string
 		if inv.EpisodeSince <= 0 {
 			inv.EpisodeSince = entry.When
 		}
-	} else {
-		inv.EpisodeStatus = alarm.Status
-		inv.EpisodeSince = alarm.LastStatusChange
-		if entry != nil && inv.EpisodeStatus == 0 {
-			inv.EpisodeStatus = entry.Status
-		}
+		return inv
 	}
-	run := e.opt.RunCommand
-	go run(inv)
+	inv.EpisodeStatus = alarm.Status
+	inv.EpisodeSince = alarm.LastStatusChange
+	if entry != nil && inv.EpisodeStatus == 0 {
+		inv.EpisodeStatus = entry.Status
+	}
+	return inv
 }

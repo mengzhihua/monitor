@@ -458,6 +458,7 @@ func run() error {
 		return err
 	}
 	runner.record = srv.RecordAutoAction
+	runner.recordInhibited = srv.RecordInhibitedAction
 	if cfg.Trapper.Listen != "" {
 		if _, err := trapper.Start(ctx.Done(), cfg.Trapper.Listen, cfg.Trapper.Allowed, cfg.Trapper.PSK, reg); err != nil {
 			return fmt.Errorf("trapper: %w", err)
@@ -652,11 +653,19 @@ func hostIdentity(cfg *config.Config) (*registry.Host, error) {
 // autoCommandRunner runs whitelisted remediation commands for health actions,
 // capturing exit code / duration / truncated output for audit + handling history.
 type autoCommandRunner struct {
-	commands []config.Command
-	audit    *audit.Log
-	record   func(health.ActionCommand, int, int64, string)
-	timeout  time.Duration
-	log      *slog.Logger
+	commands        []config.Command
+	audit           *audit.Log
+	record          func(health.ActionCommand, int, int64, string)
+	recordInhibited func(health.ActionCommand, string)
+	timeout         time.Duration
+	log             *slog.Logger
+}
+
+func (r *autoCommandRunner) NoteInhibited(inv health.ActionCommand, reason string) {
+	if r == nil || r.recordInhibited == nil {
+		return
+	}
+	r.recordInhibited(inv, reason)
 }
 
 const autoCommandOutputMax = 4096
@@ -852,26 +861,27 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 		return nil, fmt.Errorf("health.escalate_after: %w", err)
 	}
 	return health.New(reg, db, health.Options{
-		Rules:            rules,
-		Hostname:         reg.Host.Hostname,
-		LogDir:           filepath.Join(cfg.Global.DataDir, "health"),
-		LogKeep:          cfg.Health.LogKeep,
-		Notifiers:        notifiers,
-		Roles:            n.Roles,
-		HostVars:         vars,
-		Logger:           log,
-		SilenceAll:       cfg.Health.Silent,
-		InhibitSameChart: inhibit,
-		Inhibit:          cfg.Health.Inhibit,
-		GroupWait:        groupWait,
-		EscalateAfter:    escalateAfter,
-		EscalateTo:       cfg.Health.EscalateTo,
-		OnCall:           cfg.Health.OnCall,
-		Windows:          cfg.Health.Windows,
-		Macros:           cfg.Health.Macros,
-		Actions:          cfg.Health.Actions,
-		Correlation:      cfg.Health.Correlation,
-		RunCommand:       runner.Run,
+		Rules:             rules,
+		Hostname:          reg.Host.Hostname,
+		LogDir:            filepath.Join(cfg.Global.DataDir, "health"),
+		LogKeep:           cfg.Health.LogKeep,
+		Notifiers:         notifiers,
+		Roles:             n.Roles,
+		HostVars:          vars,
+		Logger:            log,
+		SilenceAll:        cfg.Health.Silent,
+		InhibitSameChart:  inhibit,
+		Inhibit:           cfg.Health.Inhibit,
+		GroupWait:         groupWait,
+		EscalateAfter:     escalateAfter,
+		EscalateTo:        cfg.Health.EscalateTo,
+		OnCall:            cfg.Health.OnCall,
+		Windows:           cfg.Health.Windows,
+		Macros:            cfg.Health.Macros,
+		Actions:           cfg.Health.Actions,
+		Correlation:       cfg.Health.Correlation,
+		RunCommand:        runner.Run,
+		OnActionInhibited: runner.NoteInhibited,
 	})
 }
 
