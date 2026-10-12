@@ -13,13 +13,19 @@ DATA=$(mktemp -d)
 mkdir -p "$DATA/logs"
 # Fixed RFC3164-ish line so parsing does not depend on locale month names.
 printf 'Oct 12 08:00:00 smokehost app: monitor smoke fixture\n' >"$DATA/logs/smoke.log"
+# Git Bash on Windows rewrites POSIX paths for native executables; the YAML
+# path is read by Go itself, so convert to a Windows path when cygpath exists.
+SMOKE_LOG="$DATA/logs/smoke.log"
+if command -v cygpath >/dev/null 2>&1; then
+  SMOKE_LOG=$(cygpath -w "$SMOKE_LOG")
+fi
 cat >"$DATA/monitor.yaml" <<EOF
 collectors:
   modules:
     logs:
       follow: false
       files:
-        - $DATA/logs/smoke.log
+        - $SMOKE_LOG
 EOF
 # Hide journalctl so smoke proves the file fallback path (no journald required).
 SMOKE_BINDIR=$(mktemp -d)

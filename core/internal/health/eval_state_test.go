@@ -9,16 +9,16 @@ import (
 
 func TestParseEvalState(t *testing.T) {
 	cases := map[string]EvalStatePolicy{
-		"":           EvalStateUndefined,
-		"undefined":  EvalStateUndefined,
-		"NoData":     EvalStateUndefined,
-		"error":      EvalStateUndefined,
-		"ok":         EvalStateOK,
-		"CLEAR":      EvalStateOK,
-		"alerting":   EvalStateAlerting,
-		"critical":   EvalStateAlerting,
-		"keep_last":  EvalStateKeepLast,
-		"keep-last":  EvalStateKeepLast,
+		"":          EvalStateUndefined,
+		"undefined": EvalStateUndefined,
+		"NoData":    EvalStateUndefined,
+		"error":     EvalStateUndefined,
+		"ok":        EvalStateOK,
+		"CLEAR":     EvalStateOK,
+		"alerting":  EvalStateAlerting,
+		"critical":  EvalStateAlerting,
+		"keep_last": EvalStateKeepLast,
+		"keep-last": EvalStateKeepLast,
 	}
 	for raw, want := range cases {
 		got, err := parseEvalState("t", "a", "no_data_state", raw)
