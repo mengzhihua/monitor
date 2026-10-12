@@ -202,7 +202,7 @@ data/
   to: sysadmin
 ```
 
-`lookup` 除 Netdata 风格聚合（average/min/max/sum/median/last/min2max，配 `unaligned`/`absolute`/`percentage`/`anomaly-bit`/`of dims`）外，还支持 Zabbix 风格函数（窗口 `[now-After, now]`，多维度结果求和）：
+`lookup` 除 Netdata 风格聚合（average/min/max/sum/median/last/min2max，配 `unaligned`/`absolute`/`percentage`/`anomaly-bit`/`at <offset>`/`of dims`）外，还支持 Zabbix 风格函数（窗口 `[now+At-After, now+At]`，默认 `at` 为 0 即到当前；多维度结果求和）：
 
 | 方法 | 语义 |
 |---|---|

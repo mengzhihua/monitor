@@ -10,7 +10,13 @@ cd "$(dirname "$0")/.."
 
 VERSION=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
 TASK=${1:-assembleRelease}
-LDFLAGS="-s -w -X main.version=$VERSION"
+COMMIT=$(git rev-parse HEAD 2>/dev/null || true)
+RELEASE_BUILD=0
+case "$VERSION" in
+  v[0-9]*.[0-9]*.[0-9]*) RELEASE_BUILD=1 ;;
+  [0-9]*.[0-9]*.[0-9]*) RELEASE_BUILD=1 ;;
+esac
+LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.releaseBuild=$RELEASE_BUILD"
 JNI=android/app/src/main/jniLibs
 
 # arm64 only: Go can link android/arm64 statically without the NDK; android/amd64

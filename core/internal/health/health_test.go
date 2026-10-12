@@ -90,6 +90,16 @@ func TestParseLookupDelayRepeat(t *testing.T) {
 	if err != nil || !l.AnomalyBit || l.After != 5*time.Minute {
 		t.Fatalf("anomaly-bit lookup = %+v %v", l, err)
 	}
+	l, err = ParseLookup("average -10m at -1h of user")
+	if err != nil || l.After != 10*time.Minute || l.At != -time.Hour || len(l.Dimensions) != 1 {
+		t.Fatalf("at lookup = %+v %v", l, err)
+	}
+	if _, err := ParseLookup("average -10m at"); err == nil {
+		t.Fatal("dangling at must be rejected")
+	}
+	if _, err := ParseLookup("average -10m nope"); err == nil || !strings.Contains(err.Error(), "unsupported lookup option") {
+		t.Fatalf("unknown option: %v", err)
+	}
 	d, err := ParseDelay("up 30s down 15m multiplier 1.5 max 1h")
 	if err != nil || d.Up != 30*time.Second || d.Down != 15*time.Minute || d.Multiplier != 1.5 || d.Max != time.Hour {
 		t.Fatalf("delay = %+v %v", d, err)

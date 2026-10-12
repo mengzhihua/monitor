@@ -55,9 +55,13 @@ jobs:
         working-directory: core
       - run: go test -race ./...
         working-directory: core
-      - run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.sha }}" -o bin/monitord ./cmd/monitord
+      - name: build monitord
         working-directory: core
         shell: bash
+        run: |
+          ver=$(tr -d '[:space:]' < ../VERSION)
+          short=$(printf '%s' "${{ github.sha }}" | cut -c1-12)
+          go build -trimpath -ldflags "-s -w -X main.version=${ver}-dev+${short} -X main.commit=${{ github.sha }} -X main.releaseBuild=0" -o bin/monitord ./cmd/monitord
       - name: smoke
         run: ./scripts/smoke.sh
         shell: bash
@@ -68,6 +72,9 @@ jobs:
       - name: default login protection
         if: runner.os != 'Windows'
         run: python3 scripts/verify-default-auth.py
+      - name: SAML IdP stub e2e
+        if: runner.os != 'Windows'
+        run: python3 scripts/auth-fixtures/verify_saml_e2e.py --bin core/bin/monitord
       - name: personal AI analysis with local provider
         if: runner.os != 'Windows'
         run: python3 scripts/verify-ai-analysis.py

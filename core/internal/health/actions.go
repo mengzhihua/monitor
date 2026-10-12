@@ -200,7 +200,7 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 			if action.recovery.role != "" {
 				entry.Recipient = action.recovery.role
 			}
-			e.fireCommandLocked(alarm, action.recovery.command, -1)
+			e.fireCommandLocked(alarm, entry, action.recovery.command, -1)
 			return
 		}
 		since := entry.When
@@ -218,16 +218,37 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 		if step.role != "" {
 			entry.Recipient = step.role
 		}
-		e.fireCommandLocked(alarm, step.command, idx)
+		e.fireCommandLocked(alarm, entry, step.command, idx)
 		return
 	}
 }
 
-func (e *Engine) fireCommandLocked(alarm *Alarm, command string, idx int) {
+func (e *Engine) fireCommandLocked(alarm *Alarm, entry *LogEntry, command string, idx int) {
 	if command == "" || e.opt.RunCommand == nil || alarm == nil || alarm.actionFired == idx {
 		return
 	}
 	alarm.actionFired = idx
+	inv := ActionCommand{
+		Name:      command,
+		AlarmID:   alarm.ID,
+		AlarmName: alarm.Name,
+		Chart:     alarm.Chart,
+		Hostname:  e.opt.Hostname,
+	}
+	if entry != nil && entry.Status == StatusClear && entry.OldStatus > StatusClear {
+		inv.Recovery = true
+		inv.EpisodeStatus = entry.OldStatus
+		inv.EpisodeSince = alarm.prevStatusChange
+		if inv.EpisodeSince <= 0 {
+			inv.EpisodeSince = entry.When
+		}
+	} else {
+		inv.EpisodeStatus = alarm.Status
+		inv.EpisodeSince = alarm.LastStatusChange
+		if entry != nil && inv.EpisodeStatus == 0 {
+			inv.EpisodeStatus = entry.Status
+		}
+	}
 	run := e.opt.RunCommand
-	go run(command)
+	go run(inv)
 }

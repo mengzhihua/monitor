@@ -49,6 +49,7 @@ type Options struct {
 	// RequestRestart asks monitord to shut down and re-exec. Nil means restart is unavailable.
 	RequestRestart func() error
 	Version        string
+	Commit         string // source commit SHA when known; shown in /api/v1/info
 	Mode           string // agent | hub (informational)
 	StartedAt      time.Time
 	AllowFrom      []string
@@ -487,6 +488,9 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 			"tiers": s.db.Tiers(), "dir": s.db.Dir(), "persistence": s.db.Persistence(),
 		},
 		"user": userOf(r),
+	}
+	if s.opt.Commit != "" {
+		out["commit"] = s.opt.Commit
 	}
 	var nodes []*hub.Node
 	if s.opt.Nodes != nil {

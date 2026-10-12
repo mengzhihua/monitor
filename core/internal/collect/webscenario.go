@@ -3,8 +3,10 @@ package collect
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -106,7 +108,7 @@ func (w *webscenarioCollector) run(ctx context.Context, job webscenarioJob) (ok 
 		for k, v := range st.Headers {
 			headers[k] = expandVars(v, vars)
 		}
-		code, text, dt, err := httpText(ctx, client, st.Method, rawURL, headers, body, 1<<20)
+		code, text, dt, err := httpTextCookie(ctx, client, st.Method, rawURL, headers, body, 1<<20)
 		elapsed += dt
 		expect := st.Expect
 		if expect == 0 {
@@ -132,6 +134,59 @@ func (w *webscenarioCollector) run(ctx context.Context, job webscenarioJob) (ok 
 		}
 	}
 	return true, 0, elapsed
+}
+
+// httpTextCookie is httpText for web scenarios. When the step sets Cookie
+// explicitly, jar cookies are not attached (avoids duplicate Cookie headers);
+// Set-Cookie from the response is still stored in the jar for later steps.
+func httpTextCookie(ctx context.Context, client *http.Client, method, rawURL string, headers map[string]string, body string, limit int64) (code int, text string, elapsed float64, err error) {
+	manualCookie := false
+	for k := range headers {
+		if strings.EqualFold(k, "Cookie") {
+			manualCookie = true
+			break
+		}
+	}
+	if !manualCookie || client == nil || client.Jar == nil {
+		return httpText(ctx, client, method, rawURL, headers, body, limit)
+	}
+	if method == "" {
+		method = http.MethodGet
+	}
+	if limit <= 0 {
+		limit = 1 << 20
+	}
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, rdr)
+	if err != nil {
+		return 0, "", 0, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	send := *client
+	send.Jar = nil
+	start := time.Now()
+	resp, err := send.Do(req)
+	elapsed = time.Since(start).Seconds()
+	if err != nil {
+		return 0, "", elapsed, err
+	}
+	defer resp.Body.Close()
+	if u, perr := url.Parse(rawURL); perr == nil {
+		client.Jar.SetCookies(u, resp.Cookies())
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return resp.StatusCode, "", elapsed, err
+	}
+	if int64(len(b)) > limit {
+		b = b[:limit]
+	}
+	return resp.StatusCode, string(b), elapsed, nil
 }
 
 func expandVars(s string, vars map[string]string) string {

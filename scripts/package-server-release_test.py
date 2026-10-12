@@ -85,6 +85,9 @@ class ReleaseTests(unittest.TestCase):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("PRIVATE DATA MUST NOT ENTER THE PACKAGE")
+        (root / "packaging").mkdir(parents=True, exist_ok=True)
+        (root / "packaging/start.sh").write_text("#!/bin/sh\n# fixture start\n")
+        (root / "packaging/stop.sh").write_text("#!/bin/sh\n# fixture stop\n")
 
     def test_archives_whitelist_permissions_checksums_and_collision(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,6 +110,7 @@ class ReleaseTests(unittest.TestCase):
                             self.assertEqual(names, expected)
                             start = package.read("monitor-2.0.0-windows-amd64/start.cmd")
                             self.assertIn(b"-listen 127.0.0.1:20099 -data-dir", start)
+                            self.assertIn("stop.cmd", names)
                     else:
                         with tarfile.open(archive) as package:
                             names = {entry.name.split("/", 1)[1] for entry in package}
@@ -116,6 +120,8 @@ class ReleaseTests(unittest.TestCase):
                             self.assertEqual(executable.uid, 0)
                             self.assertEqual(executable.mtime, EPOCH)
                             self.assertTrue(all(entry.isfile() for entry in package))
+                            self.assertIn("stop.sh", names)
+                            self.assertIn(b"fixture start", package.extractfile("monitor-2.0.0-linux-amd64/start.sh").read())
                     self.assertFalse(names & {"AGENTS.md", "agent.md", "monitor.yaml", "data/web-password", ".git/config"})
                 self.assertEqual(sums["manifest.json"], release.sha256(output / "manifest.json"))
                 before = (output / "manifest.json").read_bytes()
@@ -153,7 +159,7 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(release, "source_metadata", return_value=("2.0.0", COMMIT, EPOCH)), patch.object(release, "inspect_binary"), patch.object(release, "command") as run:
                 release.build_binaries(root, ["linux-amd64"], "go")
             args, cwd, env = run.call_args.args
-            self.assertEqual(args[args.index("-ldflags") + 1], "-s -w -X main.version=2.0.0")
+            self.assertEqual(args[args.index("-ldflags") + 1], f"-s -w -X main.version=2.0.0 -X main.commit={COMMIT} -X main.releaseBuild=1")
             self.assertEqual(cwd, root / "core")
             self.assertEqual((env["GOOS"], env["GOARCH"]), ("linux", "amd64"))
             release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)

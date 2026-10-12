@@ -244,6 +244,39 @@ func problemID(node string, a health.Alarm) string {
 	return hex.EncodeToString(sum[:])
 }
 
+const autoActionNoteMax = 2048
+const autoActionOutputMax = 4096
+
+// RecordAutoAction writes an alert-triggered command result into handling history.
+// Local agent episodes use node ID "" (same as the operations snapshot).
+func (s *Server) RecordAutoAction(cmd health.ActionCommand, exit int, durationMs int64, output string) {
+	if s == nil || s.operations == nil || cmd.Name == "" || cmd.AlarmName == "" {
+		return
+	}
+	if len(output) > autoActionOutputMax {
+		output = output[:autoActionOutputMax]
+	}
+	note := fmt.Sprintf("auto action %s: exit=%d duration_ms=%d", cmd.Name, exit, durationMs)
+	if output != "" {
+		note += "\n" + output
+	}
+	if len(note) > autoActionNoteMax {
+		note = note[:autoActionNoteMax]
+	}
+	a := health.Alarm{
+		ID: cmd.AlarmID, Name: cmd.AlarmName, Chart: cmd.Chart,
+		Status: cmd.EpisodeStatus, LastStatusChange: cmd.EpisodeSince,
+	}
+	id := problemID("", a)
+	target := operations.Target{
+		Hostname: cmd.Hostname, Chart: cmd.Chart, Name: cmd.AlarmName,
+		Severity: cmd.EpisodeStatus.String(), Since: cmd.EpisodeSince,
+	}
+	if _, err := s.operations.AppendSystem(id, "system", operations.Change{Action: "auto_command", Note: note}, target); err != nil {
+		s.log.Warn("auto action history", "command", cmd.Name, "alarm", cmd.AlarmName, "err", err)
+	}
+}
+
 func (s *Server) operationsSnapshot(r *http.Request) operationsSnapshot {
 	now := time.Now().Unix()
 	out := operationsSnapshot{Now: now, Nodes: []operationsNode{}, Problems: []problem{}, Persistent: s.operations.Persistent(), CurrentUser: userOf(r), Assignees: s.operationsAssignees(r),
