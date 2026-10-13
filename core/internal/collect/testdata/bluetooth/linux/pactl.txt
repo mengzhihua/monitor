@@ -1,0 +1,20 @@
+Card #43
+	Name: bluez_card.AC_BF_71_11_22_33
+	Driver: module-bluez5-device.c
+	Properties:
+		device.description = "JBL Flip 5"
+		device.string = "AC:BF:71:11:22:33"
+		device.api = "bluez"
+		bluez.path = "/org/bluez/hci0/dev_AC_BF_71_11_22_33"
+	Active Profile: a2dp-sink-sbc
+
+Sink #52
+	State: RUNNING
+	Name: bluez_output.AC_BF_71_11_22_33.1
+	Description: JBL Flip 5
+	Driver: PipeWire
+	Sample Specification: s16le 2ch 44100Hz
+	Properties:
+		bluetooth.codec = "sbc"
+		api.bluez5.profile = "a2dp-sink"
+		api.bluez5.address = "AC:BF:71:11:22:33"

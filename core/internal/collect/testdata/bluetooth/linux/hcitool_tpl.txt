@@ -1,0 +1,1 @@
+Current transmit power level: 4

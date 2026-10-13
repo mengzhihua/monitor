@@ -1,10 +1,10 @@
 name: Release
 
-# Every push to main is tagged automatically (patch bump of the latest stable
-# v* tag, with stable VERSION as a minimum) and packaged into a GitHub Release. Pushing a tag by
-# hand (e.g. v0.2.0 for a minor/major bump) or running the workflow manually
-# against an existing tag builds that tag instead. Artifacts are unsigned unless
-# the optional signing secrets below are configured:
+# Every push to main whose VERSION file is a stable semver is tagged as v$VERSION
+# (no auto patch bump) and packaged into a GitHub Release. Bump VERSION /
+# package.json / main.go in source first. Pushing a tag by hand or running the
+# workflow manually against an existing tag builds that tag instead. Artifacts
+# are unsigned unless the optional signing secrets below are configured:
 #   ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
 on:
   push:
@@ -31,6 +31,7 @@ jobs:
       ref: ${{ steps.v.outputs.ref }}
       version: ${{ steps.v.outputs.version }}
       build_number: ${{ steps.v.outputs.build_number }}
+      skip: ${{ steps.v.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, fetch-tags: true }
@@ -53,69 +54,55 @@ jobs:
             build=$(( major * 1000000 + minor * 10000 + patch ))
             (( build <= 2100000000 )) || { echo "build number out of range: $1" >&2; return 1; }
           }
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           if [[ -n "$INPUT_TAG" ]]; then
             tag="$INPUT_TAG"; ref="refs/tags/$INPUT_TAG"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="$GITHUB_REF_NAME"; ref="$GITHUB_REF"
           else
-            # Push to main: bump the latest stable patch, honoring a major/minor
-            # release requested by VERSION. Ignore development/prerelease tags.
-            # (Tags pushed with GITHUB_TOKEN do not trigger another run.)
+            # Push to main: tag exactly the VERSION file on this commit.
+            # No auto patch bump — bump VERSION (and package.json / main.go) in
+            # source first, then merge to main to cut a release.
             ref="$GITHUB_SHA"
-            floor=$(git show "$ref:VERSION" 2>/dev/null || true)
-            if [[ "v$floor" =~ $stable_tag ]]; then
-              floor="v$floor"
-              validate_tag "$floor"
-            else
-              floor=""
+            source_version=$(git show "$ref:VERSION" 2>/dev/null || true)
+            if [[ ! "v$source_version" =~ $stable_tag ]]; then
+              echo "VERSION on $ref must be stable MAJOR.MINOR.PATCH, got: $source_version" >&2
+              exit 1
             fi
+            tag="v$source_version"
+            validate_tag "$tag"
             existing=$(git tag --points-at "$GITHUB_SHA" | grep -E "$stable_tag" | sort -V | tail -1 || true)
-            if [[ -n "$existing" && -n "$floor" ]] && version_lt "$existing" "$floor"; then existing=""; fi
             if [[ -n "$existing" ]]; then
-              tag="$existing"
+              if [[ "$existing" != "$tag" ]]; then
+                echo "commit already tagged $existing but VERSION is $tag" >&2
+                exit 1
+              fi
             else
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              # Concurrent runs may race for the same next version: the tag push is
-              # atomic on the remote, so on rejection refetch tags and recompute.
-              for attempt in 1 2 3 4 5; do
-                git fetch -q --tags --force origin
-                last=$(git tag -l 'v[0-9]*' | grep -E "$stable_tag" | sort -V | tail -1 || true)
-                last=${last:-v0.0.0}
-                validate_tag "$last"
-                [[ "$last" =~ $stable_tag ]]
-                tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$(( ${BASH_REMATCH[3]} + 1 ))"
-                if [[ -n "$floor" ]] && version_lt "$tag" "$floor"; then tag="$floor"; fi
-                validate_tag "$tag"
+              git fetch -q --tags --force origin
+              if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+                pointed=$(git rev-list -n1 "$tag")
+                if [[ "$pointed" != "$GITHUB_SHA" ]]; then
+                  echo "VERSION $source_version already released as $tag on $pointed; skipping package rebuild"
+                  echo "skip=true" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+              else
                 git tag -a "$tag" "$GITHUB_SHA" -m "Release $tag"
-                if git push origin "refs/tags/$tag"; then break; fi
-                git tag -d "$tag"
-                [[ $attempt -lt 5 ]] || { echo "could not allocate a release tag" >&2; exit 1; }
-                sleep $(( attempt * 2 ))
-              done
+                git push origin "refs/tags/$tag"
+              fi
             fi
           fi
           validate_tag "$tag"
           git rev-parse --verify "$ref^{commit}" >/dev/null
           source_version=$(git show "$ref:VERSION" 2>/dev/null || true)
-          if [[ "v$source_version" =~ $stable_tag ]] && version_lt "$tag" "v$source_version"; then
-            echo "release tag $tag is older than source VERSION $source_version" >&2; exit 1
-          fi
           version="${tag#v}"
-          # Keep VERSION (and Dashboard defaults) aligned with the tag so CI's
-          # REQUIRE_GIT_TAG_VERSION check does not drift after auto-tags.
-          # Commits pushed with GITHUB_TOKEN do not re-trigger workflows.
-          if [[ -z "$INPUT_TAG" && "$GITHUB_REF" == refs/heads/main && "$source_version" != "$version" ]]; then
-            git checkout -B main "$GITHUB_SHA"
-            # External script: inline python -c under nested shell/YAML indent
-            # previously caused IndentationError and aborted every Release meta job.
-            python3 scripts/sync-release-version.py "$version"
-            git add VERSION web/package.json web/package-lock.json core/cmd/monitord/main.go
-            git commit -m "release: sync VERSION to $tag"
-            git push origin HEAD:main
+          if [[ "$source_version" != "$version" ]]; then
+            echo "VERSION ($source_version) must equal tag $tag (release tags only from VERSION)" >&2
+            exit 1
           fi
-          # Monotonic build number: major*1e6 + minor*1e4 + patch (minor < 100,
-          # patch < 10000). Must match scripts/build-android-server.sh.
+          # build number set by validate_tag (major*1e6 + minor*1e4 + patch).
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -123,6 +110,7 @@ jobs:
 
   web:
     needs: [meta]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +150,7 @@ jobs:
   # ---------------------------------------------------------------- server ----
   server:
     needs: [meta, web]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -216,6 +205,7 @@ jobs:
 
   server-android:
     needs: [meta, web]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -267,6 +257,7 @@ jobs:
   # ---------------------------------------------------------------- client ----
   client-android:
     needs: [meta]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -291,6 +282,7 @@ jobs:
 
   client-linux:
     needs: [meta]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -321,6 +313,7 @@ jobs:
 
   client-windows:
     needs: [meta]
+    if: needs.meta.outputs.skip != 'true'
     # windows-latest ships VS 2026, which Flutter's CMake generator selection
     # does not know yet (falls back to "Visual Studio 16 2019" and fails).
     runs-on: windows-2022
@@ -348,6 +341,7 @@ jobs:
 
   client-macos:
     needs: [meta]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -399,6 +393,7 @@ jobs:
 
   client-ios:
     needs: [meta]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -426,6 +421,7 @@ jobs:
   # --------------------------------------------------------------- publish ----
   release:
     needs: [meta, server, server-android, client-android, client-linux, client-windows, client-macos, client-ios]
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

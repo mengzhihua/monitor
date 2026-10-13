@@ -1,0 +1,40 @@
+{
+  "SPBluetoothDataType": [
+    {
+      "controller_properties": {
+        "controller_address": "F0:18:98:11:22:33",
+        "controller_chipset": "BCM_4388",
+        "controller_discoverable": "attrib_off",
+        "controller_state": "attrib_on",
+        "controller_transport": "PCIe"
+      },
+      "device_connected": [
+        {
+          "JBL Flip 5": {
+            "device_address": "AC-BF-71-11-22-33",
+            "device_addressType": "Public",
+            "device_batteryLevelMain": "90%",
+            "device_classOfDevice": "0x04 0x01 0x240414",
+            "device_firmwareVersion": "1.4.0",
+            "device_isConnected": "attrib_Yes",
+            "device_isPaired": "attrib_Yes",
+            "device_minorType": "Speaker",
+            "device_majorType": "Audio",
+            "device_rssi": -47,
+            "device_role": "attrib_Master",
+            "device_services": "Audio Sink, AVRCP Target"
+          }
+        }
+      ],
+      "device_not_connected": [
+        {
+          "Magic Keyboard": {
+            "device_address": "A0-B1-C2-D3-E4-F5",
+            "device_minorType": "Keyboard",
+            "device_isPaired": "attrib_Yes"
+          }
+        }
+      ]
+    }
+  ]
+}

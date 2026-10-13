@@ -42,6 +42,8 @@ type checkpointImage struct {
 	Tiers   []tierCheckpoint
 }
 
+// checkpointImage builds a full in-memory image (legacy / tests). Production
+// Flush uses writeCheckpoint, which streams MONCP002 without this allocation.
 func (s *Store) checkpointImage() checkpointImage {
 	image := checkpointImage{Version: 1}
 	s.mu.RLock()
@@ -68,7 +70,7 @@ func (s *Store) checkpointImage() checkpointImage {
 	return image
 }
 
-func (s *Store) writeCheckpoint(image checkpointImage) error {
+func (s *Store) writeCheckpoint() error {
 	path := filepath.Join(s.opt.Dir, checkpointFile)
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
@@ -78,11 +80,12 @@ func (s *Store) writeCheckpoint(image checkpointImage) error {
 	defer func() { f.Close(); os.Remove(tmp) }()
 	hash := sha256.New()
 	writer := io.MultiWriter(f, hash)
-	if _, err = writer.Write([]byte("MONCP001")); err != nil {
+	if _, err = writer.Write([]byte(checkpointMagicV2)); err != nil {
 		return err
 	}
 	z := gzip.NewWriter(writer)
-	if err = gob.NewEncoder(&checkpointLimitWriter{w: z, left: maxCheckpointBytes}).Encode(image); err != nil {
+	limited := &checkpointLimitWriter{w: z, left: maxCheckpointBytes}
+	if err = s.writeCheckpointStream(limited); err != nil {
 		return err
 	}
 	if err = z.Close(); err != nil {
@@ -143,18 +146,26 @@ func (s *Store) loadCheckpoint() error {
 	if _, err = io.ReadFull(f, magic[:]); err != nil {
 		return err
 	}
-	if string(magic[:]) != "MONCP001" {
-		return fmt.Errorf("unsupported checkpoint format")
-	}
 	z, err := gzip.NewReader(io.LimitReader(f, stat.Size()-40))
 	if err != nil {
 		return err
 	}
 	defer z.Close()
-	var image checkpointImage
-	if err = gob.NewDecoder(io.LimitReader(z, maxCheckpointBytes)).Decode(&image); err != nil {
-		return fmt.Errorf("decode checkpoint: %w", err)
+	switch string(magic[:]) {
+	case checkpointMagicV2:
+		return s.loadCheckpointStream(io.LimitReader(z, maxCheckpointBytes))
+	case "MONCP001":
+		var image checkpointImage
+		if err = gob.NewDecoder(io.LimitReader(z, maxCheckpointBytes)).Decode(&image); err != nil {
+			return fmt.Errorf("decode checkpoint: %w", err)
+		}
+		return s.applyCheckpointImage(image)
+	default:
+		return fmt.Errorf("unsupported checkpoint format")
 	}
+}
+
+func (s *Store) applyCheckpointImage(image checkpointImage) error {
 	if image.Version != 1 {
 		return fmt.Errorf("unsupported checkpoint version: %d", image.Version)
 	}

@@ -1,0 +1,3 @@
+Connections:
+	< ACL AC:BF:71:11:22:33 handle 12 state 1 lm MASTER AUTH ENCRYPT 
+	< LE A0:B1:C2:D3:E4:F5 handle 64 state 1 lm MASTER ENCRYPT 

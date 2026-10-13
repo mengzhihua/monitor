@@ -31,11 +31,14 @@ test('built-in dashboards use real charts, filter, range and responsive layout',
     await memory.getByRole('button', { name: '收起', exact: true }).click()
     await expect(memory.locator('.card')).toHaveCount(4)
   }
-  for (const name of ['接口与网络', '数据库与缓存', '容器工作台', '资源瓶颈', '发布观察']) {
+  for (const name of ['接口与网络', '数据库与缓存', '容器工作台', '资源瓶颈', '发布观察', '蓝牙链路与音频质量']) {
     await panel.getByRole('button', { name, exact: false }).click()
     await expect(panel.getByRole('heading', { name, exact: true, level: 2 })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
+  await panel.getByRole('button', { name: '蓝牙链路与音频质量', exact: false }).click()
+  await expect(panel.getByRole('heading', { name: '蓝牙链路与音频质量', exact: true, level: 2 })).toBeVisible()
+  await expect(panel.getByLabel('蓝牙设备与音频', { exact: true })).toBeVisible()
   await panel.getByRole('button', { name: '研发总览', exact: false }).click()
   await page.screenshot({ path: info.outputPath('presets.png'), fullPage: true })
   await page.getByRole('button', { name: '全部指标', exact: true }).click()
