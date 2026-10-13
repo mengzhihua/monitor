@@ -140,6 +140,6 @@ test('corrupt stored configuration does not prevent built-in dashboards from loa
   await page.addInitScript(key => localStorage.setItem(key, '{invalid'), storageKey)
   const panel = await open(page)
   await expect(panel.getByRole('alert')).toContainText('无法读取个人看板配置')
-  await expect(panel.locator('.presets button')).toHaveCount(54)
+  await expect(panel.locator('.presets button')).toHaveCount(dashboards.length)
   expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBe('{invalid')
 })
