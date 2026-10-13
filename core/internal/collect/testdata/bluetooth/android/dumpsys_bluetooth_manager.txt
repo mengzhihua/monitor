@@ -1,0 +1,14 @@
+Bluetooth Status
+  enabled: true
+  state: ON
+  address: F0:18:98:AA:BB:CC
+  name: Pixel 8
+
+Bonded devices:
+  AC:BF:71:11:22:33 [ AUDIO_VIDEO_LOUDSPEAKER ] JBL Flip 5
+  A0:B1:C2:D3:E4:F5 [ PERIPHERAL_KEYBOARD ] Keychron K2
+
+Profile: A2dpService
+  mCurrentDevice: AC:BF:71:11:22:33
+  mCodecStatus:
+    Current Codec: {codecName:LDAC,mCodecType:4,mCodecPriority:1000000,mSampleRate:0x4(96000),mBitsPerSample:0x2(24),mChannelMode:0x2(STEREO),mCodecSpecific1:1001,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}

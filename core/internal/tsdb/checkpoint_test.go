@@ -341,3 +341,38 @@ func TestCheckpointRejectsOversizedOnDiskImage(t *testing.T) {
 		t.Fatal("oversized checkpoint accepted")
 	}
 }
+
+func TestCheckpointStreamRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("a", 1000, 1.5)
+	s.Append("a", 1001, 2.5)
+	s.Append("b", 1000, 9)
+	if err = s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	raw, err := os.ReadFile(filepath.Join(dir, checkpointFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw[:8]) != checkpointMagicV2 {
+		t.Fatalf("magic=%q", raw[:8])
+	}
+	reopened, err := Open(Options{Dir: dir, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	points, err := reopened.Query("a", 0, 2000)
+	if err != nil || len(points) != 2 || points[0].Value != 1.5 || points[1].Value != 2.5 {
+		t.Fatalf("a=%v err=%v", points, err)
+	}
+	points, err = reopened.Query("b", 0, 2000)
+	if err != nil || len(points) != 1 || points[0].Value != 9 {
+		t.Fatalf("b=%v err=%v", points, err)
+	}
+}

@@ -37,6 +37,8 @@ install -m 755 packaging/start.sh packaging/stop.sh /opt/monitor/
 | `MONITOR_CONFIG` | _(empty)_ | Optional `-config` path |
 | `MONITOR_LISTEN` | `127.0.0.1:20099` | Listen address for `start.sh` |
 | `MONITOR_PIDFILE` | `$MONITOR_DATA_DIR/monitord.pid` | Pidfile location |
+| `MONITOR_LOG` | _(foreground: console; background: `$MONITOR_DATA_DIR/monitord.log`)_ | Log file path |
+| `MONITOR_BACKGROUND` | `0` | Set `1` (or pass `--background` / `-d`) to detach |
 
 `$ROOT` is the directory containing the script (after `cd` there). Paths may be
 relative to `$ROOT` or absolute; the scripts normalize them before matching.

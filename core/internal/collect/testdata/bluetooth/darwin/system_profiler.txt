@@ -1,0 +1,25 @@
+Bluetooth:
+
+      Apple Bluetooth Software Version: 10.0.0
+      Devices (Paired, Configured, etc.):
+          JBL Flip 5:
+              Address: AC-BF-71-11-22-33
+              Major Type: Audio
+              Minor Type: Speaker
+              Services: Audio Sink, AVRCP Target, Headset
+              Paired: Yes
+              Configured: Yes
+              Connected: Yes
+              Manufacturer: Cambridge Silicon Radio (0x1D, 0x2BA)
+              Firmware Version: 0x1C4
+              Class of Device: 0x04 0x01 0x240414
+              AFH: On
+              AFH Map: 0xFFFFFFFFFFFFFFFFFF7F
+              RSSI: -53
+              Role: Master
+              Connection Mode: Sniff Mode
+              Interval: 11.25 ms
+              Link Type: ACL
+              Transmit Power Level: 4
+              EDR Supported: Yes
+              eSCO Supported: Yes

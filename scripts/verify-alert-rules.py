@@ -2,6 +2,7 @@
 """Check alert-rule editing against a real daemon with isolated, silent data."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -210,11 +211,16 @@ def verify(daemon):
             daemon.request(path, payload, role=role, expected=403)
     for path in (MANAGE, MANAGE + '/preview'):
         daemon.request(path, {'action': 'create', 'config': candidate}, expected=400)
+    before_hash = hashlib.sha256(before_file).hexdigest()
     preview = daemon.request(MANAGE + '/preview', payload)
     require(preview['valid'] and preview['persistent'] and preview['revision'] == initial['revision'], 'preview metadata incorrect')
     require(preview['action'] == 'create' and preview['name'] == CUSTOM, 'preview action/name incorrect')
     require(preview['matched'] >= 1 and any(c['id'] == 'system.ram' for c in preview['charts']), 'preview did not match existing RAM chart')
-    require(preview['limit'] == 50 and not preview['truncated'] and not preview['disabled'] and preview['notice'], 'preview limits/notice incorrect')
+    # Preview must not mutate the rule store: compare file hashes (truncated/notice
+    # can vary with chart cardinality and are not a write signal).
+    after_hash = hashlib.sha256(daemon.saved_bytes()).hexdigest()
+    require(before_hash == after_hash, 'preview mutated persisted rules (hash mismatch)')
+    require(preview.get('limit') == 50 and not preview.get('disabled'), 'preview limits/disabled incorrect')
     daemon.request(MANAGE + '/preview', {**payload, 'config': spec(CUSTOM, warn='(')}, expected=400)
     daemon.unchanged(initial, before_file)
 

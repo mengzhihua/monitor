@@ -6,6 +6,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+DEV_MODE=0
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --dev) DEV_MODE=1 ;;
+    -h|--help|help) ARGS+=("$arg") ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
 VERSION="$(tr -d '[:space:]' < VERSION)"
 GIT_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
 GIT_COMMIT_SHORT="$(git rev-parse --short=12 HEAD 2>/dev/null || true)"
@@ -18,6 +29,15 @@ if [[ "$GIT_EXACT_TAG" != "v${VERSION}" ]]; then
   fi
 else
   RELEASE_BUILD=1
+fi
+# --dev always produces a development binary even on an exact release tag.
+if [[ "$DEV_MODE" -eq 1 ]]; then
+  RELEASE_BUILD=0
+  if [[ -n "$GIT_COMMIT_SHORT" ]]; then
+    BUILD_VERSION="${VERSION}-dev+${GIT_COMMIT_SHORT}"
+  else
+    BUILD_VERSION="${VERSION}-dev"
+  fi
 fi
 BUILD_DIRTY=false
 if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null || true)" ]]; then
@@ -33,8 +53,9 @@ BIN="core/bin"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build.sh [web|core|all|cross|check-version]
+Usage: scripts/build.sh [--dev] [web|core|all|cross|check-version]
 
+  --dev         allow VERSION/tag drift: warn and still build -dev+sha
   web           build Vue dashboard into core/internal/api/ui/dist
   core          build monitord for the current platform (default)
   all           web then core
@@ -43,8 +64,18 @@ Usage: scripts/build.sh [web|core|all|cross|check-version]
 EOF
 }
 
-build_web() {
+check_version() {
+  if [[ "$DEV_MODE" -eq 1 ]]; then
+    if ! python3 scripts/check-release-version.py; then
+      echo "warning: VERSION check failed; continuing with --dev (${BUILD_VERSION})" >&2
+    fi
+    return 0
+  fi
   python3 scripts/check-release-version.py
+}
+
+build_web() {
+  check_version
   (cd web && npm ci && npm run build)
 }
 
@@ -73,7 +104,7 @@ build_cross() {
 target="${1:-core}"
 case "$target" in
   -h|--help|help) usage ;;
-  check-version) python3 scripts/check-release-version.py ;;
+  check-version) check_version ;;
   web) build_web ;;
   core) build_core ;;
   all) build_web; build_core ;;

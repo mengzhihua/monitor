@@ -204,25 +204,25 @@ Sink #52
 		api.bluez5.address = "AC:BF:71:11:22:33"
 `
 
-// writeBluetoothSnapshot records the command output a Linux host with one
-// connected speaker and one connected keyboard would produce.
+// writeBluetoothSnapshot copies the checked-in Linux redacted snapshot into a
+// temp dir so collectors never mutate testdata/.
 func writeBluetoothSnapshot(t *testing.T) string {
 	t.Helper()
+	src := bluetoothTestdataDir(t, "linux")
 	dir := t.TempDir()
-	files := map[string]string{
-		"platform":      "linux\n",
-		"dbus-send.txt": dbusSnapshotFixture,
-		"hciconfig.txt": hciconfigFixture,
-		"pactl.txt":     pactlSnapshotFixture,
-		"hcitool_con.txt": "Connections:\n\t< ACL AC:BF:71:11:22:33 handle 12 state 1 lm MASTER AUTH ENCRYPT \n" +
-			"\t< LE A0:B1:C2:D3:E4:F5 handle 64 state 1 lm MASTER ENCRYPT \n",
-		"hcitool_lq.txt":   "Link quality: 245\n",
-		"hcitool_tpl.txt":  "Current transmit power level: 4\n",
-		"hcitool_rssi.txt": "RSSI return value: 0\n",
-		"hcitool_afh.txt":  "AFH mode: enabled\nAFH map: 0xFFFFFFFFFFFFFFFFFF7F\n",
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "expected.json" {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, e.Name()), body, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

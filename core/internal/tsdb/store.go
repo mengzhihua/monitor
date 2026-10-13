@@ -593,13 +593,12 @@ func (s *Store) Flush() (flushErr error) {
 		s.checkpointMu.Unlock()
 		return nil
 	}
-	image := s.checkpointImage()
 	walOff, walErr := s.walSyncSize()
 	s.checkpointMu.Unlock()
 	if walErr != nil {
 		return walErr
 	}
-	if err := s.writeCheckpoint(image); err != nil {
+	if err := s.writeCheckpoint(); err != nil {
 		return err
 	}
 	s.checkpointMu.Lock()

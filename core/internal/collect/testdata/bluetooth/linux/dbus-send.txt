@@ -1,0 +1,165 @@
+method return time=1760000000.123456 sender=:1.7 -> destination=:1.99 serial=3 reply_serial=2
+   array [
+      dict entry(
+         object path "/org/bluez/hci0"
+         array [
+            dict entry(
+               string "org.bluez.Adapter1"
+               array [
+                  dict entry(
+                     string "Address"
+                     variant                         string "00:1A:7D:DA:71:13"
+                  )
+                  dict entry(
+                     string "Alias"
+                     variant                         string "monitor-host"
+                  )
+                  dict entry(
+                     string "Powered"
+                     variant                         boolean true
+                  )
+               ]
+            )
+         ]
+      )
+      dict entry(
+         object path "/org/bluez/hci0/dev_AC_BF_71_11_22_33"
+         array [
+            dict entry(
+               string "org.bluez.Device1"
+               array [
+                  dict entry(
+                     string "Address"
+                     variant                         string "AC:BF:71:11:22:33"
+                  )
+                  dict entry(
+                     string "AddressType"
+                     variant                         string "public"
+                  )
+                  dict entry(
+                     string "Alias"
+                     variant                         string "JBL Flip 5 (kitchen)"
+                  )
+                  dict entry(
+                     string "Class"
+                     variant                         uint32 2360340
+                  )
+                  dict entry(
+                     string "Connected"
+                     variant                         boolean true
+                  )
+                  dict entry(
+                     string "Paired"
+                     variant                         boolean true
+                  )
+                  dict entry(
+                     string "RSSI"
+                     variant                         int16 -47
+                  )
+                  dict entry(
+                     string "Adapter"
+                     variant                         object path "/org/bluez/hci0"
+                  )
+                  dict entry(
+                     string "UUIDs"
+                     variant                         array [
+                           string "0000110b-0000-1000-8000-00805f9b34fb"
+                           string "0000110d-0000-1000-8000-00805f9b34fb"
+                           string "0000110e-0000-1000-8000-00805f9b34fb"
+                        ]
+                  )
+               ]
+            )
+            dict entry(
+               string "org.bluez.Battery1"
+               array [
+                  dict entry(
+                     string "Percentage"
+                     variant                         byte 90
+                  )
+               ]
+            )
+         ]
+      )
+      dict entry(
+         object path "/org/bluez/hci0/dev_AC_BF_71_11_22_33/fd3"
+         array [
+            dict entry(
+               string "org.bluez.MediaTransport1"
+               array [
+                  dict entry(
+                     string "Device"
+                     variant                         object path "/org/bluez/hci0/dev_AC_BF_71_11_22_33"
+                  )
+                  dict entry(
+                     string "UUID"
+                     variant                         string "0000110b-0000-1000-8000-00805f9b34fb"
+                  )
+                  dict entry(
+                     string "Codec"
+                     variant                         byte 0
+                  )
+                  dict entry(
+                     string "Configuration"
+                     variant                         array of bytes [
+                           33 21 2 53
+                        ]
+                  )
+                  dict entry(
+                     string "State"
+                     variant                         string "active"
+                  )
+                  dict entry(
+                     string "Delay"
+                     variant                         uint16 1500
+                  )
+               ]
+            )
+         ]
+      )
+      dict entry(
+         object path "/org/bluez/hci0/dev_A0_B1_C2_D3_E4_F5"
+         array [
+            dict entry(
+               string "org.bluez.Device1"
+               array [
+                  dict entry(
+                     string "Address"
+                     variant                         string "A0:B1:C2:D3:E4:F5"
+                  )
+                  dict entry(
+                     string "AddressType"
+                     variant                         string "random"
+                  )
+                  dict entry(
+                     string "Alias"
+                     variant                         string "Keychron K2"
+                  )
+                  dict entry(
+                     string "Class"
+                     variant                         uint32 1344
+                  )
+                  dict entry(
+                     string "Connected"
+                     variant                         boolean true
+                  )
+                  dict entry(
+                     string "Paired"
+                     variant                         boolean true
+                  )
+                  dict entry(
+                     string "Adapter"
+                     variant                         object path "/org/bluez/hci0"
+                  )
+                  dict entry(
+                     string "UUIDs"
+                     variant                         array [
+                           string "00001812-0000-1000-8000-00805f9b34fb"
+                           string "0000180f-0000-1000-8000-00805f9b34fb"
+                        ]
+                  )
+               ]
+            )
+         ]
+      )
+   ]
