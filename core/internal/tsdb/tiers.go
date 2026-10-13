@@ -801,7 +801,7 @@ func reduceBuckets(g []Bucket, fn GroupFunc) float64 {
 		for i, b := range g {
 			v[i] = b.Avg()
 		}
-		return reduce(v, GroupMedian)
+		return medianInPlace(v)
 	case GroupLast:
 		return g[len(g)-1].Last
 	default:

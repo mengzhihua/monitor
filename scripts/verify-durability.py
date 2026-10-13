@@ -4,7 +4,11 @@ import argparse, json, pathlib, signal, socket, subprocess, tempfile, time, urll
 
 p = argparse.ArgumentParser()
 p.add_argument('--bin', default='core/bin/monitord')
+p.add_argument('--group', choices=['average', 'min', 'max', 'sum', 'median', 'last'], default='average')
+p.add_argument('--points', type=int, default=100)
 args = p.parse_args()
+if args.points < 1:
+    p.error('--points must be positive')
 binary = str(pathlib.Path(args.bin).resolve())
 
 with tempfile.TemporaryDirectory(prefix='monitor-durability-') as tmp:
@@ -34,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='monitor-durability-') as tmp:
             except subprocess.TimeoutExpired: child.kill(); child.wait(); raise
         child = None
     def data(after, before):
-        url=f'{base}/api/v1/data?chart=system.ram&after={after}&before={before}&points=100'
+        url=f'{base}/api/v1/data?chart=system.ram&after={after}&before={before}&points={args.points}&group={args.group}'
         with urllib.request.urlopen(urllib.request.Request(url,headers={'Authorization':'Bearer '+token}),timeout=5) as r: return json.load(r)['result']['data']
     try:
         source = root/'source'
@@ -64,6 +68,6 @@ with tempfile.TemporaryDirectory(prefix='monitor-durability-') as tmp:
         subprocess.run([binary,'-config',str(config),'-data-dir',str(restored),'-restore-from',str(snap)],check=True)
         start(restored)
         assert data(begin,end)==expected, 'restored history differs'
-        print(json.dumps({'crash_recovery':'passed','active_backup_rejected':True,'backup_restore':'passed','rows_checked':len(expected)}))
+        print(json.dumps({'crash_recovery':'passed','active_backup_rejected':True,'backup_restore':'passed','rows_checked':len(expected),'group':args.group,'points':args.points}))
     finally:
         stop(); log.close()

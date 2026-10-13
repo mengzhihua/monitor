@@ -116,12 +116,14 @@ func TestQueryAggregatedSkipsTruncatedBlock(t *testing.T) {
 		t.Fatalf("blocks: %v", paths)
 	}
 	shortenBlockPayload(t, paths[0])
-	got, err := s.QueryAggregated("cpu|user", 0, start-1, start+10, 20, GroupSum)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sumFinite(got.Values[0]) != 100 {
-		t.Fatalf("truncated raw block leaked: %v", got.Values)
+	for _, fn := range []GroupFunc{GroupSum, GroupMedian} {
+		got, err := s.QueryAggregated("cpu|user", 0, start-1, start+10, 20, fn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sumFinite(got.Values[0]) != 100 {
+			t.Fatalf("%s: truncated raw block leaked: %v", fn, got.Values)
+		}
 	}
 }
 
@@ -144,12 +146,14 @@ func TestQueryAggregatedSkipsTruncatedTierBlock(t *testing.T) {
 		t.Fatalf("tier blocks: %v", paths)
 	}
 	shortenBlockPayload(t, paths[0])
-	got, err := s.QueryAggregated("cpu|user", 1, start-1, start+180, 8, GroupSum)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sumFinite(got.Values[0]) != 10 {
-		t.Fatalf("truncated tier block leaked: %v", got.Values)
+	for _, fn := range []GroupFunc{GroupSum, GroupMedian} {
+		got, err := s.QueryAggregated("cpu|user", 1, start-1, start+180, 8, fn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sumFinite(got.Values[0]) != 10 {
+			t.Fatalf("%s: truncated tier block leaked: %v", fn, got.Values)
+		}
 	}
 }
 

@@ -76,7 +76,7 @@ type fold struct {
 	seen   []bool
 	counts []int64
 	rawMed [][]float64
-	bukMed [][]Bucket
+	bukMed [][]float64 // Rollup medians use bucket means, not full bucket records.
 	// Snapshots undo a block whose decode fails after some samples were applied.
 	snapOut    []float64
 	snapSeen   []bool
@@ -215,9 +215,9 @@ func (f *fold) addBucket(b Bucket, every int64) {
 	}
 	if f.fn == GroupMedian {
 		if f.bukMed == nil {
-			f.bukMed = make([][]Bucket, f.n)
+			f.bukMed = make([][]float64, f.n)
 		}
-		f.bukMed[bi] = append(f.bukMed[bi], b)
+		f.bukMed[bi] = append(f.bukMed[bi], b.Avg())
 		return
 	}
 	f.addValue(bi, b.Min, b.Max, b.Sum, b.Last, b.Count)
@@ -260,13 +260,13 @@ func (f *fold) finish() []float64 {
 				if len(f.rawMed[i]) == 0 {
 					out[i] = math.NaN()
 				} else {
-					out[i] = reduce(f.rawMed[i], GroupMedian)
+					out[i] = medianInPlace(f.rawMed[i])
 				}
 			} else if len(f.bukMed) > 0 {
 				if len(f.bukMed[i]) == 0 {
 					out[i] = math.NaN()
 				} else {
-					out[i] = reduceBuckets(f.bukMed[i], GroupMedian)
+					out[i] = medianInPlace(f.bukMed[i])
 				}
 			} else {
 				out[i] = math.NaN()
@@ -331,11 +331,7 @@ func reduce(v []float64, fn GroupFunc) float64 {
 		return s
 	case GroupMedian:
 		c := append([]float64(nil), v...)
-		sort.Float64s(c)
-		if len(c)%2 == 1 {
-			return c[len(c)/2]
-		}
-		return (c[len(c)/2-1] + c[len(c)/2]) / 2
+		return medianInPlace(c)
 	case GroupLast:
 		return v[len(v)-1]
 	default:
@@ -345,4 +341,15 @@ func reduce(v []float64, fn GroupFunc) float64 {
 		}
 		return s / float64(len(v))
 	}
+}
+
+// medianInPlace sorts non-empty, exclusively owned scratch values. Fold calls
+// it only after all blocks have been decoded, when rollback is no longer needed.
+// Callers that do not own their input must copy it first, as reduce does.
+func medianInPlace(v []float64) float64 {
+	sort.Float64s(v)
+	if len(v)%2 == 1 {
+		return v[len(v)/2]
+	}
+	return (v[len(v)/2-1] + v[len(v)/2]) / 2
 }
