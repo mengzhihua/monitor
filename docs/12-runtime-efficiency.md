@@ -97,3 +97,29 @@ GOMAXPROCS=4 go test ./internal/api -run '^$' \
 构建依赖 `source-map-js` 从 1.2.1 更新至 1.2.2，修复 indexed source map 解析的拒绝服务问题；仅改变该包的锁定版本，`npm audit` 检查为 0 漏洞。参见 [官方安全公告](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)。
 
 本轮验证通过：全量 Go vet/race、Web 类型检查与生产构建、嵌入服务端构建，以及 50 项桌面/移动端 E2E（新增 8 项，验证请求计数、隐藏暂停、节点切换取消、历史清空和并发实时事件）。告警规则、通知、维护三项真实服务脚本共执行 5 次正常重启，均通过权限、持久化和通知断言；隔离 smoke 通过。smoke 中本机未配置的 Postfix 命令返回失败，未据此宣称全部采集器可用。
+
+## 2026-10-13：合成探测内存与取消处理
+
+HTTP 探测只需记录响应长度，改为有界流式计数，不再为响应内容建立和扩容整个字节切片。继续保留 1 MiB 读取上限、连接复用、独立 TLS 策略，以及响应体超时和截断错误的失败判断。长度仍是最多读取 1 MiB 的字节数，不是无限制下载大小。
+
+HTTP、TCP 端口和 DNS 探测在开始下一目标和发布结果前检查整轮采集上下文。服务停止或整轮采集超时时，停止后续探测并返回取消原因，不将尚未完成的目标写成新的失败/成功样本；已经完成的目标结果保留。单个目标自身超时、而整轮采集仍有效时，仍按原规则记录失败。
+
+DNS 改用支持取消等待的 `LookupIPAddr`，避免 `LookupHost` 在无响应 DNS 服务器上等待套接字截止时间后才结束本轮采集；仍检查 IPv4/IPv6 地址解析结果。
+
+可复测基准（`core` 目录）：
+
+```sh
+go test ./internal/collect -run '^$' -bench BenchmarkHTTPCheckResponseCounting -benchmem -benchtime=100x -count=3
+go test -race ./internal/collect -run 'TestHTTPCheck|TestCancelledSyntheticChecks|TestDNSCheck|TestPortCheck'
+```
+
+2026-10-13，macOS amd64、Intel i7-9750H、Go 1.27.1，同一进程内模拟 HTTP transport，预建响应内容，三次各 100 次调用：
+
+| 响应大小 | 优化前分配/次 | 优化后分配/次 | 分配次数变化 |
+| --- | --- | --- | --- |
+| 1 KiB | 3456 B | 1298–1380 B | 20 → 16 |
+| 1 MiB | 约 2,229,300 B | 1380 B | 40 → 16 |
+
+这是 `httpcheck.do` 路径的微基准，包含请求、上下文和模拟响应对象，不包含真实网络、TLS、图表存储或整机采集开销；不据此外推整机 CPU/RSS 降幅。回归包含取消前/取消中的探测、真实本地 UDP DNS 取消、部分完成后取消、空响应及响应上限，并复用既有连接复用、TLS、响应体截断和目标超时测试。
+
+版本检查脚本启用延迟求值类型注解，修复 macOS 自带 Python 3.9 执行 `make all` 时因 `str | None` 注解报错的问题，无需更换系统 Python。

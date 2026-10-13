@@ -79,7 +79,13 @@ func (d *dnsqueryCollector) Init(reg *registry.Registry) error {
 func (d *dnsqueryCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	var last error
 	for _, j := range d.cfg.Jobs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		ms, err := dnsLookup(ctx, j)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		id := "dnsquery." + j.Name
 		ok := 1.0
 		if err != nil {
@@ -107,7 +113,9 @@ func dnsLookup(ctx context.Context, j dnsJob) (float64, error) {
 	cctx, cancel := context.WithTimeout(ctx, j.Timeout)
 	defer cancel()
 	start := time.Now()
-	_, err := r.LookupHost(cctx, j.Record)
+	// LookupIPAddr makes waiting for address resolution cancellation-aware;
+	// LookupHost can remain blocked in a DNS socket read until its deadline.
+	_, err := r.LookupIPAddr(cctx, j.Record)
 	ms := float64(time.Since(start).Milliseconds())
 	return ms, err
 }

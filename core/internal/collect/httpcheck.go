@@ -130,11 +130,17 @@ func (h *httpcheckCollector) Collect(ctx context.Context, reg *registry.Registry
 	var last error
 	ok := 0
 	for _, j := range h.cfg.Jobs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := h.probe(ctx, reg, now, j); err != nil {
 			last = err
 		} else {
 			ok++
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if ok == 0 && last != nil {
 		return last
@@ -146,6 +152,11 @@ func (h *httpcheckCollector) probe(ctx context.Context, reg *registry.Registry, 
 	id := sanitizeID(j.Name)
 	start := time.Now()
 	status, length, code, expiry, err := h.do(ctx, j)
+	// A cancelled collection is not evidence that the target is unhealthy.
+	// Per-job timeouts still publish failures when the parent remains active.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	elapsed := float64(time.Since(start).Microseconds()) / 1000
 	success, failure := 0.0, 1.0
 	if err == nil && status {
@@ -180,9 +191,11 @@ func (h *httpcheckCollector) do(ctx context.Context, j httpJob) (ok bool, length
 		return false, 0, 0, 0, err
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// Only the byte count is used. Stream into Discard's pooled buffer rather
+	// than retaining and repeatedly growing a response-sized byte slice.
+	n, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	code = resp.StatusCode
-	length = len(body)
+	length = int(n)
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		exp := resp.TLS.PeerCertificates[0].NotAfter
 		expiryDays = exp.Sub(time.Now()).Hours() / 24

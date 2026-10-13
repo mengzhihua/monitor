@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Fail when server/Dashboard source versions drift, or when VERSION disagrees with git tags."""
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path

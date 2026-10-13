@@ -78,6 +78,9 @@ func (p *portcheckCollector) Init(reg *registry.Registry) error {
 
 func (p *portcheckCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	for _, j := range p.cfg.Jobs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		id := sanitizeID(j.Name)
 		d := net.Dialer{Timeout: j.Timeout}
 		start := time.Now()
@@ -90,6 +93,9 @@ func (p *portcheckCollector) Collect(ctx context.Context, reg *registry.Registry
 			success, failure = 0, 1
 		} else {
 			_ = conn.Close()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		_ = reg.Collect("portcheck.status."+id, now, map[string]float64{"success": success, "failure": failure})
 		_ = reg.Collect("portcheck.latency."+id, now, map[string]float64{"time": elapsed})
