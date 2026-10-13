@@ -15,6 +15,7 @@ export interface PluginStatus {
 }
 export interface Info {
   version: string; mode: string; uptime: number; charts_count: number; metrics_count: number
+  commit?: string; build_time?: string; dirty?: boolean
   host: { id: string; hostname: string; os: string; arch: string; labels: Record<string, string>; update_every: number }
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
   plugins?: PluginStatus[]

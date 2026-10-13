@@ -11,7 +11,16 @@ ifneq ($(GIT_EXACT_TAG),v$(VERSION))
 else
   RELEASE_BUILD := 1
 endif
-LDFLAGS  = -s -w -X main.version=$(BUILD_VERSION) -X main.commit=$(GIT_COMMIT) -X main.releaseBuild=$(RELEASE_BUILD)
+GIT_DIRTY := $(shell git status --porcelain --untracked-files=no 2>/dev/null)
+BUILD_DIRTY := false
+ifneq ($(GIT_DIRTY),)
+  BUILD_DIRTY := true
+endif
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+ifneq ($(SOURCE_DATE_EPOCH),)
+  BUILD_TIME := $(shell date -u -d @$(SOURCE_DATE_EPOCH) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r $(SOURCE_DATE_EPOCH) +%Y-%m-%dT%H:%M:%SZ)
+endif
+LDFLAGS  = -s -w -X main.version=$(BUILD_VERSION) -X main.commit=$(GIT_COMMIT) -X main.releaseBuild=$(RELEASE_BUILD) -X main.buildTime=$(BUILD_TIME) -X main.dirty=$(BUILD_DIRTY)
 BIN      = core/bin
 
 .PHONY: all web core test lint run cross clean check-version package-server

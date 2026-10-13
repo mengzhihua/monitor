@@ -15,7 +15,11 @@ import (
 // every tier. Full blocks retain the existing on-disk format. This avoids a
 // separate fsync for every series on every checkpoint (including open buckets).
 const checkpointFile = "checkpoint.v1"
-const maxCheckpointBytes = 512 << 20
+
+// Cap compressed checkpoint size and the decoded in-memory image. Loading
+// streams through gzip/gob; after apply we drop the image so the peak stays
+// near this bound instead of retaining a second full copy until GC.
+const maxCheckpointBytes = 300 << 20
 
 type rawCheckpoint struct {
 	ID     string
@@ -231,7 +235,11 @@ func (s *Store) loadCheckpoint() error {
 			}
 		}
 	}
-	s.log.Info("tsdb: checkpoint loaded", "series", len(image.Raw))
+	n := len(image.Raw)
+	// Drop decoded buffers promptly; series data now lives in Store maps.
+	image.Raw = nil
+	image.Tiers = nil
+	s.log.Info("tsdb: checkpoint loaded", "series", n)
 	return nil
 }
 

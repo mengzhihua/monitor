@@ -32,8 +32,9 @@
 | `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
-| `soak.py` | 指定时长的持续采集和查询测量；可选 `--heap-dir` 抓取 start/mid/end heap profile | `python3 scripts/soak.py --seconds 120` |
+| `soak.py` | 指定时长的持续采集和查询测量；可 `--seed-data-dir` 复制真实数据、自动 heap、RSS/heap 报警阈值 | `python3 scripts/soak.py --seconds 120` |
 | `capture-heap.py` | 对运行中的 monitord 抓取管理员鉴权的 heap profile（可抓两次做 diff） | `python3 scripts/capture-heap.py --url http://127.0.0.1:19999 --token "$TOKEN" --output reports/heap.pb` |
+| `verify-packaging-pidfile.py` | 诱饵进程不得被 start/stop 误杀；真实实例可停 | `python3 scripts/verify-packaging-pidfile.py` |
 | `benchmark-runtime.py` | macOS/Linux 默认采集器下的固定12请求/秒负载、接口延迟及主进程 CPU/RSS | `python3 scripts/benchmark-runtime.py --output reports/runtime.json` |
 | `benchmark-browser.mjs` | 遍历100张模拟图表后的画布、DOM、事件监听器和 GC 后 JS 堆 | `node scripts/benchmark-browser.mjs --output reports/browser.json` |
 | `e2e-server.mjs` | 为 Playwright 启动临时服务 | 由 `web/playwright.config.ts` 调用，无需手动启动 |

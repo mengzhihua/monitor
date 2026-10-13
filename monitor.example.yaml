@@ -867,7 +867,8 @@ export:
 # topology:
 #   - { source: core, target: edge-sw }
 # commands:
-#   - { name: echo-ok, argv: ["/bin/echo", "ok"] }
+#   # Optional per-command timeout for health auto-actions (default 30s).
+#   - { name: echo-ok, argv: ["/bin/echo", "ok"], timeout: 10s }
 # reports:
 #   every: 1h
 #   dir: data/reports

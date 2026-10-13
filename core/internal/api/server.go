@@ -50,6 +50,8 @@ type Options struct {
 	RequestRestart func() error
 	Version        string
 	Commit         string // source commit SHA when known; shown in /api/v1/info
+	BuildTime      string // UTC build / vcs.time stamp when known
+	Dirty          bool   // true when the binary was built with a dirty worktree
 	Mode           string // agent | hub (informational)
 	StartedAt      time.Time
 	AllowFrom      []string
@@ -492,6 +494,12 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 	}
 	if s.opt.Commit != "" {
 		out["commit"] = s.opt.Commit
+	}
+	if s.opt.BuildTime != "" {
+		out["build_time"] = s.opt.BuildTime
+	}
+	if s.opt.Commit != "" || s.opt.BuildTime != "" || s.opt.Dirty {
+		out["dirty"] = s.opt.Dirty
 	}
 	var nodes []*hub.Node
 	if s.opt.Nodes != nil {
