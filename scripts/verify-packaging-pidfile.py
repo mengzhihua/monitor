@@ -97,38 +97,53 @@ def main() -> int:
             fake.wait(timeout=5)
             pidfile.unlink(missing_ok=True)
 
-        # Real instance: start in background, then stop via stop.sh.
-        starter = subprocess.Popen(
-            [str(start_sh)], cwd=root, env=env,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        )
+        # start.sh must clear a decoy pidfile and still launch.
+        decoy2 = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
         try:
-            wait_health(f'http://127.0.0.1:{port}/healthz')
-            if not pidfile.is_file():
-                print('pidfile missing after start', file=sys.stderr)
-                return 1
-            real_pid = int(pidfile.read_text().strip())
-            if not pathlib.Path(f'/proc/{real_pid}').exists() and sys.platform.startswith('linux'):
-                print(f'real pid {real_pid} not running', file=sys.stderr)
-                return 1
-            stop = subprocess.run([str(stop_sh)], cwd=root, env=env, capture_output=True, text=True)
-            if stop.returncode != 0:
-                print(f'stop.sh failed on real instance: {stop.stderr}', file=sys.stderr)
-                return 1
-            starter.wait(timeout=15)
-            if pidfile.exists():
-                print('pidfile left behind after stop', file=sys.stderr)
-                return 1
+            pidfile.write_text(f'{decoy2.pid}\n')
+            starter = subprocess.Popen(
+                [str(start_sh)], cwd=root, env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
+            try:
+                wait_health(f'http://127.0.0.1:{port}/healthz')
+                if not pidfile.is_file():
+                    print('pidfile missing after start over decoy', file=sys.stderr)
+                    return 1
+                real_pid = int(pidfile.read_text().strip())
+                if real_pid == decoy2.pid:
+                    print('start.sh kept decoy pid', file=sys.stderr)
+                    return 1
+                # Second start against a live matching instance must refuse.
+                again = subprocess.run([str(start_sh)], cwd=root, env=env, capture_output=True, text=True)
+                if again.returncode == 0:
+                    print('start.sh started a second matching instance', file=sys.stderr)
+                    return 1
+                if 'already running' not in again.stderr and 'already running' not in again.stdout:
+                    print(f'unexpected second-start output: {again.stdout!r} {again.stderr!r}', file=sys.stderr)
+                    return 1
+                stop = subprocess.run([str(stop_sh)], cwd=root, env=env, capture_output=True, text=True)
+                if stop.returncode != 0:
+                    print(f'stop.sh failed on real instance: {stop.stderr}', file=sys.stderr)
+                    return 1
+                starter.wait(timeout=15)
+                if pidfile.exists():
+                    print('pidfile left behind after stop', file=sys.stderr)
+                    return 1
+            finally:
+                if starter.poll() is None:
+                    starter.send_signal(signal.SIGTERM)
+                    try:
+                        starter.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        starter.kill()
+                        starter.wait(timeout=5)
         finally:
-            if starter.poll() is None:
-                starter.send_signal(signal.SIGTERM)
-                try:
-                    starter.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    starter.kill()
-                    starter.wait(timeout=5)
+            decoy2.send_signal(signal.SIGTERM)
+            decoy2.wait(timeout=5)
+            pidfile.unlink(missing_ok=True)
 
-    print('packaging pidfile checks: decoys refused, real instance stopped')
+    print('packaging pidfile checks: decoys refused, start clears decoy, real instance stopped')
     return 0
 
 

@@ -442,14 +442,14 @@ make bench
 make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
-# 24h 内存浸泡（自动抓 start/mid/end heap；可用真实数据副本 + 报警阈值）：
+# 24h 内存浸泡（自动抓 start/mid/end heap；≥24h 默认套用 800/200/300 MiB 阈值）：
 python3 scripts/soak.py --seconds 86400 --sample-every 30 \
   --seed-data-dir /path/to/production-like-data-copy \
-  --max-rss-mib 800 --max-heap-growth-mib 200 --max-rss-growth-mib 300 \
+  --seed-config /path/to/monitor.yaml \
   --output reports/soak-24h.json
 # 可选：宿主机 crontab 每晚跑（失败非零退出，便于外挂告警）：
 # 15 2 * * * cd /opt/monitor-src && python3 scripts/soak.py --seconds 86400 --sample-every 30 \
-#   --seed-data-dir /var/backups/monitor-data-copy --max-rss-mib 800 --max-heap-growth-mib 200 \
+#   --seed-data-dir /var/backups/monitor-data-copy --seed-config /etc/monitor/monitor.yaml \
 #   --output /var/log/monitor-soak/$(date -u +\%Y\%m\%d).json >>/var/log/monitor-soak/cron.log 2>&1
 # 对已运行实例抓两次 heap 做对比：
 # python3 scripts/capture-heap.py --url http://127.0.0.1:19999 --token "$TOKEN" \

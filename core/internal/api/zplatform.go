@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,6 +24,8 @@ import (
 type Command struct {
 	Name string   `json:"name"`
 	Argv []string `json:"argv"`
+	// Timeout bounds a single admin command run. Zero uses the request context only.
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
@@ -90,43 +94,64 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	var argv []string
+	var cmdSpec Command
 	for _, c := range s.opt.Commands {
 		if c.Name == body.Name {
-			argv = append([]string(nil), c.Argv...)
+			cmdSpec = c
+			cmdSpec.Argv = append([]string(nil), c.Argv...)
 			break
 		}
 	}
+	argv := cmdSpec.Argv
 	if err := validateArgv(argv); err != nil {
 		http.Error(w, "unknown command", http.StatusBadRequest)
 		return
 	}
+	ctx := r.Context()
+	cancel := func() {}
+	if cmdSpec.Timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, cmdSpec.Timeout)
+	}
 	started := time.Now()
-	cmd := exec.CommandContext(r.Context(), argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	out, err := cmd.CombinedOutput()
 	elapsed := time.Since(started)
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	cancel()
 	msg := strings.TrimSpace(string(out))
+	if timedOut && msg == "" {
+		msg = "command timed out"
+	}
 	if len(msg) > 4000 {
 		msg = msg[:4000]
 	}
 	code := 0
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
+		if timedOut {
+			code = -1
+		} else if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()
 		} else {
 			code = 1
 		}
+	}
+	status := 200
+	if timedOut {
+		status = 504
+	} else if code != 0 {
+		status = 500
 	}
 	u := userOf(r)
 	if s.audit != nil {
 		exit := code
 		s.audit.Append(audit.Entry{
 			TS: time.Now().Unix(), User: u.Name, Role: string(u.Role), Remote: remoteHost(r),
-			Method: r.Method, Path: r.URL.Path, Action: "command:" + body.Name, Target: body.Name, Status: 200,
+			Method: r.Method, Path: r.URL.Path, Action: "command:" + body.Name, Target: body.Name, Status: status,
 			Command: body.Name, Argv: strings.Join(argv, " "), ExitCode: &exit, DurationMs: elapsed.Milliseconds(), Output: msg,
+			Note: "ok=" + strconv.FormatBool(code == 0 && !timedOut),
 		})
 	}
-	writeJSON(w, map[string]any{"name": body.Name, "exit": code, "output": msg, "duration_ms": elapsed.Milliseconds()})
+	writeJSON(w, map[string]any{"name": body.Name, "exit": code, "output": msg, "duration_ms": elapsed.Milliseconds(), "ok": code == 0 && !timedOut})
 }
 
 func validateArgv(argv []string) error {
