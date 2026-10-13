@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 
-test('header shows local agent build identity from /api/v1/info', async ({ page, request }) => {
+test('header shows local agent build identity from /api/v1/info', async ({ page, request, isMobile }) => {
   const info = await (await request.get('/api/v1/info', {
     headers: { Authorization: 'Bearer browser-test-token' },
   })).json()
@@ -10,9 +10,13 @@ test('header shows local agent build identity from /api/v1/info', async ({ page,
 
   await page.goto('/?view=charts&token=browser-test-token')
   await expect(page.locator('header .brand')).toContainText('Monitor')
-  // Build identity is a desktop-only meta chip on the local agent (hidden when a hub node is selected).
+  // Build identity is a desktop-only meta chip (CSS display:none on mobile / hub node).
   const chip = page.locator('header .meta .desktop-detail').filter({ hasText: info.version })
-  await expect(chip.first()).toBeVisible({ timeout: 15_000 })
+  if (isMobile) {
+    await expect(chip.first()).toBeAttached({ timeout: 15_000 })
+  } else {
+    await expect(chip.first()).toBeVisible({ timeout: 15_000 })
+  }
   if (info.commit) {
     await expect(chip.first()).toContainText(info.commit.slice(0, 12))
     const title = await chip.first().getAttribute('title')
