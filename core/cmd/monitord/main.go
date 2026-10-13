@@ -42,10 +42,16 @@ import (
 
 // version is the release semver in source; builds override via
 // -ldflags "-X main.version=...". Untagged builds append -dev+short-hash.
-var version = "3.0.15"
+var version = "3.0.16"
 
 // commit is the full git SHA when stamped via ldflags or read from build VCS info.
 var commit = ""
+
+// buildTime is a UTC RFC3339 stamp from ldflags (SOURCE_DATE_EPOCH or build clock).
+var buildTime = ""
+
+// dirty is "true" when the build tree had uncommitted changes (vcs.modified).
+var dirty = ""
 
 // releaseBuild is "1" for tag/release stamps that must keep a bare semver.
 var releaseBuild = "0"
@@ -54,7 +60,17 @@ func init() { applyBuildIdentity() }
 
 func applyBuildIdentity() {
 	if commit == "" {
-		commit = vcsRevision()
+		commit = vcsSetting("vcs.revision")
+	}
+	if dirty == "" {
+		if vcsSetting("vcs.modified") == "true" {
+			dirty = "true"
+		} else if commit != "" {
+			dirty = "false"
+		}
+	}
+	if buildTime == "" {
+		buildTime = vcsSetting("vcs.time")
 	}
 	if releaseBuild == "1" || commit == "" {
 		return
@@ -69,13 +85,13 @@ func applyBuildIdentity() {
 	version = version + "-dev+" + short
 }
 
-func vcsRevision() string {
+func vcsSetting(key string) string {
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
 		return ""
 	}
 	for _, s := range bi.Settings {
-		if s.Key == "vcs.revision" {
+		if s.Key == key {
 			return s.Value
 		}
 	}
@@ -344,6 +360,8 @@ func run() error {
 		TicketWebhook: cfg.Web.TicketWebhook,
 		Version:       version,
 		Commit:        commit,
+		BuildTime:     buildTime,
+		Dirty:         dirty == "true",
 		Mode:          cfg.Mode,
 		StartedAt:     time.Now(),
 		AllowFrom:     cfg.Web.AllowFrom,
@@ -688,26 +706,41 @@ func (r *autoCommandRunner) NoteInhibited(inv health.ActionCommand, reason strin
 
 const autoCommandOutputMax = 4096
 
+func autoActionAuditStatus(code int, timedOut bool) int {
+	if timedOut {
+		return 504
+	}
+	if code == 0 {
+		return 200
+	}
+	return 500
+}
+
 func (r *autoCommandRunner) Run(inv health.ActionCommand) {
 	if r == nil || inv.Name == "" {
 		return
 	}
-	timeout := r.timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
+	defaultTimeout := r.timeout
+	if defaultTimeout <= 0 {
+		defaultTimeout = 30 * time.Second
 	}
 	for _, c := range r.commands {
 		if c.Name != inv.Name || len(c.Argv) == 0 || !filepath.IsAbs(c.Argv[0]) || strings.ContainsAny(strings.Join(c.Argv, ""), "\n\r") {
 			continue
+		}
+		timeout := defaultTimeout
+		if c.Timeout > 0 {
+			timeout = c.Timeout
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		started := time.Now()
 		cmd := exec.CommandContext(ctx, c.Argv[0], c.Argv[1:]...)
 		out, err := cmd.CombinedOutput()
 		elapsed := time.Since(started)
+		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 		msg := strings.TrimSpace(string(out))
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) && msg == "" {
+		if timedOut && msg == "" {
 			msg = "command timed out"
 		}
 		if len(msg) > autoCommandOutputMax {
@@ -715,29 +748,30 @@ func (r *autoCommandRunner) Run(inv health.ActionCommand) {
 		}
 		code := 0
 		if err != nil {
-			if ee, ok := err.(*exec.ExitError); ok {
-				code = ee.ExitCode()
-			} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if timedOut {
 				code = -1
+			} else if ee, ok := err.(*exec.ExitError); ok {
+				code = ee.ExitCode()
 			} else {
 				code = 1
 			}
 		}
+		status := autoActionAuditStatus(code, timedOut)
 		if r.audit != nil {
 			exit := code
 			r.audit.Append(audit.Entry{
 				TS: time.Now().Unix(), User: "system", Role: "system",
-				Action: "action:" + inv.Name, Target: inv.AlarmName + "/" + inv.Chart, Status: 200,
+				Action: "action:" + inv.Name, Target: inv.AlarmName + "/" + inv.Chart, Status: status,
 				Command: inv.Name, Argv: strings.Join(c.Argv, " "), ExitCode: &exit,
 				DurationMs: elapsed.Milliseconds(), Output: msg,
-				Note: fmt.Sprintf("alarm=%s chart=%s recovery=%v", inv.AlarmName, inv.Chart, inv.Recovery),
+				Note: fmt.Sprintf("alarm=%s chart=%s recovery=%v ok=%v", inv.AlarmName, inv.Chart, inv.Recovery, code == 0 && !timedOut),
 			})
 		}
 		if r.record != nil {
 			r.record(inv, code, elapsed.Milliseconds(), msg)
 		}
 		if r.log != nil && code != 0 {
-			r.log.Warn("auto action failed", "command", inv.Name, "alarm", inv.AlarmName, "exit", code, "duration_ms", elapsed.Milliseconds())
+			r.log.Warn("auto action failed", "command", inv.Name, "alarm", inv.AlarmName, "exit", code, "status", status, "duration_ms", elapsed.Milliseconds())
 		}
 		return
 	}
@@ -749,7 +783,7 @@ func (r *autoCommandRunner) Run(inv health.ActionCommand) {
 		r.audit.Append(audit.Entry{
 			TS: time.Now().Unix(), User: "system", Role: "system",
 			Action: "action:" + inv.Name, Target: inv.AlarmName + "/" + inv.Chart, Status: 404,
-			Command: inv.Name, ExitCode: &exit, Note: "unknown or invalid command",
+			Command: inv.Name, ExitCode: &exit, DurationMs: 0, Note: "unknown or invalid command",
 		})
 	}
 	if r.record != nil {

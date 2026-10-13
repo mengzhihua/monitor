@@ -155,7 +155,7 @@ def binary_relative(target: str) -> str:
 
 def build_binaries(root: Path, targets: list[str], go: str) -> None:
     """Own the version-injecting command; a subsequent SHA binds its exact output."""
-    version, commit, _ = source_metadata(root)
+    version, commit, epoch = source_metadata(root)
     bin_dir = root / "core/bin"
     if (root / "core").is_symlink() or bin_dir.is_symlink():
         raise PackageError("Binary output path must not be a symbolic link")
@@ -164,6 +164,7 @@ def build_binaries(root: Path, targets: list[str], go: str) -> None:
     if receipt_path.is_symlink():
         raise PackageError("Build receipt must not be a symbolic link")
     binaries = {}
+    build_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
     for target in targets:
         if target not in TARGETS:
             raise PackageError("Unsupported build target")
@@ -176,7 +177,7 @@ def build_binaries(root: Path, targets: list[str], go: str) -> None:
         if os_name == "android":
             env["CGO_ENABLED"] = "0"
         print(f"Building {target} for Monitor {version}", flush=True)
-        command([go, "build", "-trimpath", "-ldflags", f"-s -w -X main.version={version} -X main.commit={commit} -X main.releaseBuild=1", "-o", str(binary), "./cmd/monitord"], root / "core", env)
+        command([go, "build", "-trimpath", "-ldflags", f"-s -w -X main.version={version} -X main.commit={commit} -X main.releaseBuild=1 -X main.buildTime={build_time} -X main.dirty=false", "-o", str(binary), "./cmd/monitord"], root / "core", env)
         inspect_binary(binary, target, version, commit, go)
         binaries[target] = {"version": version, "source_commit": commit, "sha256": sha256(binary)}
     if source_metadata(root)[:2] != (version, commit):

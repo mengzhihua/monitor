@@ -68,30 +68,69 @@ func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
 		t.Fatalf("inv %+v", gotInv)
 	}
 	entries := log.Query(0, 10, "system")
-	found := false
-	for _, e := range entries {
-		if e.Action == "action:fix" && e.ExitCode != nil && *e.ExitCode == 3 && e.Output != "" {
-			found = true
-			break
-		}
+	if len(entries) != 1 {
+		t.Fatalf("audit entries %+v", entries)
 	}
-	if !found {
-		t.Fatalf("audit missing auto action: %+v", entries)
+	e := entries[0]
+	if e.Action != "action:fix" || e.ExitCode == nil || *e.ExitCode != 3 || e.Output == "" {
+		t.Fatalf("audit entry %+v", e)
 	}
+	if e.Status != 500 {
+		t.Fatalf("non-zero exit should audit as 500, got %d", e.Status)
+	}
+	if e.DurationMs <= 0 {
+		t.Fatalf("duration missing: %+v", e)
+	}
+	if !strings.Contains(e.Note, "ok=false") {
+		t.Fatalf("note %q", e.Note)
+	}
+
 }
 
 func TestAutoCommandRunnerTimesOut(t *testing.T) {
 	py := pythonAbs(t)
+	log, err := audit.Open(t.TempDir(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { log.Close() })
 	r := &autoCommandRunner{
 		commands: []config.Command{{Name: "slow", Argv: []string{py, "-c", "import time; time.sleep(5)"}}},
 		timeout:  200 * time.Millisecond,
+		audit:    log,
 	}
 	var exit int
-	r.record = func(_ health.ActionCommand, code int, _ int64, _ string) { exit = code }
+	var dur int64
+	r.record = func(_ health.ActionCommand, code int, durationMs int64, _ string) { exit, dur = code, durationMs }
 	started := time.Now()
 	r.Run(health.ActionCommand{Name: "slow", AlarmName: "x", Chart: "y"})
 	if time.Since(started) > 2*time.Second {
 		t.Fatalf("timeout took too long: %s", time.Since(started))
+	}
+	if exit == 0 || dur <= 0 {
+		t.Fatalf("exit=%d dur=%d", exit, dur)
+	}
+	entries := log.Query(0, 10, "system")
+	if len(entries) == 0 || entries[len(entries)-1].Status != 504 {
+		t.Fatalf("timeout should audit as 504: %+v", entries)
+	}
+}
+
+func TestAutoCommandPerCommandTimeout(t *testing.T) {
+	py := pythonAbs(t)
+	r := &autoCommandRunner{
+		commands: []config.Command{{
+			Name: "slow", Timeout: 150 * time.Millisecond,
+			Argv: []string{py, "-c", "import time; time.sleep(5)"},
+		}},
+		timeout: 30 * time.Second, // must not win over the per-command timeout
+	}
+	var exit int
+	started := time.Now()
+	r.record = func(_ health.ActionCommand, code int, _ int64, _ string) { exit = code }
+	r.Run(health.ActionCommand{Name: "slow", AlarmName: "x", Chart: "y"})
+	if time.Since(started) > 2*time.Second {
+		t.Fatalf("per-command timeout ignored: %s", time.Since(started))
 	}
 	if exit == 0 {
 		t.Fatalf("exit=%d", exit)

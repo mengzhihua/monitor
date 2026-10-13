@@ -425,6 +425,22 @@ function fmtUptime(s: number) {
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60)
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`
 }
+const buildIdentityLabel = computed(() => {
+  const i = info.value
+  if (!i?.version) return ''
+  const short = i.commit ? i.commit.slice(0, 12) : ''
+  const dirty = i.dirty ? '+' : ''
+  return short ? `${i.version} · ${short}${dirty}` : i.version
+})
+const buildIdentityTitle = computed(() => {
+  const i = info.value
+  if (!i) return ''
+  const parts = [`版本 ${i.version}`]
+  if (i.commit) parts.push(`提交 ${i.commit}`)
+  if (i.build_time) parts.push(`构建 ${i.build_time}`)
+  parts.push(i.dirty ? '构建时工作区有未提交修改' : '构建时工作区干净')
+  return parts.join('\n')
+})
 
 onMounted(() => {
   mobileQuery.addEventListener('change', syncMobile)
@@ -479,6 +495,7 @@ onBeforeUnmount(() => {
       <span class="chart-count">{{ currentNode ? currentNode.charts_count : info.charts_count }} charts</span>
       <span v-if="!currentNode" class="desktop-detail">{{ info.metrics_count }} metrics</span>
       <span v-if="!currentNode" class="desktop-detail">up {{ fmtUptime(info.uptime) }}</span>
+      <span v-if="!currentNode" class="desktop-detail" :title="buildIdentityTitle">{{ buildIdentityLabel }}</span>
       <button v-if="healthOn" class="alarms-btn" :class="{ crit: raised.critical, warn: !raised.critical && raised.warning, open: showAlarms }"
         @click="toggleAlarms" title="告警">
         ⚠ <b v-if="raised.critical">{{ raised.critical }}</b><b v-else-if="raised.warning">{{ raised.warning }}</b><span v-else>0</span>

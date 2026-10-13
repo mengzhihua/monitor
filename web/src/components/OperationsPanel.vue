@@ -300,7 +300,7 @@ async function exportDiagnostic() {
 <template>
   <div class="operations" aria-label="运维总览">
     <div class="hero">
-      <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span>{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。可将脱敏诊断包发给有经验的同事协助排查。</p></div>
+      <div><p class="eyebrow">MONITOR · OPERATIONS</p><h1>运维总览 <span :title="'仪表盘 ' + dashboardVersion">{{ dashboardVersion }}</span></h1><p class="muted">先发现问题，再进入主机定位。跨节点状态与处理记录集中在这里。可将脱敏诊断包发给有经验的同事协助排查。</p></div>
       <div class="hero-actions">
         <button @click="refresh()"><AppIcon name="refresh" :size="16" />刷新总览</button>
         <button :disabled="!snapshot || loading || exporting || exportingDiagnostic" @click="exportSnapshot"><AppIcon name="download" :size="16" />{{ exporting ? '正在导出…' : '导出当前快照' }}</button>

@@ -19,7 +19,16 @@ if [[ "$GIT_EXACT_TAG" != "v${VERSION}" ]]; then
 else
   RELEASE_BUILD=1
 fi
-LDFLAGS="-s -w -X main.version=${BUILD_VERSION} -X main.commit=${GIT_COMMIT} -X main.releaseBuild=${RELEASE_BUILD}"
+BUILD_DIRTY=false
+if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null || true)" ]]; then
+  BUILD_DIRTY=true
+fi
+if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
+  BUILD_TIME="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+else
+  BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+LDFLAGS="-s -w -X main.version=${BUILD_VERSION} -X main.commit=${GIT_COMMIT} -X main.releaseBuild=${RELEASE_BUILD} -X main.buildTime=${BUILD_TIME} -X main.dirty=${BUILD_DIRTY}"
 BIN="core/bin"
 
 usage() {

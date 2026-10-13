@@ -11,16 +11,60 @@ systemctl daemon-reload
 systemctl enable --now monitord
 ```
 
-For non-systemd installs, use `start.sh` / `stop.sh`. They keep a pidfile under the data
-directory and stop only the pid whose command line still references that data dir or
-config path — never `pkill -x monitord`.
+## Non-systemd hosts (`start.sh` / `stop.sh`)
+
+For containers, developer laptops, or hosts without systemd, use the scripts shipped
+in release packages (and in this directory). They keep a pidfile under the data
+directory and stop **only** a process that is both:
+
+1. named `monitord` (via `/proc/<pid>/comm`, exe basename, or argv0), and
+2. launched with this instance’s `-data-dir` / `-config` path.
+
+A decoy `sleep` (or any other process) that merely mentions the data path in its
+arguments is refused. The scripts never call `pkill` / `killall`.
 
 ```
 install -m 755 packaging/start.sh packaging/stop.sh /opt/monitor/
-# optional overrides: MONITOR_BIN MONITOR_DATA_DIR MONITOR_CONFIG MONITOR_LISTEN MONITOR_PIDFILE
-MONITOR_BIN=/usr/bin/monitord MONITOR_CONFIG=/etc/monitor/monitor.yaml \
-  MONITOR_DATA_DIR=/var/lib/monitor /opt/monitor/start.sh
-/opt/monitor/stop.sh
+# Place or point at the binary (release tarballs ship monitord next to the scripts).
+```
+
+### Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MONITOR_BIN` | `$ROOT/monitord` or `/usr/bin/monitord` | Absolute path to the binary |
+| `MONITOR_DATA_DIR` | `$ROOT/data` | Data directory (`-data-dir`) |
+| `MONITOR_CONFIG` | _(empty)_ | Optional `-config` path |
+| `MONITOR_LISTEN` | `127.0.0.1:20099` | Listen address for `start.sh` |
+| `MONITOR_PIDFILE` | `$MONITOR_DATA_DIR/monitord.pid` | Pidfile location |
+
+`$ROOT` is the directory containing the script (after `cd` there). Paths may be
+relative to `$ROOT` or absolute; the scripts normalize them before matching.
+
+Example:
+
+```
+MONITOR_BIN=/usr/bin/monitord \
+MONITOR_CONFIG=/etc/monitor/monitor.yaml \
+MONITOR_DATA_DIR=/var/lib/monitor \
+MONITOR_LISTEN=127.0.0.1:19999 \
+  /opt/monitor/start.sh
+
+MONITOR_BIN=/usr/bin/monitord \
+MONITOR_CONFIG=/etc/monitor/monitor.yaml \
+MONITOR_DATA_DIR=/var/lib/monitor \
+  /opt/monitor/stop.sh
+```
+
+On hosts without `/proc` (some containers / macOS), matching falls back to `ps`
+argv0 basename + flag paths. Prefer absolute `MONITOR_*` paths so checks stay
+stable after chdir.
+
+Verify pidfile safety locally (needs a built binary):
+
+```
+scripts/build.sh core
+python3 scripts/verify-packaging-pidfile.py
 ```
 
 The unit does not ship a package build. Release artifacts stay in `.github/workflows/release.yml`.

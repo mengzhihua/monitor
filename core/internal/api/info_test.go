@@ -21,6 +21,36 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
+func TestInfoExposesBuildIdentity(t *testing.T) {
+	db, err := tsdb.Open(tsdb.Options{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := registry.New(&registry.Host{ID: "id", Hostname: "h", UpdateEvery: 1}, db)
+	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
+	srv, err := New(reg, db, sched, Options{
+		Version: "3.0.16-test", Commit: "deadbeefcafebabe", BuildTime: "2026-10-13T01:02:03Z", Dirty: true,
+		StartedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["version"] != "3.0.16-test" || got["commit"] != "deadbeefcafebabe" || got["build_time"] != "2026-10-13T01:02:03Z" || got["dirty"] != true {
+		t.Fatalf("%v", got)
+	}
+}
+
 func newInfoHub(tb testing.TB, opt hub.Options) (*Server, *hub.Nodes) {
 	tb.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

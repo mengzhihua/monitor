@@ -48,7 +48,9 @@ func diagnosticTestServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Cleanup(eng.Close)
 	sched := collect.NewScheduler(reg, nil, collect.Options{Names: []string{"none"}})
 	opt := Options{
-		Health: eng, OperationsDir: t.TempDir(), Version: "3.0.0-test", StartedAt: time.Now().Add(-time.Hour),
+		Health: eng, OperationsDir: t.TempDir(), Version: "3.0.0-test",
+		Commit: "abc123def456", BuildTime: "2026-10-12T00:00:00Z", Dirty: true,
+		StartedAt: time.Now().Add(-time.Hour),
 		Users: []User{
 			{Name: "reader", Token: "viewer", Role: RoleViewer},
 			{Name: "on-call", Token: "operator", Role: RoleTroubleshooter},
@@ -112,6 +114,9 @@ func TestDiagnosticExportRBACAndRedaction(t *testing.T) {
 	}
 	if bundle.Host["hostname"] != "diag-host" || bundle.Host["version"] != "3.0.0-test" {
 		t.Fatalf("%v", bundle.Host)
+	}
+	if bundle.Host["commit"] != "abc123def456" || bundle.Host["build_time"] != "2026-10-12T00:00:00Z" || bundle.Host["dirty"] != true {
+		t.Fatalf("build identity %+v", bundle.Host)
 	}
 	if len(bundle.Problems) == 0 || bundle.Summary["warning"] < 1 {
 		t.Fatalf("problems=%+v summary=%v", bundle.Problems, bundle.Summary)

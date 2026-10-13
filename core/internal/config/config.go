@@ -126,6 +126,9 @@ func EffectiveRooms(u User, groups []Group) []string {
 type Command struct {
 	Name string   `yaml:"name"`
 	Argv []string `yaml:"argv"`
+	// Timeout overrides the process-wide auto-action deadline for this command.
+	// Empty keeps the runner default (30s).
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // Reports writes an availability CSV on a timer. Every empty disables it.
