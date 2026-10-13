@@ -9,6 +9,20 @@ CONFIG=${MONITOR_CONFIG:-}
 PIDFILE=${MONITOR_PIDFILE:-$DATA/monitord.pid}
 LISTEN=${MONITOR_LISTEN:-127.0.0.1:20099}
 BIN=${MONITOR_BIN:-}
+LOG=${MONITOR_LOG:-}
+BACKGROUND=${MONITOR_BACKGROUND:-0}
+# Accept start.sh --background / -d for hosts without systemd.
+for arg in "$@"; do
+	case "$arg" in
+	--background|-d|--daemon) BACKGROUND=1 ;;
+	--log=*) LOG=${arg#--log=} ;;
+	--help|-h)
+		printf '%s\n' "Usage: start.sh [--background|-d] [--log=PATH]" \
+			"Env: MONITOR_BIN MONITOR_DATA_DIR MONITOR_CONFIG MONITOR_LISTEN MONITOR_PIDFILE MONITOR_LOG MONITOR_BACKGROUND=1" >&2
+		exit 0
+		;;
+	esac
+done
 
 # Resolve to absolute paths so pidfile checks stay stable after chdir.
 abspath() {
@@ -111,7 +125,26 @@ set -- "$BIN" -listen "$LISTEN" -data-dir "$DATA"
 if [ -n "$CONFIG" ]; then
 	set -- "$@" -config "$CONFIG"
 fi
- "$@" &
+if [ "$BACKGROUND" = "1" ] || [ "$BACKGROUND" = "true" ] || [ "$BACKGROUND" = "yes" ]; then
+	if [ -z "$LOG" ]; then
+		LOG=$DATA/monitord.log
+	fi
+	LOG=$(abspath "$LOG")
+	mkdir -p -- "$(dirname -- "$LOG")"
+	# Detach: keep pidfile, redirect logs, do not wait.
+	nohup "$@" >>"$LOG" 2>&1 &
+	pid=$!
+	printf '%s\n' "$pid" >"$PIDFILE"
+	printf '%s\n' "started pid $pid (pidfile $PIDFILE, log $LOG)"
+	exit 0
+fi
+if [ -n "$LOG" ]; then
+	LOG=$(abspath "$LOG")
+	mkdir -p -- "$(dirname -- "$LOG")"
+	 "$@" >>"$LOG" 2>&1 &
+else
+	 "$@" &
+fi
 pid=$!
 printf '%s\n' "$pid" >"$PIDFILE"
 trap 'rm -f -- "$PIDFILE"' EXIT INT TERM
