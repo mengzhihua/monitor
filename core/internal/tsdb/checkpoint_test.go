@@ -1,6 +1,7 @@
 package tsdb
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -306,5 +307,37 @@ func TestCheckpointRawRetentionIncludesMemory(t *testing.T) {
 	points, err := s.Query("x", 0, time.Now().Unix()+1)
 	if err != nil || len(points) != 1 || points[0].Value != 2 {
 		t.Fatalf("retention: %v %v", points, err)
+	}
+}
+
+func TestCheckpointLimitWriterRejectsOversizedPayload(t *testing.T) {
+	var buf bytes.Buffer
+	w := &checkpointLimitWriter{w: &buf, left: 8}
+	if _, err := w.Write([]byte("12345678")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("x")); err == nil {
+		t.Fatal("expected size limit error")
+	}
+	if buf.String() != "12345678" {
+		t.Fatalf("partial write leaked: %q", buf.String())
+	}
+}
+
+func TestCheckpointRejectsOversizedOnDiskImage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, checkpointFile)
+	// Cheap stand-in: a sparse-ish oversized file with a valid-looking size check.
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Truncate(maxCheckpointBytes + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	if _, err = Open(Options{Dir: dir}); err == nil {
+		t.Fatal("oversized checkpoint accepted")
 	}
 }

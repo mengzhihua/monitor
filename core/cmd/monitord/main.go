@@ -940,7 +940,7 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 func apiCommands(in []config.Command) []api.Command {
 	out := make([]api.Command, 0, len(in))
 	for _, c := range in {
-		out = append(out, api.Command{Name: c.Name, Argv: c.Argv})
+		out = append(out, api.Command{Name: c.Name, Argv: c.Argv, Timeout: c.Timeout})
 	}
 	return out
 }

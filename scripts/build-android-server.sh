@@ -16,7 +16,21 @@ case "$VERSION" in
   v[0-9]*.[0-9]*.[0-9]*) RELEASE_BUILD=1 ;;
   [0-9]*.[0-9]*.[0-9]*) RELEASE_BUILD=1 ;;
 esac
-LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.releaseBuild=$RELEASE_BUILD"
+# Stamp bare semver into the binary (strip leading v) to match package-server-release.
+VERSION_LDFLAGS=${VERSION#v}
+BUILD_DIRTY=false
+if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null || true)" ]]; then
+  BUILD_DIRTY=true
+fi
+if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
+  BUILD_TIME="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+else
+  BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+if [[ "$RELEASE_BUILD" -eq 1 ]]; then
+  BUILD_DIRTY=false
+fi
+LDFLAGS="-s -w -X main.version=$VERSION_LDFLAGS -X main.commit=$COMMIT -X main.releaseBuild=$RELEASE_BUILD -X main.buildTime=$BUILD_TIME -X main.dirty=$BUILD_DIRTY"
 JNI=android/app/src/main/jniLibs
 
 # arm64 only: Go can link android/arm64 statically without the NDK; android/amd64

@@ -7,6 +7,9 @@ By default heap profiles are captured at start/mid/end under --heap-dir
 
 Closer-to-production mode: pass --seed-data-dir with a real agent data
 directory (copied into an isolated temp tree; the source is never written).
+Pair with --seed-config (or a sibling monitor.yaml) so collectors/alerts from
+the seed are kept. Runs of --seconds >= 86400 apply default RSS/heap alert
+thresholds unless overridden.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ p.add_argument('--sample-every', type=float, default=2.0, help='seconds between 
 p.add_argument('--heap-dir', help='directory for start/mid/end heap.pprof captures (admin API)')
 p.add_argument('--no-heap', action='store_true', help='disable heap profile capture')
 p.add_argument('--seed-data-dir', help='copy an existing agent data directory as the soak starting state')
+p.add_argument('--seed-config', help='config file to use (default: sibling monitor.yaml/config.yaml near --seed-data-dir, else a minimal soak config)')
 p.add_argument('--max-rss-mib', type=float, help='fail if RSS max exceeds this MiB')
 p.add_argument('--max-heap-growth-mib', type=float, help='fail if heap alloc growth exceeds this MiB')
 p.add_argument('--max-rss-growth-mib', type=float, help='fail if RSS growth exceeds this MiB')
@@ -30,30 +34,64 @@ if a.seconds < 10:
 heap_re = re.compile(r'^monitor_process_heap_alloc_bytes\{[^}]*\} (\d+)', re.M)
 series_re = re.compile(r'^monitor_tsdb_series\{[^}]*\} (\d+)', re.M)
 
-# Overnight defaults: capture heap unless explicitly disabled.
+# Overnight defaults: capture heap unless explicitly disabled; apply alert
+# thresholds from docs/05-acceptance.md when the operator did not pass any.
 heap_dir = a.heap_dir
 if a.no_heap:
     heap_dir = None
 elif not heap_dir and a.seconds >= 3600:
     heap_dir = str(pathlib.Path('reports') / f'soak-heaps-{int(time.time())}')
+if a.seconds >= 86400:
+    if a.max_rss_mib is None:
+        a.max_rss_mib = 800
+    if a.max_heap_growth_mib is None:
+        a.max_heap_growth_mib = 200
+    if a.max_rss_growth_mib is None:
+        a.max_rss_growth_mib = 300
+
+
+def resolve_soak_config(root: pathlib.Path, seed_data: pathlib.Path | None, seed_config: str | None) -> pathlib.Path:
+    """Prefer a real config next to seeded data; fall back to a minimal soak config."""
+    cfg = root / 'config.yaml'
+    candidates: list[pathlib.Path] = []
+    if seed_config:
+        candidates.append(pathlib.Path(seed_config).resolve())
+    if seed_data is not None:
+        parent = seed_data.parent
+        candidates.extend([
+            seed_data / 'monitor.yaml',
+            seed_data / 'config.yaml',
+            parent / 'monitor.yaml',
+            parent / 'config.yaml',
+        ])
+    for src in candidates:
+        if src.is_file():
+            shutil.copy2(src, cfg)
+            return cfg
+    cfg.write_text(
+        'collectors:\n  enabled: [cpu, mem, load, disk, net]\n'
+        'plugins:\n  enabled: false\nhealth:\n  enabled: false\n'
+    )
+    return cfg
+
 
 with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
     root = pathlib.Path(tmp)
     data = root / 'data'
+    seed_src = None
     if a.seed_data_dir:
-        src = pathlib.Path(a.seed_data_dir).resolve()
-        if not src.is_dir():
-            raise SystemExit(f'seed data dir not found: {src}')
+        seed_src = pathlib.Path(a.seed_data_dir).resolve()
+        if not seed_src.is_dir():
+            raise SystemExit(f'seed data dir not found: {seed_src}')
         shutil.copytree(
-            src, data, symlinks=False, ignore_dangling_symlinks=True,
+            seed_src, data, symlinks=False, ignore_dangling_symlinks=True,
             ignore=shutil.ignore_patterns('monitord.pid', '.monitor.lock', '*.tmp'),
         )
         (data / 'monitord.pid').unlink(missing_ok=True)
         (data / '.monitor.lock').unlink(missing_ok=True)
     else:
         data.mkdir()
-    cfg = root / 'config.yaml'
-    cfg.write_text('collectors:\n  enabled: [cpu, mem, load, disk, net]\nplugins:\n  enabled: false\nhealth:\n  enabled: false\n')
+    cfg = resolve_soak_config(root, seed_src, a.seed_config)
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         port = s.getsockname()[1]
@@ -174,6 +212,7 @@ with tempfile.TemporaryDirectory(prefix='monitor-soak-') as tmp:
     report = {
         'duration_seconds': a.seconds,
         'seed_data_dir': str(pathlib.Path(a.seed_data_dir).resolve()) if a.seed_data_dir else None,
+        'config': str(cfg),
         'requests': len(latencies),
         'charts': charts,
         'query_ms_median': statistics.median(latencies) if latencies else None,
