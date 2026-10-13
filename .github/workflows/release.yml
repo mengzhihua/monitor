@@ -108,22 +108,30 @@ jobs:
           if [[ -z "$INPUT_TAG" && "$GITHUB_REF" == refs/heads/main && "$source_version" != "$version" ]]; then
             git checkout -B main "$GITHUB_SHA"
             printf '%s\n' "$version" > VERSION
-            VERSION_VALUE="$version" python3 - <<'PY'
-import json, os, pathlib, re
-version = os.environ["VERSION_VALUE"]
-for file in ("web/package.json", "web/package-lock.json"):
-    path = pathlib.Path(file)
-    data = json.loads(path.read_text())
-    data["version"] = version
-    if file.endswith("package-lock.json"):
-        data["packages"][""]["version"] = version
-    path.write_text(json.dumps(data, indent=2) + "\n")
-main = pathlib.Path("core/cmd/monitord/main.go")
-text, n = re.subn(r'^var version = "[^"]+"', f'var version = "{version}"', main.read_text(), count=1, flags=re.M)
-if n != 1:
-    raise SystemExit("could not stamp core/cmd/monitord/main.go")
-main.write_text(text)
-PY
+            # Keep the Python body indented under run:|; an unindented heredoc
+            # breaks workflow YAML parsing (release jobs never start).
+            VERSION_VALUE="$version" python3 -c '
+            import json, os, pathlib, re
+            version = os.environ["VERSION_VALUE"]
+            for file in ("web/package.json", "web/package-lock.json"):
+                path = pathlib.Path(file)
+                data = json.loads(path.read_text())
+                data["version"] = version
+                if file.endswith("package-lock.json"):
+                    data["packages"][""]["version"] = version
+                path.write_text(json.dumps(data, indent=2) + "\n")
+            main = pathlib.Path("core/cmd/monitord/main.go")
+            text, n = re.subn(
+                r"^var version = \"[^\"]+\"",
+                f"var version = \"{version}\"",
+                main.read_text(),
+                count=1,
+                flags=re.M,
+            )
+            if n != 1:
+                raise SystemExit("could not stamp core/cmd/monitord/main.go")
+            main.write_text(text)
+            '
             git add VERSION web/package.json web/package-lock.json core/cmd/monitord/main.go
             git commit -m "release: sync VERSION to $tag"
             git push origin HEAD:main
@@ -211,7 +219,8 @@ PY
           ext=""; [ "$GOOS" = windows ] && ext=".exe"
           mkdir -p "dist/$name"
           commit=$(git rev-parse HEAD)
-          (cd core && go build -trimpath -ldflags "-s -w -X main.version=$v -X main.commit=$commit -X main.releaseBuild=1" -o "../dist/$name/monitord$ext" ./cmd/monitord)
+          build_time=$(git show -s --format=%cI HEAD | sed 's/+00:00$/Z/; s/\([+-][0-9][0-9]\):\([0-9][0-9]\)$/\1\2/')
+          (cd core && go build -trimpath -ldflags "-s -w -X main.version=$v -X main.commit=$commit -X main.releaseBuild=1 -X main.buildTime=$build_time -X main.dirty=false" -o "../dist/$name/monitord$ext" ./cmd/monitord)
           cp monitor.example.yaml README.md "dist/$name/"
           cp -r plugins.d "dist/$name/plugins.d"
           cd dist
