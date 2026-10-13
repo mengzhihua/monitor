@@ -42,7 +42,7 @@ import (
 
 // version is the release semver in source; builds override via
 // -ldflags "-X main.version=...". Untagged builds append -dev+short-hash.
-var version = "3.0.16"
+var version = "3.0.17"
 
 // commit is the full git SHA when stamped via ldflags or read from build VCS info.
 var commit = ""
