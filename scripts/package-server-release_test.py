@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -16,6 +17,7 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 EPOCH = 1780000000
+BUILD_TIME = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(EPOCH))
 
 
 def build_info(target="linux-amd64", commit=COMMIT, modified="false"):
@@ -159,7 +161,11 @@ class ReleaseTests(unittest.TestCase):
             with patch.object(release, "source_metadata", return_value=("2.0.0", COMMIT, EPOCH)), patch.object(release, "inspect_binary"), patch.object(release, "command") as run:
                 release.build_binaries(root, ["linux-amd64"], "go")
             args, cwd, env = run.call_args.args
-            self.assertEqual(args[args.index("-ldflags") + 1], f"-s -w -X main.version=2.0.0 -X main.commit={COMMIT} -X main.releaseBuild=1")
+            build_time = __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime(EPOCH))
+            self.assertEqual(
+                args[args.index("-ldflags") + 1],
+                f"-s -w -X main.version=2.0.0 -X main.commit={COMMIT} -X main.releaseBuild=1 -X main.buildTime={build_time} -X main.dirty=false",
+            )
             self.assertEqual(cwd, root / "core")
             self.assertEqual((env["GOOS"], env["GOARCH"]), ("linux", "amd64"))
             release.validate_receipt(root, ["linux-amd64"], "2.0.0", COMMIT)
