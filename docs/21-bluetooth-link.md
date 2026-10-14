@@ -197,6 +197,8 @@ monitord -bluetooth-report -bluetooth-snapshot ./bt-snapshot
 
 回放结果始终标注“数据来自 snapshot_dir 录制的命令输出，不是本机实时采集”。录制文件可能包含设备名与地址，分享前自行脱敏。
 
+`core/internal/collect/testdata/bluetooth/linux-aac-aptx` 是一份 BlueZ `GetManagedObjects` 文本，里面有一条 AAC（codec `0x02`，44.1 kHz 立体声 VBR）和一条 aptX（厂商 `0x0000004F`，44.1 kHz 立体声）。`TestBluetoothLinuxAACAndAptXSnapshot` 用它检查 `bluetooth.audio_streams`。这不是这台构建机上的耳机实采；拿到真机时用上面的命令重录 `dbus-send.txt` 换进去即可。
+
 ## 已验证范围与边界
 
 - 单元测试覆盖：SBC / AAC / aptX HD / LDAC 配置解码与码率换算、厂商编解码器查表、Class of Device 解码、AFH 信道计数、`bluetoothctl info`、`hciconfig -a`、`hcitool con`、`pactl list`、BlueZ `GetManagedObjects` 文本回复、macOS JSON 与文本报告、Windows PnP JSON、Android `dumpsys` 编解码器块，以及从录制快照到图表与函数表格的全链路。
