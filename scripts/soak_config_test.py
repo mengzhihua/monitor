@@ -43,6 +43,25 @@ def main() -> int:
         raise SystemExit(f"fixed token was removed:\n{stripped}")
     if soak.web_token(stripped) != "production-fixed-token":
         raise SystemExit(f"token parse failed: {soak.web_token(stripped)!r}")
+    nested = """
+web:
+  users:
+    - name: viewer
+      token: not-the-admin
+  token: "admin-token"
+collectors:
+  enabled:
+    - cpu
+    - mem
+"""
+    if soak.web_token(nested) != "admin-token":
+        raise SystemExit(f"nested token wins: {soak.web_token(nested)!r}")
+    if soak.expects_ml(nested):
+        raise SystemExit("cpu/mem config should not expect ml")
+    if not soak.expects_ml("collectors:\n  enabled: [cpu, ml]\n"):
+        raise SystemExit("inline ml list not detected")
+    if not soak.expects_ml("mode: agent\n"):
+        raise SystemExit("default config should expect ml")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)

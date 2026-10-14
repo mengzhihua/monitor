@@ -67,10 +67,18 @@ def strip_seed_config(text: str) -> str:
     return "".join(out)
 
 
+def _yaml_value(body: str) -> str:
+    value = body.split(":", 1)[1].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return value
+
+
 def web_token(text: str) -> str | None:
-    """Return web.token when it is set, else None."""
+    """Return the admin web.token. Nested user tokens are ignored."""
     in_web = False
     web_indent = 0
+    child_indent: int | None = None
     for raw in text.splitlines():
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
@@ -79,17 +87,54 @@ def web_token(text: str) -> str | None:
         if indent == 0 and body.startswith("web:"):
             in_web = True
             web_indent = 0
+            child_indent = None
             continue
         if not in_web:
             continue
         if indent <= web_indent:
             break
-        if body.startswith("token:"):
-            value = body.split(":", 1)[1].strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-                value = value[1:-1]
-            return value or None
+        if child_indent is None:
+            child_indent = indent
+        if indent == child_indent and body.startswith("token:"):
+            return _yaml_value(body) or None
     return None
+
+
+def expects_ml(text: str) -> bool:
+    """True when this config starts the ml collector (default is all collectors)."""
+    in_collectors = False
+    collectors_indent = 0
+    child_indent: int | None = None
+    enabled: list[str] | None = None
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        body = raw.lstrip()
+        if indent == 0 and body.startswith("collectors:"):
+            in_collectors = True
+            collectors_indent = 0
+            child_indent = None
+            continue
+        if not in_collectors:
+            continue
+        if indent <= collectors_indent:
+            break
+        if child_indent is None:
+            child_indent = indent
+        if indent == child_indent and body.startswith("enabled:"):
+            enabled = []
+            rest = _yaml_value("enabled:" + body.split(":", 1)[1])
+            if rest.startswith("[") and rest.endswith("]"):
+                enabled = [part.strip().strip('"').strip("'") for part in rest[1:-1].split(",") if part.strip()]
+            elif rest:
+                enabled = [rest.strip('"').strip("'")]
+            continue
+        if enabled is not None and indent > child_indent and body.startswith("- "):
+            enabled.append(body[2:].strip().strip('"').strip("'"))
+    if not in_collectors or enabled is None:
+        return True
+    return "ml" in enabled
 
 
 def resolve_soak_config(root: pathlib.Path, seed_config: str | None) -> pathlib.Path:
@@ -164,7 +209,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             data.mkdir()
         cfg = resolve_soak_config(root, args.seed_config)
-        token = args.token if args.token else web_token(cfg.read_text(encoding="utf-8"))
+        cfg_text = cfg.read_text(encoding="utf-8")
+        configured_token = args.token if args.token else web_token(cfg_text)
+        token = configured_token
+        auth_kind = "token" if configured_token else "web-password"
+        want_ml = expects_ml(cfg_text)
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
@@ -201,14 +250,14 @@ def main(argv: list[str] | None = None) -> int:
                 local_alerts.append(f"heap_mib_growth {heap_growth:.1f} > {args.max_heap_growth_mib}")
             if args.max_anomaly_buffer_mib is not None and anomaly and max(anomaly) > args.max_anomaly_buffer_mib:
                 local_alerts.append(f"anomaly_buffer_mib {max(anomaly):.1f} > {args.max_anomaly_buffer_mib}")
-            if args.max_anomaly_buffer_mib is not None and latencies and not anomaly:
+            if want_ml and args.max_anomaly_buffer_mib is not None and latencies and not anomaly:
                 local_alerts.append("anomaly buffer metric missing")
             return {
                 "duration_seconds": args.seconds,
                 "interrupted": interrupted,
                 "seed_data_dir": str(pathlib.Path(args.seed_data_dir).resolve()) if args.seed_data_dir else None,
                 "seed_config": str(pathlib.Path(args.seed_config).resolve()) if args.seed_config else None,
-                "auth": "token" if token else "web-password",
+                "auth": auth_kind,
                 "config": str(cfg),
                 "requests": len(latencies),
                 "charts": charts,
