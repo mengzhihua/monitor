@@ -88,7 +88,7 @@
 
 ## 快速开始
 
-云主机安装、验收和配置 AI 模型见 [云主机部署指引](docs/22-cloud-host.md)。按该文档使用发布包即可，发布包内同一份文件名为 `CLOUD-HOST.md`。
+云主机安装、验收和配置 AI 模型见 [云主机部署指引](docs/22-cloud-host.md)。解压发布包后执行 `sudo ./cloud-host.sh install --check`。发布包内同一份说明名为 `CLOUD-HOST.md`。
 
 从源码构建时依赖 Go 1.26+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
 

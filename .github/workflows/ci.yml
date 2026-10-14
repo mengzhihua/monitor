@@ -69,6 +69,9 @@ jobs:
       - name: packaging pidfile decoy guards
         if: runner.os == 'Linux'
         run: python3 scripts/verify-packaging-pidfile.py
+      - name: cloud host install script
+        if: runner.os == 'Linux'
+        run: python3 scripts/verify-cloud-host.py
 
       - name: crash recovery and backup
         if: runner.os != 'Windows'
