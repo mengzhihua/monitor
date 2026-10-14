@@ -193,8 +193,8 @@ jobs:
           cp docs/22-cloud-host.md "dist/$name/CLOUD-HOST.md"
           cp -r plugins.d "dist/$name/plugins.d"
           if [ "$GOOS" != windows ]; then
-            cp packaging/start.sh packaging/stop.sh "dist/$name/"
-            chmod 755 "dist/$name/start.sh" "dist/$name/stop.sh"
+            cp packaging/start.sh packaging/stop.sh packaging/cloud-host.sh packaging/monitord.service "dist/$name/"
+            chmod 755 "dist/$name/start.sh" "dist/$name/stop.sh" "dist/$name/cloud-host.sh"
           fi
           cd dist
           if [ "$GOOS" = windows ]; then zip -qr "$name.zip" "$name"; else tar czf "$name.tar.gz" "$name"; fi

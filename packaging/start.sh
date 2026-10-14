@@ -120,7 +120,8 @@ if [ -f "$PIDFILE" ]; then
 	rm -f -- "$PIDFILE"
 fi
 
-printf '%s\n' "Open http://${LISTEN}/ ; password: ${DATA}/web-password"
+printf '%s\n' "health: curl -fsS http://${LISTEN}/healthz"
+printf '%s\n' "password: ${DATA}/web-password"
 set -- "$BIN" -listen "$LISTEN" -data-dir "$DATA"
 if [ -n "$CONFIG" ]; then
 	set -- "$@" -config "$CONFIG"
