@@ -78,6 +78,13 @@ def main():
             f"VERSION {version!r} differs from latest stable git tag reachable from HEAD (v{tag_version}); "
             "bump VERSION/package.json/main.go to match the tag, or create the matching tag"
         )
+    tagged = run_git(root, "show", f"v{version}:VERSION")
+    if tagged is not None and tagged.strip() != version:
+        raise ValueError(
+            f"tag v{version} points at a commit whose VERSION is {tagged.strip()!r}; "
+            "move the tag onto the commit that contains this VERSION "
+            "(see docs/23-release.md)"
+        )
     print(f"Server and Dashboard source versions match git tag v{tag_version}: {version}")
 
 

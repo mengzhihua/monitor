@@ -1,23 +1,59 @@
 name: Nightly soak
 
-# Overnight RSS/heap soak against a seeded agent data copy. Fails the job when
-# memory thresholds from scripts/soak.py (≥24h defaults) are exceeded.
+# GitHub-hosted jobs die at 6h. The scheduled job therefore runs 19800s (5.5h)
+# and applies tighter RSS/heap limits. workflow_dispatch profile=lab runs 24h
+# on a self-hosted Linux runner (labels: self-hosted, linux). A timeout or
+# SIGTERM is a failure: soak.py writes the partial JSON before exiting 1, and
+# the artifact step still uploads that file plus heap profiles.
 on:
   schedule:
     - cron: "15 18 * * *" # 02:15 UTC+8
   workflow_dispatch:
     inputs:
-      seconds:
-        description: "Soak duration in seconds (default 86400)"
-        required: false
-        default: "86400"
+      profile:
+        description: "hosted = 5.5h on GitHub; lab = 24h on a self-hosted Linux runner"
+        required: true
+        default: hosted
+        type: choice
+        options:
+          - hosted
+          - lab
 
 permissions:
   contents: read
 
 jobs:
-  soak:
+  soak-hosted:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.profile != 'lab'
     runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build agent
+        run: ./scripts/build.sh --dev all
+      - name: Soak 5.5h
+        run: bash scripts/ci-soak.sh hosted
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-nightly
+          path: |
+            reports/soak-nightly.json
+            reports/soak-heaps/
+          if-no-files-found: warn
+
+  soak-lab:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'lab'
+    runs-on: [self-hosted, linux]
     timeout-minutes: 1500
     steps:
       - uses: actions/checkout@v4
@@ -31,76 +67,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Build agent
-        run: |
-          ./scripts/build.sh --dev all
-      - name: Prepare seed data
-        run: |
-          set -euo pipefail
-          mkdir -p reports/seed-data
-          cat > reports/seed-config.yaml <<'YAML'
-          collectors:
-            enabled: [cpu, mem, load, disk, net]
-          plugins:
-            enabled: false
-          health:
-            enabled: false
-          YAML
-          # Warm a seed data dir the overnight soak will copy (never writes the seed).
-          python3 - <<'PY'
-          import pathlib, shutil, socket, subprocess, tempfile, time, urllib.request
-          root = pathlib.Path('reports')
-          cfg = root / 'seed-config.yaml'
-          seed = root / 'seed-data'
-          with tempfile.TemporaryDirectory(prefix='seed-warm-') as tmp:
-              data = pathlib.Path(tmp) / 'data'
-              data.mkdir()
-              with socket.socket() as s:
-                  s.bind(('127.0.0.1', 0))
-                  port = s.getsockname()[1]
-              log = open(pathlib.Path(tmp) / 'warm.log', 'w')
-              proc = subprocess.Popen(
-                  ['core/bin/monitord', '-config', str(cfg), '-data-dir', str(data),
-                   '-listen', f'127.0.0.1:{port}'],
-                  stdout=log, stderr=log,
-              )
-              try:
-                  for _ in range(100):
-                      try:
-                          urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=1).close()
-                          break
-                      except OSError:
-                          time.sleep(0.1)
-                  time.sleep(20)
-              finally:
-                  proc.terminate()
-                  try:
-                      proc.wait(timeout=30)
-                  except subprocess.TimeoutExpired:
-                      proc.kill()
-                      proc.wait()
-                  log.close()
-              if seed.exists():
-                  shutil.rmtree(seed)
-              shutil.copytree(data, seed, ignore=shutil.ignore_patterns('monitord.pid', '.monitor.lock'))
-          print('seed ready', seed)
-          PY
-      - name: 24h soak with thresholds
-        env:
-          SOAK_SECONDS: ${{ github.event.inputs.seconds || '86400' }}
-        run: |
-          set -euo pipefail
-          python3 scripts/soak.py \
-            --seconds "${SOAK_SECONDS}" \
-            --sample-every 30 \
-            --bin core/bin/monitord \
-            --seed-data-dir reports/seed-data \
-            --seed-config reports/seed-config.yaml \
-            --heap-dir reports/soak-heaps \
-            --output reports/soak-nightly.json
+        run: ./scripts/build.sh --dev all
+      - name: Soak 24h
+        run: bash scripts/ci-soak.sh lab
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: soak-nightly
+          name: soak-nightly-24h
           path: |
             reports/soak-nightly.json
             reports/soak-heaps/

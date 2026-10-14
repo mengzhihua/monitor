@@ -442,7 +442,8 @@ make bench
 make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
-# 24h 内存浸泡（自动抓 start/mid/end heap；≥24h 默认套用 800/200/300 MiB 阈值）：
+# GitHub 托管夜间任务是 19800s（5.5h），阈值 RSS 450 / heap 增长 80 / RSS 增长 120 / 异常检测缓冲 16 MiB。
+# 24h 要在自建 runner 上跑（workflow_dispatch profile=lab）。≥24h 默认套用 800/200/300/16 MiB 阈值：
 python3 scripts/soak.py --seconds 86400 --sample-every 30 \
   --seed-data-dir /path/to/production-like-data-copy \
   --seed-config /path/to/monitor.yaml \

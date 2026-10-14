@@ -146,6 +146,34 @@ func TestBluetoothAndroidTestdataSnapshot(t *testing.T) {
 	}
 }
 
+func TestBluetoothLinuxAACAndAptXSnapshot(t *testing.T) {
+	dir := bluetoothTestdataDir(t, "linux-aac-aptx")
+	want := readBluetoothExpected(t, dir)
+	b := &bluetoothCollector{goos: "linux"}
+	if err := b.Configure(func(v any) error {
+		cfg := v.(*bluetoothConfig)
+		cfg.SnapshotDir = dir
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reg := registry.New(&registry.Host{Hostname: "t", UpdateEvery: 1}, nil)
+	if err := b.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Collect(context.Background(), reg, time.Unix(1_760_000_000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	ch, ok := reg.Chart("bluetooth.audio_streams")
+	if !ok {
+		t.Fatal("missing bluetooth.audio_streams")
+	}
+	_, vals := ch.LastValues()
+	if vals[want["aac"].(string)] != 1 || vals[want["aptx"].(string)] != 1 {
+		t.Fatalf("codecs=%v want AAC and aptX", vals)
+	}
+}
+
 func TestBluetoothCollectorChartsFromTestdataDir(t *testing.T) {
 	// Keep the older inline helper path exercised via the shared linux snapshot.
 	b := newBluetoothSnapshotCollector(t)

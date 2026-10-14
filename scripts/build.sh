@@ -80,6 +80,9 @@ build_web() {
 }
 
 build_core() {
+  if ! python3 scripts/check-release-version.py; then
+    echo "warning: VERSION check failed; continuing core build (${BUILD_VERSION})" >&2
+  fi
   mkdir -p "$BIN"
   (cd core && go build -trimpath -ldflags "$LDFLAGS" -o "../${BIN}/monitord" ./cmd/monitord)
   echo "built ${BIN}/monitord (${BUILD_VERSION})"

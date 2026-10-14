@@ -16,16 +16,17 @@ import (
 // Detection is Netdata-style k-means (k=2 on lag-window first-differences)
 // with a k-sigma fallback until the first model trains.
 type mlConfig struct {
-	Enabled    *bool         `yaml:"enabled"`
-	Window     int           `yaml:"window"` // sample ring, default 120
-	Sigma      float64       `yaml:"sigma"`  // k-sigma fallback, default 3
-	Lag        int           `yaml:"lag"`    // feature length, default 3
-	K          int           `yaml:"k"`      // clusters, default 2
-	Models     int           `yaml:"models"` // voting models on different train windows
-	MinTrain   int           `yaml:"min_train"`
-	TrainEvery time.Duration `yaml:"train_every"`
-	MaxTrain   int           `yaml:"max_train_samples"`
-	Threshold  float64       `yaml:"threshold"` // percentile of train distances, default 0.99
+	Enabled       *bool         `yaml:"enabled"`
+	Window        int           `yaml:"window"` // sample ring, default 120
+	Sigma         float64       `yaml:"sigma"`  // k-sigma fallback, default 3
+	Lag           int           `yaml:"lag"`    // feature length, default 3
+	K             int           `yaml:"k"`      // clusters, default 2
+	Models        int           `yaml:"models"` // voting models on different train windows
+	MinTrain      int           `yaml:"min_train"`
+	TrainEvery    time.Duration `yaml:"train_every"`
+	MaxTrain      int           `yaml:"max_train_samples"`
+	MaxTrainBytes int           `yaml:"max_train_bytes"` // total diff-ring bytes across series, default 16MiB
+	Threshold     float64       `yaml:"threshold"`       // percentile of train distances, default 0.99
 }
 
 type kmModel struct {
@@ -104,6 +105,9 @@ func (m *mlCollector) Configure(decode func(v any) error) error {
 	if m.cfg.MaxTrain <= 0 {
 		m.cfg.MaxTrain = 14400
 	}
+	if m.cfg.MaxTrainBytes <= 0 {
+		m.cfg.MaxTrainBytes = 16 << 20
+	}
 	if m.cfg.Threshold <= 0 || m.cfg.Threshold > 1 {
 		m.cfg.Threshold = 0.99
 	}
@@ -126,6 +130,9 @@ func (m *mlCollector) Init(reg *registry.Registry) error {
 	reg.AddChart(&registry.Chart{ID: "anomaly_detection.anomalous_dims", Family: "anomalies",
 		Title: "Anomalous dimensions", Units: "dimensions", Priority: 51,
 		Plugin: "ml", Module: "ml", Dimensions: []*registry.Dimension{{ID: "anomalous"}, {ID: "normal"}}})
+	reg.AddChart(&registry.Chart{ID: "anomaly_detection.train_buffer", Family: "anomalies",
+		Title: "Anomaly training buffer", Units: "bytes", Priority: 52,
+		Plugin: "ml", Module: "ml", Dimensions: []*registry.Dimension{{ID: "bytes"}}})
 	reg.Subscribe(m.onSample)
 	return nil
 }
@@ -158,7 +165,7 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 			st.n++
 		}
 		if st.hasPrev {
-			st.pushDiff(v-st.prev, m.cfg.MaxTrain)
+			m.noteDiff(st, v-st.prev)
 		}
 		st.prev, st.hasPrev = v, true
 		if trainSt == nil && m.trainLeft > 0 && m.due(st, ts) {
@@ -196,14 +203,39 @@ func (m *mlCollector) onSample(chartID string, ts int64, values map[string]float
 	m.mu.Unlock()
 }
 
-func (st *dimML) pushDiff(d float64, max int) {
+// TrainBufferBytes is the sum of per-series first-diff rings.
+func (m *mlCollector) TrainBufferBytes() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.trainBytesLocked()
+}
+
+func (m *mlCollector) trainBytesLocked() int {
+	n := 0
+	for _, st := range m.dims {
+		n += len(st.diffRing) * 4
+	}
+	return n
+}
+
+// noteDiff appends one first-difference. Rings stop growing once the process
+// would pass MaxTrainBytes; samples then overwrite the existing ring.
+func (m *mlCollector) noteDiff(st *dimML, d float64) {
+	max := m.cfg.MaxTrain
 	if max < 1 {
 		max = 1
+	}
+	budget := m.cfg.MaxTrainBytes
+	if budget <= 0 {
+		budget = 16 << 20
 	}
 	if len(st.diffRing) == 0 {
 		n := 32
 		if n > max {
 			n = max
+		}
+		if m.trainBytesLocked()+n*4 > budget {
+			return
 		}
 		st.diffRing = make([]float32, n)
 	} else if st.diffN == len(st.diffRing) && len(st.diffRing) < max {
@@ -211,16 +243,25 @@ func (st *dimML) pushDiff(d float64, max int) {
 		if n > max || n < len(st.diffRing) {
 			n = max
 		}
-		next := make([]float32, n)
-		start := st.diffI - st.diffN
-		if start < 0 {
-			start += len(st.diffRing)
+		extra := (n - len(st.diffRing)) * 4
+		if extra > 0 && m.trainBytesLocked()+extra > budget {
+			n = len(st.diffRing)
 		}
-		for i := 0; i < st.diffN; i++ {
-			next[i] = st.diffRing[(start+i)%len(st.diffRing)]
+		if n > len(st.diffRing) {
+			next := make([]float32, n)
+			start := st.diffI - st.diffN
+			if start < 0 {
+				start += len(st.diffRing)
+			}
+			for i := 0; i < st.diffN; i++ {
+				next[i] = st.diffRing[(start+i)%len(st.diffRing)]
+			}
+			st.diffRing = next
+			st.diffI = st.diffN
 		}
-		st.diffRing = next
-		st.diffI = st.diffN
+	}
+	if len(st.diffRing) == 0 {
+		return
 	}
 	st.diffRing[st.diffI] = float32(d)
 	st.diffI++
@@ -407,6 +448,7 @@ func meanStd(xs []float64) (mean, std float64) {
 func (m *mlCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
 	m.mu.Lock()
 	var anom, total float64
+	bufBytes := m.trainBytesLocked()
 	for _, st := range m.dims {
 		total++
 		if st.anom {
@@ -420,6 +462,7 @@ func (m *mlCollector) Collect(_ context.Context, reg *registry.Registry, now tim
 	}
 	_ = reg.Collect("anomaly_detection.anomaly_rate", now, map[string]float64{"anomaly_rate": rate})
 	_ = reg.Collect("anomaly_detection.anomalous_dims", now, map[string]float64{"anomalous": anom, "normal": total - anom})
+	_ = reg.Collect("anomaly_detection.train_buffer", now, map[string]float64{"bytes": float64(bufBytes)})
 	return nil
 }
 

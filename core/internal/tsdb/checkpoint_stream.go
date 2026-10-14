@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 )
 
@@ -23,6 +24,7 @@ import (
 //	)
 //	sha256 of everything above
 const checkpointMagicV2 = "MONCP002"
+const checkpointMagicV3 = "MONCP003"
 
 var (
 	rawCheckpointPool    = sync.Pool{New: func() any { return &rawCheckpoint{} }}
@@ -92,7 +94,7 @@ func (s *Store) writeCheckpointStream(w io.Writer) error {
 		row.TS = append(row.TS[:0], sr.ts...)
 		row.Values = append(row.Values[:0], sr.vals...)
 		sr.mu.Unlock()
-		if err := encodeGobRecord(w, row); err != nil {
+		if err := writeRawCompact(w, row); err != nil {
 			return err
 		}
 	}
@@ -126,7 +128,7 @@ func (s *Store) writeCheckpointStream(w io.Writer) error {
 				rollup.Open = nil
 			}
 			sr.mu.Unlock()
-			if err := encodeGobRecord(w, rollup); err != nil {
+			if err := writeRollupCompact(w, rollup); err != nil {
 				return err
 			}
 		}
@@ -142,6 +144,229 @@ type byteReader struct {
 func (b *byteReader) ReadByte() (byte, error) {
 	_, err := io.ReadFull(b.r, b.b[:])
 	return b.b[0], err
+}
+
+func zigzag(n int64) uint64   { return uint64((n << 1) ^ (n >> 63)) }
+func unzigzag(n uint64) int64 { return int64((n >> 1) ^ -(n & 1)) }
+
+func writeString(w io.Writer, s string) error {
+	if err := writeUvarint(w, uint64(len(s))); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, s)
+	return err
+}
+
+func readString(br *byteReader) (string, error) {
+	n, err := readUvarint(br)
+	if err != nil {
+		return "", err
+	}
+	if n > 1<<20 {
+		return "", fmt.Errorf("checkpoint id too long")
+	}
+	buf := make([]byte, n)
+	if _, err = io.ReadFull(br.r, buf); err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+func writeF64(w io.Writer, v float64) error {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], math.Float64bits(v))
+	_, err := w.Write(buf[:])
+	return err
+}
+
+func readF64(br *byteReader) (float64, error) {
+	var buf [8]byte
+	if _, err := io.ReadFull(br.r, buf[:]); err != nil {
+		return 0, err
+	}
+	return math.Float64frombits(binary.LittleEndian.Uint64(buf[:])), nil
+}
+
+func writeRawCompact(w io.Writer, row *rawCheckpoint) error {
+	if len(row.TS) != len(row.Values) {
+		return fmt.Errorf("checkpoint raw length mismatch")
+	}
+	if err := writeString(w, row.ID); err != nil {
+		return err
+	}
+	if err := writeUvarint(w, zigzag(row.Last)); err != nil {
+		return err
+	}
+	if err := writeUvarint(w, uint64(len(row.TS))); err != nil {
+		return err
+	}
+	var prev int64
+	for i, ts := range row.TS {
+		delta := ts
+		if i > 0 {
+			delta = ts - prev
+		}
+		prev = ts
+		if err := writeUvarint(w, zigzag(delta)); err != nil {
+			return err
+		}
+		if err := writeF64(w, row.Values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeBucket(w io.Writer, b Bucket) error {
+	if err := writeUvarint(w, zigzag(b.TS)); err != nil {
+		return err
+	}
+	for _, v := range []float64{b.Min, b.Max, b.Sum, b.Last} {
+		if err := writeF64(w, v); err != nil {
+			return err
+		}
+	}
+	return writeUvarint(w, zigzag(b.Count))
+}
+
+func readBucket(br *byteReader) (Bucket, error) {
+	var b Bucket
+	ts, err := readUvarint(br)
+	if err != nil {
+		return b, err
+	}
+	b.TS = unzigzag(ts)
+	for _, dst := range []*float64{&b.Min, &b.Max, &b.Sum, &b.Last} {
+		v, err := readF64(br)
+		if err != nil {
+			return b, err
+		}
+		*dst = v
+	}
+	n, err := readUvarint(br)
+	if err != nil {
+		return b, err
+	}
+	b.Count = unzigzag(n)
+	return b, nil
+}
+
+func writeRollupCompact(w io.Writer, row *rollupCheckpoint) error {
+	if err := writeString(w, row.ID); err != nil {
+		return err
+	}
+	if err := writeUvarint(w, uint64(len(row.Done))); err != nil {
+		return err
+	}
+	for _, b := range row.Done {
+		if err := writeBucket(w, b); err != nil {
+			return err
+		}
+	}
+	if row.Open == nil {
+		return writeUvarint(w, 0)
+	}
+	if err := writeUvarint(w, 1); err != nil {
+		return err
+	}
+	return writeBucket(w, *row.Open)
+}
+
+func (s *Store) loadCheckpointStreamV3(r io.Reader) error {
+	br := &byteReader{r: r}
+	rawCount, err := readUvarint(br)
+	if err != nil {
+		return err
+	}
+	if rawCount > uint64(maxCheckpointBytes) {
+		return fmt.Errorf("invalid checkpoint raw count: %d", rawCount)
+	}
+	image := checkpointImage{Version: 1, Raw: make([]rawCheckpoint, 0, rawCount)}
+	for i := uint64(0); i < rawCount; i++ {
+		id, err := readString(br)
+		if err != nil {
+			return err
+		}
+		last, err := readUvarint(br)
+		if err != nil {
+			return err
+		}
+		n, err := readUvarint(br)
+		if err != nil {
+			return err
+		}
+		if n > uint64(maxCheckpointBytes/8) {
+			return fmt.Errorf("checkpoint series too long")
+		}
+		row := rawCheckpoint{ID: id, Last: unzigzag(last), TS: make([]int64, n), Values: make([]float64, n)}
+		var prev int64
+		for j := uint64(0); j < n; j++ {
+			delta, err := readUvarint(br)
+			if err != nil {
+				return err
+			}
+			ts := unzigzag(delta)
+			if j > 0 {
+				ts += prev
+			}
+			prev = ts
+			row.TS[j] = ts
+			v, err := readF64(br)
+			if err != nil {
+				return err
+			}
+			row.Values[j] = v
+		}
+		image.Raw = append(image.Raw, row)
+	}
+	tierCount, err := readUvarint(br)
+	if err != nil {
+		return err
+	}
+	image.Tiers = make([]tierCheckpoint, 0, tierCount)
+	for i := uint64(0); i < tierCount; i++ {
+		every, err := readUvarint(br)
+		if err != nil {
+			return err
+		}
+		nSeries, err := readUvarint(br)
+		if err != nil {
+			return err
+		}
+		tier := tierCheckpoint{Every: int64(every), Series: make([]rollupCheckpoint, 0, nSeries)}
+		for j := uint64(0); j < nSeries; j++ {
+			id, err := readString(br)
+			if err != nil {
+				return err
+			}
+			nDone, err := readUvarint(br)
+			if err != nil {
+				return err
+			}
+			row := rollupCheckpoint{ID: id, Done: make([]Bucket, 0, nDone)}
+			for k := uint64(0); k < nDone; k++ {
+				b, err := readBucket(br)
+				if err != nil {
+					return err
+				}
+				row.Done = append(row.Done, b)
+			}
+			hasOpen, err := readUvarint(br)
+			if err != nil {
+				return err
+			}
+			if hasOpen == 1 {
+				b, err := readBucket(br)
+				if err != nil {
+					return err
+				}
+				row.Open = &b
+			}
+			tier.Series = append(tier.Series, row)
+		}
+		image.Tiers = append(image.Tiers, tier)
+	}
+	return s.applyCheckpointImage(image)
 }
 
 func (s *Store) loadCheckpointStream(r io.Reader) error {

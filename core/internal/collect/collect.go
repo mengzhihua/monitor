@@ -44,6 +44,11 @@ type Weight struct {
 	AnomalyRate float64 `json:"anomaly_rate"`
 }
 
+// TrainBuffer reports how many bytes the anomaly detector keeps for training history.
+type TrainBuffer interface {
+	TrainBufferBytes() int
+}
+
 // AnomalyProvider exposes the current per-dimension anomaly bit (series id → flag).
 type AnomalyProvider interface {
 	DimAnomalies() map[string]bool

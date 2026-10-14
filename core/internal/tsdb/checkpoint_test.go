@@ -359,7 +359,7 @@ func TestCheckpointStreamRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw[:8]) != checkpointMagicV2 {
+	if string(raw[:8]) != checkpointMagicV3 {
 		t.Fatalf("magic=%q", raw[:8])
 	}
 	reopened, err := Open(Options{Dir: dir, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})
