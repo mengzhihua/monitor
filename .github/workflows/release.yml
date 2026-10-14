@@ -190,6 +190,7 @@ jobs:
           build_time=$(git show -s --format=%cI HEAD | sed 's/+00:00$/Z/; s/\([+-][0-9][0-9]\):\([0-9][0-9]\)$/\1\2/')
           (cd core && go build -trimpath -ldflags "-s -w -X main.version=$version -X main.commit=$commit -X main.releaseBuild=1 -X main.buildTime=$build_time -X main.dirty=false" -o "../dist/$name/monitord$ext" ./cmd/monitord)
           cp monitor.example.yaml README.md "dist/$name/"
+          cp docs/22-cloud-host.md "dist/$name/CLOUD-HOST.md"
           cp -r plugins.d "dist/$name/plugins.d"
           if [ "$GOOS" != windows ]; then
             cp packaging/start.sh packaging/stop.sh "dist/$name/"

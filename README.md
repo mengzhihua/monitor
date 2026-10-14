@@ -82,12 +82,15 @@
 | [docs/19-host-shell.md](docs/19-host-shell.md) | WebShell 本机与 SSH 交互终端、HTTPS、权限与审计 |
 | [docs/20-reliability-and-isolation.md](docs/20-reliability-and-isolation.md) | 房间隔离、数据新鲜度、模板与诊断请求保护、验证范围 |
 | [docs/21-bluetooth-link.md](docs/21-bluetooth-link.md) | 蓝牙设备识别、链接模式、编解码器与码率解码、链路质量评分、行业工具对照 |
+| [docs/22-cloud-host.md](docs/22-cloud-host.md) | 云主机安装、Hub/Agent、命令行验收与 AI 模型配置（发布包内为 `CLOUD-HOST.md`） |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
 ## 快速开始
 
-依赖：Go 1.26+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
+云主机安装、验收和配置 AI 模型见 [云主机部署指引](docs/22-cloud-host.md)。按该文档使用发布包即可，发布包内同一份文件名为 `CLOUD-HOST.md`。
+
+从源码构建时依赖 Go 1.26+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
 
 ```bash
 make all          # 1) 构建 Vue Dashboard 并嵌入  2) 编译 core/bin/monitord
