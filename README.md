@@ -83,6 +83,7 @@
 | [docs/20-reliability-and-isolation.md](docs/20-reliability-and-isolation.md) | 房间隔离、数据新鲜度、模板与诊断请求保护、验证范围 |
 | [docs/21-bluetooth-link.md](docs/21-bluetooth-link.md) | 蓝牙设备识别、链接模式、编解码器与码率解码、链路质量评分、行业工具对照 |
 | [docs/22-cloud-host.md](docs/22-cloud-host.md) | 云主机安装、Hub/Agent、命令行验收与 AI 模型配置（发布包内为 `CLOUD-HOST.md`） |
+| [docs/23-release.md](docs/23-release.md) | VERSION 与标签、跳过重复打包、把指错提交的标签移回去 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 

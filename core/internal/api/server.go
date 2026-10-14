@@ -881,6 +881,12 @@ func (s *Server) writeProcessMetrics(w http.ResponseWriter) {
 	fmt.Fprintf(w, "monitor_tsdb_series{instance=%q} %d\n", host, series)
 	fmt.Fprintf(w, "# HELP monitor_charts Number of registered charts on this process.\n# TYPE monitor_charts gauge\n")
 	fmt.Fprintf(w, "monitor_charts{instance=%q} %d\n", host, len(s.reg.Charts()))
+	if s.sched != nil {
+		if tb, ok := s.sched.Collector("ml").(collect.TrainBuffer); ok && tb != nil {
+			fmt.Fprintf(w, "# HELP monitor_ml_train_buffer_bytes Bytes retained for anomaly-detection training history.\n# TYPE monitor_ml_train_buffer_bytes gauge\n")
+			fmt.Fprintf(w, "monitor_ml_train_buffer_bytes{instance=%q} %d\n", host, tb.TrainBufferBytes())
+		}
+	}
 }
 
 // writeCollectorTimingMetrics exposes per-collector Collect durations so

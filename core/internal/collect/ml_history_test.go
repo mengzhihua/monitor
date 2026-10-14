@@ -71,6 +71,21 @@ func TestMLHistoryMatchesInsertionOrder(t *testing.T) {
 	}
 }
 
+func TestMLTrainBufferStopsGrowingAtBudget(t *testing.T) {
+	m := &mlCollector{cfg: mlConfig{MaxTrain: 10000, MaxTrainBytes: 128}, dims: map[string]*dimML{}}
+	st := &dimML{}
+	m.dims["c|d"] = st
+	for i := 0; i < 1000; i++ {
+		m.noteDiff(st, float64(i))
+	}
+	if got := m.TrainBufferBytes(); got > 128 {
+		t.Fatalf("train buffer %d exceeds 128", got)
+	}
+	if st.diffN == 0 || st.diffN >= 1000 {
+		t.Fatalf("ring kept growing: n=%d bytes=%d", st.diffN, m.TrainBufferBytes())
+	}
+}
+
 func TestMLHistoryOrderRecoversAndResize(t *testing.T) {
 	st := &dimML{}
 	m := &mlCollector{dims: map[string]*dimML{"chart|dim": st}}

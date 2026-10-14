@@ -80,7 +80,7 @@ func (s *Store) writeCheckpoint() error {
 	defer func() { f.Close(); os.Remove(tmp) }()
 	hash := sha256.New()
 	writer := io.MultiWriter(f, hash)
-	if _, err = writer.Write([]byte(checkpointMagicV2)); err != nil {
+	if _, err = writer.Write([]byte(checkpointMagicV3)); err != nil {
 		return err
 	}
 	z := gzip.NewWriter(writer)
@@ -152,6 +152,8 @@ func (s *Store) loadCheckpoint() error {
 	}
 	defer z.Close()
 	switch string(magic[:]) {
+	case checkpointMagicV3:
+		return s.loadCheckpointStreamV3(io.LimitReader(z, maxCheckpointBytes))
 	case checkpointMagicV2:
 		return s.loadCheckpointStream(io.LimitReader(z, maxCheckpointBytes))
 	case "MONCP001":
