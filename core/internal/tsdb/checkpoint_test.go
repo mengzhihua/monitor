@@ -2,6 +2,7 @@ package tsdb
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -374,5 +375,33 @@ func TestCheckpointStreamRoundTrip(t *testing.T) {
 	points, err = reopened.Query("b", 0, 2000)
 	if err != nil || len(points) != 1 || points[0].Value != 9 {
 		t.Fatalf("b=%v err=%v", points, err)
+	}
+}
+
+func BenchmarkCheckpointFlush(b *testing.B) {
+	dir := b.TempDir()
+	s, err := Open(Options{Dir: dir, Tiers: []TierSpec{{Every: 60, BlockSize: 4}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer s.Close()
+	for i := 0; i < 1500; i++ {
+		id := fmt.Sprintf("series-%d", i)
+		for t := int64(1_000); t < 1_040; t++ {
+			s.Append(id, t, float64(t))
+		}
+	}
+	if err = s.Flush(); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// A clean Flush returns immediately. Touch one series so each
+		// iteration rewrites the checkpoint.
+		s.Append("series-0", 2_000+int64(i), float64(i))
+		if err = s.Flush(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
