@@ -1,5 +1,7 @@
 # Packaging
 
+Cloud VM install, health checks, Hub/Agent, and API-based AI model setup are in [docs/22-cloud-host.md](../docs/22-cloud-host.md). Release archives ship that file as `CLOUD-HOST.md`.
+
 `monitord.service` is a systemd unit for a static `monitord` binary installed at `/usr/bin/monitord`.
 
 ```
