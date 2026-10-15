@@ -1,277 +1,29 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
-import type { AgentVisual, ManageConfig, NodeConfigFull, NodeInfo } from '../api'
-import { ApiError, api } from '../api'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AgentConfigForm from './AgentConfigForm.vue'
-import { usePolling } from '../polling'
+import { useConfigurationFeedback } from '../features/configuration/useConfigurationFeedback'
+import { useLocalConfiguration } from '../features/configuration/useLocalConfiguration'
+import { nodeConfigurationText as nodeText, useNodeConfiguration } from '../features/configuration/useNodeConfiguration'
 
 const props = defineProps<{ canManage: boolean; isHub: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-
 const tab = ref<'local' | 'nodes'>('local')
-const busy = ref(false)
-const localLoading = ref(false)
-const localReloading = ref(false)
-const nodeReloading = ref(false)
-const nodeLoading = ref(false)
+const feedback = useConfigurationFeedback()
+const { busy, error, message } = feedback
+const {
+  local, draft: localDraft, editor: localEditor, form: localForm, formError,
+  conflict: localConflict, dirty: localDirty, loading: localLoading, reloading: localReloading,
+  switchEditor, reload: reloadLocal, save: saveLocal, rollback, restart,
+} = useLocalConfiguration(() => props.canManage, feedback)
+const {
+  nodes, nodesLoaded, nodeID, config: nodeCfg, draft: nodeDraft, conflict: nodeConflict,
+  dirty: nodeDirty, loading: nodeLoading, reloading: nodeReloading,
+  selectNode, reload: reloadNode, save: saveNode,
+} = useNodeConfiguration(() => tab.value === 'nodes' && props.isHub, () => props.canManage, feedback)
 const loading = computed(() => tab.value === 'local' ? localLoading.value : nodeLoading.value)
-const error = ref('')
-const message = ref('')
-let disposed = false
-let localRequest: AbortController | undefined
-let nodeRequest: AbortController | undefined
-let nodesRequest: AbortController | undefined
-const time = (t?: number) => (t ? new Date(t * 1000).toLocaleString() : '—')
+const time = (value?: number) => value ? new Date(value * 1000).toLocaleString() : '—'
 
-/** 提取 ApiError 携带的后端说明文字（JSON 的 error/message 字段或纯文本 body）。 */
-function detail(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e)
-  if (!(e instanceof ApiError)) return raw
-  const body = raw.replace(/^\S+: \d+ /, '')
-  try {
-    const parsed = JSON.parse(body) as { error?: unknown; message?: unknown }
-    const text = parsed?.error ?? parsed?.message
-    if (typeof text === 'string' && text) return text
-  } catch { /* 纯文本响应 */ }
-  return body || raw
-}
-
-function authError(e: unknown): boolean {
-  return e instanceof ApiError && [401, 403].includes(e.status)
-}
-
-/* ---------- 本机配置 ---------- */
-const local = shallowRef<ManageConfig | null>(null)
-const localBaseline = shallowRef<ManageConfig | null>(null)
-const localDraft = ref('')
-const localEditor = ref<'yaml' | 'form'>('yaml')
-const localForm = ref<AgentVisual | null>(null)
-const formError = ref('')
-let localBase = ''
-let localUpdated = 0
-let formSnapshot = ''
-let preferForm = true
-
-function formDirty() {
-  if (!localForm.value) return false
-  return JSON.stringify(localForm.value) !== formSnapshot
-}
-
-function localDirty() { return localDraft.value !== localBase || formDirty() }
-const localConflict = computed(() => !!local.value && !!localBaseline.value && (local.value.updated !== localBaseline.value.updated || local.value.yaml !== localBaseline.value.yaml))
-
-function applyLocal(cfg: ManageConfig, force = false) {
-  local.value = cfg
-  if (!force && localDirty()) return // Keep the revision paired with the draft.
-  localBaseline.value = cfg
-  localDraft.value = localBase = cfg.yaml
-  localUpdated = cfg.updated
-  formError.value = cfg.form_error || ''
-  const incoming = cfg.form ? structuredClone(toRaw(cfg.form)) : null
-  localForm.value = incoming
-  formSnapshot = incoming ? JSON.stringify(incoming) : ''
-
-  if (preferForm && incoming && !formError.value) {
-    localEditor.value = 'form'
-    preferForm = false
-  }
-}
-
-async function loadLocal(force = false) {
-  localRequest?.abort()
-  const request = localRequest = new AbortController()
-  localLoading.value = true
-  localReloading.value = force
-  try {
-    const cfg = await api.manageConfig(request.signal)
-    if (disposed || request.signal.aborted || localRequest !== request) return
-    applyLocal(cfg, force)
-  } catch (e) {
-    if (disposed || request.signal.aborted || localRequest !== request) return
-    error.value = authError(e) ? '没有管理权限或登录已失效，请重新登录。' : `读取本机配置失败：${detail(e)}`
-  } finally { if (localRequest === request) { localRequest = undefined; localLoading.value = false; localReloading.value = false } }
-}
-
-function switchEditor(editor: 'yaml' | 'form') {
-  if (editor === localEditor.value || busy.value || localReloading.value) return
-  if (localDirty()) {
-    if (!confirm('切换编辑方式将放弃未保存修改。请先保存或复制草稿，确定切换？')) return
-    if (local.value) applyLocal(local.value, true)
-  }
-  localEditor.value = editor
-}
-
-async function reloadLocal() {
-  if (localDirty() && !confirm('载入最新配置将放弃当前草稿。请先复制需要保留的内容，确定继续？')) return
-  error.value = ''; message.value = ''
-  await loadLocal(true)
-}
-
-async function saveLocal() {
-  if (!props.canManage || busy.value || localConflict.value || !local.value || local.value.writable === false) return
-  busy.value = true; error.value = ''; message.value = ''
-  try {
-    const next = localEditor.value === 'form' && localForm.value
-      ? await api.putManageForm(localForm.value, localUpdated)
-      : await api.putManageConfig(localDraft.value, localUpdated)
-    applyLocal(next, true)
-    message.value = '配置已保存并校验通过。重启服务后生效。'
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 409) {
-      await loadLocal()
-      error.value = '配置已在别处被修改，草稿已保留。请核对最新配置后重新编辑。'
-    } else if (e instanceof ApiError && e.status === 400) error.value = `配置无效，未保存：${detail(e)}`
-    else if (authError(e)) error.value = '没有管理权限或登录已失效，请重新登录。'
-    else error.value = String(e)
-  } finally { busy.value = false }
-}
-
-async function rollback() {
-  if (!props.canManage || busy.value || localReloading.value || !local.value?.backup) return
-  if (!confirm('恢复上一份已保存的配置？当前文件会变成新的备份。')) return
-  busy.value = true; error.value = ''; message.value = ''
-  try {
-    applyLocal(await api.rollbackManageConfig(), true)
-    message.value = '已恢复上一份配置。重启服务后生效。'
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) error.value = '没有可恢复的备份。'
-    else if (authError(e)) error.value = '没有管理权限或登录已失效，请重新登录。'
-    else error.value = String(e)
-  } finally { busy.value = false }
-}
-
-async function restart() {
-  if (!props.canManage || busy.value) return
-  if (!confirm('重启将短暂中断本机监控与 Web 服务（数秒），服务将自动重新启动。确定继续？')) return
-  busy.value = true; error.value = ''; message.value = ''
-  try {
-    await api.restartService()
-    message.value = '重启指令已发出，页面将在服务恢复后自动重连。'
-  } catch (e) {
-    error.value = authError(e) ? '没有管理权限或登录已失效，请重新登录。' : String(e)
-  } finally { busy.value = false }
-}
-
-/* ---------- 节点配置（仅 hub） ---------- */
-const nodes = ref<NodeInfo[]>([])
-const nodesLoaded = ref(false)
-const nodeID = ref('')
-const nodeCfg = shallowRef<NodeConfigFull | null>(null)
-const nodeBaseline = shallowRef<NodeConfigFull | null>(null)
-const nodeDraft = ref('')
-let nodeBase = ''
-let nodeUpdated = 0
-function nodeText(cfg: NodeConfigFull) { return cfg.yaml || cfg.reported || '' }
-function nodeDirty() { return nodeDraft.value !== nodeBase }
-const nodeConflict = computed(() => !!nodeCfg.value && !!nodeBaseline.value && ((nodeCfg.value.updated ?? 0) !== (nodeBaseline.value.updated ?? 0) || nodeText(nodeCfg.value) !== nodeText(nodeBaseline.value)))
-
-async function loadNodes() {
-  nodesRequest?.abort()
-  const request = nodesRequest = new AbortController()
-  try {
-    const r = await api.nodes(request.signal)
-    if (disposed || request.signal.aborted || nodesRequest !== request) return
-    nodes.value = r.nodes.filter((n) => !n.local)
-    if (nodeID.value && !nodes.value.some((n) => n.id === nodeID.value)) nodeID.value = ''
-    nodesLoaded.value = true
-  } catch (e) {
-    if (disposed || request.signal.aborted || nodesRequest !== request) return
-    error.value = authError(e) ? '没有管理权限或登录已失效，请重新登录。' : `读取节点列表失败：${detail(e)}`
-  } finally { if (nodesRequest === request) nodesRequest = undefined }
-}
-
-function applyNode(cfg: NodeConfigFull, force = false) {
-  nodeCfg.value = cfg
-  if (!force && nodeDirty()) return
-  nodeBaseline.value = cfg
-  nodeDraft.value = nodeBase = nodeText(cfg)
-  nodeUpdated = cfg.updated ?? 0
-}
-
-async function loadNode(force = false, signal?: AbortSignal) {
-  nodeRequest?.abort()
-  const id = nodeID.value
-  if (!id || tab.value !== 'nodes') { nodeRequest = undefined; nodeLoading.value = false; return }
-  const request = nodeRequest = new AbortController()
-  const abort = () => request.abort()
-  signal?.addEventListener('abort', abort, { once: true })
-  if (signal?.aborted) abort()
-  nodeLoading.value = true
-  nodeReloading.value = force
-  try {
-    const cfg = await api.nodeConfig(id, request.signal)
-    if (disposed || request.signal.aborted || nodeRequest !== request || nodeID.value !== id) return
-    applyNode(cfg, force)
-  } catch (e) {
-    if (disposed || request.signal.aborted || nodeRequest !== request || nodeID.value !== id) return
-    error.value = authError(e) ? '没有管理权限或登录已失效，请重新登录。' : `读取节点配置失败：${detail(e)}`
-  } finally {
-    signal?.removeEventListener('abort', abort)
-    if (nodeRequest === request) { nodeRequest = undefined; nodeLoading.value = false; nodeReloading.value = false }
-  }
-}
-
-async function reloadNode() {
-  if (nodeDirty() && !confirm('载入最新配置将放弃当前草稿。请先复制需要保留的内容，确定继续？')) return
-  error.value = ''; message.value = ''
-  await loadNode(true)
-}
-
-function selectNode(event: Event) {
-  const select = event.target as HTMLSelectElement
-  if (nodeDirty() && !confirm('切换节点将放弃当前节点的未保存修改，确定继续？')) { select.value = nodeID.value; return }
-  nodeID.value = select.value
-}
-
-watch(nodeID, () => {
-  nodeRequest?.abort()
-  nodeCfg.value = nodeBaseline.value = null
-  nodeDraft.value = nodeBase = ''
-  nodeUpdated = 0
-  error.value = ''; message.value = ''
-  void loadNode()
-})
-
-async function saveNode() {
-  if (!props.canManage || busy.value || nodeConflict.value || !nodeID.value || !nodeCfg.value) return
-  busy.value = true; error.value = ''; message.value = ''
-  nodeRequest?.abort()
-  nodeRequest = undefined
-  nodeLoading.value = false
-  nodeReloading.value = false
-  try {
-    const res = await api.putNodeConfig({ node_id: nodeID.value, yaml: nodeDraft.value, if_updated: nodeUpdated })
-    applyNode(res, true)
-    message.value = res.pushed && res.online
-      ? '已校验并推送给节点，等待 agent 应用（会自动重启重连）。'
-      : '已保存，节点上线后自动下发。'
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 409) {
-      await loadNode()
-      error.value = '配置已在别处被修改，草稿已保留。请核对最新配置后重新编辑。'
-    } else if (e instanceof ApiError && e.status === 400) error.value = `配置无效，未保存：${detail(e)}`
-    else if (authError(e)) error.value = '没有管理权限或登录已失效，请重新登录。'
-    else error.value = String(e)
-  } finally { busy.value = false }
-}
-
-watch(tab, (t) => {
-  error.value = ''; message.value = ''
-  nodeRequest?.abort(); nodesRequest?.abort()
-  nodeRequest = nodesRequest = undefined
-  nodeLoading.value = false
-  nodeReloading.value = false
-  if (t === 'nodes' && props.isHub) {
-    if (!nodesLoaded.value) void loadNodes()
-    if (nodeID.value) void loadNode()
-  }
-})
-
-usePolling(async (signal) => {
-  if (busy.value || nodeReloading.value || tab.value !== 'nodes' || !nodeID.value) return
-  await loadNode(false, signal)
-}, 10000)
-
+watch(tab, feedback.clear)
 function canLeave() {
   return !busy.value && (!(localDirty() || nodeDirty()) || confirm('仍有未保存的配置，关闭将丢弃草稿，确定继续？'))
 }
@@ -279,14 +31,10 @@ function close() { if (canLeave()) emit('close') }
 defineExpose({ requestClose: close, canLeave })
 
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (localDirty() || nodeDirty()) { event.preventDefault(); event.returnValue = '' }
+  if (busy.value || localDirty() || nodeDirty()) { event.preventDefault(); event.returnValue = '' }
 }
-onMounted(() => { void loadLocal(); window.addEventListener('beforeunload', beforeUnload) })
-onBeforeUnmount(() => {
-  disposed = true
-  localRequest?.abort(); nodeRequest?.abort(); nodesRequest?.abort()
-  window.removeEventListener('beforeunload', beforeUnload)
-})
+onMounted(() => window.addEventListener('beforeunload', beforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 </script>
 
 <template>

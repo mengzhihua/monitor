@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OperationsNode, ResourceMetric } from '../../api'
+import type { OperationsNode, ResourceMetric } from '../../api/operations/types'
 import AppIcon from '../../components/AppIcon.vue'
 
 defineProps<{ nodes: OperationsNode[]; total: number }>()

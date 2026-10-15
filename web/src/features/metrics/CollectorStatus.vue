@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Info } from '../../api'
+import type { Info } from '../../api/monitoring/types'
 const props = defineProps<{ info: Info }>()
 const issues = computed(() => props.info.collectors.filter(c => !c.enabled || c.error).length
   + (props.info.plugins || []).filter(p => p.state !== 'running' && p.state !== 'starting').length)

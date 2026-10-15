@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { NodeInfo } from '../../api'
+import type { NodeInfo } from '../../api/hub/types'
 defineProps<{ nodes: NodeInfo[]; canManage: boolean }>()
 const emit = defineEmits<{ pick: [id: string]; forget: [node: NodeInfo] }>()
 </script>

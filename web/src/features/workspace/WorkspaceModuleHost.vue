@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onErrorCaptured, ref, shallowRef, watch, type Component } from 'vue'
+import type { WorkspaceModuleHandle } from './contracts'
 
 defineOptions({ inheritAttrs: false })
 defineProps<{ component: Component }>()
-const child = shallowRef<{ canLeave?: () => boolean; showChart?: (id: string) => void } | null>(null)
+const child = shallowRef<WorkspaceModuleHandle | null>(null)
 const failed = ref(false)
 let disposed = false
 let pendingChart: string | null = null

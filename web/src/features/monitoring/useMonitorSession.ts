@@ -1,6 +1,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
-import type { Alarm, AlarmLogEntry, Chart, FunctionInfo, Info, NodeInfo } from '../../api'
-import { ApiError, api, auth, selection } from '../../api'
+import type { Alarm, AlarmLogEntry } from '../../api/alarms/types'
+import type { Chart, FunctionInfo, Info } from '../../api/monitoring/types'
+import type { NodeInfo } from '../../api/hub/types'
+import { ApiError } from '../../api/transport'
+import { auth } from '../../api/auth'
+import { selection } from '../../api/selection'
+import { monitoringApi } from '../../api/monitoring/client'
+import { alarmsApi } from '../../api/alarms/client'
+import { hubApi } from '../../api/hub/client'
 import { live } from '../../live'
 import { usePolling } from '../../polling'
 import { sharedRequest } from '../../sharedRequest'
@@ -76,7 +83,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
 
   const alarmSnapshotRead = sharedRequest(async signal => {
     const request = context()
-    try { return { result: await api.alarms(signal), request } }
+    try { return { result: await alarmsApi.alarms(signal), request } }
     catch (reason) { handleAuthenticationFailure(reason, request, signal); throw reason }
   }, ({ result, request }) => {
     if (isCurrent(request) && !needToken.value) alarms.value = Object.values(result.alarms)
@@ -85,7 +92,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
   const alarmLogRead = sharedRequest(async signal => {
     const request = context()
     const known = new Set(alarmLog.value.map(event => event.unique_id))
-    try { return { entries: await api.alarmLog(0, signal), known, request } }
+    try { return { entries: await alarmsApi.alarmLog(0, signal), known, request } }
     catch (reason) { handleAuthenticationFailure(reason, request, signal); throw reason }
   }, ({ entries, known, request }) => {
     if (!isCurrent(request) || needToken.value) return
@@ -119,7 +126,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
   async function refreshFunctions(signal: AbortSignal) {
     const request = context()
     try {
-      const result = await api.functions(signal)
+      const result = await monitoringApi.functions(signal)
       if (isCurrent(request, signal) && !needToken.value) functions.value = result
     } catch (reason) { handleAuthenticationFailure(reason, request, signal) }
   }
@@ -128,7 +135,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
     if (!isHub.value) return
     const request = context()
     try {
-      const result = await api.nodes(signal)
+      const result = await hubApi.nodes(signal)
       if (!isCurrent(request, signal)) return
       nodes.value = result.nodes
       if (selectedNode.value && !nodes.value.some(node => node.id === selectedNode.value)) await selectNode('')
@@ -138,7 +145,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
   async function load(signal: AbortSignal) {
     const request = context()
     try {
-      const [metadata, chartResponse] = await Promise.all([api.info(signal), api.charts(signal)])
+      const [metadata, chartResponse] = await Promise.all([monitoringApi.info(signal), monitoringApi.charts(signal)])
       if (!isCurrent(request, signal)) return
       info.value = metadata
       await refreshNodes(signal)
@@ -200,7 +207,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
     if (!confirm(`确定删除离线节点「${node.hostname}」吗？该节点的图表与历史数据将一并删除，且不可恢复。`)) return
     const request = context()
     try {
-      await api.forgetNode(node.id)
+      await hubApi.forgetNode(node.id)
       if (!isCurrent(request)) return
       error.value = ''
       await refreshNodes(new AbortController().signal)

@@ -1,4 +1,4 @@
-import type { Chart } from '../../api'
+import type { Chart } from '../../api/monitoring/types'
 
 /** One catalog owns discovery semantics; rendering and pagination use this same index. */
 export const metricDomains = [

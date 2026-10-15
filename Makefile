@@ -45,7 +45,7 @@ test:
 	python3 scripts/check-release-version.py
 	python3 scripts/package-server-release_test.py
 	cd core && go vet ./... && go test -race -p 1 ./...
-	cd web && npm run typecheck
+	cd web && npm run check:architecture && npm run typecheck
 
 lint:
 	cd core && test -z "$$(gofmt -l .)" && go vet ./...

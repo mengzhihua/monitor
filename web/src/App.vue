@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { api, auth, type Problem } from './api'
+import { auth } from './api/auth'
+import { configurationApi } from './api/configuration/client'
+import type { Problem } from './api/operations/types'
 import type { AIProblemSelection } from './ai'
 import { useMonitorSession } from './features/monitoring/useMonitorSession'
 import { modules, resolveWorkspace, type WorkspaceId } from './features/workspace/modules'
 import WorkspaceHeader from './features/workspace/WorkspaceHeader.vue'
 import WorkspaceModuleHost from './features/workspace/WorkspaceModuleHost.vue'
+import type { WorkspaceModuleHandle } from './features/workspace/contracts'
 import DashboardTools from './components/DashboardTools.vue'
 import AppIcon from './components/AppIcon.vue'
 
@@ -15,7 +18,7 @@ const alarmHistoryVisible = computed(() => workspace.value === 'alarms')
 const aiProblem = shallowRef<AIProblemSelection | null>(null)
 const toolsMenu = ref<InstanceType<typeof DashboardTools> | null>(null)
 const toolsOpen = ref(false)
-const moduleView = shallowRef<{ canLeave?: () => boolean; showChart?: (id: string) => void } | null>(null)
+const moduleView = shallowRef<WorkspaceModuleHandle | null>(null)
 const pendingChart = ref<string | null>(null)
 // An awaited node refresh must not take over a workspace chosen in the meantime.
 let navigationGeneration = 0
@@ -201,7 +204,7 @@ onBeforeUnmount(() => { media.removeEventListener('change', syncMobile); window.
         <h1>登录 Monitor</h1><p>请输入登录密码或访问令牌。</p><p>首次部署的密码保存在服务器数据目录的 web-password 文件中，请联系管理员获取。</p>
         <input v-model="tokenInput" type="password" placeholder="登录密码或访问令牌" aria-label="登录密码或访问令牌" autocomplete="current-password" required autofocus />
         <p v-if="loginError" role="alert">{{ loginError }}</p><button type="submit">进入</button>
-        <a v-if="oidcAvailable" class="oidc" :href="api.oidcLoginURL()">使用 OIDC 登录</a>
+        <a v-if="oidcAvailable" class="oidc" :href="configurationApi.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
       <template v-else-if="info">
         <div class="workspace-context"><span>{{ activeModule?.group || '工作区' }} / {{ activeModule?.label || workspace }}</span><span>{{ workspace === 'operations' || workspace === 'services' ? '全局视图' : currentNode?.hostname || info.host.hostname }}</span></div>

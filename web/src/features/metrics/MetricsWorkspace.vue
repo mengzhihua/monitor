@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import type { Chart, Info, NodeInfo } from '../../api'
+import type { Chart, Info } from '../../api/monitoring/types'
+import type { NodeInfo } from '../../api/hub/types'
 import MetricChart from '../../components/MetricChart.vue'
 import ChartTimeline from '../../components/ChartTimeline.vue'
 import DashboardsPanel from '../../components/DashboardsPanel.vue'

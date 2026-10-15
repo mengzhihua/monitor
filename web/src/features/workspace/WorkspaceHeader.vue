@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Info, NodeInfo } from '../../api'
+import type { Info } from '../../api/monitoring/types'
+import type { NodeInfo } from '../../api/hub/types'
 import AppIcon from '../../components/AppIcon.vue'
 const props = defineProps<{ info: Info | null; currentNode: NodeInfo | null; nodes: NodeInfo[]; node: string; connected: boolean; warning: number; critical: number; authenticated: boolean; mobile: boolean }>()
 const emit = defineEmits<{ node: [id: string]; alarms: []; logout: [] }>()

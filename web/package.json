@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node -e \"fs.rmSync('../core/internal/api/ui/dist/assets',{recursive:true,force:true})\" && vue-tsc -b && vite build",
+    "build": "npm run check:architecture && node -e \"fs.rmSync('../core/internal/api/ui/dist/assets',{recursive:true,force:true})\" && vue-tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "check:architecture": "node --test scripts/check-architecture.test.mjs && node scripts/check-architecture.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
