@@ -133,6 +133,22 @@ function nodeMark(n: NodeInfo): string {
 function nodeName(n: NodeInfo): string {
   return n.hostname + (n.local ? ' (hub)' : n.replica ? ' (replica)' : n.peer ? ' (peer)' : '')
 }
+// Short display form: keep the version core plus a 7-char commit hash; the
+// full string stays available on the element title.
+function shortVersion(v: string): string {
+  if (!v) return '—'
+  const plus = v.indexOf('+')
+  return plus > 0 ? v.slice(0, plus + 8) : v
+}
+function nodeVersion(n: NodeInfo): string {
+  return shortVersion(n.version)
+}
+const hubVersion = computed(() => nodes.value.find((n) => n.local)?.version ?? '')
+function versionMismatch(n: NodeInfo): boolean {
+  // Only plain agents are compared against the hub build; replica/peer nodes
+  // are other hubs and not expected to track this one.
+  return !!hubVersion.value && !n.local && !n.replica && !n.peer && !!n.version && n.version !== hubVersion.value
+}
 function toggleNodeMenu() { nodeMenuOpen.value = !nodeMenuOpen.value }
 function closeNodeMenu() { nodeMenuOpen.value = false }
 function pickNode(id: string) { closeNodeMenu(); void selectNode(id) }
@@ -472,8 +488,8 @@ onBeforeUnmount(() => {
   <header>
     <div class="brand">
       <span class="logo">◉</span> Monitor
-      <span v-if="info && !currentNode" class="host" :title="info.host.hostname">{{ info.host.hostname }} · {{ info.host.os }}/{{ info.host.arch }}</span>
-      <span v-else-if="currentNode" class="host" :title="currentNode.hostname">{{ currentNode.hostname }} · {{ currentNode.os }}/{{ currentNode.arch }}
+      <span v-if="info && !currentNode" class="host" :title="info.host.hostname + ' · ' + info.version">{{ info.host.hostname }} · {{ info.host.os }}/{{ info.host.arch }} · v{{ shortVersion(info.version) }}</span>
+      <span v-else-if="currentNode" class="host" :title="currentNode.hostname + ' · ' + currentNode.version">{{ currentNode.hostname }} · {{ currentNode.os }}/{{ currentNode.arch }} · v{{ nodeVersion(currentNode) }}
         <i :class="['node-status', currentNode.status]">{{ currentNode.status }}</i></span>
     </div>
     <div class="meta" v-if="info">
@@ -486,6 +502,8 @@ onBeforeUnmount(() => {
             :class="{ sel: n.id === selectedNode, live: n.status === 'live', stale: n.status === 'stale', offline: n.status === 'offline' }"
             @click="pickNode(n.id)">
             {{ nodeMark(n) }}{{ nodeName(n) }}
+            <span :class="['node-ver', { mismatch: versionMismatch(n) }]"
+              :title="versionMismatch(n) ? `与 hub 版本不一致（hub: ${hubVersion}）；${n.version}` : n.version">{{ nodeVersion(n) }}</span>
           </button>
         </div>
       </div>
@@ -631,6 +649,8 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; pa
 .node-item { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 5px 10px; font-size: 13px; color: #cbd5e1; cursor: pointer; white-space: nowrap; }
 .node-item:hover { background: #1e293b; }
 .node-item.sel { background: #1e293b; color: #e2e8f0; }
+.node-ver { color: #64748b; font-size: 11px; margin-left: 6px; }
+.node-ver.mismatch { color: #f59e0b; }
 .nodes-count { color: #cbd5e1; }
 .node-notice { color: #fcd34d; font-size: 13px; overflow-wrap: anywhere; }
 .node-status { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #1e293b; }
