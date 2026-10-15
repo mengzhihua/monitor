@@ -6,8 +6,11 @@ import type { OperationsView, OperationsViews } from '../api'
 const props = defineProps<{ filters: Omit<OperationsView, 'name'> }>()
 const emit = defineEmits<{ apply: [view: OperationsView] }>()
 const collection = ref<OperationsViews | null>(null)
-const name = ref('')
+const name = defineModel<string>('draftName', { default: '' })
+const managing = ref(false)
 const busy = ref(false)
+const saving = ref(false)
+defineExpose({ isSaving: () => saving.value })
 const message = ref('')
 const error = ref('')
 const loaded = ref(false)
@@ -60,7 +63,7 @@ onMounted(refresh)
 
 async function replace(views: OperationsView[], success: string) {
   if (busy.value || !loaded.value || !collection.value?.enabled) return false
-  busy.value = true; error.value = ''; message.value = ''
+  busy.value = true; saving.value = true; error.value = ''; message.value = ''
   try {
     const next = await api.saveOperationsViews(collection.value.revision, views)
     if (disposed) return false
@@ -74,7 +77,7 @@ async function replace(views: OperationsView[], success: string) {
       if (!disposed && refreshed) error.value = '其他页面已修改视图，已读取最新列表。名称和筛选草稿已保留，请核对后再次保存或删除。'
     } else error.value = failure(e)
     return false
-  } finally { if (!disposed) busy.value = false }
+  } finally { if (!disposed) { busy.value = false; saving.value = false } }
 }
 async function save() {
   const trimmed = name.value.trim()
@@ -99,21 +102,24 @@ async function importView(view: OperationsView) {
   <section class="personal-views" aria-label="个人视图">
     <div class="row">
       <strong>个人视图 <small v-if="collection?.enabled">{{ collection.user.name || '当前账号' }} · {{ collection.views.length }}/{{ collection.limit }}</small></strong>
-      <button :disabled="busy" @click="refresh">刷新视图</button>
+      <div v-if="collection?.views.length" class="saved-views" aria-label="已保存的视图">
+        <span v-for="view in collection.views" :key="view.name" class="view">
+          <button @click="emit('apply', view)">{{ view.name }}</button>
+          <button :aria-label="'删除视图 ' + view.name" :disabled="busy || !loaded" @click="remove(view)">×</button>
+        </span>
+      </div>
+      <button class="manage" :aria-expanded="managing" aria-controls="operations-view-manager" @click="managing = !managing">管理个人视图</button>
     </div>
-    <p class="hint" v-if="collection?.enabled">保存当前搜索与筛选条件。同名保存会更新已有视图；跨设备使用需连接同一服务并登录同一账号。</p>
-    <p class="hint" v-else-if="collection">匿名访问和临时分享链接不支持个人视图，请使用账号登录。已有浏览器视图仍可应用。</p>
+    <div v-if="managing" id="operations-view-manager" class="view-manager">
+      <p class="hint" v-if="collection?.enabled">保存当前搜索与筛选条件。同名保存会更新已有视图；跨设备使用需连接同一服务并登录同一账号。</p>
+      <p class="hint" v-else-if="collection">匿名访问和临时分享链接不支持个人视图，请使用账号登录。已有浏览器视图仍可应用。</p>
+      <form v-if="collection?.enabled" class="row" @submit.prevent="save">
+        <input v-model="name" placeholder="视图名称" aria-label="视图名称" maxlength="40" />
+        <button type="submit" :disabled="busy || !loaded || !name.trim()">保存视图</button>
+      </form>
+      <button :disabled="busy" class="refresh" @click="refresh">刷新视图</button>
+    </div>
     <p v-if="collection?.enabled && !collection.persistent" class="error">服务端未启用持久化，视图会在重启后丢失。</p>
-    <form v-if="collection?.enabled" class="row" @submit.prevent="save">
-      <input v-model="name" placeholder="视图名称" aria-label="视图名称" maxlength="40" />
-      <button type="submit" :disabled="busy || !loaded || !name.trim()">保存视图</button>
-    </form>
-    <div class="saved-views">
-      <span v-for="view in collection?.views || []" :key="view.name" class="view">
-        <button @click="emit('apply', view)">{{ view.name }}</button>
-        <button :aria-label="'删除视图 ' + view.name" :disabled="busy || !loaded" @click="remove(view)">×</button>
-      </span>
-    </div>
     <p v-if="busy" role="status">正在同步视图…</p>
     <p v-if="message" role="status">{{ message }}</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
@@ -131,12 +137,12 @@ async function importView(view: OperationsView) {
 </template>
 
 <style scoped>
-.personal-views { background:#0c1526; border:1px solid #23334b; border-radius:10px; padding:14px; margin:10px 0 22px; }
+.personal-views { background:#0c1526; border:1px solid #23334b; border-radius:10px; padding:10px 14px; margin:10px 0 18px; font-size:13px; }
 .row,.saved-views,.view { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.row:first-child { justify-content:space-between; }
+.manage { margin-left:auto; }.view-manager { border-top:1px solid #23334b; margin-top:10px; padding-top:2px; }.refresh { margin-top:10px; }
 small,.hint { color:#9cacbf; font-size:12px; font-weight:normal; }
 .hint { line-height:1.6; }
-.saved-views { margin-top:10px; }
+.legacy-views .saved-views { margin-top:10px; }
 .view { gap:2px; max-width:100%; }
 button,input { background:#111d30; color:#dce6f2; border:1px solid #35455c; border-radius:6px; padding:7px 10px; font:inherit; max-width:100%; }
 button { cursor:pointer; overflow-wrap:anywhere; }

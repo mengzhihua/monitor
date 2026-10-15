@@ -10,7 +10,7 @@ async function visibility(page: Page, hidden: boolean) {
   }, hidden)
 }
 
-test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async ({ page }) => {
+test('paging 100 charts bounds mounted cards and destroys old page canvases', async ({ page }) => {
   const charts = Object.fromEntries(Array.from({ length: 100 }, (_, i) => {
     const id = `test.chart${i}`
     return [id, { id, title: id, context: 'test', family: 'test', units: 'value', chart_type: 'line',
@@ -22,22 +22,18 @@ test('scrolling 100 charts bounds canvases and rebuilds evicted charts', async (
   } }))
   await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
-  await expect(cards).toHaveCount(100)
+  await expect(cards).toHaveCount(12)
   await expect(cards.first().locator('canvas')).toBeVisible()
   const firstCanvas = await cards.first().locator('canvas').elementHandle()
-  for (let i = 0; i < 100; i += 4) {
-    await cards.nth(i).scrollIntoViewIfNeeded()
-    await expect(cards.nth(i).locator('canvas')).toBeVisible()
+  for (let i = 1; i < 9; i++) {
+    await page.getByRole('button', { name: '下一页指标', exact: true }).click()
+    await expect(cards).toHaveCount(i === 8 ? 4 : 12)
+    await expect(cards.first().locator('canvas')).toBeVisible()
   }
-  // The cache holds eight offscreen plots; visible plots depend on card height,
-  // responsive columns and the chart observer's 300px prefetch margin.
-  await expect.poll(() => cards.evaluateAll(elements => elements.filter(card => {
-    const rect = card.getBoundingClientRect()
-    return card.querySelector('canvas') && (rect.bottom < -300 || rect.top > innerHeight + 300)
-  }).length)).toBeLessThanOrEqual(8)
-  await expect(cards.first().locator('canvas')).toHaveCount(0)
   expect(await firstCanvas!.evaluate(canvas => canvas.isConnected)).toBe(false)
-  await cards.first().scrollIntoViewIfNeeded()
+  await expect(page.getByRole('button', { name: '下一页指标', exact: true })).toBeDisabled()
+  await page.getByPlaceholder('筛选图表…').fill('test.chart0')
+  await expect(cards).toHaveCount(1)
   await expect(cards.first().locator('canvas')).toBeVisible()
   expect(await page.evaluate(canvas => canvas === document.querySelector('.card canvas'), firstCanvas)).toBe(false)
 })

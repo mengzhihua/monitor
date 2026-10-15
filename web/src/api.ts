@@ -270,13 +270,22 @@ const TOKEN_KEY = 'monitor.token'
  * `/?token=...` (then removed from the URL so it is not kept in history) or
  * entered in the UI; kept in sessionStorage and sent as a Bearer header.
  */
+let memoryToken = ''
+let memoryOnly = false
 export const auth = {
   get token(): string {
-    return sessionStorage.getItem(TOKEN_KEY) ?? ''
+    if (!memoryOnly) {
+      try { memoryToken = sessionStorage.getItem(TOKEN_KEY) ?? '' }
+      catch { memoryOnly = true }
+    }
+    return memoryToken
   },
   set token(t: string) {
-    if (t) sessionStorage.setItem(TOKEN_KEY, t)
-    else sessionStorage.removeItem(TOKEN_KEY)
+    memoryToken = t
+    try {
+      if (t) sessionStorage.setItem(TOKEN_KEY, t)
+      else sessionStorage.removeItem(TOKEN_KEY)
+    } catch { memoryOnly = true }
   },
   /** Import `?token=` from the page URL and scrub it from the address bar. */
   fromURL() {
@@ -285,7 +294,7 @@ export const auth = {
     if (t === null) return
     this.token = t
     u.searchParams.delete('token')
-    history.replaceState(null, '', u.pathname + u.search + u.hash)
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash)
   },
 }
 

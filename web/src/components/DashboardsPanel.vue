@@ -168,7 +168,7 @@ const board = computed(() => allBoards.value.find(b => b.id === selected.value) 
 const groups = computed(() => board.value.groups.map(group => {
   const matched = matchesByGroup.value.get(group.id) ?? []
   const query = props.filter.trim().toLowerCase()
-  const filtered = matched.filter(c => !query || `${c.id} ${c.title} ${c.family}`.toLowerCase().includes(query))
+  const filtered = matched.filter(c => !query || [c.id, c.title, c.family, c.context, ...Object.entries(c.labels || {}).flat()].join(' ').toLowerCase().includes(query))
   return { ...group, matched, filtered, visible: expanded.value.includes(group.id) ? filtered : filtered.slice(0, limit.value) }
 }))
 const visibleGroups = computed(() => groups.value.filter(g => !settings.value?.hideEmpty || g.matched.length))

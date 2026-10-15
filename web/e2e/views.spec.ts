@@ -1,3 +1,4 @@
+import { openOperationsFilters } from './operations-navigation'
 import { expect, test } from '@playwright/test'
 import type { OperationsView } from '../src/api'
 
@@ -15,11 +16,17 @@ test('personal views sync to a fresh browser, stay private and detect concurrent
   await page.goto('/?token=' + token)
   const panel = page.getByRole('region', { name: '个人视图' })
   await page.getByLabel('搜索主机或问题').fill(view.query)
+  await openOperationsFilters(page)
   await page.getByLabel('节点状态', { exact: true }).selectOption(view.nodeStatus)
   await page.getByLabel('问题级别', { exact: true }).selectOption(view.severity)
+  await openOperationsFilters(page)
   await page.getByLabel('责任人筛选', { exact: true }).selectOption(view.ownerFilter)
+  await openOperationsFilters(page)
   await page.getByLabel('处理进度筛选', { exact: true }).selectOption(view.progressFilter)
+  await openOperationsFilters(page)
   await page.getByLabel('只看待确认', { exact: true }).check()
+  await expect(panel.getByLabel('视图名称', { exact: true })).toHaveCount(0)
+  await panel.getByRole('button', { name: '管理个人视图', exact: true }).click()
   await panel.getByLabel('视图名称', { exact: true }).fill(view.name)
   await panel.getByRole('button', { name: '保存视图', exact: true }).click()
   await expect(panel).toContainText('视图已保存到当前账号')
@@ -28,6 +35,7 @@ test('personal views sync to a fresh browser, stay private and detect concurrent
     const second = await ctx.newPage()
     await second.goto('/?token=' + token)
     expect(await second.evaluate(() => localStorage.getItem('monitor.operations.views.v1'))).toBeNull()
+    await expect(second.getByRole('button', { name: '管理个人视图', exact: true })).toHaveAttribute('aria-expanded', 'false')
     await second.getByRole('button', { name: view.name, exact: true }).click()
     await expect(second.getByLabel('搜索主机或问题')).toHaveValue(view.query)
     await expect(second.getByLabel('节点状态', { exact: true })).toHaveValue(view.nodeStatus)
@@ -76,6 +84,7 @@ test('browser views import explicitly, retain originals and never overwrite a na
 test('view storage failures preserve drafts and expired login clears private views', async ({ page }) => {
   await page.goto('/?token=' + token)
   const panel = page.getByRole('region', { name: '个人视图' })
+  await panel.getByRole('button', { name: '管理个人视图', exact: true }).click()
   await panel.getByLabel('视图名称', { exact: true }).fill('连接恢复后保存')
   await page.route('**' + path, route => route.request().method() === 'POST'
     ? route.fulfill({ status: 503, body: 'storage unavailable' }) : route.continue())

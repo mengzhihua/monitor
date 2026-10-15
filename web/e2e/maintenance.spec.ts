@@ -27,6 +27,7 @@ test.afterEach(async ({ request }) => {
 
 test('maintenance plans preview exact scope, survive reload, schedule future work and enforce read-only roles', async ({ page, request }, info) => {
   await page.goto('/?token=browser-test-token')
+  await page.getByRole('tab', { name: '维护计划', exact: true }).click()
   const title = `e2e-active-${info.project.name}`
   const panel = await form(page, title)
   await expect(panel.getByRole('region', { name: '维护计划预览' })).toContainText('system.ram · browser_ram_notice')
@@ -38,6 +39,10 @@ test('maintenance plans preview exact scope, survive reload, schedule future wor
   expect(plan.created_by).toBe('admin')
   expect(plan.state).toBe('active')
   expect(plan.scope).toBe('alarm')
+  // A committed plan must no longer trigger the unsaved-draft leave guard.
+  await page.getByRole('tab', { name: '问题中心', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '问题中心', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: '维护计划', exact: true }).click()
   await page.reload()
   const card = panel.locator(`[data-maintenance-id="${plan.id}"]`)
   await expect(card).toContainText('维护中')
@@ -69,6 +74,7 @@ test('maintenance plans preview exact scope, survive reload, schedule future wor
   const bounds = await panel.boundingBox()
   await page.screenshot({ path: info.outputPath('maintenance-plans.png'), fullPage: true, clip: bounds! })
   await page.goto('/?token=browser-viewer-token')
+  await page.getByRole('tab', { name: '维护计划', exact: true }).click()
   await expect(panel).toContainText('当前账号可查看')
   await expect(panel.locator('summary')).toHaveCount(0)
   await expect(panel.getByRole('button', { name: /^取消维护 / })).toHaveCount(0)
@@ -80,6 +86,7 @@ test('maintenance plans preview exact scope, survive reload, schedule future wor
 
 test('maintenance changes freeze the preview revision and require explicit review after conflict', async ({ page, request }, info) => {
   await page.goto('/?token=browser-test-token')
+  await page.getByRole('tab', { name: '维护计划', exact: true }).click()
   const title = `e2e-conflict-${info.project.name}`
   const panel = await form(page, title)
   let data = await snapshot(request)
@@ -104,6 +111,7 @@ test('maintenance changes freeze the preview revision and require explicit revie
 
 test('maintenance storage and ambiguous network failures never claim success or automatically retry', async ({ page, request }, info) => {
   await page.goto('/?token=browser-test-token')
+  await page.getByRole('tab', { name: '维护计划', exact: true }).click()
   const title = `e2e-error-${info.project.name}`
   const panel = await form(page, title)
   await page.route('**' + path, route => route.request().method() === 'POST' ? route.fulfill({ status: 503, body: 'storage unavailable' }) : route.continue())

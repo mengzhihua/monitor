@@ -198,7 +198,7 @@ function addItem(list: string[], input: HTMLInputElement) {
 </template>
 
 <style scoped>
-.block { border: 1px solid #1e293b; border-radius: 8px; margin: 0 0 10px; padding: 8px 10px; }
+.block { border: 1px solid #1e293b; border-radius: 8px; margin: 0 0 10px; padding: 8px 10px; min-inline-size:0; }
 legend { color: #94a3b8; padding: 0 4px; }
 label { display: flex; gap: 8px; align-items: center; color: #94a3b8; margin: 6px 0; }
 .check { color: #e2e8f0; }
@@ -213,4 +213,12 @@ button { cursor: pointer; background: #1e293b; }
 table { width: 100%; border-collapse: collapse; margin: 6px 0; }
 td, th { text-align: left; padding: 4px; border-bottom: 1px solid #1e293b; }
 fieldset:disabled { opacity: .6; }
+@media(max-width:760px) {
+  label:not(.check) { flex-direction:column; align-items:stretch; gap:5px; }
+  input:not([type=checkbox]),select { width:100%; min-width:0; max-width:100%; }
+  .target label { flex:1 1 100%; }.chips { overflow-wrap:anywhere; }.chips input { min-width:0; flex-basis:100%; }
+  table,tbody { display:block; width:100%; } thead { display:none; }
+  tr { display:grid; grid-template-columns:minmax(0,1fr); gap:4px; padding:10px 0; border-bottom:1px solid #334155; }
+  td { min-width:0; border:0; padding:2px 0; } td .chips { margin:0; }
+}
 </style>

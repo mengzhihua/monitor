@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 
-type Tool = { id: string; label: string; title: string; description: string; active: boolean }
+type Tool = { id: string; label: string; title: string; description: string; active: boolean; group?: string }
 const props = defineProps<{ mobile: boolean; tools: Tool[] }>()
+const groups = computed(() => [...new Set(props.tools.map(tool => tool.group || '功能'))].map(name => ({ name, tools: props.tools.filter(tool => (tool.group || '功能') === name) })))
 const emit = defineEmits<{ select: [id: string]; visibility: [open: boolean] }>()
 const sheet = ref<HTMLDialogElement>()
 let previousOverflow: string | undefined
@@ -34,25 +35,33 @@ defineExpose({ open, close })
 
 <template>
   <div v-if="!mobile" class="desktop-tools">
-    <button v-for="tool in tools" :key="tool.id" class="tool-button" :class="{ active: tool.active }"
-      :title="tool.title" @click="emit('select', tool.id)"><AppIcon :name="tool.id" :size="14" />{{ tool.label }}</button>
+    <div v-for="group in groups" :key="group.name" class="tool-group">
+      <p class="group-title">{{ group.name }}</p>
+      <button v-for="tool in group.tools" :key="tool.id" class="tool-button" :class="{ active: tool.active }" :aria-current="tool.active ? 'page' : undefined"
+        :title="tool.title" @click="emit('select', tool.id)"><AppIcon :name="tool.id" :size="17" />{{ tool.label }}</button>
+    </div>
   </div>
   <dialog v-else ref="sheet" class="tools-sheet" aria-label="更多功能" @close="closed" @click="event => { if (event.target === sheet) close() }">
     <div class="sheet-body">
       <div class="sheet-heading"><div><small>MONITOR</small><h2>更多功能</h2></div><button class="close" autofocus @click="close" aria-label="关闭更多功能"><AppIcon name="close" :size="16" />关闭</button></div>
+      <section v-for="group in groups" :key="group.name" class="tool-group">
+      <h3 class="group-title">{{ group.name }}</h3>
       <div class="tool-grid">
-        <button v-for="tool in tools" :key="tool.id" :title="tool.title" :aria-label="tool.label" :class="{ active: tool.active }"
+        <button v-for="tool in group.tools" :key="tool.id" :title="tool.title" :aria-label="tool.label" :class="{ active: tool.active }"
           @click="select(tool.id)"><span class="tool-icon" :class="'icon-' + tool.id"><AppIcon :name="tool.id" :size="22" /></span><strong>{{ tool.label }}</strong><span class="tool-description">{{ tool.description }}</span></button>
       </div>
+      </section>
       <details class="homescreen"><summary>添加到手机主屏幕</summary><p>iPhone / iPad：在 Safari 的共享菜单选择“添加到主屏幕”。Android：在浏览器菜单选择“添加到主屏幕”或“安装应用”（以浏览器提供的选项为准）。</p><p>从主屏幕重新打开时可能需要再次登录。查看实时数据需要连接服务器。</p></details>
     </div>
   </dialog>
 </template>
 
 <style scoped>
-.desktop-tools { display:contents; }
-.tool-button { display:inline-flex; align-items:center; gap:5px; background:#1e293b; color:#94a3b8; border:1px solid #334155; border-radius:12px; padding:2px 8px; font-size:12px; cursor:pointer; }
-.active { outline:1px solid #5eead4; }
+.desktop-tools { display:flex; flex-direction:column; gap:18px; }
+.group-title { color:#64748b; font-size:11px; font-weight:600; margin:0 0 8px; padding:0 10px; letter-spacing:.08em; }
+.tool-button { display:flex; width:100%; align-items:center; gap:10px; background:transparent; color:#94a3b8; border:1px solid transparent; border-radius:8px; padding:9px 10px; font-size:13px; cursor:pointer; text-align:left; }
+.tool-button:hover { background:#172337; color:#e2e8f0; }.active { background:#123333; color:#5eead4; border-color:#1e5451; }
+.tools-sheet .tool-group + .tool-group { margin-top:20px; }
 .tools-sheet { padding:0; color:#e2e8f0; background:#0b1526; border:1px solid #334155; border-radius:20px 20px 0 0; margin:auto auto 0; width:100%; max-width:600px; max-height:calc(100dvh - env(safe-area-inset-top) - 16px); }
 .tools-sheet::backdrop { background:#020617ba; }
 .sheet-body { padding:20px max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }

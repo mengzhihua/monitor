@@ -272,12 +272,11 @@ usePolling(async (signal) => {
   await loadNode(false, signal)
 }, 10000)
 
-function close() {
-  if (busy.value) return
-  if ((localDirty() || nodeDirty()) && !confirm('仍有未保存的配置，关闭将丢弃草稿，确定继续？')) return
-  emit('close')
+function canLeave() {
+  return !busy.value && (!(localDirty() || nodeDirty()) || confirm('仍有未保存的配置，关闭将丢弃草稿，确定继续？'))
 }
-defineExpose({ requestClose: close })
+function close() { if (canLeave()) emit('close') }
+defineExpose({ requestClose: close, canLeave })
 
 function beforeUnload(event: BeforeUnloadEvent) {
   if (localDirty() || nodeDirty()) { event.preventDefault(); event.returnValue = '' }
@@ -366,7 +365,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .conflict { border:1px solid #a16207; padding:8px; margin:8px 0; border-radius:6px; }
 .conflict pre { max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
-.config-panel { background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px 14px; margin-bottom:14px; color:#cbd5e1; font-size:13px; }
+.config-panel { background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px 14px; margin-bottom:14px; color:#cbd5e1; font-size:13px; min-width:0; overflow-wrap:anywhere; }
 .head { display:flex; justify-content:space-between; align-items:center; }
 h3 { margin:0; font-size:13px; color:#cbd5e1; text-transform:uppercase; letter-spacing:.05em; }
 h3 small { color:#64748b; font-weight:400; margin-left:6px; text-transform:none; }

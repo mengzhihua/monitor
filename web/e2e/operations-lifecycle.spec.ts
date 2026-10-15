@@ -1,3 +1,4 @@
+import { openOperationsExports } from './operations-navigation'
 import { workspace } from './mobile-navigation'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
@@ -36,7 +37,9 @@ async function fixture(page: Page, overview: (route: Route, url: URL) => Promise
     return route.continue()
   })
   await page.goto('/?token=browser-test-token')
+  await openOperationsExports(page)
   await expect(page.getByRole('button', { name: '导出当前快照', exact: true })).toBeEnabled()
+  await page.getByRole('tab', { name: '主机资源', exact: true }).click()
   return errors
 }
 
@@ -63,6 +66,7 @@ test('snapshot export uses its own response time and records while overview refr
     } else await route.fulfill({ json: snapshot(++overviewReads * 100, overviewReads === 1 ? 'baseline' : 'new-overview') })
   })
   const downloaded = page.waitForEvent('download')
+  await openOperationsExports(page)
   await page.getByRole('button', { name: '导出当前快照', exact: true }).click()
   await expect.poll(() => exports).toBe(1)
   await expect(page.getByRole('button', { name: '正在导出…', exact: true })).toBeDisabled()
@@ -96,6 +100,7 @@ for (const change of ['filter', 'workspace', 'authentication']) {
       } else if (rejectOverview) await route.fulfill({ status: 401, body: 'expired' })
       else await route.fulfill({ json: snapshot(200, url.searchParams.get('q') || 'baseline') })
     })
+    await openOperationsExports(page)
     await page.getByRole('button', { name: '导出当前快照', exact: true }).click()
     await expect.poll(() => exportStarted).toBe(true)
     const aborted = page.waitForEvent('requestfailed', request => isExport(request.url()))
@@ -126,6 +131,7 @@ for (const status of [401, 503]) {
       if (url.searchParams.get('limit') === '200') await route.fulfill({ status, body: 'export failed' })
       else await route.fulfill({ json: snapshot() })
     })
+    await openOperationsExports(page)
     await page.getByRole('button', { name: '导出当前快照', exact: true }).click()
     await expect(page.getByRole('alert').filter({ hasText: '本次未生成文件' })).toBeVisible()
     expect(downloads).toBe(0)

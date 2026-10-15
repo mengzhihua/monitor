@@ -6,6 +6,7 @@ const headers = { Authorization: 'Bearer browser-test-token' }
 
 test('history searches beyond the latest 100 episodes with independent filters and retention labels', async ({ page }, info) => {
   await page.goto('/?token=browser-viewer-token')
+  await page.getByRole('tab', { name: '处理历史', exact: true }).click()
   const history = page.getByRole('region', { name: '处理记录查询' })
   await history.getByLabel('历史关键词').fill('history_case_')
   await history.getByRole('button', { name: '查询历史', exact: true }).click()
@@ -35,6 +36,7 @@ test('history searches beyond the latest 100 episodes with independent filters a
 
 test('history exports all matching rows and rejects a changed snapshot before download', async ({ page, request }) => {
   await page.goto('/?token=browser-viewer-token')
+  await page.getByRole('tab', { name: '处理历史', exact: true }).click()
   const history = page.getByRole('region', { name: '处理记录查询' })
   await history.getByLabel('历史关键词').fill('history_case_')
   await history.getByRole('button', { name: '查询历史', exact: true }).click()

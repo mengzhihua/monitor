@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { openTools } from './mobile-navigation'
 
 const chartList = Object.fromEntries(['system.cpu'].map(id => [id, {
   id, title: id, context: id, family: 'test', units: '%', chart_type: 'line', priority: 1, update_every: 1,
@@ -35,6 +36,8 @@ async function hubFixture(page: Page, deleteStatus = 204) {
 test('node cards offer deletion only for offline remote nodes', async ({ page }) => {
   await hubFixture(page)
   await page.goto('/?view=charts&token=browser-test-token')
+  await openTools(page)
+  await page.getByTitle('节点管理', { exact: true }).click()
   const cards = page.locator('.node-card')
   await expect(cards).toHaveCount(3)
   await expect(cards.filter({ hasText: 'Gone agent' }).getByRole('button', { name: '删除节点' })).toBeVisible()
@@ -45,6 +48,8 @@ test('node cards offer deletion only for offline remote nodes', async ({ page })
 test('forgetting an offline node confirms, sends DELETE and drops the card', async ({ page }) => {
   const { deleted } = await hubFixture(page)
   await page.goto('/?view=charts&token=browser-test-token')
+  await openTools(page)
+  await page.getByTitle('节点管理', { exact: true }).click()
   const messages: string[] = []
   page.on('dialog', async dialog => { messages.push(dialog.message()); await dialog.accept() })
   await page.locator('.node-card').filter({ hasText: 'Gone agent' }).getByRole('button', { name: '删除节点' }).click()
@@ -57,6 +62,8 @@ test('forgetting an offline node confirms, sends DELETE and drops the card', asy
 test('cancelling the confirmation sends no DELETE', async ({ page }) => {
   const { deleted } = await hubFixture(page)
   await page.goto('/?view=charts&token=browser-test-token')
+  await openTools(page)
+  await page.getByTitle('节点管理', { exact: true }).click()
   page.on('dialog', dialog => dialog.dismiss())
   await page.locator('.node-card').filter({ hasText: 'Gone agent' }).getByRole('button', { name: '删除节点' }).click()
   await expect(page.locator('.node-card')).toHaveCount(3)
@@ -66,8 +73,31 @@ test('cancelling the confirmation sends no DELETE', async ({ page }) => {
 test('a rejected delete surfaces the hub error in the banner', async ({ page }) => {
   await hubFixture(page, 409)
   await page.goto('/?view=charts&token=browser-test-token')
+  await openTools(page)
+  await page.getByTitle('节点管理', { exact: true }).click()
   page.on('dialog', dialog => dialog.accept())
   await page.locator('.node-card').filter({ hasText: 'Gone agent' }).getByRole('button', { name: '删除节点' }).click()
   await expect(page.locator('.banner').first()).toContainText(/删除节点失败/)
   await expect(page.locator('.node-card')).toHaveCount(3)
+})
+
+
+test('node selector retains per-node versions and highlights agent build differences', async ({ page }) => {
+  await hubFixture(page)
+  nodes[0]!.version = '3.0.17+123456789abc'
+  nodes[1]!.version = '3.0.16+abcdef012345'
+  nodes[2]!.version = '3.0.15+fedcba987654'
+  nodes[2]!.peer = true
+  await page.goto('/?view=charts&token=browser-test-token')
+  await page.getByTitle('节点', { exact: true }).click()
+  const menu = page.getByRole('listbox', { name: '节点', exact: true })
+  const liveNode = menu.getByRole('option').filter({ hasText: 'Live agent' })
+  await expect(liveNode.locator('.node-version')).toHaveText('3.0.16+abcdef0')
+  await expect(liveNode.locator('.node-version')).toHaveClass(/mismatch/)
+  await expect(liveNode.locator('.node-version')).toHaveAttribute('title', /hub: 3.0.17/)
+  await expect(menu.getByRole('option').filter({ hasText: 'Gone agent' }).locator('.node-version')).not.toHaveClass(/mismatch/)
+  await liveNode.click()
+  await expect(page.locator('.node-select-btn .node-version')).toHaveText('3.0.16+abcdef0')
+  await expect(page.locator('.node-select-btn .node-version')).toHaveAttribute('title', '3.0.16+abcdef012345')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })

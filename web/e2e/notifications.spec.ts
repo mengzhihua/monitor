@@ -16,6 +16,7 @@ test('notification diagnostics shows real local channel outcomes and filters on 
   expect(data.scope).toBe('local')
   expect(data.hostname).toBe('browser-test')
   await page.goto('/?token=' + token)
+  await page.getByRole('tab', { name: '通知诊断', exact: true }).click()
   const panel = page.getByRole('region', { name: '通知诊断' })
   await expect(panel).toContainText('此处不汇总远端 Agent 的通知')
   await expect(panel.locator('[data-notification-channel="webhook"]')).toContainText('接受 2')
@@ -47,6 +48,7 @@ test('notification diagnostics shows real local channel outcomes and filters on 
 
 test('notification diagnostics retains stale results on connection failure and clears them on auth failure', async ({ page }) => {
   await page.goto('/?token=' + token)
+  await page.getByRole('tab', { name: '通知诊断', exact: true }).click()
   const panel = page.getByRole('region', { name: '通知诊断' })
   await expect(panel.locator('[data-notification-channel="slack"]')).toBeVisible()
   await page.route('**' + path, route => route.abort())
@@ -65,6 +67,7 @@ test('notification diagnostics retains stale results on connection failure and c
 test('notification diagnostics distinguishes disabled engine and unconfigured channels', async ({ page }) => {
   await page.route('**' + path, route => route.fulfill({ json: { available: false, scope: 'local', channels: [], recent: [] } }))
   await page.goto('/?token=' + token)
+  await page.getByRole('tab', { name: '通知诊断', exact: true }).click()
   const panel = page.getByRole('region', { name: '通知诊断' })
   await expect(panel).toContainText('本机健康引擎未启用')
   await expect(panel.locator('.stats')).toHaveCount(0)
@@ -86,12 +89,14 @@ test('notification diagnostics distinguishes disabled engine and unconfigured ch
 
 test('notification test controls require admin and confirm the destination', async ({ page, request }, info) => {
   await page.goto('/?token=browser-viewer-token')
+  await page.getByRole('tab', { name: '通知诊断', exact: true }).click()
   const panel = page.getByRole('region', { name: '通知诊断' })
   await expect(panel.locator('[data-notification-channel="webhook"]')).toBeVisible()
   await expect(panel.getByRole('button', { name: '测试 webhook', exact: true })).toHaveCount(0)
   const denied = await request.post(path + '/test', { headers, data: { channel: 'webhook' } })
   expect(denied.status()).toBe(403)
   await page.goto('/?token=browser-test-token')
+  await page.getByRole('tab', { name: '通知诊断', exact: true }).click()
   await panel.getByRole('button', { name: '测试 webhook', exact: true }).click()
   const confirmation = panel.getByRole('group', { name: '确认通知测试' })
   await expect(confirmation).toContainText('绕过静默、维护和规则路由')
@@ -121,6 +126,7 @@ test('notification test controls require admin and confirm the destination', asy
 
 test('new push channels expose distinct cards, filters and test destinations', async ({ page }) => {
   await page.goto('/?token=browser-test-token')
+  await page.getByRole('tab', { name: '通知诊断', exact: true }).click()
   const panel = page.getByRole('region', { name: '通知诊断' })
   for (const [channel, label] of [['ntfy', 'ntfy'], ['gotify', 'Gotify'], ['bark', 'Bark']]) {
     const card = panel.locator(`[data-notification-channel="${channel}"]`)

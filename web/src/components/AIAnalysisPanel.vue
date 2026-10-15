@@ -247,6 +247,12 @@ function downloadResult() {
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+function canLeave() {
+  if (busy.value === 'save' || busy.value === 'delete') return false
+  const changed = !!settings.value && dirty.value
+  return !(changed || busy.value === 'analyze') || confirm('离开 AI 分析将取消当前请求并丢弃未保存的模型配置，确定继续？')
+}
+defineExpose({ canLeave })
 function close() { cancel(false); clearPrivateState(); emit('close') }
 onMounted(() => { void loadSettings() })
 onBeforeUnmount(() => { cancel(false); clearPrivateState(); clearTimeout(expiryTimer) })

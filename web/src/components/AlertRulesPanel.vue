@@ -169,7 +169,7 @@ function close() {
 function beforeUnload(event: BeforeUnloadEvent) {
   if (dirty.value || busy.value) { event.preventDefault(); event.returnValue = '' }
 }
-defineExpose({ requestClose: close })
+defineExpose({ requestClose: close, canLeave: mayDiscard })
 onMounted(() => { void load(); window.addEventListener('beforeunload', beforeUnload) })
 onBeforeUnmount(() => {
   disposed = true; listRequest?.abort(); previewRequest?.abort()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import type { HandlingChange, HandlingStatus, Problem } from '../api'
 
 const selected = defineModel<Problem[]>('selected', { required: true })
@@ -8,10 +8,10 @@ const props = defineProps<{
   busy: boolean; stale: boolean; error: string; message: string; completed: number
 }>()
 const emit = defineEmits<{ submit: [change: HandlingChange & { note: string }] }>()
-const action = ref<HandlingChange['action']>('acknowledge')
-const assignee = ref('')
-const status = ref<HandlingStatus>('investigating')
-const note = ref('')
+const action = defineModel<HandlingChange['action']>('action', { default: 'acknowledge' })
+const assignee = defineModel<string>('assignee', { default: '' })
+const status = defineModel<HandlingStatus>('status', { default: 'investigating' })
+const note = defineModel<string>('note', { default: '' })
 const labels: Record<string, string> = { acknowledge: '确认问题', unacknowledge: '撤销确认', assign: '指派责任人', unassign: '取消指派', progress: '更新进度', comment: '添加备注' }
 const progressNames: Record<HandlingStatus, string> = { open: '待处理', investigating: '排查中', watching: '观察中' }
 const changedIDs = computed(() => new Set(selected.value.filter(p => {
@@ -34,14 +34,14 @@ function submit() {
 </script>
 
 <template>
-  <section class="batch" aria-label="批量问题处置">
+  <section class="batch" :class="{ idle: !selected.length }" aria-label="批量问题处置">
     <div class="row">
       <strong>批量处置 · 已选择 {{ selected.length }} / 50 项</strong>
-      <button :disabled="busy || stale || !visible.length" @click="selected = visible.slice(0, 50)">选择当前显示（最多 50 项）</button>
-      <button :disabled="busy || !selected.length" @click="selected = []">清空选择</button>
+      <button :disabled="busy || stale || !visible.length" aria-label="选择当前显示（最多 50 项）" @click="selected = visible.slice(0, 50)">选择当前显示<span class="selection-limit">（最多 50 项）</span></button>
+      <button v-if="selected.length" :disabled="busy" @click="selected = []">清空选择</button>
     </div>
-    <p class="hint">只处理明确选中的问题；改变筛选会清空选择。刷新不会自动加入新问题或更新已选版本。整批保存成功后才生效。</p>
     <template v-if="selected.length">
+      <p class="hint">只处理明确选中的问题；改变筛选会清空选择。刷新不会自动加入新问题或更新已选版本。整批保存成功后才生效。</p>
       <details open>
         <summary>核对本次范围（{{ selected.length }} 项）</summary>
         <ul><li v-for="p in selected" :key="p.id">
@@ -70,7 +70,7 @@ function submit() {
 </template>
 
 <style scoped>
-.batch { margin:12px 0; padding:14px; background:#102035; border:1px solid #30516e; border-radius:10px; font-size:13px; }
+.batch { margin:8px 0; padding:9px; background:#102035; border:1px solid #30516e; border-radius:10px; font-size:13px; }
 .row,li { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .hint { color:#94a3b8; font-size:12px; line-height:1.6; }
 .error { color:#fca5a5; }
@@ -89,4 +89,11 @@ button:disabled { opacity:.5; cursor:default; }
 .note { align-items:flex-start; flex-direction:column; margin:12px 0; }
 textarea { width:100%; box-sizing:border-box; resize:vertical; }
 button:focus-visible,select:focus,textarea:focus { outline:2px solid #5eead4; outline-offset:2px; }
+@media(max-width:760px) {
+  .batch.idle { padding:0; margin:6px 0; border:0; background:transparent; }
+  .batch.idle > .row { flex-wrap:nowrap; justify-content:space-between; gap:6px; }
+  .batch.idle > .row > strong { font-size:12px; white-space:nowrap; }
+  .batch.idle > .row > button { font-size:12px; padding-inline:8px; white-space:nowrap; }
+  .batch.idle .selection-limit { display:none; }
+}
 </style>

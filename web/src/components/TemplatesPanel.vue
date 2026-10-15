@@ -18,6 +18,9 @@ const editing = ref<Template | null>(null)
 const draft = ref<Template | null>(null)
 const rulesYaml = ref('')
 const saving = ref(false)
+const deleting = ref(false)
+let draftBaseline = ''
+let rulesBaseline = ''
 
 // effective preview
 const previewNode = ref('')
@@ -36,6 +39,35 @@ let listRequest: AbortController | undefined
 let inventoryRequest: AbortController | undefined
 let previewRequest: AbortController | undefined
 let invRequest: AbortController | undefined
+
+function templateDirty() {
+  return !!draft.value && (!editing.value || JSON.stringify(draft.value) !== draftBaseline || rulesYaml.value !== rulesBaseline)
+}
+function inventoryDirty() {
+  return !!invView.value && JSON.stringify(invDraft.value) !== JSON.stringify(invView.value.manual || {})
+}
+function canLeave() {
+  return !saving.value && !invSaving.value && !deleting.value &&
+    (!(templateDirty() || inventoryDirty()) || confirm('仍有未保存的模板或资产修改，离开将丢弃草稿，确定继续？'))
+}
+function close() { if (canLeave()) emit('close') }
+function cancelTemplate() {
+  if (saving.value || (templateDirty() && !confirm('取消将丢弃未保存的模板修改，确定继续？'))) return
+  draft.value = null
+  editing.value = null
+  rulesYaml.value = ''
+}
+function requestCancelInventoryEdit() {
+  if (invSaving.value || (inventoryDirty() && !confirm('取消将丢弃未保存的资产修改，确定继续？'))) return
+  cancelInventoryEdit()
+}
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (saving.value || invSaving.value || deleting.value || templateDirty() || inventoryDirty()) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+defineExpose({ canLeave })
 
 function cancelInventoryEdit() {
   invRequest?.abort()
@@ -77,6 +109,7 @@ function rulesToYaml(tpl: Template): string {
 
 function edit(tpl?: Template) {
   if (saving.value || !canManage.value) return
+  if (templateDirty() && !confirm('切换模板将丢弃未保存的模板修改，确定继续？')) return
   error.value = ''
   editing.value = tpl || null
   draft.value = tpl
@@ -84,6 +117,8 @@ function edit(tpl?: Template) {
     : { name: '', description: '', macros: {}, tags: {}, assign: { rooms: [], nodes: [], labels: {} }, removed: [], disabled: [] }
   draft.value!.assign ||= {}
   rulesYaml.value = tpl ? rulesToYaml(tpl) : ''
+  draftBaseline = JSON.stringify(draft.value)
+  rulesBaseline = rulesYaml.value
 }
 
 async function saveWithYaml() {
@@ -111,8 +146,11 @@ async function saveWithYaml() {
   } catch (e) { if (!disposed) error.value = (e as Error).message } finally { saving.value = false }
 }
 async function del(tpl: Template) {
-  if (saving.value || !canManage.value || !tpl.id || !window.confirm(`删除模板 ${tpl.name}？`)) return
-  try { await api.deleteTemplate(tpl.id); await Promise.all([load(), loadInventory()]) } catch (e) { error.value = (e as Error).message }
+  if (saving.value || deleting.value || !canManage.value || !tpl.id || !window.confirm(`删除模板 ${tpl.name}？`)) return
+  deleting.value = true
+  try { await api.deleteTemplate(tpl.id); if (!disposed) await Promise.all([load(), loadInventory()]) }
+  catch (e) { if (!disposed) error.value = (e as Error).message }
+  finally { deleting.value = false }
 }
 
 function kvEntries(rec: Record<string, string> | undefined) { return Object.entries(rec || {}) }
@@ -159,6 +197,7 @@ async function loadInventory() {
 }
 async function editInv(nodeID: string) {
   if (invSaving.value) return
+  if (inventoryDirty() && !confirm('切换资产将丢弃未保存的资产修改，确定继续？')) return
   cancelInventoryEdit()
   invNode.value = nodeID
   invLoading.value = true
@@ -191,7 +230,7 @@ async function saveInv() {
   finally { invSaving.value = false }
 }
 
-onMounted(() => { void load(); void loadInventory() })
+onMounted(() => { void load(); void loadInventory(); window.addEventListener('beforeunload', beforeUnload) })
 onBeforeUnmount(() => {
   disposed = true
   ++loadGeneration
@@ -199,6 +238,7 @@ onBeforeUnmount(() => {
   inventoryRequest?.abort()
   previewRequest?.abort()
   cancelInventoryEdit()
+  window.removeEventListener('beforeunload', beforeUnload)
 })
 </script>
 
@@ -210,7 +250,7 @@ onBeforeUnmount(() => {
         <button :class="{ on: tab === 'templates' }" @click="tab = 'templates'">模板</button>
         <button :class="{ on: tab === 'inventory' }" @click="tab = 'inventory'">资产清单</button>
       </div>
-      <button class="x" @click="emit('close')" title="关闭">×</button>
+      <button class="x" :disabled="saving || invSaving || deleting" @click="close" title="关闭">×</button>
     </div>
     <div v-if="error" class="err" role="alert">{{ error }}</div>
 
@@ -309,7 +349,7 @@ onBeforeUnmount(() => {
 
         <div class="row">
           <button v-if="canManage" :disabled="saving" @click="saveWithYaml">{{ saving ? '保存中…' : '保存' }}</button>
-          <button @click="draft = null">取消</button>
+          <button :disabled="saving" @click="cancelTemplate">取消</button>
         </div>
       </fieldset>
     </template>
@@ -337,16 +377,16 @@ onBeforeUnmount(() => {
           <button @click="delKV(invDraft, k)">×</button>
         </div>
         <button class="mini" @click="addKV(invDraft)">+ 字段</button>
-        <div class="row"><button @click="saveInv">{{ invSaving ? '保存中…' : '保存' }}</button><button @click="cancelInventoryEdit">取消</button></div>
+        <div class="row"><button @click="saveInv">{{ invSaving ? '保存中…' : '保存' }}</button><button :disabled="invSaving" @click="requestCancelInventoryEdit">取消</button></div>
       </fieldset>
     </template>
   </section>
 </template>
 
 <style scoped>
-.panel { position: fixed; inset: 60px 12px 12px auto; width: min(720px, 96vw); background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; overflow: auto; z-index: 40; color: #e2e8f0; }
-.head { display: flex; align-items: center; gap: 10px; }
-.head h3 { margin: 0; flex: none; }
+.panel { min-width:0; max-width:100%; box-sizing:border-box; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; color: #e2e8f0; overflow-wrap:anywhere; }
+.head { display: flex; flex-wrap:wrap; align-items: center; gap: 10px; }
+.head h3 { margin: 0; flex:1 1 260px; min-width:0; }
 .head small { color: #64748b; }
 .tabs { display: flex; gap: 4px; flex: 1; }
 .tabs button { background: #1e293b; color: #cbd5e1; border: 0; border-radius: 4px; padding: 4px 10px; }
@@ -354,13 +394,13 @@ onBeforeUnmount(() => {
 .x { margin-left: auto; }
 .err { color: #f87171; margin: 8px 0; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
-.list { width: 100%; border-collapse: collapse; font-size: 13px; }
+.list { display:block; width: 100%; max-width:100%; overflow-x:auto; border-collapse: collapse; font-size: 13px; }
 .list td, .list th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1e293b; }
 .dim { color: #64748b; font-size: 12px; }
 .nav-title { font-size: 11px; text-transform: uppercase; color: #64748b; margin-top: 12px; }
 .kv { display: flex; gap: 6px; margin: 4px 0; }
-.kv input { flex: 1; }
-input, select, textarea { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+.kv input { flex: 1; min-width:0; }
+input, select, textarea { min-width:0; max-width:100%; box-sizing:border-box; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 4px; padding: 4px 8px; font-size: 13px; }
 textarea { width: 100%; font-family: monospace; }
 button { background: #1e293b; color: #cbd5e1; border: 0; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
 button:hover { background: #334155; }
@@ -372,5 +412,13 @@ button.mini { font-size: 12px; padding: 2px 8px; }
 .editor { min-width: 0; border: 0; margin-inline: 0; padding-inline: 0; border-top: 1px solid #1e293b; margin-top: 12px; padding-top: 8px; }
 .editor label { display: block; margin: 6px 0; font-size: 13px; }
 .editor label input { width: 100%; box-sizing: border-box; }
-@media (max-width: 700px) { .panel { inset: 49px 0 0 0; width: auto; border-radius: 0; } }
+@media (max-width: 760px) {
+  .panel { padding:12px; }
+  .head h3 { flex-basis:100%; font-size:17px; }
+  .head small { display:block; font-size:11px; margin-top:5px; }
+  .tabs { flex:1; }
+  button,input,select { min-height:44px; }
+  input,select,textarea { font-size:16px; }
+  .assign { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; }
+}
 </style>

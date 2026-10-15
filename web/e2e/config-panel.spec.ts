@@ -2,7 +2,7 @@ import { openTools } from './mobile-navigation'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-const toolbarButton = 'header button[title="配置：本机与节点"]'
+const toolbarButton = 'button[title="配置：本机与节点"]'
 
 type FixtureOpts = {
   mode?: 'standalone' | 'hub'

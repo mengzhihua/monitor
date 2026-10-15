@@ -93,6 +93,7 @@
 | [docs/22-cloud-host.md](docs/22-cloud-host.md) | 云主机安装、Hub/Agent、命令行验收与 AI 模型配置（发布包内为 `CLOUD-HOST.md`） |
 | [docs/23-release.md](docs/23-release.md) | VERSION 与标签、跳过重复打包、把指错提交的标签移回去 |
 | [docs/24-device-monitoring.md](docs/24-device-monitoring.md) | 多设备 SNMP / Redfish、标准设备模板、行业对标与现场验收 |
+| [docs/25-modular-workspace.md](docs/25-modular-workspace.md) | 模块注册、单工作区导航、指标分类分页、运维分区及开发约定 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
@@ -559,6 +560,10 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 
 目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。Linux 客户端请先安装 `libegl1`（见上文）。
 
+## 模块化监控工作台
+
+桌面使用分组侧栏，手机保留底部导航；每次只进入一个功能模块。运维总览按问题、主机、历史、维护和通知分区，指标页按资源类型分类并每页最多展示 12 张图表。未打开的业务模块按需加载，切换后取消旧模块的请求和订阅。配置、规则及终端保留离开保护。使用方式与模块开发约定见[模块化工作台](docs/25-modular-workspace.md)。
+
 ## 仓库结构
 
 ```text
@@ -568,6 +573,8 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 │   └── internal/              采集、TSDB、认证/API、Hub、流协议等实现
 ├── web/                        Vue Dashboard 源码与浏览器测试
 │   ├── src/
+│   │   ├── features/          会话、工作区、指标、运维领域模块
+│   │   └── components/        业务模块与共享图表/编辑器
 │   └── e2e/
 ├── app/                        Flutter 五端客户端
 │   ├── lib/

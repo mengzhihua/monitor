@@ -9,8 +9,15 @@ const readError = ref(''), error = ref(''), message = ref('')
 const busy = ref(false), loading = ref(false), mustReview = ref(false)
 const loadedAt = ref(0), limit = ref(20), state = ref('current')
 const draft = ref({ title: '', reason: '', scope: 'alarm', target: '', mode: 'now', start: '', duration: 3600 })
+let savedDraft = JSON.stringify(draft.value)
 const preview = ref<{ plan: MaintenanceSpec; revision: number } | null>(null)
 const cancel = ref<{ plan: MaintenancePlan; revision: number; reason: string } | null>(null)
+const isDirty = () => !!preview.value || !!cancel.value || JSON.stringify(draft.value) !== savedDraft
+const isBusy = () => busy.value
+function canLeave() {
+  return !busy.value && (!isDirty() || confirm('仍有未提交的维护计划或取消草稿，离开将丢弃这些内容，确定继续？'))
+}
+defineExpose({ canLeave, isDirty, isBusy })
 const names: Record<string, string> = { active: '维护中', scheduled: '待开始', ended: '已到期', canceled: '已取消' }
 const time = (t: number) => new Date(t * 1000).toLocaleString()
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -70,7 +77,10 @@ async function save(body: MaintenanceChange) {
     if (disposed) return
     data.value = next; loadedAt.value = Math.floor(Date.now() / 1000)
     preview.value = null; cancel.value = null
-    if (body.action === 'create') { draft.value.title = ''; draft.value.reason = ''; state.value = 'current' }
+    if (body.action === 'create') {
+      draft.value.title = ''; draft.value.reason = ''; state.value = 'current'
+      savedDraft = JSON.stringify(draft.value)
+    }
     message.value = body.action === 'create' ? '维护计划已保存。' : '本计划已取消；其他重叠计划或静默仍可能生效。'
   } catch (e) {
     if (disposed) return

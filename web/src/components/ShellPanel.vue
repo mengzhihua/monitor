@@ -230,6 +230,8 @@ function sendCommand() {
 async function copySelection() {if(term?.hasSelection())try{await navigator.clipboard.writeText(term.getSelection());notice.value='已复制选中内容。'}catch{error.value='复制失败，请使用浏览器复制操作。'}}
 function sessionTime(value: number) { return value > 0 ? new Date(value * 1000).toLocaleString() : '等待连接' }
 function outputSize(value: number) { return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB` }
+function canLeave() { return status.value === 'idle' || confirm('离开终端将断开当前 Shell 连接，正在运行的前台任务可能中断，确定继续？') }
+defineExpose({ canLeave })
 function close() {disconnect();emit('close')}
 function pageClosed() {disconnect('页面离开或网络中断，连接已关闭。')}
 watch(() => props.node, () => {command.value='';void load()})

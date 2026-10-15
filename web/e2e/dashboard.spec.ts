@@ -18,6 +18,7 @@ test('visible charts load on demand and reuse nearby canvases with live data', a
   })
   await page.goto('/?view=charts&token=' + token)
   const cards = page.locator('.card')
+  await cards.first().scrollIntoViewIfNeeded()
   await expect(cards.first().locator('canvas').first()).toBeVisible()
   const total = await cards.count()
   expect(total).toBeGreaterThan(8)
