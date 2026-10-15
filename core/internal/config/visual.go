@@ -14,7 +14,7 @@ import (
 )
 
 // Visual is the subset of monitor.yaml edited from the dashboard form.
-// ApplyVisual updates only these fields and leaves alarms, modules, tokens and other keys in place.
+// ApplyVisual merges these fields while preserving unrelated alarms, module options and tokens.
 type Visual struct {
 	Mode               string         `json:"mode"`
 	Hostname           string         `json:"hostname"`
@@ -40,6 +40,11 @@ type Visual struct {
 	HubRoom            string         `json:"hub_room"`
 	Notify             VisualNotify   `json:"notify"`
 	Targets            []VisualTarget `json:"targets"`
+
+	SNMPTargets    *[]VisualSNMPTarget    `json:"snmp_targets,omitempty"`
+	RedfishTargets *[]VisualRedfishTarget `json:"redfish_targets,omitempty"`
+	SNMPLegacy     bool                   `json:"snmp_legacy,omitempty"`
+	RedfishLegacy  bool                   `json:"redfish_legacy,omitempty"`
 }
 
 // VisualTarget is one collector endpoint. Timeout, password and jobs stay in the YAML module.
@@ -205,6 +210,9 @@ func VisualFrom(raw string) (Visual, error) {
 		v.Targets[i].Listen = nodeScalar(node, "listen")
 		v.Targets[i].User = nodeScalar(node, "user")
 	}
+	if err := readDeviceTargets(c.Collectors.Modules, &v); err != nil {
+		return Visual{}, err
+	}
 	switch {
 	case c.Health.Enabled == nil:
 		v.HealthEnabled = "default"
@@ -283,6 +291,9 @@ func ApplyVisual(raw string, v Visual) (string, error) {
 	setStrings(cols, "enabled", v.CollectorsEnabled)
 	setStrings(cols, "disabled", v.CollectorsDisabled)
 	if err := applyTargets(cols, v.Targets); err != nil {
+		return "", err
+	}
+	if err := applyDeviceTargets(cols, v); err != nil {
 		return "", err
 	}
 	health := ensureMap(root, "health")
@@ -402,6 +413,9 @@ func (v *Visual) normalize() error {
 		return fmt.Errorf("stream destinations are required when streaming is on")
 	}
 	if err := v.Notify.normalize(); err != nil {
+		return err
+	}
+	if err := normalizeDeviceTargets(v); err != nil {
 		return err
 	}
 	return normalizeTargets(v.Targets)

@@ -48,6 +48,8 @@ func TestSNMPv3ItemsAndLLD(t *testing.T) {
 			return []byte(".1.3.6.1.2.1.2.2.1.10.1 = Counter32: 10\n"), nil
 		case "1.3.6.1.2.1.2.2.1.8":
 			return []byte(".1.3.6.1.2.1.2.2.1.8.1 = INTEGER: 1\n"), nil
+		case "1.3.6.1.2.1.31.1.1.1.6", "1.3.6.1.2.1.31.1.1.1.10":
+			return []byte("No Such Object available on this agent"), nil
 		case "1.3.6.1.4.1.1.0":
 			return []byte(`.1.3.6.1.4.1.1.0 = STRING: "load=1.5"` + "\n"), nil
 		case "1.3.6.1.4.1.2.1.2":

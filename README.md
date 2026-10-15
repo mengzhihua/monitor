@@ -7,6 +7,14 @@
 
 代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。完成验证后将改动合入 `main` 并[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
 
+## 多设备接入
+
+管理员可在「配置 → 本机 → 表单 → 设备接入」管理多个 SNMP 设备和 Redfish 服务器管理口，支持桌面及手机操作。SNMP 内置网络设备、UPS、打印机、服务器/NAS 四种标准 MIB 模板；Redfish 读取真实 Systems 资源，提供健康、电源状态和设备实际返回的 CPU/内存信息。每类最多配置 64 台设备，最多 4 台并发，独立身份、超时和可达状态，暂时离线后自动重试。
+
+网络流量优先使用 64 位计数器，切换计数源时重建基线；未知耗材量、缺失指标和未提供的硬件健康状态不会补成零或正常。保留旧版单设备 YAML 和既有历史图表；新设备保存后通过现有重启流程生效。SNMP 采集主机需安装 Net-SNMP `snmpwalk`，设备需开启对应协议。
+
+本轮参照 PRTG、Datadog NDM、LogicMonitor 的设备模板和动态组件采集方式。支持标准协议不等于所有厂商型号已实机验证；逐型号验收、配置示例、指标口径和后续路线见 [多设备监控与行业对标](docs/24-device-monitoring.md)。
+
 ## 2.0 运维工作台
 
 内嵌 Web Dashboard 新增「运维总览」：集中查看本机及 Hub 节点的 CPU、内存、在线状态、数据新鲜度和严重问题；可按主机、级别、状态和待确认条件筛选，并直接跳转到对应图表。缺失或过期指标明确标注，不显示为正常数值。
@@ -84,6 +92,7 @@
 | [docs/21-bluetooth-link.md](docs/21-bluetooth-link.md) | 蓝牙设备识别、链接模式、编解码器与码率解码、链路质量评分、行业工具对照 |
 | [docs/22-cloud-host.md](docs/22-cloud-host.md) | 云主机安装、Hub/Agent、命令行验收与 AI 模型配置（发布包内为 `CLOUD-HOST.md`） |
 | [docs/23-release.md](docs/23-release.md) | VERSION 与标签、跳过重复打包、把指错提交的标签移回去 |
+| [docs/24-device-monitoring.md](docs/24-device-monitoring.md) | 多设备 SNMP / Redfish、标准设备模板、行业对标与现场验收 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 

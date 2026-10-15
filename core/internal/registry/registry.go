@@ -384,6 +384,17 @@ func (r *Registry) writeSink(sec int64, chartID string, vals map[string]float64)
 	}
 }
 
+// ResetIncremental drops the baseline when a source changes counter identity
+// (for example from SNMP Counter32 to Counter64). The next collection primes
+// that dimension without publishing a fabricated delta; history stays intact.
+func (c *Chart) ResetIncremental(dimension string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d := c.dimIx[dimension]; d != nil && (d.Algorithm == Incremental || d.Algorithm == PercentageOfIncrementalRow) {
+		d.hasLast = false
+	}
+}
+
 // Collect feeds one collection round of raw values for a chart. ts is the
 // collection time; raw values are keyed by dimension id. Dimensions missing from
 // raw produce no sample (a gap). Returns an error if the chart is unknown.

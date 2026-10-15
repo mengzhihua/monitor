@@ -830,6 +830,64 @@ alarms:
     info: SNMP interface operational status is down
     to: sysadmin
 
+  - name: snmp_target_unreachable
+    on: snmp.target_status
+    class: Availability
+    type: System
+    component: SNMP
+    lookup: last -30s unaligned of down
+    units: state
+    every: 10s
+    crit: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: SNMP target did not respond to its availability probe
+    to: sysadmin
+
+  - name: snmp_ups_battery_state
+    on: snmp.ups.battery_status
+    class: Availability
+    type: System
+    component: UPS
+    lookup: last -30s unaligned of value
+    calc: '($this == 2 || $this == 3 || $this == 4) ? $this : nan'
+    units: state
+    every: 10s
+    warn: '$this == 3'
+    crit: '$this == 4'
+    delay: down 2m multiplier 1.5 max 30m
+    info: UPS battery is low or depleted; unknown battery state is undefined
+    to: sysadmin
+
+  - name: snmp_printer_supply_remaining
+    on: snmp.printer.supply_remaining
+    class: Utilization
+    type: System
+    component: Printer
+    lookup: last -30s unaligned of value
+    calc: '$this >= 0 ? $this : nan'
+    units: '%'
+    every: 10s
+    warn: '$this <= 10'
+    crit: '$this <= 5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Printer supply or waste receptacle remaining capacity is low
+    to: sysadmin
+
+  - name: snmp_host_storage_utilization
+    on: snmp.host.storage_utilization
+    class: Utilization
+    type: System
+    component: Storage
+    lookup: last -30s unaligned of value
+    calc: '$this >= 0 ? $this : nan'
+    units: '%'
+    every: 10s
+    warn: '$this >= 85'
+    crit: '$this >= 95'
+    delay: down 2m multiplier 1.5 max 30m
+    info: SNMP host resource storage pool utilization is high
+    to: sysadmin
+
   - name: cockroachdb_no_live_nodes
     on: cockroachdb.live_nodes
     class: Availability
@@ -1019,11 +1077,25 @@ alarms:
     type: System
     component: BMC
     lookup: last -30s unaligned of critical
+    calc: '$unknown > 0.5 ? nan : $this'
     units: state
     every: 10s
     warn: '$this > 0.5'
     delay: down 2m multiplier 1.5 max 30m
     info: Redfish system health is Critical
+    to: sysadmin
+
+  - name: redfish_target_collection_failed
+    on: redfish.target_status
+    class: Availability
+    type: System
+    component: BMC
+    lookup: last -30s unaligned of down
+    units: state
+    every: 10s
+    crit: '$this > 0.5'
+    delay: down 2m multiplier 1.5 max 30m
+    info: Redfish target collection failed or returned incomplete system data
     to: sysadmin
 
   - name: activemq_unprocessed

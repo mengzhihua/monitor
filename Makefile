@@ -105,6 +105,7 @@ acceptance:
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		python3 scripts/verify-apps-identity.py --require-clean-startup; \
 	fi
+	python3 scripts/verify-device-monitoring.py
 	python3 scripts/load-hub.py
 	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}
 	cd web && npm run test:e2e

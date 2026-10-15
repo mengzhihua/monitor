@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentVisual } from '../api'
+import DeviceConfigForm from './DeviceConfigForm.vue'
 
 defineProps<{ form: AgentVisual; disabled: boolean }>()
 
@@ -91,6 +92,8 @@ function addItem(list: string[], input: HTMLInputElement) {
       <label v-if="target.fields.includes('user')">用户 <input v-model="target.user" :aria-label="target.name + ' 用户'" /></label>
     </div>
   </fieldset>
+
+  <DeviceConfigForm :form="form" :disabled="disabled" />
 
   <fieldset class="block" :disabled="disabled">
     <legend>告警</legend>

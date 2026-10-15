@@ -41,6 +41,15 @@ export interface Claim { token: string; space_id: string; room_id: string; node_
 export interface NodeConfig { node_id: string; disabled?: string[]; yaml?: string; updated?: number }
 export interface AgentUser { name: string; token: string; role: string }
 export interface AgentTarget { name: string; fields: string; url: string; address: string; listen: string; user: string }
+export interface AgentSNMPTarget {
+  name: string; address: string; profile: '' | 'network' | 'ups' | 'printer' | 'host'
+  version: '' | '1' | '2c' | '3'; community?: string; user: string
+  auth_protocol: string; auth_passphrase?: string; priv_protocol: string; priv_passphrase?: string; timeout: string
+}
+export interface AgentRedfishTarget {
+  name: string; url: string; user: string; password?: string; timeout: string
+  tls?: { ca_file?: string; insecure_skip_verify?: boolean }
+}
 export interface AgentRole { name: string; channels: string[] }
 export interface AgentNotify {
   webhook_url: string; slack_webhook_url: string; slack_channel: string
@@ -61,6 +70,8 @@ export interface AgentVisual {
   stream_enabled: boolean; stream_destinations: string[]; stream_api_key: string; stream_protocol: string
   hub_api_keys: string[]; hub_peers: string[]; hub_storage: string; hub_space: string; hub_room: string
   notify: AgentNotify; targets: AgentTarget[]
+  snmp_targets?: AgentSNMPTarget[]; redfish_targets?: AgentRedfishTarget[]
+  snmp_legacy?: boolean; redfish_legacy?: boolean
 }
 export interface ManageConfig {
   writable?: boolean; path: string; yaml: string; updated: number; size?: number

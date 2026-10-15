@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/mengzhihua/monitor/core/internal/collect"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +33,13 @@ func Parse(b []byte) (*Config, error) {
 	}
 	if err := c.Shell.Validate(); err != nil {
 		return nil, err
+	}
+	for _, module := range []string{"snmp", "redfish"} {
+		if node, ok := c.Collectors.Modules[module]; ok {
+			if err := collect.ValidateDeviceTargets(module, node.Decode); err != nil {
+				return nil, fmt.Errorf("config: %w", err)
+			}
+		}
 	}
 	return c, nil
 }
