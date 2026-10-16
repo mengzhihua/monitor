@@ -73,7 +73,7 @@ function focusWorkspace() {
   void nextTick(() => {
     const main = document.getElementById('workspace-main')
     main?.focus({ preventScroll: true })
-    main?.scrollIntoView({ block: 'start' })
+    if (!isMobile.value) main?.scrollIntoView({ block: 'start' })
   })
 }
 function navigate(value: WorkspaceId, guarded = true, push = true) {
@@ -215,12 +215,14 @@ onBeforeUnmount(() => { media.removeEventListener('change', syncMobile); window.
       <p v-else-if="!error" class="empty" role="status">正在连接监控服务…</p>
     </main>
   </div>
+  <Teleport to="body">
   <nav v-if="info && !needToken" class="mobile-nav" aria-label="手机导航">
     <button :aria-current="workspace === 'operations' && !toolsOpen ? 'page' : undefined" @click="navigate('operations')"><AppIcon name="operations" :size="21" /><span>总览</span></button>
     <button :aria-current="workspace === 'charts' && !toolsOpen ? 'page' : undefined" @click="navigate('charts')"><AppIcon name="charts" :size="21" /><span>图表</span></button>
     <button :aria-current="workspace === 'alarms' && !toolsOpen ? 'page' : undefined" @click="navigate('alarms')"><AppIcon name="alarms" :size="21" /><span>告警 <b v-if="raised.critical + raised.warning">{{ raised.critical + raised.warning }}</b></span></button>
-    <button :aria-expanded="toolsOpen" :aria-current="toolsOpen || !['operations', 'charts', 'alarms'].includes(workspace) ? 'page' : undefined" aria-haspopup="dialog" @click="toolsMenu?.open($event.currentTarget)"><AppIcon name="more" :size="21" /><span>更多</span></button>
+    <button :aria-expanded="toolsOpen" :aria-current="toolsOpen ? 'page' : undefined" aria-haspopup="dialog" @click="toolsMenu?.open($event.currentTarget)"><AppIcon name="more" :size="21" /><span>更多</span></button>
   </nav>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -231,5 +233,5 @@ main { min-width:0; padding:22px 28px 40px; scroll-margin-top:80px; outline:none
 .banner { background:#3a1e2a; border:1px solid #7f1d1d; color:#fecaca; padding:12px; border-radius:8px; margin-bottom:12px; font-size:13px; overflow-wrap:anywhere; }.node-notice { color:#fcd34d; }.empty { color:#94a3b8; padding:24px; }
 .token { max-width:420px; margin:40px auto; padding:24px; background:#0f172a; border:1px solid #334155; border-radius:12px; display:flex; flex-direction:column; gap:12px; }.token h1 { font-size:24px; margin:0; }.token p { margin:0; color:#94a3b8; font-size:13px; }.token input { background:#0b1120; border:1px solid #475569; border-radius:7px; padding:12px; color:#e2e8f0; font:inherit; }.token button { background:#2dd4bf; color:#042f2e; padding:10px; font:inherit; font-weight:600; border:0; border-radius:7px; cursor:pointer; }.oidc { color:#93c5fd; text-align:center; }
 .mobile-nav { display:none; }button:focus-visible { outline:2px solid #5eead4; outline-offset:2px; }
-@media(max-width:760px) { .app-layout.authenticated { grid-template-columns:minmax(0,1fr); }.app-layout { padding-bottom:calc(78px + env(safe-area-inset-bottom)); }main { padding:14px max(12px,env(safe-area-inset-right)) 20px max(12px,env(safe-area-inset-left)); scroll-margin-top:12px; }.workspace-context { margin-bottom:16px; }.token { margin:12px auto; padding:20px 16px; }.token input { min-width:0; width:100%; }.mobile-nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); position:fixed; inset:auto 0 0; padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); background:#0b1526f5; border-top:1px solid #2b3e53; z-index:20; }.mobile-nav button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-height:52px; background:none; border:0; border-radius:10px; color:#94a3b8; font:inherit; font-size:11px; cursor:pointer; }.mobile-nav button[aria-current=page] { color:#5eead4; background:#123333; }.mobile-nav b { padding:0 4px; border-radius:10px; background:#7f1d1d; color:#fecaca; font-size:10px; } }
+@media(max-width:760px) { .app-layout.authenticated { grid-template-columns:minmax(0,1fr); }.app-layout { position:relative; z-index:1; padding-bottom:calc(78px + env(safe-area-inset-bottom)); }main { padding:14px max(12px,env(safe-area-inset-right)) 20px max(12px,env(safe-area-inset-left)); scroll-margin-top:12px; position:relative; z-index:0; }.workspace-context { margin-bottom:16px; }.token { margin:12px auto; padding:20px 16px; }.token input { min-width:0; width:100%; }.mobile-nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); position:fixed; inset:auto 0 0; padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); background:#0b1526f2; border-top:1px solid #2b3e53; z-index:40; pointer-events:auto; }.mobile-nav button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-height:52px; background:none; border:0; border-radius:10px; color:#94a3b8; font:inherit; font-size:11px; cursor:pointer; pointer-events:auto; }.mobile-nav button[aria-current=page] { color:#5eead4; background:#123333; }.mobile-nav b { padding:0 4px; border-radius:10px; background:#7f1d1d; color:#fecaca; font-size:10px; } }
 </style>

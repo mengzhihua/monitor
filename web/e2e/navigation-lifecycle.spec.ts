@@ -30,7 +30,8 @@ async function fixture(page: Page, read?: (route: Route, url: URL) => Promise<bo
 }
 async function openTool(page: Page, title: string) {
   await openTools(page)
-  await page.getByTitle(title, { exact: true }).click()
+  const sheet = page.getByRole('dialog', { name: '更多功能', exact: true })
+  await sheet.getByTitle(title, { exact: true }).click({ force: true })
 }
 
 test('a slow node drill cannot replace a newer workspace or discard its config draft', async ({ page }) => {
@@ -162,7 +163,7 @@ test('node selection updates the shareable URL and survives refresh without rest
   await page.goto('/?view=charts&token=browser-test-token&node=node-a')
   await expect(page.locator('.node-select-btn')).toContainText('node-a')
   await page.getByTitle('节点', { exact: true }).click()
-  await page.getByRole('option').filter({ hasText: 'node-b' }).click()
+  await page.getByRole('option').filter({ hasText: 'node-b' }).click({ force: true })
   await expect(page.locator('.node-select-btn')).toContainText('node-b')
   expect(new URL(page.url()).searchParams.get('node')).toBe('node-b')
   expect(new URL(page.url()).searchParams.has('token')).toBe(false)
