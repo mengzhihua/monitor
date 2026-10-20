@@ -194,7 +194,7 @@ test.describe('H5 phone workspace', () => {
     await page.goto('/?view=charts&token=' + token)
     await expect(page.locator('.card canvas').first()).toBeVisible()
     await page.getByTitle('节点', { exact: true }).click()
-    await page.locator('.node-menu').getByRole('option', { name: /production-remote-node/ }).click({ force: true })
+    await page.locator('.node-menu').getByRole('option', { name: /production-remote-node/ }).click()
     await expect.poll(() => scoped.includes(remote), { timeout: 15000 }).toBe(true)
     await expect(page.getByTitle('节点', { exact: true })).toContainText('production-remote-node')
     await noPageOverflow(page)

@@ -71,7 +71,7 @@ h2 { margin:4px 0 0; font-size:20px; }
 button { font:inherit; cursor:pointer; }
 .close { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:60px; min-height:44px; border:1px solid #475569; color:#cbd5e1; background:#172337; border-radius:10px; }
 .tool-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-.tool-grid button { min-height:76px; padding:12px; border:1px solid #283b50; border-radius:12px; background:#112136; color:#e2e8f0; display:flex; flex-direction:column; gap:6px; text-align:left; overflow-wrap:anywhere; }
+.tool-grid button { min-height:76px; padding:12px; border:1px solid #283b50; border-radius:12px; background:#112136; color:#e2e8f0; display:flex; flex-direction:column; gap:6px; text-align:left; overflow-wrap:anywhere; overflow:hidden; position:relative; z-index:0; }
 .tool-grid strong { font-size:14px; }.tool-description { color:#94a3b8; font-size:12px; line-height:1.5; }
 .tool-icon { display:flex; align-items:center; justify-content:center; width:36px; height:36px; margin-bottom:3px; border-radius:10px; background:#15374b; color:#67e8f9; }
 .icon-rules,.icon-weights { background:#46321d; color:#fcd34d; }.icon-config,.icon-templates,.icon-contexts { background:#302950; color:#c4b5fd; }.icon-ai { background:#173f39; color:#6ee7b7; }.icon-logout { background:#3e2935; color:#fda4af; }
