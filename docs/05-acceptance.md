@@ -443,6 +443,8 @@ make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
 # GitHub 托管夜间任务是 19800s（5.5h），阈值 RSS 450 / heap 增长 80 / RSS 增长 120 / 异常检测缓冲 16 MiB。
+# 运行不少于 30 分钟时，默认每 1800 秒抓一份 heap（heap-t00h00m.pprof、heap-t00h30m.pprof…），结束时用 go tool pprof 对比第一份和最后一份。
+# 不少于 2 小时且未单独传阈值时，套用上面的 450/80/120/16 MiB 上限。
 # 24h 在自建 runner（标签 self-hosted、linux）上跑：Weekly soak 工作流，每周日 02:15（UTC+8），也可以手动触发。
 # 以前它挂在 Nightly soak 里，定时运行时 if 条件不成立，任务一直是 skipped。
 # ≥24h 默认套用 800/200/300/16 MiB 阈值：

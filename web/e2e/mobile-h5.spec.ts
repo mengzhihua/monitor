@@ -19,6 +19,18 @@ async function more(page: Page) {
   return dialog
 }
 
+test('phone dock opens a tool with a normal click', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Phone dock only.')
+  await page.goto('/?view=charts&token=' + token)
+  await expect(page.locator('.metrics-workspace')).toBeVisible()
+  const dialog = await more(page)
+  await dialog.getByTitle('日志', { exact: true }).click()
+  await expect(page.getByRole('heading', { name: /^日志/ })).toBeVisible()
+  await mobileNav(page).getByRole('button', { name: '图表', exact: true }).click()
+  await expect(page.locator('.metrics-workspace')).toBeVisible()
+  await noPageOverflow(page)
+})
+
 test.describe('H5 phone workspace', () => {
   test.skip(({ isMobile }) => !isMobile, 'Phone-only navigation is tested in the mobile project.')
 

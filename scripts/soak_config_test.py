@@ -84,6 +84,32 @@ collectors:
             raise SystemExit(copied_text)
         if soak.web_token(copied_text) != "production-fixed-token":
             raise SystemExit("explicit seed config lost its token")
+    marks = soak.heap_marks(7200, 1800)
+    if marks != [0, 1800, 3600, 5400, 7200]:
+        raise SystemExit(f"heap marks {marks}")
+    if soak.heap_marks(120, 0) != [0, 120]:
+        raise SystemExit("short runs still capture start and end")
+    if soak.heap_label(1800) != "t00h30m" or soak.heap_label(0) != "t00h00m" or soak.heap_label(8) != "t00h00m08s":
+        raise SystemExit(f"heap label {soak.heap_label(1800)} {soak.heap_label(8)}")
+
+    class Args:
+        max_rss_mib = None
+        max_heap_growth_mib = None
+        max_rss_growth_mib = None
+        max_anomaly_buffer_mib = None
+
+    two_hour = Args()
+    soak.apply_duration_thresholds(7200, two_hour)
+    if (two_hour.max_rss_mib, two_hour.max_heap_growth_mib, two_hour.max_rss_growth_mib, two_hour.max_anomaly_buffer_mib) != (450, 80, 120, 16):
+        raise SystemExit("2h caps")
+    day = Args()
+    soak.apply_duration_thresholds(86400, day)
+    if day.max_heap_growth_mib != 200 or day.max_rss_mib != 800:
+        raise SystemExit("24h caps")
+    short = Args()
+    soak.apply_duration_thresholds(120, short)
+    if short.max_heap_growth_mib is not None:
+        raise SystemExit("short runs stay uncapped unless asked")
     print("soak config isolation ok")
     return 0
 
