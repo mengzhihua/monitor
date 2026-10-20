@@ -25,13 +25,8 @@ func TestLoadingGateServesUntilReady(t *testing.T) {
 		t.Fatalf("retry-after %q", resp.Header.Get("Retry-After"))
 	}
 
-	resp, err = http.Get(srv.URL + "/api/v1/info")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("api while loading: %d", resp.StatusCode)
+	if _, err = http.Get(srv.URL + "/api/v1/info"); err == nil {
+		t.Fatal("api request during load should fail the dial, not return a status")
 	}
 
 	gate.use(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -20,12 +20,22 @@ func (g *loadingGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(w, r)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Retry-After", "1")
 	if r.URL.Path == "/healthz" {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("loading\n"))
 		return
+	}
+	// Acceptance scripts treat any HTTP status as a final answer and only
+	// retry when the dial fails. Until the database is open, drop other
+	// connections the way a closed port did.
+	if hj, ok := w.(http.Hijacker); ok {
+		conn, _, err := hj.Hijack()
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
 	}
 	http.Error(w, "loading", http.StatusServiceUnavailable)
 }
