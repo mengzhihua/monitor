@@ -443,8 +443,8 @@ make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
 # GitHub 托管夜间任务是 19800s（5.5h），阈值 RSS 450 / heap 增长 80 / RSS 增长 120 / 异常检测缓冲 16 MiB。
-# 24h 在自建 runner（标签 self-hosted、linux）上跑：每周日 02:15（UTC+8）的定时任务，或 workflow_dispatch profile=lab。
-# 以前 lab 任务只在手动选择 profile=lab 时才会启动，定时运行里一直被跳过。
+# 24h 在自建 runner（标签 self-hosted、linux）上跑：Weekly soak 工作流，每周日 02:15（UTC+8），也可以手动触发。
+# 以前它挂在 Nightly soak 里，定时运行时 if 条件不成立，任务一直是 skipped。
 # ≥24h 默认套用 800/200/300/16 MiB 阈值：
 python3 scripts/soak.py --seconds 86400 --sample-every 30 \
   --seed-data-dir /path/to/production-like-data-copy \
