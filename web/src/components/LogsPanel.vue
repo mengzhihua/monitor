@@ -97,6 +97,11 @@ table { width: 100%; border-collapse: collapse; }
 th { text-align: left; color: #64748b; font-weight: 500; font-size: 11px; padding: 4px 6px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: #0f172a; }
 td { padding: 3px 6px; border-bottom: 1px solid #111827; }
 .msg { max-width: 720px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .panel, .scroll { max-width: 100%; min-width: 0; }
+  .scroll { overflow-x: auto; }
+  .msg { max-width: 68vw; }
+}
 .dim { color: #94a3b8; }
 tr.err td { color: #fca5a5; }
 tr.warn td { color: #fde68a; }

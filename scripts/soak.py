@@ -157,13 +157,69 @@ def resolve_soak_config(root: pathlib.Path, seed_config: str | None) -> pathlib.
     return cfg
 
 
+def heap_marks(seconds: int, every: int) -> list[int]:
+    """Elapsed seconds for heap profiles. Always includes the start and the end."""
+    marks = [0]
+    if every > 0:
+        t = every
+        while t < seconds:
+            marks.append(t)
+            t += every
+    if marks[-1] != seconds:
+        marks.append(seconds)
+    return marks
+
+
+def heap_label(elapsed: int) -> str:
+    hours, rem = divmod(max(elapsed, 0), 3600)
+    minutes, seconds = divmod(rem, 60)
+    if seconds:
+        return f"t{hours:02d}h{minutes:02d}m{seconds:02d}s"
+    return f"t{hours:02d}h{minutes:02d}m"
+
+
+def apply_duration_thresholds(seconds: int, args) -> None:
+    """Fill unset memory caps. 24h keeps the looser lab limits; 2h+ uses the hosted limits."""
+    if seconds >= 86400:
+        caps = (800, 200, 300, 16)
+    elif seconds >= 7200:
+        caps = (450, 80, 120, 16)
+    else:
+        return
+    if args.max_rss_mib is None:
+        args.max_rss_mib = caps[0]
+    if args.max_heap_growth_mib is None:
+        args.max_heap_growth_mib = caps[1]
+    if args.max_rss_growth_mib is None:
+        args.max_rss_growth_mib = caps[2]
+    if args.max_anomaly_buffer_mib is None:
+        args.max_anomaly_buffer_mib = caps[3]
+
+
+def heap_diff_top(older: pathlib.Path, newer: pathlib.Path) -> str:
+    """Text diff of two heap profiles. Empty when go tool pprof cannot run."""
+    go = shutil.which("go")
+    if not go or not older.is_file() or not newer.is_file():
+        return ""
+    proc = subprocess.run(
+        [go, "tool", "pprof", "-top", "-nodecount=20", f"-diff_base={older}", str(newer)],
+        capture_output=True, text=True, timeout=120,
+    )
+    text = (proc.stdout or "").strip()
+    if proc.returncode != 0:
+        err = (proc.stderr or "").strip()
+        return (text + "\n" + err).strip()[:4000]
+    return text[:4000]
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--seconds", type=int, default=120)
     p.add_argument("--bin", default="core/bin/monitord")
     p.add_argument("--output")
     p.add_argument("--sample-every", type=float, default=2.0, help="seconds between samples")
-    p.add_argument("--heap-dir", help="directory for start/mid/end heap.pprof captures (admin API)")
+    p.add_argument("--heap-dir", help="directory for periodic heap.pprof captures (admin API)")
+    p.add_argument("--heap-every", type=int, default=None, help="seconds between heap profiles (default 1800 when the run is at least 30 minutes)")
     p.add_argument("--no-heap", action="store_true", help="disable heap profile capture")
     p.add_argument("--seed-data-dir", help="copy an existing agent data directory as the soak starting state")
     p.add_argument("--seed-config", help="config file to use; sibling configs are ignored")
@@ -179,17 +235,15 @@ def main(argv: list[str] | None = None) -> int:
     heap_dir = args.heap_dir
     if args.no_heap:
         heap_dir = None
-    elif not heap_dir and args.seconds >= 3600:
+    elif not heap_dir and args.seconds >= 1800:
         heap_dir = str(pathlib.Path("reports") / f"soak-heaps-{int(time.time())}")
-    if args.seconds >= 86400:
-        if args.max_rss_mib is None:
-            args.max_rss_mib = 800
-        if args.max_heap_growth_mib is None:
-            args.max_heap_growth_mib = 200
-        if args.max_rss_growth_mib is None:
-            args.max_rss_growth_mib = 300
-        if args.max_anomaly_buffer_mib is None:
-            args.max_anomaly_buffer_mib = 16
+    heap_every = args.heap_every
+    if heap_every is None:
+        heap_every = 1800 if args.seconds >= 1800 else 0
+    if heap_every < 0:
+        p.error("--heap-every must be >= 0")
+    marks = heap_marks(args.seconds, heap_every)
+    apply_duration_thresholds(args.seconds, args)
 
     state: dict = {"stop": False, "signum": 0}
 
@@ -277,6 +331,8 @@ def main(argv: list[str] | None = None) -> int:
                 "tsdb_series_max": max(series, default=0),
                 "disk_bytes": sum(f.stat().st_size for f in data.rglob("*") if f.is_file()),
                 "heap_profiles": heap_files,
+                "heap_every_seconds": heap_every,
+                "heap_diff_top": state.get("heap_diff_top") or "",
                 "alerts": local_alerts,
                 "errors": sorted(set(errors)),
                 "scope": "local agent; pass --seed-config explicitly; CI hosted runs are ~5.5h, 24h needs a self-hosted runner",
@@ -349,10 +405,10 @@ def main(argv: list[str] | None = None) -> int:
                 except (OSError, urllib.error.URLError) as exc:
                     errors.append(f"heap {label}: {exc}")
 
-            capture_heap("start")
-            mid_at = time.monotonic() + args.seconds / 2
-            mid_done = False
-            deadline = time.monotonic() + args.seconds
+            started_mono = time.monotonic()
+            capture_heap(heap_label(0))
+            next_mark = 1
+            deadline = started_mono + args.seconds
             samples = 0
             while time.monotonic() < deadline and not state["stop"]:
                 try:
@@ -390,11 +446,14 @@ def main(argv: list[str] | None = None) -> int:
                 samples += 1
                 if samples % 10 == 0:
                     write_report(False, False)
-                if not mid_done and time.monotonic() >= mid_at:
-                    capture_heap("mid")
-                    mid_done = True
+                elapsed = time.monotonic() - started_mono
+                while next_mark < len(marks) - 1 and elapsed >= marks[next_mark]:
+                    capture_heap(heap_label(marks[next_mark]))
+                    next_mark += 1
                 time.sleep(min(args.sample_every, max(0, deadline - time.monotonic())))
-            capture_heap("end")
+            capture_heap(heap_label(args.seconds))
+            if len(heap_files) >= 2:
+                state["heap_diff_top"] = heap_diff_top(pathlib.Path(heap_files[0]), pathlib.Path(heap_files[-1]))
         finally:
             proc.send_signal(signal.SIGINT)
             try:

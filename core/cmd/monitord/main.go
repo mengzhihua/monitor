@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -206,6 +207,39 @@ func run() error {
 			tiers[i].Retention = ret
 		}
 	}
+	// Bind before opening the database. A few hundred megabytes of blocks
+	// can take tens of seconds; the port should answer (503 loading) instead
+	// of refusing connections until that finishes.
+	var httpSrv *http.Server
+	gate := &loadingGate{}
+	errc := make(chan error, 1)
+	serverHandoff := false
+	if cfg.WebEnabled() || *listen != "" {
+		ln, err := net.Listen("tcp", cfg.Web.Listen)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", cfg.Web.Listen, err)
+		}
+		httpSrv = &http.Server{
+			Addr:              cfg.Web.Listen,
+			Handler:           gate,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		log.Info("web server listening", "addr", cfg.Web.Listen, "ready", false)
+		go func() {
+			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
+	defer func() {
+		if httpSrv != nil && !serverHandoff {
+			stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_ = httpSrv.Shutdown(stopCtx)
+			cancel()
+		}
+	}()
+
+	openStarted := time.Now()
 	db, err := tsdb.Open(tsdb.Options{
 		Dir:           filepath.Join(cfg.Global.DataDir, "db"),
 		Retention:     cfg.DB.Tier0Retention,
@@ -217,6 +251,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open tsdb: %w", err)
 	}
+	log.Info("tsdb open", "elapsed", time.Since(openStarted).Round(time.Millisecond))
 
 	reg := registry.New(h, db)
 	localDisabled := map[string]bool{}
@@ -508,10 +543,11 @@ func run() error {
 			}
 		})
 	}
-	httpSrv := &http.Server{
-		Addr:              cfg.Web.Listen,
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+	if httpSrv != nil {
+		gate.use(srv.Handler())
+		log.Info("web server ready", "addr", cfg.Web.Listen)
+	} else {
+		log.Info("web server disabled (web.enabled=false)")
 	}
 
 	schedDone := make(chan struct{})
@@ -560,20 +596,7 @@ func run() error {
 		go discover.Announce(ctx, reg.Host.Hostname, port)
 	}
 
-	errc := make(chan error, 1)
-	go func() {
-		// An explicit -listen flag overrides web.enabled=false; otherwise a
-		// headless agent can drop the HTTP listener entirely.
-		if !cfg.WebEnabled() && *listen == "" {
-			log.Info("web server disabled (web.enabled=false)")
-			return
-		}
-		log.Info("web server listening", "addr", cfg.Web.Listen)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
-		}
-	}()
-
+	serverHandoff = true
 	var runErr error
 	restarting := false
 	select {
@@ -591,7 +614,9 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.CloseShells()
-	_ = httpSrv.Shutdown(shutdownCtx)
+	if httpSrv != nil {
+		_ = httpSrv.Shutdown(shutdownCtx)
+	}
 	select {
 	case <-schedDone:
 	case <-shutdownCtx.Done():

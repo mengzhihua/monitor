@@ -131,6 +131,26 @@ func TestChecksAPI(t *testing.T) {
 		t.Fatalf("list = %+v", listed.Checks)
 	}
 
+	resp = post("operator", `{"name":"nightly-backup","status":"ok","ttl":"1m","output":"recovered"}`, "")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("output alias %d %s", resp.StatusCode, body)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&row); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if row.Message != "recovered" || row.Status != "ok" {
+		t.Fatalf("output alias row = %+v", row)
+	}
+	resp = post("operator", `{"name":"nightly-backup","status":"warning","message":"late","output":"other"}`, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("disagreeing output status %d", resp.StatusCode)
+	}
+
 	resp = post("operator", `{"name":"nightly-backup","status":"ok","ttl":"1m"}`, "")
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

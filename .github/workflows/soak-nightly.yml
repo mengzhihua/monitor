@@ -1,30 +1,29 @@
 name: Nightly soak
 
-# GitHub-hosted jobs die at 6h. The scheduled job therefore runs 19800s (5.5h)
-# and applies tighter RSS/heap limits. workflow_dispatch profile=lab runs 24h
-# on a self-hosted Linux runner (labels: self-hosted, linux). A timeout or
-# SIGTERM is a failure: soak.py writes the partial JSON before exiting 1, and
-# the artifact step still uploads that file plus heap profiles.
+# GitHub-hosted jobs die at 6h. This nightly cron runs 19800s (5.5h)
+# and applies tighter RSS/heap limits. The 24h run is soak-weekly.yml on a
+# self-hosted Linux runner; it used to live here behind an if that skipped it
+# on every schedule. A timeout or SIGTERM is a failure: soak.py writes the
+# partial JSON before exiting 1, and the artifact step still uploads that
+# file plus heap profiles.
 on:
   schedule:
     - cron: "15 18 * * *" # 02:15 UTC+8
   workflow_dispatch:
     inputs:
       profile:
-        description: "hosted = 5.5h on GitHub; lab = 24h on a self-hosted Linux runner"
+        description: "5.5h on GitHub-hosted runners. 24h is the Weekly soak workflow."
         required: true
         default: hosted
         type: choice
         options:
           - hosted
-          - lab
 
 permissions:
   contents: read
 
 jobs:
   soak-hosted:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.profile != 'lab'
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
@@ -46,34 +45,6 @@ jobs:
         if: always()
         with:
           name: soak-nightly
-          path: |
-            reports/soak-nightly.json
-            reports/soak-heaps/
-          if-no-files-found: warn
-
-  soak-lab:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'lab'
-    runs-on: [self-hosted, linux]
-    timeout-minutes: 1500
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: core/go.mod
-          cache-dependency-path: core/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Build agent
-        run: ./scripts/build.sh --dev all
-      - name: Soak 24h
-        run: bash scripts/ci-soak.sh lab
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: soak-nightly-24h
           path: |
             reports/soak-nightly.json
             reports/soak-heaps/

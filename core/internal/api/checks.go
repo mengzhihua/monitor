@@ -40,6 +40,7 @@ func (s *Server) handleChecks(w http.ResponseWriter, r *http.Request) {
 		Name    string   `json:"name"`
 		Status  string   `json:"status"`
 		Message string   `json:"message"`
+		Output  string   `json:"output"`
 		Value   *float64 `json:"value"`
 		TTL     string   `json:"ttl"`
 	}
@@ -58,8 +59,15 @@ func (s *Server) handleChecks(w http.ResponseWriter, r *http.Request) {
 		}
 		ttl = d
 	}
+	message := body.Message
+	if strings.TrimSpace(message) == "" {
+		message = body.Output
+	} else if strings.TrimSpace(body.Output) != "" && body.Output != body.Message {
+		http.Error(w, "message and output disagree", http.StatusBadRequest)
+		return
+	}
 	now := time.Now()
-	if err := collect.Checks().Report(body.Name, body.Status, body.Message, body.Value, ttl, now); err != nil {
+	if err := collect.Checks().Report(body.Name, body.Status, message, body.Value, ttl, now); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

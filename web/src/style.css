@@ -3,7 +3,15 @@ html, body { margin: 0; background: #020617; color: #e2e8f0; font: 14px/1.4 -app
 #app { min-height: 100vh; }
 button, a, summary { -webkit-tap-highlight-color: transparent; }
 @media (max-width: 760px) {
-  #app { min-height: 100dvh; }
+  /* 0533c9b gave #app min-height: 100dvh and moved wide panels (logs, charts)
+     into the same document as the fixed dock. A nowrap table widens the layout
+     viewport past the phone screen. The dock then stretches to that layout
+     width, so 「更多」 sits outside the visual viewport while #app still covers
+     the visible area. Hit testing reports #app (or body) as intercepting the
+     tap. Clip horizontal overflow so the layout viewport stays at device width.
+     059ed8b did not set pointer-events on #app. */
+  html, body, #app { max-width: 100%; overflow-x: clip; }
+  #app { min-height: 100dvh; position: relative; z-index: 0; }
   button, input:not([type="checkbox"]):not([type="radio"]), select, textarea { min-height:44px; }
   /* Keep every mobile editor above Safari's focus-zoom threshold, including scoped panel styles. */
   input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size:16px !important; }
