@@ -4,11 +4,12 @@ name: Weekly soak
 # run that used to be soak-lab inside Nightly soak, where the job was skipped
 # on every schedule. It has no skip condition: Sunday 02:15 UTC+8 and a manual
 # dispatch both execute on a self-hosted Linux runner (labels: self-hosted, linux).
+# Actions evaluates cron in UTC, so Sunday 02:15 UTC+8 is Saturday 18:15 UTC.
 # A timeout or SIGTERM is a failure. soak.py writes the partial JSON first, and
 # the artifact step still uploads that file plus heap profiles.
 on:
   schedule:
-    - cron: "15 18 * * 0" # Sunday 02:15 UTC+8
+    - cron: "15 18 * * 6" # Saturday 18:15 UTC = Sunday 02:15 UTC+8
   workflow_dispatch:
 
 permissions:
