@@ -91,3 +91,50 @@ test('in-flight single handling keeps the batch mutex across section unmounts', 
     release()
   }
 })
+
+test('saving one field preserves the remaining draft revision across concurrent updates', async ({ page }) => {
+  let revision = 1
+  const submitted: (HandlingChange & { revision: number; note: string })[] = []
+  await page.route(/\/api\/v1\/operations(?:\?.*)?$/, route => route.fulfill({ json: overview(revision) }))
+  await page.route('**/api/v1/operations/handling', route => {
+    submitted.push(route.request().postDataJSON())
+    if (submitted.length === 1) {
+      // Our save committed revision 2; another operator committed revision 3
+      // before the following overview read. The unsaved progress is still based on 2.
+      revision = 3
+      return route.fulfill({ json: { ...overview(2).problems[0]!.handling, assignee: 'operator' } })
+    }
+    return route.fulfill({ status: 409, body: 'changed' })
+  })
+  const card = await open(page)
+  await card.getByLabel('modular_problem 责任人', { exact: true }).selectOption('operator')
+  await card.getByLabel('modular_problem 处理进度', { exact: true }).selectOption('watching')
+  await card.getByRole('button', { name: '保存责任人', exact: true }).click()
+  await expect(card.getByRole('button', { name: '保存进度', exact: true })).toBeEnabled()
+  await card.getByRole('button', { name: '保存进度', exact: true }).click()
+  await expect.poll(() => submitted.length).toBe(2)
+  expect(submitted[1]).toMatchObject({ revision: 2, status: 'watching' })
+  await expect(page.getByRole('alert')).toContainText('草稿已保留')
+  await expect(card.getByLabel('modular_problem 处理进度', { exact: true })).toHaveValue('watching')
+})
+
+test('failed overview refresh prevents single problem mutations while keeping drafts', async ({ page }) => {
+  let fail = false
+  await page.route(/\/api\/v1\/operations(?:\?.*)?$/, route => fail
+    ? route.fulfill({ status: 503, body: 'unavailable' })
+    : route.fulfill({ json: overview(1) }))
+  const card = await open(page)
+  await card.getByLabel('modular_problem 处理备注').fill('保留待提交备注')
+  await card.getByLabel('modular_problem 责任人', { exact: true }).selectOption('operator')
+  await card.getByLabel('modular_problem 处理进度', { exact: true }).selectOption('watching')
+  fail = true
+  await page.getByRole('button', { name: '刷新总览', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('刷新失败')
+  for (const name of ['保存责任人', '分配给我', '保存进度', '确认问题', '添加备注']) {
+    await expect(card.getByRole('button', { name, exact: true })).toBeDisabled()
+  }
+  await expect(card.getByLabel('modular_problem 处理备注')).toHaveValue('保留待提交备注')
+  fail = false
+  await page.getByRole('button', { name: '刷新总览', exact: true }).click()
+  await expect(card.getByRole('button', { name: '添加备注', exact: true })).toBeEnabled()
+})

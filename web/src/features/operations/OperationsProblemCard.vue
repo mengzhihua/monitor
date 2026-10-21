@@ -35,17 +35,17 @@ const emit = defineEmits<{
           <option v-if="p.handling.assignee && !assignees.some(u => u.name === p.handling.assignee)" :value="p.handling.assignee" disabled>{{ p.handling.assignee }}（不在可指派列表）</option>
           <option v-for="u in assignees" :key="u.name" :value="u.name">{{ u.name }}{{ u.name === currentUser ? '（我）' : '' }}</option>
         </select></label>
-        <button :disabled="!!busy || (owner ?? p.handling.assignee) === p.handling.assignee" @click="emit('assign')">保存责任人</button>
-        <button v-if="canSelfAssign && p.handling.assignee !== currentUser" :disabled="!!busy" @click="emit('update', { action: 'assign', assignee: currentUser })">分配给我</button>
+        <button :disabled="!!busy || stale || (owner ?? p.handling.assignee) === p.handling.assignee" @click="emit('assign')">保存责任人</button>
+        <button v-if="canSelfAssign && p.handling.assignee !== currentUser" :disabled="!!busy || stale" @click="emit('update', { action: 'assign', assignee: currentUser })">分配给我</button>
       </div>
       <div>
         <label>处理进度 <select :value="status ?? p.handling.status" :disabled="busy === p.id" :aria-label="p.name + ' 处理进度'" @change="emit('status', ($event.target as HTMLSelectElement).value as HandlingStatus)">
           <option value="open">待处理</option><option value="investigating">排查中</option><option value="watching">观察中</option>
         </select></label>
-        <button :disabled="!!busy || (status ?? p.handling.status) === p.handling.status" @click="emit('update', { action: 'progress', status: status ?? p.handling.status })">保存进度</button>
+        <button :disabled="!!busy || stale || (status ?? p.handling.status) === p.handling.status" @click="emit('update', { action: 'progress', status: status ?? p.handling.status })">保存进度</button>
       </div>
     </div>
-    <div class="problem-actions"><button @click="emit('drill', p.node, p.chart)">定位图表</button><button @click="emit('solve', p)"><AppIcon name="ai" :size="16" />AI 解决问题</button><template v-if="canHandle"><input :value="note" @input="emit('note', ($event.target as HTMLInputElement).value)" :disabled="busy === p.id" :aria-label="p.name + ' 处理备注'" placeholder="处理备注（可选）" maxlength="512" /><button :disabled="!!busy" @click="emit('update', { action: p.handling.acknowledged ? 'unacknowledge' : 'acknowledge' })">{{ busy === p.id ? '正在保存…' : p.handling.acknowledged ? '撤销确认' : '确认问题' }}</button><button :disabled="!!busy || !note?.trim()" @click="emit('update', { action: 'comment' })">添加备注</button></template></div>
+    <div class="problem-actions"><button @click="emit('drill', p.node, p.chart)">定位图表</button><button @click="emit('solve', p)"><AppIcon name="ai" :size="16" />AI 解决问题</button><template v-if="canHandle"><input :value="note" @input="emit('note', ($event.target as HTMLInputElement).value)" :disabled="busy === p.id" :aria-label="p.name + ' 处理备注'" placeholder="处理备注（可选）" maxlength="512" /><button :disabled="!!busy || stale" @click="emit('update', { action: p.handling.acknowledged ? 'unacknowledge' : 'acknowledge' })">{{ busy === p.id ? '正在保存…' : p.handling.acknowledged ? '撤销确认' : '确认问题' }}</button><button :disabled="!!busy || stale || !note?.trim()" @click="emit('update', { action: 'comment' })">添加备注</button></template></div>
     <details v-if="p.handling.history.length"><summary>处理记录 · 最近 {{ p.handling.history.length }} 条</summary><ol><li v-for="(h,i) in [...p.handling.history].reverse()" :key="i"><span>{{ formatTime(h.at) }} · {{ h.actor }} · {{ describeAction(h) }}</span><p v-if="h.note">{{ h.note }}</p></li></ol></details>
   </article>
 </template>

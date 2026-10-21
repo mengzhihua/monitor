@@ -52,17 +52,21 @@ export function useProblemHandling({ role, snapshot, error, refresh, filters }: 
     draftRevisions.value[p.id] ??= p.handling.revision
   }
   async function update(p: Problem, change: HandlingChange) {
-    if (busy.value) return
+    if (busy.value || !canHandle.value || error.value) return
     busy.value = p.id
     actionError.value = ''
     try {
-      await api.handleProblem({ id: p.id, ...change, note: notes.value[p.id] || '', revision: draftRevisions.value[p.id] ?? p.handling.revision })
+      const saved = await api.handleProblem({ id: p.id, ...change, note: notes.value[p.id] || '', revision: draftRevisions.value[p.id] ?? p.handling.revision })
       if (disposed) return
       historyRefreshKey.value++
       delete notes.value[p.id]
-      delete draftRevisions.value[p.id]
       if (change.action === 'assign' || change.action === 'unassign') delete owners.value[p.id]
       if (change.action === 'progress') delete progress.value[p.id]
+      // Other fields may still contain drafts. Anchor them to our own accepted
+      // write, not to a newer overview that may already include someone else's edit.
+      if (owners.value[p.id] !== undefined || progress.value[p.id] !== undefined) {
+        draftRevisions.value[p.id] = saved.revision
+      } else delete draftRevisions.value[p.id]
       await refresh()
     } catch (e) {
       if (disposed) return
