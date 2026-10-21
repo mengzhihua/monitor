@@ -443,7 +443,8 @@ make hub-load
 mkdir -p reports
 python3 scripts/soak.py --seconds 600 --output reports/soak.json
 # GitHub 托管夜间任务是 19800s（5.5h），阈值 RSS 450 / heap 增长 80 / RSS 增长 120 / 异常检测缓冲 16 MiB。
-# 运行不少于 30 分钟时，默认每 1800 秒抓一份 heap（heap-t00h00m.pprof、heap-t00h30m.pprof…），结束时用 go tool pprof 对比第一份和最后一份。
+# 30 分钟到 4 小时：默认每 1800 秒一份 heap。4 小时及以上：每 2 小时一份（heap-t00h00m.pprof、heap-t02h00m.pprof…）。结束时用 go tool pprof 对比第一份和最后一份。
+# 2026-10-20 默认采集器 2 小时：序列数停在 110。堆从 1.0MB 涨到 1 小时的 9.5MB，刷盘后 1.5 小时回到 4.7MB，2 小时又填到 8.3MB。刷盘后 `tsdb.(*Store).accept` 的在用内存下降，旧块没有一直占着。
 # 不少于 2 小时且未单独传阈值时，套用上面的 450/80/120/16 MiB 上限。
 # 24h 在自建 runner（标签 self-hosted、linux）上跑：Weekly soak 工作流，每周日 02:15（UTC+8），也可以手动触发。
 # 以前它挂在 Nightly soak 里，定时运行时 if 条件不成立，任务一直是 skipped。

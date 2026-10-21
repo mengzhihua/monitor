@@ -109,6 +109,36 @@ func TestStoreFlushReloadQuery(t *testing.T) {
 	}
 }
 
+func TestFlushReleasesBlockBackingArray(t *testing.T) {
+	s, err := Open(Options{Dir: t.TempDir(), BlockSize: 64, Tiers: []TierSpec{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	start := int64(1_700_000_000)
+	for i := int64(0); i < 64; i++ {
+		s.Append("x", start+i, float64(i))
+	}
+	s.Append("x", start+64, 64)
+	s.mu.RLock()
+	sr := s.series["x"]
+	s.mu.RUnlock()
+	sr.mu.Lock()
+	tailLen, tailTS := len(sr.ts), append([]int64(nil), sr.ts...)
+	tsCap, valsCap := cap(sr.ts), cap(sr.vals)
+	sr.mu.Unlock()
+	if tailLen != 1 || len(tailTS) != 1 || tailTS[0] != start+64 {
+		t.Fatalf("tail %+v", tailTS)
+	}
+	if tsCap > 32 || valsCap > 32 {
+		t.Fatalf("flushed buffer kept the block: len=%d ts cap=%d vals cap=%d", tailLen, tsCap, valsCap)
+	}
+	pts, err := s.Query("x", start, start+64)
+	if err != nil || len(pts) != 65 || pts[64].Value != 64 {
+		t.Fatalf("query after compact: %d %v", len(pts), err)
+	}
+}
+
 func TestAppendDropsSamplesOlderThanFlushedBlocks(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(Options{Dir: dir, BlockSize: 10})

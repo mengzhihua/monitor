@@ -89,6 +89,10 @@ collectors:
         raise SystemExit(f"heap marks {marks}")
     if soak.heap_marks(120, 0) != [0, 120]:
         raise SystemExit("short runs still capture start and end")
+    if soak.default_heap_every(7200) != 1800 or soak.default_heap_every(6 * 3600) != 7200 or soak.default_heap_every(120) != 0:
+        raise SystemExit(f"heap interval {soak.default_heap_every(6 * 3600)}")
+    if soak.heap_marks(8 * 3600, 7200) != [0, 7200, 14400, 21600, 28800]:
+        raise SystemExit("2h marks")
     if soak.heap_label(1800) != "t00h30m" or soak.heap_label(0) != "t00h00m" or soak.heap_label(8) != "t00h00m08s":
         raise SystemExit(f"heap label {soak.heap_label(1800)} {soak.heap_label(8)}")
 

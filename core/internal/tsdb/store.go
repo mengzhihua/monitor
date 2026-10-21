@@ -545,12 +545,27 @@ func (s *Store) flushSeries(sr *series) error {
 }
 
 // suffixNewerThan keeps samples strictly after end. ts is ordered ascending.
+// The tail is copied when it would otherwise pin the whole flushed block.
 func suffixNewerThan(ts []int64, vals []float64, end int64) ([]int64, []float64) {
 	i := sort.Search(len(ts), func(j int) bool { return ts[j] > end })
 	if i > len(vals) {
 		i = len(vals)
 	}
-	return ts[i:], vals[i:]
+	return compactTail(ts[i:]), compactTail(vals[i:])
+}
+
+// compactTail drops a backing array that is mostly already on disk.
+// A short tail after flush must not keep the hour-sized buffer alive.
+func compactTail[T any](s []T) []T {
+	if len(s) == 0 {
+		return nil
+	}
+	if cap(s) > len(s)*2 && cap(s)-len(s) > 32 {
+		out := make([]T, len(s))
+		copy(out, s)
+		return out
+	}
+	return s
 }
 
 // visibleEndLocked is the newest timestamp still stored in a block or the
