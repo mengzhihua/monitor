@@ -1,8 +1,9 @@
 #!/bin/bash
 # Seed a throwaway data dir and run soak.py. Profile is "hosted" (5.5h) or "lab" (24h).
-# Runs of at least 30 minutes capture a heap profile every 30 minutes and diff the first
-# profile against the last. Runs of at least 2 hours also fail when memory growth exceeds
-# the hosted caps, unless the flags below set a different limit.
+# Runs of 30 minutes to 4 hours capture a heap profile every 30 minutes. Longer runs
+# capture one every 2 hours, then diff the first profile against the last. Runs of at
+# least 2 hours also fail when memory growth exceeds the hosted caps, unless the flags
+# below set a different limit.
 set -euo pipefail
 profile=${1:-hosted}
 mkdir -p reports/seed-data

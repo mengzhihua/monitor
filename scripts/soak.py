@@ -170,6 +170,15 @@ def heap_marks(seconds: int, every: int) -> list[int]:
     return marks
 
 
+def default_heap_every(seconds: int) -> int:
+    """30 minutes below 4 hours, then every 2 hours for the long watch."""
+    if seconds >= 4 * 3600:
+        return 2 * 3600
+    if seconds >= 1800:
+        return 1800
+    return 0
+
+
 def heap_label(elapsed: int) -> str:
     hours, rem = divmod(max(elapsed, 0), 3600)
     minutes, seconds = divmod(rem, 60)
@@ -219,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output")
     p.add_argument("--sample-every", type=float, default=2.0, help="seconds between samples")
     p.add_argument("--heap-dir", help="directory for periodic heap.pprof captures (admin API)")
-    p.add_argument("--heap-every", type=int, default=None, help="seconds between heap profiles (default 1800 when the run is at least 30 minutes)")
+    p.add_argument("--heap-every", type=int, default=None, help="seconds between heap profiles (default 1800 from 30 minutes, 7200 from 4 hours)")
     p.add_argument("--no-heap", action="store_true", help="disable heap profile capture")
     p.add_argument("--seed-data-dir", help="copy an existing agent data directory as the soak starting state")
     p.add_argument("--seed-config", help="config file to use; sibling configs are ignored")
@@ -239,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         heap_dir = str(pathlib.Path("reports") / f"soak-heaps-{int(time.time())}")
     heap_every = args.heap_every
     if heap_every is None:
-        heap_every = 1800 if args.seconds >= 1800 else 0
+        heap_every = default_heap_every(args.seconds)
     if heap_every < 0:
         p.error("--heap-every must be >= 0")
     marks = heap_marks(args.seconds, heap_every)
