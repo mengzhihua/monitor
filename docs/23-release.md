@@ -26,7 +26,7 @@ git push --force origin refs/tags/v3.0.17
 
 ### 2026-10-20 外部检查 `output`
 
-`POST /api/v1/checks` 增加可选字段 `output`，含义与 `message` 相同。只提交 `output` 时按说明文字保存。两个字段都有且内容不同时返回 400，不写入。只提交 `message` 的客户端不用改。字段说明见 [外部服务检查](06-monitor-2.0.md)。
+`POST /api/v1/checks` 增加可选字段 `output`，含义与 `message` 相同。只提交 `output` 时按说明文字保存。两个字段都有且内容不同时返回 400，不写入。只提交 `message` 的客户端不用改。给外部脚本看的条目在仓库根目录 [CHANGELOG.md](../CHANGELOG.md)，字段表在 [外部服务检查](06-monitor-2.0.md)。
 
 ### 2026-10-21 问题处置草稿与刷新失败保护
 

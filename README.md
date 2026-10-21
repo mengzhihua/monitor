@@ -462,7 +462,7 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 
 | 模块 | 说明 |
 | --- | --- |
-| API | `GET\|POST /api/v1/checks`：本机被动检查（Nagios passive / Zabbix trapper / Datadog service check）。状态 `ok` / `warning` / `critical`，超过 TTL 未再上报记为 `expired`。图表 `check.<name>`，context `check.status`。管理员和排障可提交，只读可查看 |
+| API | `GET\|POST /api/v1/checks`：本机被动检查（Nagios passive / Zabbix trapper / Datadog service check）。状态 `ok` / `warning` / `critical`，超过 TTL 未再上报记为 `expired`。说明字段 `message` 与 `output` 同义，只传 `output` 即可。图表 `check.<name>`，context `check.status`。管理员和排障可提交，只读可查看 |
 | 采集 / 告警 | 采集器 `checks` 与 Function `checks`；内置告警 `external_check_status`（警告为 WARNING，严重或过期为 CRITICAL） |
 
 ### 已实现能力（告警依赖）
