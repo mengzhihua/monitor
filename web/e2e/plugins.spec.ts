@@ -84,6 +84,43 @@ test('viewers and servers without capability never mount or fetch the plugin man
   expect(requests).toBe(0)
 })
 
+test('plugin details distinguish diagnostic suppression, zero counts and older servers without statistics', async ({ page }, info) => {
+  await metadata(page)
+  const catalog = fixture()
+  const demo = catalog.plugins[0]!
+  demo.stderr = { bytes: 90000, lines: 25, logged: 20, suppressed: 5, truncated: 2 }
+  await page.route('**/api/v1/plugins', route => route.fulfill({ json: catalog }))
+  await page.goto('/?view=plugins&token=browser-test-token')
+  const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+  const card = panel.getByRole('article', { name: '演示采集器' })
+  await card.locator('summary').click()
+  const details = card.locator('details')
+  await expect(details.locator('.stderr-summary > span')).toHaveText([
+    '收到 90000 字节 · 25 行', '转发到服务日志 20 行', '限流抑制 5 行 · 超长 2 行',
+  ])
+  await expect(details).toContainText('超过日志限额的行不转发')
+  await expect(details).toContainText('计数跨插件进程重启累计')
+  await expect(card.locator('.state')).toHaveText('运行中')
+  await expect(card.locator('.metrics')).toContainText('采样 4')
+  expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    window.scrollTo(0, 0)
+  })
+  await page.screenshot({ path: info.outputPath('plugin-stderr-details.png'), fullPage: true })
+
+  demo.stderr = { bytes: 0, lines: 0, logged: 0, suppressed: 0, truncated: 0 }
+  await panel.getByRole('button', { name: '刷新目录' }).click()
+  await expect(details.locator('.stderr-summary > span')).toHaveText([
+    '收到 0 字节 · 0 行', '转发到服务日志 0 行', '限流抑制 0 行 · 超长 0 行',
+  ])
+  delete demo.stderr
+  await panel.getByRole('button', { name: '刷新目录' }).click()
+  await expect(details).toContainText('服务未提供诊断输出统计')
+  await expect(details.locator('.stderr-summary')).toHaveCount(0)
+  await expect(card.getByRole('button', { name: '重启', exact: true })).toBeEnabled()
+})
+
 test('failed refresh freezes writes and a revision conflict refreshes before the next action', async ({ page }) => {
   await metadata(page)
   let fail = false, revision = 4, mutations = 0

@@ -46,8 +46,15 @@ DOCUMENTS = (
     "docs/05-acceptance.md", "docs/06-monitor-2.0.md",
     "docs/07-preset-dashboards.md", "docs/08-release-2.0.md",
     "docs/08-operations-dashboard-research.md", "docs/09-dashboard-final-update.md",
-    "docs/10-final-integration.md", "scripts/README.md",
+    "docs/10-final-integration.md", "docs/25-modular-workspace.md",
+    "docs/26-module-boundaries.md", "docs/27-plugin-platform.md", "scripts/README.md",
 )
+# Keep installable examples outside the scanned plugins.d directory. Explicit
+# filenames and modes avoid including local plugin state, credentials or links.
+EXAMPLES = {
+    "examples/plugins/heartbeat/plugin.json": 0o644,
+    "examples/plugins/heartbeat/collector.sh": 0o755,
+}
 VERSION_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
@@ -252,6 +259,7 @@ def quickstart(version: str, os_name: str, architecture: str, launch_name: str) 
         "启动器只监听本机，使用本包目录独立的 data；不要与已有运行实例共用数据。\n"
         "若端口占用，请设置 MONITOR_LISTEN 或手动指定其他 -listen 地址。\n\n"
         "包内 monitor.example.yaml 仅是示例，不会自动加载；按需复制为 monitor.yaml。\n"
+        "心跳插件示例位于 examples/plugins/heartbeat，默认不安装或运行；接入方法见 docs/27-plugin-platform.md。\n"
         "已有安装升级前先停止旧服务并备份原始配置和完整数据，阅读 docs/08-release-2.0.md。\n"
         "升级原安装应保留原有配置/数据路径，勿用空白示例覆盖。\n"
         "不要在运行中替换二进制、移动数据或并发启动多个实例写同一数据目录。\n\n"
@@ -314,6 +322,7 @@ def package(root: Path, output_root: Path, targets: list[str], universal: bool, 
         raise PackageError("Select at least one target")
     validate_receipt(root, inputs, version, commit)
     documents = {name: regular_file(root, name) for name in DOCUMENTS}
+    examples = {name: (regular_file(root, name), mode) for name, mode in EXAMPLES.items()}
     sources: dict[str, Path] = {}
     builds: dict[str, dict] = {}
     for target in inputs:
@@ -362,6 +371,7 @@ def package(root: Path, output_root: Path, targets: list[str], universal: bool, 
                 build["notarized"] = False
             launch_name, launchers = launcher_files(root, os_name)
             entries: dict[str, tuple[Path | bytes, int]] = {name: (path, 0o644) for name, path in documents.items()}
+            entries.update(examples)
             entries.update({
                 binary_name: (sources[target], 0o755),
                 "使用说明.txt": (quickstart(version, os_name, arch, launch_name), 0o644),

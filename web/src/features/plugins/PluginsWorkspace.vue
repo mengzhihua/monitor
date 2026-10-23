@@ -67,7 +67,22 @@ defineExpose({ canLeave })
           <p v-if="plugin.error" class="error">运行诊断：{{ plugin.error }}</p>
           <p v-if="plugin.stats.last_error" class="error">采样诊断：{{ plugin.stats.last_error }}</p>
           <p v-if="plugin.locked" class="warning">配置已锁定停用；请先修改服务器配置，此处不能启动。</p>
-          <details><summary>运行详情</summary><dl><dt>可执行文件</dt><dd><code>{{ plugin.command }}</code></dd><dt>协议行数</dt><dd>{{ plugin.stats.lines }}</dd><template v-if="plugin.functions?.length"><dt>声明函数</dt><dd>{{ plugin.functions.join('、') }}</dd></template></dl></details>
+          <details>
+            <summary>运行详情</summary>
+            <dl>
+              <dt>可执行文件</dt><dd><code>{{ plugin.command }}</code></dd>
+              <dt>协议行数</dt><dd>{{ plugin.stats.lines }}</dd>
+              <dt>诊断输出（stderr）</dt>
+              <dd v-if="plugin.stderr" class="stderr-summary">
+                <span>收到 {{ plugin.stderr.bytes }} 字节 · {{ plugin.stderr.lines }} 行</span>
+                <span>转发到服务日志 {{ plugin.stderr.logged }} 行</span>
+                <span>限流抑制 {{ plugin.stderr.suppressed }} 行 · 超长 {{ plugin.stderr.truncated }} 行</span>
+                <p class="dim">超过日志限额的行不转发；超长行仅转发省略标记。计数跨插件进程重启累计，服务重启后清零。</p>
+              </dd>
+              <dd v-else class="dim">服务未提供诊断输出统计。</dd>
+              <template v-if="plugin.functions?.length"><dt>声明函数</dt><dd>{{ plugin.functions.join('、') }}</dd></template>
+            </dl>
+          </details>
           <div class="actions">
             <button v-if="plugin.enabled" :disabled="!canWrite || !allowsPluginAction(catalog, 'disable', plugin.name)" @click="act('disable', plugin.name)">停用</button>
             <button v-else :disabled="!canWrite || !allowsPluginAction(catalog, 'enable', plugin.name)" @click="act('enable', plugin.name)">启用</button>
@@ -80,6 +95,7 @@ defineExpose({ canLeave })
 </template>
 
 <style scoped>
+.stderr-summary > span { display:block; line-height:1.8; }
 .plugins-workspace { color:#cbd5e1; min-width:0; }.panel-heading,.panel-heading h2,.toolbar,.actions { display:flex; align-items:center; gap:10px; }.panel-heading { justify-content:space-between; align-items:flex-start; }.panel-heading h2 { margin:0; font-size:20px; }.panel-heading p,.dim { color:#94a3b8; font-size:12px; line-height:1.7; }.panel-heading p { margin:8px 0 16px; }.toolbar { flex-wrap:wrap; align-items:flex-end; }.toolbar label { display:flex; flex-direction:column; gap:6px; font-size:12px; flex:1; min-width:min(200px,100%); }
 button,input { border:1px solid #475569; border-radius:7px; background:#111e30; color:#e2e8f0; font:inherit; padding:8px 11px; box-sizing:border-box; }button { cursor:pointer; display:inline-flex; gap:6px; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }button:disabled { opacity:.45; cursor:default; }button:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid #5eead4; outline-offset:3px; }input { width:100%; min-width:0; }.plugin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr)); gap:14px; margin-top:16px; }.plugin-card { border:1px solid #334155; border-radius:10px; background:#0f172a; padding:16px; min-width:0; overflow-wrap:anywhere; }.plugin-card>header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }.plugin-card h3 { margin:0 0 5px; font-size:16px; }.plugin-card p { font-size:13px; line-height:1.7; }code { font-size:12px; color:#94a3b8; overflow-wrap:anywhere; }.state { color:#5eead4; font-size:12px; white-space:nowrap; padding:4px 7px; border:1px solid #2c5251; border-radius:6px; }.state.issue,.warning { color:#fcd34d; }.metadata { display:grid; grid-template-columns:1fr 1fr; gap:10px; }.metadata div { min-width:0; }dt { color:#94a3b8; font-size:12px; margin-bottom:3px; }dd { margin:0; font-size:13px; overflow-wrap:anywhere; }.metrics { display:flex; flex-wrap:wrap; gap:12px; padding-block:10px; font-size:12px; }.metrics b { color:#e2e8f0; }.actions { margin-top:12px; }.error { color:#fca5a5; overflow-wrap:anywhere; }.notice { color:#5eead4; }.diagnostics { border:1px solid #7c5425; border-radius:8px; background:#2c251b; padding:12px; font-size:13px; overflow-wrap:anywhere; }.diagnostics h3 { margin:0; }.diagnostics ul { padding-left:20px; }.diagnostics li span { display:block; color:#fcd34d; margin-block:5px 10px; }.empty { padding:18px; border:1px dashed #475569; border-radius:8px; color:#94a3b8; line-height:1.8; }details { font-size:12px; color:#94a3b8; }summary { cursor:pointer; }details dd { margin-bottom:8px; }
 @media(max-width:760px) { button,input,summary { min-height:44px; }input { font-size:16px; }.plugin-card { padding:12px; }.metadata { gap:12px; }.panel-heading>button { font-size:12px; }summary { display:flex; align-items:center; }.toolbar label { flex-basis:100%; } }

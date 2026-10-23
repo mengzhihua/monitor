@@ -19,6 +19,8 @@
 
 服务端正式打包使用 `make package-server`：先构建内嵌 Web，再由脚本以根目录 `VERSION` 编译二进制并记录 SHA-256 构建收据，随后打包。需要已提交且干净的工作树；拒绝错平台、非当前提交、脏源码或缺失/不匹配构建收据的二进制。单独运行 `python3 scripts/package-server-release.py` 只打包已具备匹配收据的构建，`--build-only` 可只编译，`--target linux-amd64 --no-universal` 可限制目标。不会覆盖已有发布目录，可用 `--output-root` 指定新的父目录。
 
+归档按明确的文件白名单收录说明和示例，包含模块工作台、服务端边界及[插件平台](../docs/27-plugin-platform.md)说明（`docs/25`、`26`、`27`），以及 `examples/plugins/heartbeat/plugin.json` 和可执行的 `collector.sh`。心跳示例供 macOS/Linux 手动复制到配置的 `plugins.dir` 后扫描安装，解压或默认启动不会自动执行它。打包不递归复制插件目录，不包含本机 `monitor.yaml`、插件控制状态、密码、运行数据或私有文件，并拒绝输入文件及其父目录中的符号链接。
+
 ## 验收
 
 日常开发使用下列分层入口，Node 版本遵循根目录 `.node-version`，Web 依赖由 `make web` 安装。先完成 Web 构建，再运行 Go 测试；不要在 Go 编译时并发替换内嵌资源。
