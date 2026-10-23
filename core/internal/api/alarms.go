@@ -310,3 +310,50 @@ func (s *Server) PublishAlarm(e health.LogEntry) { s.publishAlarm("", e) }
 func (s *Server) publishAlarm(nodeID string, e health.LogEntry) {
 	s.live.broadcastAlarm(nodeID, e)
 }
+
+func (s *Server) handleAlarmCount(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.target(w, r)
+	if !ok {
+		return
+	}
+	var sum health.Summary
+	if v.node != nil {
+		for _, e := range v.node.Alarms() {
+			switch e.Status {
+			case health.StatusWarning:
+				sum.Warning++
+			case health.StatusCritical:
+				sum.Critical++
+			case health.StatusClear:
+				sum.Normal++
+			default:
+				sum.Silent++
+			}
+		}
+	} else if s.opt.Health != nil {
+		sum = s.opt.Health.Summary()
+	} else {
+		http.Error(w, "health engine disabled", http.StatusNotFound)
+		return
+	}
+	count := sum.Warning + sum.Critical
+	if st := r.URL.Query().Get("status"); st != "" {
+		count = 0
+		for _, p := range strings.Split(st, ",") {
+			switch strings.ToUpper(strings.TrimSpace(p)) {
+			case "WARNING":
+				count += sum.Warning
+			case "CRITICAL":
+				count += sum.Critical
+			case "CLEAR", "NORMAL":
+				count += sum.Normal
+			case "UNDEFINED", "UNINITIALIZED", "REMOVED", "SILENT":
+				count += sum.Silent
+			}
+		}
+	}
+	writeJSON(w, map[string]any{
+		"status": true, "count": count,
+		"normal": sum.Normal, "warning": sum.Warning, "critical": sum.Critical, "silent": sum.Silent,
+	})
+}

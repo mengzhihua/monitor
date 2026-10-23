@@ -286,7 +286,10 @@ func roomVisible(u User, room string) bool {
 	return false
 }
 
-func (s *Server) selfMonitor() {
+func (s *Server) selfMonitor(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	s.reg.AddChart(&registry.Chart{ID: "monitor.notify_queue", Context: "monitor.notify_queue", Title: "Notification queue",
 		Units: "entries", Family: "monitor", Plugin: "monitor", Module: "self", Priority: 100,
 		Dimensions: []*registry.Dimension{{ID: "depth"}}})
@@ -296,8 +299,13 @@ func (s *Server) selfMonitor() {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	s.sampleSelf(time.Now())
-	for now := range t.C {
-		s.sampleSelf(now)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			s.sampleSelf(now)
+		}
 	}
 }
 
@@ -321,15 +329,20 @@ func (s *Server) sampleSelf(now time.Time) {
 	_ = s.reg.Collect("monitor.hub_nodes", now, map[string]float64{"live": float64(live), "offline": float64(offline)})
 }
 
-func (s *Server) exportReports() {
-	if s.opt.ReportEvery <= 0 || s.opt.ReportDir == "" {
+func (s *Server) exportReports(ctx context.Context) {
+	if ctx.Err() != nil || s.opt.ReportEvery <= 0 || s.opt.ReportDir == "" {
 		return
 	}
 	t := time.NewTicker(s.opt.ReportEvery)
 	defer t.Stop()
 	s.writeReport(time.Now())
-	for now := range t.C {
-		s.writeReport(now)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			s.writeReport(now)
+		}
 	}
 }
 

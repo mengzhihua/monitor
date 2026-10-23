@@ -38,6 +38,7 @@ func newTestServer(t *testing.T, opt Options) (*httptest.Server, *registry.Regis
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, reg

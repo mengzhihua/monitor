@@ -115,3 +115,28 @@ test('API modules cannot bypass the UI boundary through Vue subpackages', () => 
   assert.equal(issues.length, 2)
   assert.ok(issues.every(issue => issue.includes('API internals')))
 })
+
+test('domain models accept API type contracts and other models without acquiring runtime services', () => {
+  assert.deepEqual(check({
+    'features/metrics/model/chartSeries.ts': 'import type { Chart } from "../../../api/monitoring/types"; import { limit } from "./bounds"',
+    'features/metrics/model/bounds.ts': 'export const limit = 1200',
+    'api/monitoring/types.ts': 'export interface Chart {}',
+  }), [])
+  const issues = check({
+    'features/metrics/model/chartSeries.ts': 'import { ref } from "vue"; import "uplot"; import "../../../api/monitoring/client"; import "../chartRenderer"',
+    'api/monitoring/client.ts': 'export {}',
+    'features/metrics/chartRenderer.ts': 'export {}',
+  })
+  assert.equal(issues.length, 4)
+  assert.ok(issues.every(issue => issue.includes('Domain models')))
+})
+
+test('type-only imports cannot smuggle component or orchestration contracts into domain models', () => {
+  const issues = check({
+    'features/metrics/model/chartSeries.ts': 'import type Card from "../../../components/Card.vue"; import type { Session } from "../useSession"',
+    'components/Card.vue': '<template><div /></template>',
+    'features/metrics/useSession.ts': 'export interface Session {}',
+  })
+  assert.equal(issues.length, 2)
+  assert.ok(issues.every(issue => issue.includes('Domain models')))
+})

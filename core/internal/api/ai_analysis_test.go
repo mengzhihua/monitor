@@ -59,6 +59,7 @@ func aiTestServer(t *testing.T, opt Options) (*Server, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Close)
 	return s, base
 }
 

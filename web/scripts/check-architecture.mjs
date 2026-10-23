@@ -88,6 +88,11 @@ export function checkArchitecture(sources) {
       }
       const domain = /^features\/([^/]+)\//.exec(file)?.[1]
       const targetDomain = target && /^features\/([^/]+)\//.exec(target)?.[1]
+      const modelRoot = /^features\/[^/]+\/model\//.exec(file)?.[0]
+      if (modelRoot && !(target?.startsWith(modelRoot)
+        || typeOnly && target?.startsWith('api/') && target.endsWith('/types.ts'))) {
+        report('Domain models may only depend on their own models and API type contracts: ' + specifier)
+      }
       if (domain && domain !== 'workspace' && targetDomain && targetDomain !== domain
         && !(typeOnly && target === 'features/workspace/contracts.ts')) {
         report('Feature domains must not import another domain internals: ' + specifier)

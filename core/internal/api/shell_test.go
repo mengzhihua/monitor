@@ -230,25 +230,32 @@ func TestShellShutdownClosesHijackedConnection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix fixture")
 	}
-	s, ts := shellTestServer(t)
-	ws, _, e := shellDial(t, ts, shellGetTicket(t, ts))
-	if e != nil {
-		t.Fatal(e)
+	for _, tc := range []struct {
+		name  string
+		close func(*Server)
+	}{{"shells", (*Server).CloseShells}, {"server", (*Server).Close}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ts := shellTestServer(t)
+			ws, _, e := shellDial(t, ts, shellGetTicket(t, ts))
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer ws.Close()
+			ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+			ws.WriteJSON(map[string]any{"type": "connect", "cols": 80, "rows": 24})
+			var event map[string]any
+			if ws.ReadJSON(&event) != nil {
+				t.Fatal("not connected")
+			}
+			tc.close(s)
+			for {
+				if _, _, e := ws.ReadMessage(); e != nil {
+					break
+				}
+			}
+			shellRequest(t, ts, "/api/v1/shell/tickets", "shell-fixture-admin", `{"target":"local-test"}`, ts.URL, 503)
+		})
 	}
-	defer ws.Close()
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
-	ws.WriteJSON(map[string]any{"type": "connect", "cols": 80, "rows": 24})
-	var event map[string]any
-	if ws.ReadJSON(&event) != nil {
-		t.Fatal("not connected")
-	}
-	s.CloseShells()
-	for {
-		if _, _, e := ws.ReadMessage(); e != nil {
-			break
-		}
-	}
-	shellRequest(t, ts, "/api/v1/shell/tickets", "shell-fixture-admin", `{"target":"local-test"}`, ts.URL, 503)
 }
 
 func TestShellTargetUsersRestriction(t *testing.T) {
