@@ -15,13 +15,16 @@ func (s *Server) startBackground() {
 	}
 }
 
-// Close stops and joins the Server's background workers and WebShell sessions.
+// Close stops and joins background workers, live feeds and WebShell sessions.
 // Callers must also shut down their HTTP server before closing shared stores.
 // Concurrent and repeated calls all wait until shutdown is complete.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		if s.backgroundCancel != nil {
 			s.backgroundCancel()
+		}
+		if s.live != nil {
+			s.live.close()
 		}
 		if s.shell != nil {
 			s.CloseShells()

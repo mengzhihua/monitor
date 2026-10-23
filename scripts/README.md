@@ -21,6 +21,17 @@
 
 ## 验收
 
+日常开发使用下列分层入口，Node 版本遵循根目录 `.node-version`，Web 依赖由 `make web` 安装。先完成 Web 构建，再运行 Go 测试；不要在 Go 编译时并发替换内嵌资源。
+
+| 命令 | 范围 | 前置条件 |
+| --- | --- | --- |
+| `make test-fast` | 版本、脚本 fixture、前端模型/架构/类型和启动/API/Registry/Trapper 等重点 Go 包 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
+| `make test-web` | Node 原生图表模型测试、架构检查、TypeScript | Node 与 Web 依赖，无需服务或浏览器 |
+| `make test-scripts` | 打包、版本同步、App 版本写入、运行基准和 soak 配置 fixture | Python 3，无需真实服务 |
+| `make test` | 脚本、全量 Go vet/race 和前端检查 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
+
+快速检查用于开发反馈；交付仍执行 `make test` 及受影响功能的真实服务/浏览器验收。纯模型测试位于 `web/tests/`，通过 `node --test` 直接载入 TypeScript 模型，不启动浏览器；浏览器测试保留请求、订阅、绘制和交互验证。CI 的 Web 阶段也执行模型及脚本 fixture。
+
 | 脚本 | 检查范围 | 运行方式 |
 | --- | --- | --- |
 | `smoke.sh` | Agent / Hub API、默认密码、claim 和 ring | `bash scripts/smoke.sh` |

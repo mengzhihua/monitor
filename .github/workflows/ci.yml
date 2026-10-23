@@ -15,14 +15,15 @@ jobs:
       - name: VERSION must match latest stable git tag
         env: { REQUIRE_GIT_TAG_VERSION: "1" }
         run: python3 scripts/check-release-version.py
-      - run: python3 scripts/package-server-release_test.py
-      - run: python3 scripts/sync-release-version_test.py
+      - run: make test-scripts
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        working-directory: web
+      - run: npm run test:unit
         working-directory: web
       - run: npm run build
         working-directory: web

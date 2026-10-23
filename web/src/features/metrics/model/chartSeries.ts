@@ -17,6 +17,10 @@ export function emptySeries(): ChartSeries {
 
 export const collectionStep = (chart: Chart) => Math.max(1, chart.update_every || 1)
 
+function sample(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 export function historySeries(chart: Chart, response: DataResponse, node: string): ChartSeries {
   if (response.units !== chart.units) throw new Error('采样单位与图表定义不一致，请稍后重试或刷新图表。')
   const dimensions = chart.dimensions.filter(dimension => !dimension.hidden).map(dimension => dimension.id)
@@ -31,7 +35,7 @@ export function historySeries(chart: Chart, response: DataResponse, node: string
     times: response.result.data.map(row => row[0] as number),
     values: dimensions.map(id => {
       const column = columns.get(id)
-      return response.result.data.map(row => column == null ? null : row[column] as number | null)
+      return response.result.data.map(row => column == null ? null : sample(row[column]))
     }),
     anomalyBits: dimensions.map(id => {
       const column = response.dimension_ids.indexOf(id)
@@ -45,7 +49,7 @@ export function historySeries(chart: Chart, response: DataResponse, node: string
 
 /** Mutate only the live tail; callers publish once after all dimensions align. */
 export function appendLiveSample(series: ChartSeries, timestamp: number, values: Record<string, number>, duration: number, step: number): boolean {
-  if (duration > 1200) return false // Long ranges retain downsampled history.
+  if (!Number.isFinite(timestamp) || duration > 1200) return false // Long ranges retain downsampled history.
   const previous = series.times.at(-1)
   if (previous !== undefined && timestamp <= previous) return false
   // A missed collection period becomes a single null, never a fabricated zero.
@@ -54,7 +58,7 @@ export function appendLiveSample(series: ChartSeries, timestamp: number, values:
     series.values.forEach(row => row.push(null))
   }
   series.times.push(timestamp)
-  series.dimensions.forEach((id, index) => series.values[index]!.push(id in values ? values[id]! : null))
+  series.dimensions.forEach((id, index) => series.values[index]!.push(Object.hasOwn(values, id) ? sample(values[id]) : null))
   const cutoff = timestamp - duration
   while (series.times.length && (series.times[0]! < cutoff || series.times.length > 1200)) {
     series.times.shift()

@@ -100,7 +100,7 @@ export function useMetricChart(props: MetricChartSource, anchor: Ref<number | nu
   }
 
   function onLive(timestamp: number, values: Record<string, number>) {
-    if (anchor.value !== null) return
+    if (anchor.value !== null || !Number.isFinite(timestamp)) return
     lastSample.value = Math.max(lastSample.value, timestamp)
     if (!appendLiveSample(series.value, timestamp, values, props.window, collectionStep(props.chart))) return
     triggerRef(series)

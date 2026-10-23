@@ -11,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
@@ -28,7 +29,9 @@ type Result struct {
 }
 
 // Start listens on addr until ctx is done. allowed empty means every source.
-// psk, when set, must match the JSON psk field.
+// psk, when set, must match the JSON psk field. The returned listener owns its
+// accepted connections: Close stops intake, closes connections and waits for
+// all handlers to finish before returning. Repeated/concurrent Close is safe.
 func Start(ctxDone <-chan struct{}, addr string, allowedCIDR []string, psk string, reg *registry.Registry) (net.Listener, error) {
 	allowed, err := parseNets(allowedCIDR)
 	if err != nil {
@@ -38,38 +41,94 @@ func Start(ctxDone <-chan struct{}, addr string, allowedCIDR []string, psk strin
 	if err != nil {
 		return nil, err
 	}
+	s := &server{Listener: ln, connections: make(map[net.Conn]struct{}),
+		stop: make(chan struct{}), done: make(chan struct{}), watchDone: make(chan struct{})}
+	go s.serve(allowed, psk, reg)
 	go func() {
-		defer ln.Close()
-		for {
-			_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
-			conn, err := ln.Accept()
-			if err != nil {
-				select {
-				case <-ctxDone:
-					return
-				default:
-				}
-				if ne, ok := err.(net.Error); ok && ne.Timeout() {
-					continue
-				}
-				return
-			}
-			if !allowedIP(conn.RemoteAddr(), allowed) {
-				_ = conn.Close()
-				continue
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
-				_ = Handle(c, reg, psk)
-			}(conn)
+		defer close(s.watchDone)
+		select {
+		case <-ctxDone:
+			s.shutdown()
+		case <-s.stop:
 		}
 	}()
-	go func() {
-		<-ctxDone
-		_ = ln.Close()
+	return s, nil
+}
+
+type server struct {
+	net.Listener
+	mu          sync.Mutex
+	connections map[net.Conn]struct{}
+	handlers    sync.WaitGroup
+	closeOnce   sync.Once
+	closeErr    error
+	stop        chan struct{}
+	done        chan struct{}
+	watchDone   chan struct{}
+}
+
+// shutdown is shared by cancellation, accept failure and Close. It never waits:
+// the accept loop and cancellation watcher must not try to join themselves.
+func (s *server) shutdown() {
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.closeErr = s.Listener.Close()
+		s.mu.Lock()
+		for conn := range s.connections {
+			_ = conn.Close()
+		}
+		s.mu.Unlock()
+	})
+}
+
+func (s *server) Close() error {
+	s.shutdown()
+	<-s.done
+	<-s.watchDone
+	return s.closeErr
+}
+
+func (s *server) serve(allowed []net.IPNet, psk string, reg *registry.Registry) {
+	defer func() {
+		s.shutdown()
+		// Only this accept loop adds handlers, so no Add can race this Wait.
+		s.handlers.Wait()
+		close(s.done)
 	}()
-	return ln, nil
+	for {
+		conn, err := s.Listener.Accept()
+		if err != nil {
+			return
+		}
+		if !allowedIP(conn.RemoteAddr(), allowed) || !s.track(conn) {
+			_ = conn.Close()
+			continue
+		}
+		s.handlers.Add(1)
+		go func() {
+			defer s.handlers.Done()
+			defer func() {
+				_ = conn.Close()
+				s.mu.Lock()
+				delete(s.connections, conn)
+				s.mu.Unlock()
+			}()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			_ = Handle(conn, reg, psk)
+		}()
+	}
+}
+
+func (s *server) track(conn net.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.stop:
+		return false
+	default:
+		s.connections[conn] = struct{}{}
+		return true
+	}
 }
 
 func parseNets(cidrs []string) ([]net.IPNet, error) {

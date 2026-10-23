@@ -1,9 +1,24 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"sync"
 )
+
+// stopHTTPServer drains active requests within the shared shutdown deadline.
+// Shutdown alone leaves active connections open after its context expires;
+// force-closing them also cancels their request contexts before stores close.
+func stopHTTPServer(ctx context.Context, srv *http.Server) error {
+	if srv == nil {
+		return nil
+	}
+	if err := srv.Shutdown(ctx); err != nil {
+		_ = srv.Close()
+		return err
+	}
+	return nil
+}
 
 // loadingGate accepts connections before the TSDB and API are ready.
 // /healthz stays non-200 until use() so existing wait loops keep polling.

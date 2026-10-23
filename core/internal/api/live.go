@@ -28,8 +28,12 @@ type liveHub struct {
 	log      *slog.Logger
 	upgrader websocket.Upgrader
 
-	mu    sync.RWMutex
-	conns map[*liveConn]struct{}
+	mu          sync.RWMutex
+	conns       map[*liveConn]struct{}
+	closed      bool
+	closeOnce   sync.Once
+	handlers    sync.WaitGroup
+	unsubscribe func()
 }
 
 type liveConn struct {
@@ -68,14 +72,38 @@ func newLiveHub(reg *registry.Registry, log *slog.Logger) *liveHub {
 		log:   log,
 		conns: map[*liveConn]struct{}{},
 		upgrader: websocket.Upgrader{
-			ReadBufferSize:  1024,
-			WriteBufferSize: 16 * 1024,
-			CheckOrigin:     sameHostOrigin,
-			Subprotocols:    []string{wsProto},
+			HandshakeTimeout: 10 * time.Second,
+			ReadBufferSize:   1024,
+			WriteBufferSize:  16 * 1024,
+			CheckOrigin:      sameHostOrigin,
+			Subprotocols:     []string{wsProto},
 		},
 	}
-	reg.Subscribe(h.broadcast)
+	h.unsubscribe = reg.SubscribeCancelable(h.broadcast)
 	return h
+}
+
+// close stops accepting upgrades, releases the registry subscription and joins
+// all live handlers. Each handler waits for its writer before it exits.
+func (h *liveHub) close() {
+	h.closeOnce.Do(func() {
+		h.mu.Lock()
+		h.closed = true
+		conns := make([]*liveConn, 0, len(h.conns))
+		for c := range h.conns {
+			conns = append(conns, c)
+		}
+		h.mu.Unlock()
+		if h.unsubscribe != nil {
+			h.unsubscribe()
+		}
+		for _, c := range conns {
+			// Close is safe alongside reads/writes and interrupts both even
+			// when the browser has stopped reading queued messages.
+			_ = c.ws.Close()
+		}
+		h.handlers.Wait()
+	})
 }
 
 // sameHostOrigin accepts non-browser clients (no Origin) and browsers whose
@@ -100,6 +128,9 @@ func (h *liveHub) broadcast(chartID string, ts int64, values map[string]float64)
 func (h *liveHub) broadcastNode(node, chartID string, ts int64, values map[string]float64) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	if h.closed {
+		return
+	}
 	var b []byte
 	for c := range h.conns {
 		if !c.wants(node, chartID) {
@@ -126,6 +157,9 @@ func (h *liveHub) broadcastNode(node, chartID string, ts int64, values map[strin
 func (h *liveHub) broadcastAlarm(node string, e health.LogEntry) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	if h.closed {
+		return
+	}
 	var b []byte
 	for c := range h.conns {
 		if !c.wants(node, "") {
@@ -179,6 +213,17 @@ func (c *liveConn) setCharts(list []string) {
 // handle serves an upgraded live connection scoped to node ("" = local);
 // resolve validates in-band node switches and returns the canonical id.
 func (h *liveHub) handle(w http.ResponseWriter, r *http.Request, node string, resolve func(string) (string, bool), allowed func(string) bool) {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		http.Error(w, "live feed closed", http.StatusServiceUnavailable)
+		return
+	}
+	// Reserve under the same lock that close uses to reject new handlers.
+	// This also covers an upgrade already in flight when shutdown begins.
+	h.handlers.Add(1)
+	h.mu.Unlock()
+	defer h.handlers.Done()
 	ws, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -188,16 +233,27 @@ func (h *liveHub) handle(w http.ResponseWriter, r *http.Request, node string, re
 		c.setCharts(strings.Split(q, ","))
 	}
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		_ = ws.Close()
+		return
+	}
 	h.conns[c] = struct{}{}
 	h.mu.Unlock()
 
-	go h.writer(c)
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		h.writer(c)
+	}()
 	h.reader(c) // blocks until the client disconnects
 
+	_ = ws.Close()
 	h.mu.Lock()
 	delete(h.conns, c)
 	h.mu.Unlock()
 	close(c.send)
+	<-writerDone
 }
 
 func (h *liveHub) reader(c *liveConn) {

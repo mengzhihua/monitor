@@ -23,7 +23,7 @@ endif
 LDFLAGS  = -s -w -X main.version=$(BUILD_VERSION) -X main.commit=$(GIT_COMMIT) -X main.releaseBuild=$(RELEASE_BUILD) -X main.buildTime=$(BUILD_TIME) -X main.dirty=$(BUILD_DIRTY)
 BIN      = core/bin
 
-.PHONY: all web core test lint run cross clean check-version package-server
+.PHONY: all web core test test-fast test-web test-scripts lint run cross clean check-version package-server
 
 # Go embeds the generated dashboard. Keep this ordered even under make -j.
 all: web
@@ -43,9 +43,29 @@ run: all
 
 test:
 	python3 scripts/check-release-version.py
-	python3 scripts/package-server-release_test.py
+	$(MAKE) test-scripts
 	cd core && go vet ./... && go test -race -p 1 ./...
-	cd web && npm run check:architecture && npm run typecheck
+	$(MAKE) test-web
+
+## test-fast: focused development checks, without browsers or platform collectors
+# Reuses installed npm dependencies and stable embedded UI (no concurrent build).
+# Full race coverage remains in make test; this is deliberately a smaller gate.
+test-fast: check-version
+	$(MAKE) test-scripts
+	$(MAKE) test-web
+	cd core && go test ./cmd/monitord ./internal/architecture ./internal/api ./internal/registry ./internal/trapper
+
+## test-web: pure models, dependency boundaries and TypeScript (no daemon/browser)
+test-web:
+	cd web && npm run test:unit && npm run check:architecture && npm run typecheck
+
+## test-scripts: all local build/acceptance-script fixtures, no live services
+test-scripts:
+	python3 scripts/package-server-release_test.py
+	python3 scripts/sync-release-version_test.py
+	python3 scripts/stamp_app_version_test.py
+	python3 scripts/benchmark_runtime_test.py
+	python3 scripts/soak_config_test.py
 
 lint:
 	cd core && test -z "$$(gofmt -l .)" && go vet ./...

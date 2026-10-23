@@ -99,7 +99,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	defer func() {
 		if httpSrv != nil && !serverHandoff {
 			stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_ = httpSrv.Shutdown(stopCtx)
+			_ = stopHTTPServer(stopCtx, httpSrv)
 			cancel()
 		}
 	}()
@@ -217,10 +217,13 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	defer srv.Close()
 	runner.record = srv.RecordAutoAction
 	runner.recordInhibited = srv.RecordInhibitedAction
+	var trapperListener net.Listener
 	if cfg.Trapper.Listen != "" {
-		if _, err := trapper.Start(ctx.Done(), cfg.Trapper.Listen, cfg.Trapper.Allowed, cfg.Trapper.PSK, reg); err != nil {
+		trapperListener, err = trapper.Start(ctx.Done(), cfg.Trapper.Listen, cfg.Trapper.Allowed, cfg.Trapper.PSK, reg)
+		if err != nil {
 			return fmt.Errorf("trapper: %w", err)
 		}
+		defer trapperListener.Close()
 	}
 	if eng != nil {
 		eng.SetOnEvent(func(e health.LogEntry) {
@@ -280,9 +283,12 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if trapperListener != nil {
+		_ = trapperListener.Close()
+	}
 	srv.CloseShells()
-	if httpSrv != nil {
-		_ = httpSrv.Shutdown(shutdownCtx)
+	if err := stopHTTPServer(shutdownCtx, httpSrv); err != nil {
+		log.Warn("HTTP drain deadline exceeded; connections closed", "err", err)
 	}
 	srv.Close()
 	workers.wait(shutdownCtx, log)

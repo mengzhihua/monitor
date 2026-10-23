@@ -45,3 +45,28 @@ func TestLiveUnsubscribedSampleDoesNotAllocate(t *testing.T) {
 		t.Fatalf("unsubscribed sample allocated %g objects", allocations)
 	}
 }
+
+func BenchmarkLiveSampleDelivery(b *testing.B) {
+	for _, scenario := range []string{"no_clients", "other_chart", "subscribed", "closed"} {
+		b.Run(scenario, func(b *testing.B) {
+			c := &liveConn{send: make(chan liveFrame, 1)}
+			h := &liveHub{conns: map[*liveConn]struct{}{}}
+			if scenario != "no_clients" {
+				h.conns[c] = struct{}{}
+			}
+			if scenario == "other_chart" {
+				c.setCharts([]string{"system.cpu"})
+			}
+			h.closed = scenario == "closed"
+			values := map[string]float64{"used": 23}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				h.broadcast("system.ram", 100, values)
+				if scenario == "subscribed" {
+					<-c.send
+				}
+			}
+		})
+	}
+}

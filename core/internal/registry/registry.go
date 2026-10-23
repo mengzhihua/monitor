@@ -154,7 +154,7 @@ type Registry struct {
 	mu     sync.RWMutex
 	charts map[string]*Chart
 	sink   Sink
-	subs   []func(chartID string, ts int64, values map[string]float64)
+	subs   []*subscription // immutable snapshots; see subscriptions.go
 }
 
 func New(host *Host, sink Sink) *Registry {
@@ -172,14 +172,6 @@ func (r *Registry) SetHostLabel(key, value string) {
 		r.Host.Labels = map[string]string{}
 	}
 	r.Host.Labels[key] = value
-}
-
-// Subscribe registers a callback that is invoked for every completed chart
-// collection with the final (post-algorithm) values. Used by the live WS feed.
-func (r *Registry) Subscribe(fn func(chartID string, ts int64, values map[string]float64)) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.subs = append(r.subs, fn)
 }
 
 // AddChart registers a chart (idempotent by ID) and returns the stored instance.
@@ -350,12 +342,7 @@ func (r *Registry) Ingest(chartID string, sec int64, values map[string]float64) 
 	}
 	c.mu.Unlock()
 	r.writeSink(sec, chartID, vals)
-	r.mu.RLock()
-	subs := r.subs
-	r.mu.RUnlock()
-	for _, fn := range subs {
-		fn(chartID, sec, vals)
-	}
+	r.notifySubscribers(chartID, sec, vals)
 	return nil
 }
 
@@ -460,11 +447,6 @@ func (r *Registry) Collect(chartID string, ts time.Time, raw map[string]float64)
 	c.mu.Unlock()
 
 	r.writeSink(sec, chartID, vals)
-	r.mu.RLock()
-	subs := r.subs
-	r.mu.RUnlock()
-	for _, fn := range subs {
-		fn(chartID, sec, vals)
-	}
+	r.notifySubscribers(chartID, sec, vals)
 	return nil
 }

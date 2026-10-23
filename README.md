@@ -481,12 +481,17 @@ curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 ### 开发
 
 ```bash
-make test         # go vet + go test -race + 前端 typecheck
+make all          # 先生成内嵌 Web，再编译服务端
+make test-fast    # 日常开发：脚本、前端模型/边界/类型、重点 Go 包
+make test         # 完整 Go vet/race + 脚本与前端检查
+make test-web     # 独立前端模型/架构/类型检查，无需服务或浏览器
 ./plugins.d/example.plugin 1 | head   # 手工查看示例插件的协议输出
 make lint         # gofmt + vet
 ./scripts/smoke.sh    # 启动 monitord 并验证 API / metrics / dashboard
 cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 ```
+
+使用仓库指定的 Go 和 Node 版本；首次运行先安装 Web 依赖。Go 会嵌入生成的 Web 资源，构建完成后再执行 Go 测试，避免并发替换资源。各层职责、退出约定和验证范围见[模块边界](docs/26-module-boundaries.md)。
 
 ### 页面响应与资源占用
 
