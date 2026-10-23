@@ -46,7 +46,13 @@ python3 scripts/auth-fixtures/verify_psk.py --hub-bin core/bin/monitord
 
 ## SAML
 
-CI runs `verify_saml_e2e.py`: starts monitord with a fixture IdP cert, posts a signed Assertion (login ok), an unsigned one (401), and replays the signed Assertion (401).
+CI runs `verify_saml_e2e.py` against two isolated, temporary monitord installations: one SAML admin and one SAML viewer. Both configure SAML as their only authentication source, with no static token or users, and enable an empty plugin directory.
+
+The fixture checks that no fallback `web-password` is created; anonymous and invalid-token requests to info, plugin catalog and plugin actions return 401. A genuinely signed login must retain its exact personal identity and configured role. The admin sees platform capabilities and can read the catalog and rescan it; the viewer receives no plugin capabilities and gets 403 for catalog and control requests. Unsigned assertions and replayed signed assertions remain rejected with 401.
+
+Each HTTP connection closes after use. Each daemon receives SIGINT and must exit within a bounded wait, its listener must close, and temporary credentials and files are removed. The script prints only result descriptions and HTTP statuses on failure; session tokens, redirect URLs, private keys and response bodies are never printed.
+
+Go must be available on `PATH` to generate the signed assertions, even when `--bin` points to an already built daemon.
 
 ```bash
 # after building core/bin/monitord

@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -124,11 +123,7 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 	go func() {
 		defer close(stderrDone)
 		defer stderr.Close()
-		sc := bufio.NewScanner(stderr)
-		sc.Buffer(make([]byte, 0, 4096), 64<<10)
-		for sc.Scan() {
-			m.log.Info("plugin stderr", "plugin", p.spec.Name, "msg", redactProcessText(p.spec, sc.Text()))
-		}
+		m.drainStderr(p, stderr)
 	}()
 
 	// watchdog: kill when no output for Timeout seconds
@@ -201,23 +196,4 @@ func pluginEnvironment(sp Spec) []string {
 		}
 	}
 	return env
-}
-
-func redactProcessText(sp Spec, text string) string {
-	for _, entry := range sp.Env {
-		_, value, ok := strings.Cut(entry, "=")
-		if ok && value != "" {
-			text = strings.ReplaceAll(text, value, "[redacted]")
-		}
-	}
-	for _, arg := range sp.Args {
-		value := arg
-		if _, v, ok := strings.Cut(arg, "="); ok {
-			value = v
-		}
-		if value != "" {
-			text = strings.ReplaceAll(text, value, "[redacted]")
-		}
-	}
-	return text
 }

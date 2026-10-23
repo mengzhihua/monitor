@@ -76,6 +76,8 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	// can take tens of seconds; the port should answer (503 loading) instead
 	// of refusing connections until that finishes.
 	var httpSrv *http.Server
+	var httpListener net.Listener
+	var httpDone chan struct{}
 	gate := &loadingGate{}
 	errc := make(chan error, 1)
 	serverHandoff := false
@@ -84,6 +86,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 		if err != nil {
 			return fmt.Errorf("listen %s: %w", cfg.Web.Listen, err)
 		}
+		httpListener, httpDone = ln, make(chan struct{})
 		httpSrv = &http.Server{
 			Addr:              cfg.Web.Listen,
 			Handler:           gate,
@@ -91,6 +94,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 		}
 		log.Info("web server listening", "addr", cfg.Web.Listen, "ready", false)
 		go func() {
+			defer close(httpDone)
 			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errc <- err
 			}
@@ -101,6 +105,12 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 			stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 			_ = stopHTTPServer(stopCtx, httpSrv)
 			cancel()
+		}
+		if httpListener != nil {
+			// Shutdown only knows listeners already registered by Serve. A fast
+			// startup failure can reach here before that goroutine has started.
+			_ = httpListener.Close()
+			<-httpDone
 		}
 	}()
 

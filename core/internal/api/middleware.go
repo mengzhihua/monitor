@@ -39,18 +39,24 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			if !u.Role.allows(r) {
-				http.Error(w, "forbidden: role "+string(u.Role)+" may not "+r.Method+" "+r.URL.Path, http.StatusForbidden)
-				return
-			}
-			if !s.roomAllowed(u, r.URL.Query().Get("node")) {
-				http.Error(w, "forbidden: room", http.StatusForbidden)
-				return
-			}
 			r = r.WithContext(context.WithValue(r.Context(), userKey{}, u))
+			// Attribute rejected mutations too, without reading their bodies or
+			// invoking the endpoint. Authentication failures keep their separate
+			// login_failed event; reads and telemetry remain excluded by auditWrap.
+			authorized := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !u.Role.allows(r) {
+					http.Error(w, "forbidden: role "+string(u.Role)+" may not "+r.Method+" "+r.URL.Path, http.StatusForbidden)
+					return
+				}
+				if !s.roomAllowed(u, r.URL.Query().Get("node")) {
+					http.Error(w, "forbidden: room", http.StatusForbidden)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
 			// Local variable: reassigning the closure's `next` would nest
 			// wrappers across requests and bake in the first caller's identity.
-			h := s.auditWrap(u, r, next)
+			h := s.auditWrap(u, r, authorized)
 			h.ServeHTTP(w, r)
 			return
 		}

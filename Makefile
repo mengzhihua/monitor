@@ -23,7 +23,7 @@ endif
 LDFLAGS  = -s -w -X main.version=$(BUILD_VERSION) -X main.commit=$(GIT_COMMIT) -X main.releaseBuild=$(RELEASE_BUILD) -X main.buildTime=$(BUILD_TIME) -X main.dirty=$(BUILD_DIRTY)
 BIN      = core/bin
 
-.PHONY: all web core test test-fast test-web test-scripts lint run cross clean check-version package-server
+.PHONY: all web core test test-fast test-web test-scripts test-platform lint run cross clean check-version package-server
 
 # Go embeds the generated dashboard. Keep this ordered even under make -j.
 all: web
@@ -58,6 +58,17 @@ test-fast: check-version
 ## test-web: pure models, dependency boundaries and TypeScript (no daemon/browser)
 test-web:
 	cd web && npm run test:unit && npm run check:architecture && npm run typecheck
+
+## test-platform: rebuild and exercise plugin lifecycle, API and browser integration
+# Sequential prerequisites prevent stale UI/binaries, including under make -j.
+# Requires Go/Node/Python and Chromium (or MONITOR_BROWSER_CHANNEL=chrome).
+# Process fixtures require macOS/Linux.
+test-platform: all
+	$(MAKE) test-web
+	cd core && go test -race -p 1 ./internal/plugins ./internal/api ./internal/collect ./internal/config ./cmd/monitord
+	python3 scripts/verify-plugin-platform.py
+	python3 scripts/auth-fixtures/verify_saml_e2e.py --bin core/bin/monitord
+	cd web && npm run test:e2e -- e2e/plugins.spec.ts e2e/plugin-runtime.spec.ts e2e/api-contract.spec.ts
 
 ## test-scripts: all local build/acceptance-script fixtures, no live services
 test-scripts:

@@ -203,3 +203,159 @@ test('hidden plugin workspaces pause requests and leaving cancels a pending read
   await expect(panel).toHaveCount(0)
   await expect(page.locator('.metrics-workspace')).toBeVisible()
 })
+
+test('stalled plugin actions expire and release navigation without claiming a rollback', async ({ page }) => {
+  await page.clock.install()
+  await metadata(page)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/plugins', route => route.fulfill({ json: fixture() }))
+  await page.route('**/api/v1/plugins/actions', async route => {
+    await gate
+    await route.fulfill({ json: { ...fixture(), revision: 5 } }).catch(() => {})
+  })
+  try {
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    await panel.getByRole('article', { name: '演示采集器' }).getByRole('button', { name: '重启', exact: true }).click()
+    await expect(panel).toContainText('正在提交操作')
+    await page.clock.fastForward(16000)
+    await expect(panel.getByRole('alert')).toContainText('超时')
+    await expect(panel).toContainText('服务端可能已处理')
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeDisabled()
+    await workspace(page, 'charts')
+    await expect(panel).toHaveCount(0)
+  } finally { release() }
+})
+
+test('token replacement clears the old catalog before a new principal can send a plugin action', async ({ page }) => {
+  await metadata(page)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const revisions: number[] = []
+  await page.route('**/api/v1/plugins', async route => {
+    const replacement = route.request().headers().authorization === 'Bearer browser-admin-b-token'
+    if (replacement) await gate
+    await route.fulfill({ json: { ...fixture(), revision: replacement ? 8 : 4 } }).catch(() => {})
+  })
+  await page.route('**/api/v1/plugins/actions', route => {
+    revisions.push(route.request().postDataJSON().if_revision)
+    return route.fulfill({ json: { ...fixture(), revision: 9 } })
+  })
+  try {
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    const restart = panel.getByRole('article', { name: '演示采集器' }).getByRole('button', { name: '重启', exact: true })
+    await expect(restart).toBeEnabled()
+    await page.evaluate(() => sessionStorage.setItem('monitor.token', 'browser-admin-b-token'))
+    await restart.click()
+    await expect(panel.getByRole('article')).toHaveCount(0)
+    expect(revisions).toEqual([])
+    release()
+    await expect(panel).toContainText('目录版本 8')
+    await restart.click()
+    await expect(panel).toContainText('目录版本 9')
+    expect(revisions).toEqual([8])
+  } finally { release() }
+})
+
+test('returning to the foreground preserves the result of an already submitted plugin action', async ({ page }) => {
+  await page.clock.install()
+  await metadata(page)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/plugins', route => route.fulfill({ json: fixture() }))
+  await page.route('**/api/v1/plugins/actions', async route => {
+    await gate
+    await route.fulfill({ json: { ...fixture(), revision: 5 } }).catch(() => {})
+  })
+  try {
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    await panel.getByRole('article', { name: '演示采集器' }).getByRole('button', { name: '重启', exact: true }).click()
+    await expect(panel).toContainText('正在提交操作')
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')) })
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')) })
+    release()
+    await expect(panel).toContainText('目录版本 5')
+    await expect(panel).toContainText('操作请求已接受')
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeEnabled()
+  } finally { release() }
+})
+
+test('a stalled catalog read expires and its late result cannot replace a successful retry', async ({ page }) => {
+  await page.clock.install()
+  await metadata(page)
+  let reads = 0
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/plugins', async route => {
+    const read = ++reads
+    if (read === 2) await gate
+    await route.fulfill({ json: { ...fixture(), revision: read > 2 ? 8 : 4 } }).catch(() => {})
+  })
+  try {
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    await expect(panel).toContainText('目录版本 4')
+    await panel.getByRole('button', { name: '刷新目录' }).click()
+    await expect(panel).toContainText('正在读取插件目录')
+    await page.clock.fastForward(16000)
+    await expect(panel.getByRole('alert')).toContainText('读取超时')
+    await expect(panel).toContainText('目录版本 4')
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeDisabled()
+    await panel.getByRole('button', { name: '刷新目录' }).click()
+    await expect(panel).toContainText('目录版本 8')
+    release()
+    await expect(panel.getByRole('alert')).toHaveCount(0)
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeEnabled()
+    await expect(panel).toContainText('目录版本 8')
+  } finally { release() }
+})
+
+test('a new token recovers from a denied catalog without reusing the old authorization decision', async ({ page }) => {
+  await page.clock.install()
+  await metadata(page)
+  const credentials: string[] = []
+  await page.route('**/api/v1/plugins', route => {
+    const credential = route.request().headers().authorization || ''
+    credentials.push(credential)
+    return credential === 'Bearer browser-admin-b-token'
+      ? route.fulfill({ json: { ...fixture(), revision: 8 } }) : route.fulfill({ status: 403, body: 'permission revoked' })
+  })
+  await page.goto('/?view=plugins&token=browser-test-token')
+  const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+  await expect(panel.getByRole('alert')).toContainText('无权管理本机插件')
+  await expect(panel.getByRole('article')).toHaveCount(0)
+  await page.evaluate(() => sessionStorage.setItem('monitor.token', 'browser-admin-b-token'))
+  await page.clock.fastForward(5000)
+  await expect(panel).toContainText('目录版本 8')
+  await expect(panel.getByRole('alert')).toHaveCount(0)
+  await expect(panel.getByRole('button', { name: '重新扫描' })).toBeEnabled()
+  expect(credentials).toEqual(['Bearer browser-test-token', 'Bearer browser-admin-b-token'])
+})
+
+test('an old principal action response cannot repopulate the catalog after a token change', async ({ page }) => {
+  await page.clock.install()
+  await metadata(page)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/plugins', route => route.fulfill({ json: {
+    ...fixture(), revision: route.request().headers().authorization === 'Bearer browser-admin-b-token' ? 8 : 4,
+  } }))
+  await page.route('**/api/v1/plugins/actions', async route => {
+    await gate
+    await route.fulfill({ json: { ...fixture(), revision: 5 } }).catch(() => {})
+  })
+  try {
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    await panel.getByRole('article', { name: '演示采集器' }).getByRole('button', { name: '重启', exact: true }).click()
+    await expect(panel).toContainText('正在提交操作')
+    await page.evaluate(() => sessionStorage.setItem('monitor.token', 'browser-admin-b-token'))
+    release()
+    await expect(panel).toContainText('目录版本 8')
+    await expect(panel).not.toContainText('操作请求已接受')
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeEnabled()
+  } finally { release() }
+})

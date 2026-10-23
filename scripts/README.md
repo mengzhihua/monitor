@@ -26,11 +26,16 @@
 | 命令 | 范围 | 前置条件 |
 | --- | --- | --- |
 | `make test-fast` | 版本、脚本 fixture、前端模型/架构/类型和启动/API/Registry/Trapper 等重点 Go 包 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
-| `make test-web` | Node 原生图表模型测试、架构检查、TypeScript | Node 与 Web 依赖，无需服务或浏览器 |
+| `make test-web` | Node 原生模型测试、架构检查、应用与全部 Playwright 夹具/配置的 TypeScript 检查 | Node 与 Web 依赖，无需服务或浏览器 |
 | `make test-scripts` | 打包、版本同步、App 版本写入、运行基准和 soak 配置 fixture | Python 3，无需真实服务 |
 | `make test` | 脚本、全量 Go vet/race 和前端检查 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
+| `make test-platform` | 顺序重建 Web/服务端，平台相关 Go 竞态、真实插件和 SAML-only 认证、插件管理与 API 浏览器验收 | macOS/Linux、Go/Node/Python 与 Playwright Chromium |
 
 快速检查用于开发反馈；交付仍执行 `make test` 及受影响功能的真实服务/浏览器验收。纯模型测试位于 `web/tests/`，通过 `node --test` 直接载入 TypeScript 模型，不启动浏览器；浏览器测试保留请求、订阅、绘制和交互验证。CI 的 Web 阶段也执行模型及脚本 fixture。
+
+`web/tsconfig.e2e.json` 将 Playwright 测试纳入现有 `typecheck` 和生产构建检查，测试里的接口类型错误会在启动浏览器之前失败。`make test-platform` 自动生成当前内嵌界面和原生二进制，避免用上一次构建验证新源码；插件与 SAML 进程验收各自使用临时目录和随机端口，浏览器主服务仍可通过 `MONITOR_E2E_PORT` 改端口。
+
+首次使用浏览器测试先运行 `cd web && npx playwright install chromium`；本机已有 Google Chrome 时可改用 `MONITOR_BROWSER_CHANNEL=chrome make test-platform`，无需额外下载。CI 使用 Playwright Chromium，本机 Chrome 与 CI Chromium 的验证结果分别记录。
 
 | 脚本 | 检查范围 | 运行方式 |
 | --- | --- | --- |

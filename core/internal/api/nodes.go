@@ -66,7 +66,7 @@ func validateUsers(us []User) error {
 // authenticate maps the request credential to a user. With no token and no
 // users configured the API is open and callers act as admin.
 func (s *Server) authenticate(r *http.Request) (User, bool) {
-	if s.opt.Token == "" && len(s.opt.Users) == 0 && s.oidc == nil && s.ldap == nil {
+	if s.opt.Token == "" && len(s.opt.Users) == 0 && s.oidc == nil && s.saml == nil && s.ldap == nil {
 		return anonymous, true
 	}
 	tok := requestToken(r)

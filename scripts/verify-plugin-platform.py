@@ -213,6 +213,9 @@ done
                 require_process_gone(fourth['pid'])
                 audit = request('/api/v1/audit?limit=100')
                 assert any(e.get('target') == 'heartbeat' and e['status'] == 200 for e in audit['entries'])
+                assert any(e.get('user') == 'fixture-reader' and e.get('status') == 403
+                    and e.get('method') == 'POST' and e.get('path') == '/api/v1/plugins/actions'
+                    for e in audit['entries']), 'rejected plugin control was not audited'
                 stop()
                 assert admin not in log_path.read_text() and reader not in log_path.read_text()
                 print(json.dumps({'plugin_platform': 'passed', 'live_install_and_rescan': 'passed',

@@ -1,9 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { HandlingChange, OperationsSnapshot } from '../src/api'
+import type { HandlingChange, OperationsSnapshot, Problem } from '../src/api'
 
 const problemID = 'local/system.ram/modular_problem'
 function overview(revision: number, status: 'open' | 'watching' = 'open'): OperationsSnapshot {
-  const identity = { node: 'local', hostname: 'module-host', chart: 'system.ram', name: 'modular_problem', severity: 'WARNING', since: 100 }
+  const identity = { node: 'local', hostname: 'module-host', chart: 'system.ram', name: 'modular_problem', severity: 'WARNING', since: 100 } satisfies Pick<Problem, 'node' | 'hostname' | 'chart' | 'name' | 'severity' | 'since'>
   const handling = { id: problemID, problem: identity, revision, acknowledged: false, assignee: '', status, history: [] }
   return {
     now: 200, persistent: true, current_user: { name: 'admin', role: 'admin' },

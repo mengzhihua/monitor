@@ -21,6 +21,32 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/config"
 )
 
+func TestEarlyDatabaseFailureReleasesHTTPListenerBeforeServeStarts(t *testing.T) {
+	// Keep the listener's Serve goroutine queued while database initialization
+	// fails. The daemon must own and close the socket even before Serve takes it.
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+	cfg := config.Default()
+	cfg.Global.DataDir = t.TempDir()
+	cfg.Web.Listen = unusedListenAddress(t)
+	cfg.Web.Token = "test-startup-admin"
+	if err := os.WriteFile(filepath.Join(cfg.Global.DataDir, "db"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for range 10 {
+		err := runDaemon(context.Background(), cfg, filepath.Join(cfg.Global.DataDir, "monitor.yaml"), false, logger)
+		if err == nil || !strings.Contains(err.Error(), "open tsdb:") {
+			t.Fatalf("expected early database failure, got %v", err)
+		}
+		listener, err := net.Listen("tcp", cfg.Web.Listen)
+		if err != nil {
+			t.Fatalf("early startup failure retained HTTP listener: %v", err)
+		}
+		listener.Close()
+	}
+}
+
 func TestFailedStartupClosesInitializedCollectorListeners(t *testing.T) {
 	udp, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -193,7 +219,7 @@ func unusedListenAddress(t *testing.T) string {
 // Fail before and after API construction. Repeated starts must not retain
 // database/API workers or the listening socket/data lock.
 func TestFailedStartupReleasesResources(t *testing.T) {
-	for _, stage := range []string{"stream", "trapper"} {
+	for _, stage := range []string{"plugin-state", "stream", "trapper"} {
 		t.Run(stage, func(t *testing.T) { testFailedStartupReleasesResources(t, stage) })
 	}
 }
@@ -209,7 +235,16 @@ func testFailedStartupReleasesResources(t *testing.T, stage string) {
 	cfg.Global.DataDir = t.TempDir()
 	cfg.Web.Listen = address
 	wantError := "stream.destinations"
-	if stage == "stream" {
+	if stage == "plugin-state" {
+		dir := filepath.Join(cfg.Global.DataDir, "plugins")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("invalid control state"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		wantError = "plugins: invalid plugin control state JSON"
+	} else if stage == "stream" {
 		cfg.Stream.Enabled = true
 		cfg.Stream.Destinations = nil
 	} else {

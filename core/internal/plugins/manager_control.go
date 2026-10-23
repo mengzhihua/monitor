@@ -90,10 +90,12 @@ func (m *Manager) apply(ctx context.Context, req ControlRequest) error {
 		}
 		disabled[req.Name] = true
 	}
-	if err := m.commit(ctx, disabled); err != nil {
+	revision, err := m.commit(ctx, disabled)
+	if err != nil {
 		return err
 	}
 	m.stopWorker(target)
+	m.mu.Lock()
 	target.mu.Lock()
 	target.enabled = req.Action != "disable"
 	if !target.enabled {
@@ -104,27 +106,30 @@ func (m *Manager) apply(ctx context.Context, req ControlRequest) error {
 	}
 	target.mu.Unlock()
 	m.startWorker(target)
-	return nil
-}
-
-func (m *Manager) commit(ctx context.Context, disabled map[string]bool) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if m.runCtx.Err() != nil {
-		return ErrUnavailable
-	}
-	if m.revision == math.MaxUint64 {
-		return fmt.Errorf("%w: catalog revision exhausted", ErrUnavailable)
-	}
-	revision := m.revision + 1
-	if err := m.saveState(revision, disabled); err != nil {
-		return err
-	}
-	m.mu.Lock()
 	m.revision, m.disabled = revision, disabled
 	m.mu.Unlock()
 	return nil
+}
+
+// commit persists intent before a handoff, but keeps the public revision at
+// the last completed generation. Publish it with the resulting catalog only
+// after the old worker has finished, so accepted revisions describe what readers
+// actually saw. The caller holds gate, never mu, across filesystem/process IO.
+func (m *Manager) commit(ctx context.Context, disabled map[string]bool) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if m.runCtx.Err() != nil {
+		return 0, ErrUnavailable
+	}
+	if m.revision == math.MaxUint64 {
+		return 0, fmt.Errorf("%w: catalog revision exhausted", ErrUnavailable)
+	}
+	revision := m.revision + 1
+	if err := m.saveState(revision, disabled); err != nil {
+		return 0, err
+	}
+	return revision, nil
 }
 
 func (m *Manager) rescan(ctx context.Context) error {
@@ -144,6 +149,7 @@ func (m *Manager) rescan(ctx context.Context) error {
 			if old != nil {
 				old.mu.Lock()
 				p.restart = old.restart + 1
+				p.stderr = old.stderr
 				old.mu.Unlock()
 			}
 			replacements = append(replacements, p)
@@ -156,7 +162,8 @@ func (m *Manager) rescan(ctx context.Context) error {
 	if !changed {
 		return nil
 	}
-	if err := m.commit(ctx, m.disabled); err != nil {
+	revision, err := m.commit(ctx, m.disabled)
+	if err != nil {
 		return err
 	}
 	// Stop every removed or changed worker first, including all of its children.
@@ -177,10 +184,10 @@ func (m *Manager) rescan(ctx context.Context) error {
 		m.stopWorker(old)
 	}
 	m.mu.Lock()
-	m.list, m.diagnostics = next, diagnostics
-	m.mu.Unlock()
+	m.list, m.diagnostics, m.revision = next, diagnostics, revision
 	for _, p := range replacements {
 		m.startWorker(p)
 	}
+	m.mu.Unlock()
 	return nil
 }

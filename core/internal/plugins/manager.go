@@ -61,6 +61,7 @@ type Status struct {
 	Source      string             `json:"source"`
 	Manifest    *Manifest          `json:"manifest,omitempty"`
 	Locked      bool               `json:"locked"`
+	Stderr      StderrStats        `json:"stderr"`
 }
 
 type plugin struct {
@@ -77,6 +78,7 @@ type plugin struct {
 	err         string
 	// Worker ownership is serialized by Manager.gate. The worker never edits
 	// these fields, including after a self-disable or failed start.
+	stderr *stderrState
 	cancel context.CancelFunc
 	done   chan struct{}
 }

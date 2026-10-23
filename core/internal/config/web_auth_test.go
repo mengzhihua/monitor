@@ -34,7 +34,7 @@ func TestDefaultPasswordPersistsAndIsUnique(t *testing.T) {
 }
 
 func TestExplicitAuthenticationDoesNotCreateDefaultPassword(t *testing.T) {
-	for _, name := range []string{"token", "users", "oidc", "ldap"} {
+	for _, name := range []string{"token", "users", "oidc", "ldap", "saml"} {
 		t.Run(name, func(t *testing.T) {
 			c := Config{}
 			c.Global.DataDir = t.TempDir()
@@ -47,6 +47,8 @@ func TestExplicitAuthenticationDoesNotCreateDefaultPassword(t *testing.T) {
 				c.Web.OIDC.ClientID = "client"
 			case "ldap":
 				c.Web.LDAP.URL = "ldaps://example.test"
+			case "saml":
+				c.Web.SAML.SSOURL = "https://example.test/sso"
 			}
 			path, err := c.EnsureWebAuth()
 			if err != nil || path != "" {

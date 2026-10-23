@@ -69,7 +69,7 @@ func (m *Manager) discoverCatalog() ([]*plugin, []Diagnostic) {
 			sp.Command = path
 		}
 		locked := sp.Disabled || disabled[sp.Name]
-		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: newPluginParser(sp, m.reg)}
+		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: newPluginParser(sp, m.reg), stderr: &stderrState{}}
 		if !p.enabled {
 			p.state = StateDisabled
 		}
@@ -160,11 +160,11 @@ func specFingerprint(sp Spec) string {
 
 func (m *Manager) Catalog() Catalog {
 	m.mu.Lock()
-	catalog := Catalog{SchemaVersion: 1, Revision: m.revision, Running: m.running, Diagnostics: append([]Diagnostic{}, m.diagnostics...)}
-	list := append([]*plugin(nil), m.list...)
-	m.mu.Unlock()
-	catalog.Plugins = snapshotPlugins(list)
-	return catalog
+	defer m.mu.Unlock()
+	// Keep management fields and their revision in one short snapshot. Worker
+	// state/metrics may advance independently; no file IO or worker join holds mu.
+	return Catalog{SchemaVersion: 1, Revision: m.revision, Running: m.running,
+		Diagnostics: append([]Diagnostic{}, m.diagnostics...), Plugins: snapshotPlugins(m.list)}
 }
 
 func (m *Manager) Status() []Status { return m.Catalog().Plugins }
@@ -188,6 +188,7 @@ func snapshotPlugins(list []*plugin) []Status {
 		p.mu.Unlock()
 		st.Stats, st.Variables, st.Functions = parser.Stats(), parser.Variables(), parser.Functions()
 		st.Stats.LastError = redactProcessText(p.spec, st.Stats.LastError)
+		st.Stderr = p.stderr.snapshot()
 		out = append(out, st)
 	}
 	return out

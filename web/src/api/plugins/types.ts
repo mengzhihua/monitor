@@ -15,6 +15,7 @@ export interface PluginStatus {
   source: 'configured' | 'legacy' | 'manifest'; locked: boolean; manifest?: PluginManifest
   pid?: number; enabled: boolean; update_every: number; restarts: number; started?: number; error?: string
   stats: { lines: number; samples: number; charts: number; errors: number; last_error?: string; last_data?: number }
+  stderr?: { bytes: number; lines: number; logged: number; suppressed: number; truncated: number }
   variables?: Record<string, number>; functions?: string[]
 }
 

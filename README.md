@@ -127,7 +127,7 @@ cd core && go run ./cmd/monitord -listen :19999
 
 ### 默认登录密码
 
-未配置 `web.token`、`web.users`、OIDC 或 LDAP 时，首次启动会生成**每台部署独立的随机管理员密码**，无需用户名。重启沿用该密码；旧的无认证部署升级后也会要求登录。已有认证配置继续生效，不会额外生成管理员密码。
+未配置 `web.token`、`web.users`、OIDC、SAML 或 LDAP 时，首次启动会生成**每台部署独立的随机管理员密码**，无需用户名。重启沿用该密码；旧的无认证部署升级后也会要求登录。已有认证配置继续生效，不会额外生成管理员密码。
 
 密码位于 `<data_dir>/web-password`。`data_dir` 来自 `-data-dir` 或 `global.data_dir`，默认是**启动时工作目录**下的 `./data`，不是可执行文件所在目录。按上面的启动命令，在另一终端读取：
 
@@ -154,7 +154,7 @@ web:
   token: "替换为你生成的长随机密码"
 ```
 
-重置**自动生成的密码**：先停止服务，删除实际数据目录中的 `web-password`，再启动并读取新文件。旧密码立即失效。若已配置 `web.token`、`web.users`、OIDC 或 LDAP，应修改对应的认证配置，删除文件不会重置这些凭据。
+重置**自动生成的密码**：先停止服务，删除实际数据目录中的 `web-password`，再启动并读取新文件。旧密码立即失效。若已配置 `web.token`、`web.users`、OIDC、SAML 或 LDAP，应修改对应的认证配置，删除文件不会重置这些凭据。
 
 远程部署应通过 HTTPS 反向代理或可信加密网络访问；密码认证本身不加密 HTTP。不要把真实密码写进 URL、文档或仓库。
 
@@ -485,13 +485,14 @@ make all          # 先生成内嵌 Web，再编译服务端
 make test-fast    # 日常开发：脚本、前端模型/边界/类型、重点 Go 包
 make test         # 完整 Go vet/race + 脚本与前端检查
 make test-web     # 独立前端模型/架构/类型检查，无需服务或浏览器
+make test-platform # 重建并验证插件平台：竞态、真实进程/SAML、桌面与手机操作
 ./plugins.d/example.plugin 1 | head   # 手工查看示例插件的协议输出
 make lint         # gofmt + vet
 ./scripts/smoke.sh    # 启动 monitord 并验证 API / metrics / dashboard
 cd web && npm run dev # 前端热更新，API 代理到 127.0.0.1:19999
 ```
 
-使用仓库指定的 Go 和 Node 版本；首次运行先安装 Web 依赖。Go 会嵌入生成的 Web 资源，构建完成后再执行 Go 测试，避免并发替换资源。各层职责、退出约定和验证范围见[模块边界](docs/26-module-boundaries.md)。
+使用仓库指定的 Go 和 Node 版本；首次运行先安装 Web 依赖。类型检查同时覆盖应用、Playwright 配置及全部浏览器测试夹具。Go 会嵌入生成的 Web 资源，构建完成后再执行 Go 测试，避免并发替换资源。`make test-platform` 需要 macOS/Linux、Python 3 和已安装的 Playwright Chromium，按顺序重建并运行隔离验收。各层职责、退出约定和验证范围见[模块边界](docs/26-module-boundaries.md)。
 
 ### 页面响应与资源占用
 

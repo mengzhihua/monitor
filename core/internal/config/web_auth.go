@@ -20,7 +20,7 @@ func (c *Config) EnsureWebAuth() (string, error) {
 		}
 		return "", nil
 	}
-	if len(c.Web.Users) > 0 || c.Web.OIDC.Issuer != "" || c.Web.OIDC.ClientID != "" || c.Web.LDAP.URL != "" {
+	if len(c.Web.Users) > 0 || c.Web.OIDC.Issuer != "" || c.Web.OIDC.ClientID != "" || c.Web.LDAP.URL != "" || c.Web.SAML.SSOURL != "" {
 		return "", nil
 	}
 	path := filepath.Join(c.Global.DataDir, "web-password")

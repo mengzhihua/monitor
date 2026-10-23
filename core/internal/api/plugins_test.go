@@ -2,15 +2,151 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
+	dsig "github.com/russellhaering/goxmldsig"
+
+	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 )
+
+func TestPluginSAMLOnlyAuthenticationAndRoles(t *testing.T) {
+	keys := dsig.RandomKeyStoreForTest()
+	_, certificate, err := keys.GetKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []Role{RoleAdmin, RoleTroubleshooter, RoleViewer} {
+		t.Run(string(role), func(t *testing.T) {
+			runtime := &pluginRuntimeFixture{}
+			ts, _ := newTestServer(t, Options{Plugins: runtime, SAML: &SAMLConfig{
+				EntityID: "monitor", SSOURL: "https://idp.example/sso", Role: string(role),
+				CertPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate})),
+			}})
+			for _, token := range []string{"", "unknown-session"} {
+				for _, path := range []string{"/api/v1/info", "/api/v1/platform", "/api/v1/plugins", "/metrics"} {
+					if code, _ := pluginRequest(t, ts.URL+path, token, ""); code != http.StatusUnauthorized {
+						t.Errorf("SAML-only unauthenticated %s: status %d, want 401", path, code)
+					}
+				}
+			}
+			if code, _ := pluginRequest(t, ts.URL+"/api/v1/plugins/actions", "", `{"action":"rescan","if_revision":7}`); code != http.StatusUnauthorized {
+				t.Errorf("anonymous action: status %d, want 401", code)
+			}
+			assertion := signAssertion(t, keys, "_plugin-"+string(role), "operator@example.test")
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			response, err := client.PostForm(ts.URL+"/api/v1/auth/saml/acs", url.Values{
+				"SAMLResponse": {base64.StdEncoding.EncodeToString(assertion)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			location, err := response.Location()
+			if response.StatusCode != http.StatusFound || err != nil {
+				t.Fatal("signed assertion did not create a SAML session")
+			}
+			token := location.Query().Get("token")
+			if token == "" {
+				t.Fatal("SAML session credential missing")
+			}
+			code, body := pluginRequest(t, ts.URL+"/api/v1/info", token, "")
+			var info struct {
+				User     User         `json:"user"`
+				Platform platformInfo `json:"platform"`
+			}
+			if code != http.StatusOK || json.Unmarshal([]byte(body), &info) != nil {
+				t.Fatal("SAML session could not read server info")
+			}
+			if info.User.Name != "operator@example.test" || info.User.Role != role || !info.User.Personal {
+				t.Errorf("authenticated SAML identity became %+v", info.User)
+			}
+			wantStatus, wantCapabilities := http.StatusForbidden, 0
+			if role == RoleAdmin {
+				wantStatus, wantCapabilities = http.StatusOK, 2
+			}
+			if len(info.Platform.Capabilities) != wantCapabilities {
+				t.Errorf("role %s advertised capabilities %v", role, info.Platform.Capabilities)
+			}
+			code, body = pluginRequest(t, ts.URL+"/api/v1/platform", token, "")
+			var platform platformInfo
+			if code != http.StatusOK || json.Unmarshal([]byte(body), &platform) != nil || len(platform.Capabilities) != wantCapabilities || platform.Scope != info.Platform.Scope {
+				t.Errorf("SAML role %s received inconsistent platform capabilities", role)
+			}
+			for _, request := range []struct{ path, body string }{
+				{"/api/v1/plugins", ""}, {"/api/v1/plugins/actions", `{"action":"rescan","if_revision":7}`},
+			} {
+				if code, _ := pluginRequest(t, ts.URL+request.path, token, request.body); code != wantStatus {
+					t.Errorf("SAML %s %s: status %d, want %d", role, request.path, code, wantStatus)
+				}
+			}
+			runtime.mu.Lock()
+			defer runtime.mu.Unlock()
+			if runtime.calls != wantCapabilities/2 {
+				t.Fatalf("SAML role %s reached plugin control %d times", role, runtime.calls)
+			}
+		})
+	}
+}
+
+func TestPluginAndGenericAuthorizationDenialsAreAudited(t *testing.T) {
+	log, err := audit.Open("", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(log.Close)
+	runtime := &pluginRuntimeFixture{}
+	ts, _ := newTestServer(t, Options{Plugins: runtime, Audit: log, Users: []User{
+		{Name: "reader", Token: "private-reader-credential", Role: RoleViewer},
+		{Name: "operator", Token: "private-operator-credential", Role: RoleTroubleshooter},
+		{Name: "restricted", Token: "private-room-credential", Role: RoleAdmin, Rooms: []string{"allowed"}},
+		{Name: "admin", Token: "private-admin-credential", Role: RoleAdmin},
+	}})
+	for _, request := range []struct{ token, path, user string }{
+		{"private-reader-credential", "/api/v1/plugins/actions", "reader"},
+		{"private-operator-credential", "/api/v1/plugins/actions", "operator"},
+		{"private-room-credential", "/api/v1/plugins/actions?node=forbidden", "restricted"},
+		{"private-reader-credential", "/api/v1/alarms/silence", "reader"},
+	} {
+		before := len(log.Query(0, 0, ""))
+		if code, _ := pluginRequest(t, ts.URL+request.path, request.token, `{"name":"example","action":"disable","if_revision":7}`); code != http.StatusForbidden {
+			t.Fatalf("denied action returned %d", code)
+		}
+		entries := log.Query(0, 0, "")
+		if len(entries) != before+1 {
+			t.Errorf("denied %s by %s did not create one audit entry", request.path, request.user)
+			continue
+		}
+		entry := entries[0]
+		if entry.User != request.user || entry.Status != http.StatusForbidden || entry.Method != http.MethodPost || entry.Path != strings.Split(request.path, "?")[0] {
+			t.Errorf("incorrect denied-action attribution: %+v", entry)
+		}
+	}
+	if code, _ := pluginRequest(t, ts.URL+"/api/v1/plugins/actions", "private-admin-credential", `{"name":"example","action":"disable","if_revision":7}`); code != http.StatusOK {
+		t.Fatalf("authorized action returned %d", code)
+	}
+	entry := log.Query(0, 1, "")[0]
+	if entry.User != "admin" || entry.Status != http.StatusOK || entry.Target != "example" || entry.Note != "disable" {
+		t.Errorf("authorized action lost its audit target or note: %+v", entry)
+	}
+	serialized, err := json.Marshal(log.Query(0, 0, ""))
+	if err != nil || strings.Contains(string(serialized), "credential") {
+		t.Fatal("audit contained request credentials")
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.calls != 1 {
+		t.Fatalf("denied requests reached plugin runtime: calls=%d", runtime.calls)
+	}
+}
 
 type pluginRuntimeFixture struct {
 	mu    sync.Mutex
