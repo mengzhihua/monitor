@@ -9,6 +9,7 @@ import { modules, resolveWorkspace, type WorkspaceId } from './features/workspac
 import WorkspaceHeader from './features/workspace/WorkspaceHeader.vue'
 import WorkspaceModuleHost from './features/workspace/WorkspaceModuleHost.vue'
 import type { WorkspaceModuleHandle } from './features/workspace/contracts'
+import { workspaceKey, workspaceScopeLabel } from './features/workspace/model/workspaceScope'
 import DashboardTools from './components/DashboardTools.vue'
 import AppIcon from './components/AppIcon.vue'
 
@@ -48,7 +49,7 @@ const {
   onUnauthorized: () => { navigationGeneration++; toolsMenu.value?.close(); aiProblem.value = null; pendingChart.value = null },
   onNodeChange: () => { aiProblem.value = null },
 })
-const context = computed(() => ({ hub: isHub.value, admin: info.value?.user?.role === 'admin', personal: !!info.value?.user?.personal, authenticated: !!auth.token, functions: functions.value.length, logs: logsAvailable.value }))
+const context = computed(() => ({ hub: isHub.value, admin: info.value?.user?.role === 'admin', personal: !!info.value?.user?.personal, authenticated: !!auth.token, functions: functions.value.length, logs: logsAvailable.value, platform: info.value?.platform }))
 const availableModules = computed(() => modules.filter(module => !module.available || module.available(context.value)))
 const activeModule = computed(() => availableModules.value.find(module => module.id === workspace.value))
 const primaryModules = computed(() => availableModules.value.filter(module => module.group === '监控'))
@@ -134,6 +135,7 @@ const moduleProps = computed(() => {
     case 'ai': return { node: selectedNode.value, charts: charts.value, problem: aiProblem.value, role }
     case 'templates': return { role, nodes: nodes.value }
     case 'nodes': return { nodes: nodes.value, canManage: role === 'admin' }
+    case 'plugins': return { role, authenticated: !!auth.token, platform: info.value?.platform, hostname: info.value?.host.hostname || '' }
     case 'config': return { canManage: role === 'admin', isHub: isHub.value }
     default: return {}
   }
@@ -147,7 +149,8 @@ const moduleEvents = computed(() => ({
   ...(workspace.value === 'nodes' ? { forget: forgetNode } : {}),
 }))
 // Node-scoped modules unmount to cancel their requests; global config/operations stay stable.
-const moduleKey = computed(() => `${workspace.value}:${['alarms', 'logs', 'weights', 'contexts', 'functions'].includes(workspace.value) ? selectedNode.value : ''}`)
+const moduleKey = computed(() => workspaceKey(workspace.value, activeModule.value?.scope, selectedNode.value))
+const scopeLabel = computed(() => workspaceScopeLabel(activeModule.value?.scope, info.value?.host.hostname || '', currentNode.value?.hostname))
 function popstate(event: PopStateEvent) {
   const entry = readHistoryEntry(event.state)
   if (restoringHistory && entry?.session === restoringHistory.session && entry.index === restoringHistory.index) {
@@ -207,7 +210,7 @@ onBeforeUnmount(() => { media.removeEventListener('change', syncMobile); window.
         <a v-if="oidcAvailable" class="oidc" :href="configurationApi.oidcLoginURL()">使用 OIDC 登录</a>
       </form>
       <template v-else-if="info">
-        <div class="workspace-context"><span>{{ activeModule?.group || '工作区' }} / {{ activeModule?.label || workspace }}</span><span>{{ workspace === 'operations' || workspace === 'services' ? '全局视图' : currentNode?.hostname || info.host.hostname }}</span></div>
+        <div class="workspace-context"><span>{{ activeModule?.group || '工作区' }} / {{ activeModule?.label || workspace }}</span><span>{{ scopeLabel }}</span></div>
         <p v-if="!activeModule" class="empty">当前节点或账号暂不可使用此模块。<button @click="navigate('operations', false)">返回运维总览</button></p>
         <p v-else-if="workspace === 'alarms' && !healthOn" class="empty">当前节点未启用告警。</p>
         <WorkspaceModuleHost v-else :component="activeModule.component" :key="moduleKey" ref="moduleView" v-bind="moduleProps" v-on="moduleEvents" />

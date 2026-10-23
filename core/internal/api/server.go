@@ -18,7 +18,6 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/ingest"
 	"github.com/mengzhihua/monitor/core/internal/operations"
-	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/sla"
 	"github.com/mengzhihua/monitor/core/internal/stream"
@@ -46,8 +45,8 @@ type Options struct {
 	Users  []User
 	Health *health.Engine // nil = alarms API disabled
 	Logger *slog.Logger
-	// Plugins exposes external plugins.d processes in /api/v1/collectors (optional).
-	Plugins *plugins.Manager
+	// Plugins is the injected extension runtime; HTTP does not own its workers.
+	Plugins PluginRuntime
 	// Nodes enables hub mode: /api/v1/stream ingestion and node= routing.
 	Nodes *hub.Nodes
 	// Stream reports this agent's own upstream connection in /api/v1/info.

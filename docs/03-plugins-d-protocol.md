@@ -2,6 +2,8 @@
 
 `monitord` 可以把任意语言写的程序作为采集器运行：进程把指标按下面的**文本协议**写到 stdout，agent 逐行解析并写入 Registry / TSDB，随后与内置采集器一样出现在 Dashboard、`/api/v1/*`、`/metrics` 和告警规则中。协议语义与 Netdata 外部插件协议兼容，多数现成的 Netdata shell/Python 插件无需修改即可运行。
 
+新插件建议使用[版本化清单包](27-plugin-platform.md)，支持在线扫描、独立启停、状态持久化和命名空间约束。下文描述旧脚本协议；清单包的 metrics 能力不允许写主机标签或声明函数。
+
 ## 1. 进程生命周期
 
 | 阶段 | 行为 |
@@ -12,7 +14,7 @@
 | 看门狗 | `timeout` 秒（默认 `max(10×update_every, 60)`）无任何输出 → 结束进程并重启 |
 | 退出 | 进程退出 / 崩溃 / 被看门狗结束 / 发送 `EXIT` → 等待后重启；退避 1s→2s→…→60s，运行足够久（>5 分钟）后重置 |
 | 禁用 | 发送 `DISABLE`（例如依赖不存在）→ 进程结束且**不再重启**，状态 `disabled`；`plugins.disabled` 或 `list[].disabled: true` 可在配置层禁用 |
-| 停止 | agent 关闭时向插件的进程组发送 SIGTERM（Unix），3s 后强制回收管道；shell 插件建议 `exec` 长驻子进程或自己处理信号 |
+| 停止 | agent 关闭或管理员停用时先向插件进程组发送 SIGTERM（Unix），1s 后强制结束进程组；等待管道和解析器退出后再启动后继实例 |
 | 状态 | `GET /api/v1/collectors` → `plugins[]`：`state`（starting/running/waiting/stopped/disabled/failed）、`pid`、`restarts`、`error`、`stats`（行数/样本数/图表数/协议错误数与最后一次错误/最后数据时间）、`variables` |
 
 ## 2. 命令

@@ -19,6 +19,7 @@ func (s *Server) routes() {
 	s.registerHubRoutes(m)
 	s.registerAuthRoutes(m)
 	s.registerManagementRoutes(m)
+	s.registerPluginRoutes(m)
 	if s.opt.Nodes != nil {
 		m.HandleFunc("GET "+stream.Path, s.opt.Nodes.HandleStream)
 		m.HandleFunc("GET "+stream.PathACLK, s.opt.Nodes.HandleACLK)

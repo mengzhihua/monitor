@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,12 @@ type Parser struct {
 	Now func() time.Time
 	// MaxLine caps a single protocol line (default 64 KiB).
 	MaxLine int
+	// Versioned packages may only publish their own metrics. Empty Namespace
+	// preserves the legacy plugins.d contract; limits survive process restarts
+	// by counting definitions already held by the Registry.
+	Namespace     string
+	MaxCharts     int
+	MaxDimensions int
 
 	mu        sync.Mutex
 	stats     Stats
@@ -162,6 +169,9 @@ func (p *Parser) Line(line string) error {
 		p.replace = false
 		return p.chart(f[1:])
 	case "OVERWRITE":
+		if p.Namespace != "" {
+			return fmt.Errorf("OVERWRITE: metrics packages must retain definitions for cumulative budgets")
+		}
 		p.replace = true
 		return p.chart(f[1:])
 	case "DIMENSION":
@@ -175,6 +185,9 @@ func (p *Parser) Line(line string) error {
 		}
 		if p.pending == nil {
 			p.pending = map[string]string{}
+		}
+		if err := p.checkLabel(f[1]); err != nil {
+			return err
 		}
 		p.pending[f[1]] = f[2]
 	case "CLABEL_COMMIT":
@@ -200,13 +213,22 @@ func (p *Parser) Line(line string) error {
 		if p.draft.Labels == nil {
 			p.draft.Labels = map[string]string{}
 		}
+		if err := p.checkLabel(f[1]); err != nil {
+			return err
+		}
 		p.draft.Labels[f[1]] = f[2]
 	case "HOST_LABEL":
+		if p.Namespace != "" {
+			return fmt.Errorf("HOST_LABEL: metrics capability cannot change host labels")
+		}
 		if len(f) < 3 {
 			return fmt.Errorf("HOST_LABEL: need name and value")
 		}
 		p.Reg.SetHostLabel(f[1], f[2])
 	case "FUNCTION":
+		if p.Namespace != "" {
+			return fmt.Errorf("FUNCTION: callable functions are not supported by the metrics capability")
+		}
 		if len(f) < 2 || f[1] == "" {
 			return fmt.Errorf("FUNCTION: missing name")
 		}
@@ -238,7 +260,7 @@ func (p *Parser) Line(line string) error {
 			return nil // explicit gap
 		}
 		v, err := strconv.ParseFloat(val, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("SET %s: bad value %q", id, val)
 		}
 		if p.cur.Dimension(id) == nil {
@@ -272,8 +294,13 @@ func (p *Parser) Line(line string) error {
 			return fmt.Errorf("VARIABLE: %w", err)
 		}
 		v, err := strconv.ParseFloat(val, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("VARIABLE %s: bad value %q", name, val)
+		}
+		if p.Namespace != "" && len(p.variables) >= 128 {
+			if _, exists := p.variables[name]; !exists {
+				return fmt.Errorf("VARIABLE: package variable budget exceeded")
+			}
 		}
 		p.variables[name] = v
 	case "DISABLE":
@@ -306,6 +333,9 @@ func assignment(f []string) (name, value string, err error) {
 func (p *Parser) chart(f []string) error {
 	if len(f) < 1 || f[0] == "" {
 		return fmt.Errorf("CHART: missing id")
+	}
+	if err := p.checkChart(f[0]); err != nil {
+		return err
 	}
 	get := func(i int) string {
 		if i < len(f) {
@@ -385,6 +415,9 @@ func (p *Parser) dimension(f []string) error {
 	}
 	if len(f) < 1 || f[0] == "" {
 		return fmt.Errorf("DIMENSION: missing id")
+	}
+	if err := p.checkDimension(f[0]); err != nil {
+		return err
 	}
 	get := func(i int) string {
 		if i < len(f) {

@@ -22,6 +22,7 @@ type statsdConfig struct {
 type statsdCollector struct {
 	cfg  statsdConfig
 	conn *net.UDPConn
+	done chan struct{}
 
 	mu     sync.Mutex
 	gauges map[string]float64
@@ -63,6 +64,7 @@ func (s *statsdCollector) Init(reg *registry.Registry) error {
 	s.gauges = map[string]float64{}
 	s.counts = map[string]float64{}
 	s.times = map[string][]float64{}
+	s.done = make(chan struct{})
 	go s.readLoop()
 	_ = reg
 	return nil
@@ -72,9 +74,13 @@ func (s *statsdCollector) Stop() {
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
+	if s.done != nil {
+		<-s.done
+	}
 }
 
 func (s *statsdCollector) readLoop() {
+	defer close(s.done)
 	buf := make([]byte, 65535)
 	for {
 		n, _, err := s.conn.ReadFromUDP(buf)

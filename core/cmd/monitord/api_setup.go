@@ -41,10 +41,12 @@ func serverOptions(cfg *config.Config, cfgPath string, eng *health.Engine, pm *p
 		ReportDir:     reportDir(cfg),
 		SelfMonitor:   true,
 		Health:        eng,
-		Plugins:       pm,
 		Stream:        sc,
 		ConfigPath:    cfgPath,
 		Logger:        log.With("component", "api"),
+	}
+	if pm != nil {
+		apiOpt.Plugins = pm
 	}
 	if cfg.Web.OIDC.Issuer != "" || cfg.Web.OIDC.ClientID != "" {
 		apiOpt.OIDC = &api.OIDCConfig{Issuer: cfg.Web.OIDC.Issuer, ClientID: cfg.Web.OIDC.ClientID,

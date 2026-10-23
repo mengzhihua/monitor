@@ -36,6 +36,7 @@
 | --- | --- | --- |
 | `smoke.sh` | Agent / Hub API、默认密码、claim 和 ring | `bash scripts/smoke.sh` |
 | `verify-default-auth.py` | 默认认证、错误密码、WebSocket 拒绝、重启和重置 | `python3 scripts/verify-default-auth.py` |
+| `verify-plugin-platform.py` | 清单包在线安装、真实采样、启停重启、版本冲突、持久化、坏包隔离与进程回收（macOS/Linux） | `python3 scripts/verify-plugin-platform.py` |
 | `verify-operations.py` | 2.0 真实采样、处置/个人视图持久化、服务重启、单条/批量版本冲突及历史查询导出 | `python3 scripts/verify-operations.py` |
 | `verify-notifications.py` | 本机真实内存触发通知、HTTP 成功/503、静默/路由、凭据隐藏、只读权限及重启计数边界 | `python3 scripts/verify-notifications.py` |
 | `verify-alert-rules.py` | 规则预览无写入、RBAC、原子批次、并发版本、两次重启、覆盖/删除/恢复与损坏文件拒绝启动 | `python3 scripts/verify-alert-rules.py` |

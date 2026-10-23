@@ -25,6 +25,8 @@ type Collector interface {
 
 // Stopper is an optional collector that holds sockets or background work
 // (StatsD, long-lived HTTP clients) and must release them on shutdown.
+// Stop must handle partial initialization; the scheduler serializes it with
+// Init and Collect and invokes it once for each instance it owns.
 type Stopper interface {
 	Stop()
 }
@@ -85,6 +87,7 @@ type Options struct {
 	Timeout time.Duration
 }
 
+// Factory returns a fresh instance, including when a failed Init is retried.
 type Factory func() Collector
 
 var (
@@ -110,6 +113,18 @@ func Available() []string {
 	return out
 }
 
+// factorySnapshot keeps extension code outside the registration lock. Factories,
+// Configure and Init may themselves query or extend the collector catalog.
+func factorySnapshot() map[string]Factory {
+	regMu.Lock()
+	defer regMu.Unlock()
+	out := make(map[string]Factory, len(factories))
+	for name, factory := range factories {
+		out[name] = factory
+	}
+	return out
+}
+
 type Status struct {
 	Name     string `json:"name"`
 	Enabled  bool   `json:"enabled"`
@@ -131,6 +146,7 @@ type running struct {
 	functions    []Function // protected by mu; published after successful Init
 	mu           sync.Mutex
 	opMu         sync.Mutex // serializes Init, Collect and Stop
+	stopped      bool       // protected by opMu; each instance is stopped once
 	factory      Factory
 	decode       func(any) error
 	desired      bool
@@ -149,15 +165,27 @@ type Scheduler struct {
 	timeout time.Duration
 	cols    []*running
 	initWG  sync.WaitGroup
+
+	scheduleMu    sync.Mutex // guards starting work against Close's wait
+	lifecycleOnce sync.Once
+	stopCtx       context.Context
+	cancel        context.CancelFunc
+	closeOnce     sync.Once
 }
 
 // NewScheduler instantiates the selected collectors, configures and
 // initialises them; collectors whose Configure/Init fails are kept in the
-// status list as disabled.
+// status list as disabled. The caller owns the returned scheduler and must
+// Close it even if later application setup fails before Run can be called.
 func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Scheduler {
+	catalog := factorySnapshot()
 	names := opt.Names
 	if len(names) == 0 {
-		names = Available()
+		names = make([]string, 0, len(catalog))
+		for name := range catalog {
+			names = append(names, name)
+		}
+		sort.Strings(names)
 	}
 	if log == nil {
 		log = slog.Default()
@@ -166,15 +194,13 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 		opt.Timeout = time.Duration(reg.Host.UpdateEvery) * time.Second
 	}
 	s := &Scheduler{reg: reg, log: log, timeout: opt.Timeout}
-	regMu.Lock()
-	defer regMu.Unlock()
 	for n := range opt.Modules {
-		if _, ok := factories[n]; !ok {
+		if _, ok := catalog[n]; !ok {
 			log.Warn("collector: config for unknown module", "name", n)
 		}
 	}
 	for _, n := range names {
-		f, ok := factories[n]
+		f, ok := catalog[n]
 		if !ok {
 			log.Warn("collector: unknown", "name", n)
 			continue
@@ -195,9 +221,7 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 			r.status.Error = err.Error()
 			r.backoff = 5 * time.Second
 			r.retryAt = time.Now().Add(r.backoff)
-			if st, ok := c.(Stopper); ok {
-				st.Stop()
-			}
+			r.stop()
 			log.Info("collector: disabled", "name", n, "reason", err)
 		} else {
 			r.initialized = true
@@ -261,12 +285,16 @@ func (s *Scheduler) Collector(name string) Collector {
 
 // SetEnabled turns a collector on or off at runtime (hub config push).
 func (s *Scheduler) SetEnabled(name string, on bool) bool {
+	stopCtx := s.lifecycle()
 	for _, r := range s.cols {
 		if r.status.Name != name {
 			continue
 		}
 		r.opMu.Lock()
 		defer r.opMu.Unlock()
+		if stopCtx.Err() != nil {
+			return false
+		}
 		r.mu.Lock()
 		if r.desired == on {
 			r.mu.Unlock()
@@ -284,9 +312,7 @@ func (s *Scheduler) SetEnabled(name string, on bool) bool {
 		}
 		r.mu.Unlock()
 		if stop {
-			if st, ok := r.c.(Stopper); ok {
-				st.Stop()
-			}
+			r.stop()
 		}
 		return true
 	}
@@ -296,6 +322,9 @@ func (s *Scheduler) SetEnabled(name string, on bool) bool {
 // prepare retries unavailable dependencies with bounded exponential backoff.
 // The caller holds opMu; disabled modules are never probed automatically.
 func (s *Scheduler) prepare(r *running, now time.Time) bool {
+	if s.lifecycle().Err() != nil {
+		return false
+	}
 	r.mu.Lock()
 	if !r.desired || r.configFailed {
 		r.mu.Unlock()
@@ -313,7 +342,9 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	// opMu keeps lifecycle changes serial while dependency probes run. Never
 	// hold the metadata mutex across network/command I/O: Status and Functions
 	// must remain readable even when a retry takes the full probe timeout.
+	r.stop()
 	c := r.factory()
+	r.c, r.stopped = c, false
 	err := configure(c, r.decode)
 	configFailed := err != nil
 	if err == nil {
@@ -321,15 +352,12 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	}
 	var functions []Function
 	if err != nil {
-		if st, ok := c.(Stopper); ok {
-			st.Stop()
-		}
+		r.stop()
 	} else if fp, ok := c.(FunctionProvider); ok {
 		functions = fp.Functions()
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.c = c
 	r.functions = functions
 	r.configFailed = configFailed
 	if err != nil {
@@ -353,10 +381,19 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	return true
 }
 
-// Run blocks until ctx is done. The first tick is aligned to the next whole
-// interval boundary so samples land on round timestamps.
+// Run collects immediately, then on whole interval boundaries. It blocks until
+// ctx is done or Close is called and always closes the scheduler before returning.
 func (s *Scheduler) Run(ctx context.Context) {
-	defer s.stop()
+	ctx, cancel := context.WithCancel(ctx)
+	stopCancel := context.AfterFunc(s.lifecycle(), cancel)
+	defer func() {
+		cancel()
+		stopCancel()
+		s.Close()
+	}()
+	if s.stopCtx.Err() != nil || ctx.Err() != nil {
+		return
+	}
 	every := time.Duration(s.reg.Host.UpdateEvery) * time.Second
 	s.tick(ctx, time.Now())
 	next := time.Now().Truncate(every).Add(every)
@@ -377,18 +414,12 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-func (s *Scheduler) stop() {
-	s.initWG.Wait()
-	for _, r := range s.cols {
-		r.opMu.Lock()
-		if st, ok := r.c.(Stopper); ok {
-			st.Stop()
-		}
-		r.opMu.Unlock()
-	}
-}
-
 func (s *Scheduler) tick(ctx context.Context, now time.Time) {
+	s.scheduleMu.Lock()
+	if s.lifecycle().Err() != nil {
+		s.scheduleMu.Unlock()
+		return
+	}
 	var wg sync.WaitGroup
 	for _, r := range s.cols {
 		// Most registered collectors fail Init and stay disabled. Spawning a
@@ -405,6 +436,16 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 		// goroutines for it every tick would leak them. Later ticks skip it
 		// here until it unwinds (or dies with the process).
 		if !r.opMu.TryLock() {
+			continue
+		}
+		// SetEnabled may have changed the state between the first snapshot and
+		// acquiring opMu. Never collect an instance that has just been stopped.
+		r.mu.Lock()
+		ready = r.desired && r.initialized
+		retry = r.desired && !r.initialized && !r.configFailed && !now.Before(r.retryAt)
+		r.mu.Unlock()
+		if !ready && !retry {
+			r.opMu.Unlock()
 			continue
 		}
 		if !ready {
@@ -452,6 +493,7 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time) {
 			r.mu.Unlock()
 		}(r)
 	}
+	s.scheduleMu.Unlock()
 	s.waitTick(&wg)
 }
 

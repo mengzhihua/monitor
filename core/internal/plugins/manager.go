@@ -1,59 +1,50 @@
 package plugins
 
 import (
-	"bufio"
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
-// Spec describes one external plugin process.
+// Spec describes one external plugin process. Execution fields are kept private
+// to the manager; only Status is suitable for public responses.
 type Spec struct {
-	Name        string   `yaml:"name"`
-	Command     string   `yaml:"command"` // executable path (relative paths resolve against Options.Dir)
-	Args        []string `yaml:"args"`
-	UpdateEvery int      `yaml:"update_every"` // passed as first argument; default host update_every
-	Timeout     int      `yaml:"timeout"`      // seconds without output before the plugin is killed (0 = 10×update_every, min 60)
-	Env         []string `yaml:"env"`
-	Disabled    bool     `yaml:"disabled"`
+	Name        string    `yaml:"name"`
+	Command     string    `yaml:"command"`
+	Args        []string  `yaml:"args"`
+	UpdateEvery int       `yaml:"update_every"`
+	Timeout     int       `yaml:"timeout"`
+	Env         []string  `yaml:"env"`
+	Disabled    bool      `yaml:"disabled"`
+	Source      string    `yaml:"-"`
+	Manifest    *Manifest `yaml:"-"`
 }
 
-// Options configures the manager.
+// Options configures discovery, persisted controls and restart backoff.
 type Options struct {
-	Dir      string // plugins.d directory scanned for *.plugin executables
-	Disabled []string
-	Logger   *slog.Logger
-	// RestartMin/RestartMax bound the exponential back-off between restarts.
+	Dir        string
+	Disabled   []string
+	StatePath  string
+	Logger     *slog.Logger
 	RestartMin time.Duration
 	RestartMax time.Duration
 }
 
-// State of a plugin process.
 type State string
 
 const (
 	StateStarting State = "starting"
 	StateRunning  State = "running"
-	StateWaiting  State = "waiting" // exited, restart scheduled
-	StateStopped  State = "stopped" // context cancelled
+	StateWaiting  State = "waiting"
+	StateStopped  State = "stopped"
 	StateDisabled State = "disabled"
-	StateFailed   State = "failed" // cannot start (missing binary, not executable)
+	StateFailed   State = "failed"
 )
 
-// Status is the public view of a plugin for /api/v1/collectors.
+// Status is the public view used by the collectors and plugin catalog APIs.
 type Status struct {
 	Name        string             `json:"name"`
 	Command     string             `json:"command"`
@@ -67,32 +58,50 @@ type Status struct {
 	Stats       Stats              `json:"stats"`
 	Variables   map[string]float64 `json:"variables,omitempty"`
 	Functions   []string           `json:"functions,omitempty"`
+	Source      string             `json:"source"`
+	Manifest    *Manifest          `json:"manifest,omitempty"`
+	Locked      bool               `json:"locked"`
 }
 
 type plugin struct {
-	spec    Spec
-	parser  *Parser
-	mu      sync.Mutex
-	state   State
-	pid     int
-	restart int
-	started time.Time
-	err     string
+	spec        Spec // immutable after discovery
+	fingerprint string
+	locked      bool
+	mu          sync.Mutex
+	parser      *Parser
+	state       State
+	enabled     bool
+	pid         int
+	restart     int
+	started     time.Time
+	err         string
+	// Worker ownership is serialized by Manager.gate. The worker never edits
+	// these fields, including after a self-disable or failed start.
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
-// Manager supervises plugin processes: start, watchdog, restart with
-// back-off, stop on shutdown.
+// Manager owns plugin workers. Catalog reads use mu; lifecycle and control
+// transitions use gate so waiting for a worker never blocks status polling.
 type Manager struct {
-	reg  *registry.Registry
-	opt  Options
-	log  *slog.Logger
-	mu   sync.Mutex
-	list []*plugin
+	reg         *registry.Registry
+	opt         Options
+	log         *slog.Logger
+	specs       []Spec
+	gate        chan struct{}
+	mu          sync.Mutex
+	list        []*plugin
+	diagnostics []Diagnostic
+	revision    uint64
+	disabled    map[string]bool
+	initErr     error
+	running     bool
+	started     bool
+	runCtx      context.Context
 }
 
-// New builds a manager from explicit specs plus every executable
-// <Dir>/*.plugin (name = file name without the suffix). Explicit specs win
-// over discovered ones with the same name.
+// New builds a catalog in configured > manifest > legacy precedence. A corrupt
+// persisted state is fail-closed: Err reports it and Run starts no processes.
 func New(reg *registry.Registry, specs []Spec, opt Options) *Manager {
 	if opt.Logger == nil {
 		opt.Logger = slog.Default()
@@ -103,288 +112,96 @@ func New(reg *registry.Registry, specs []Spec, opt Options) *Manager {
 	if opt.RestartMax <= 0 {
 		opt.RestartMax = time.Minute
 	}
-	m := &Manager{reg: reg, opt: opt, log: opt.Logger}
-	disabled := map[string]bool{}
-	for _, n := range opt.Disabled {
-		disabled[n] = true
-	}
-	seen := map[string]bool{}
-	add := func(sp Spec) {
-		if sp.Name == "" || seen[sp.Name] {
-			return
-		}
-		seen[sp.Name] = true
-		if sp.UpdateEvery <= 0 {
-			sp.UpdateEvery = reg.Host.UpdateEvery
-		}
-		if sp.Timeout <= 0 {
-			sp.Timeout = max(10*sp.UpdateEvery, 60)
-		}
-		// Relative commands resolve against the plugins dir first; a bare name
-		// that is not there falls back to PATH.
-		if !filepath.IsAbs(sp.Command) && opt.Dir != "" {
-			if _, err := os.Stat(filepath.Join(opt.Dir, sp.Command)); err == nil {
-				sp.Command = filepath.Join(opt.Dir, sp.Command)
-			}
-		}
-		if strings.ContainsAny(sp.Command, `/\`) {
-			if abs, err := filepath.Abs(sp.Command); err == nil {
-				sp.Command = abs
-			}
-		} else if lp, err := exec.LookPath(sp.Command); err == nil { // bare name: search PATH
-			sp.Command = lp
-		}
-		p := &plugin{spec: sp, parser: &Parser{Plugin: sp.Name, Reg: reg}, state: StateStarting}
-		if sp.Disabled || disabled[sp.Name] {
-			p.state = StateDisabled
-		}
-		m.list = append(m.list, p)
-	}
+	opt.RestartMax = max(opt.RestartMin, opt.RestartMax)
+	opt.Disabled = append([]string(nil), opt.Disabled...)
+	m := &Manager{reg: reg, opt: opt, log: opt.Logger, gate: make(chan struct{}, 1), revision: 1, disabled: map[string]bool{}}
 	for _, sp := range specs {
-		add(sp)
+		m.specs = append(m.specs, cloneSpec(sp))
 	}
-	for _, sp := range discover(opt.Dir) {
-		add(sp)
-	}
-	sort.Slice(m.list, func(i, j int) bool { return m.list[i].spec.Name < m.list[j].spec.Name })
+	m.initErr = m.loadState()
+	m.list, m.diagnostics = m.discoverCatalog()
 	return m
 }
 
-// discover lists <dir>/*.plugin (plus .exe/.bat/.cmd variants on Windows).
-func discover(dir string) []Spec {
-	if dir == "" {
-		return nil
-	}
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var out []Spec
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		base := name
-		if runtime.GOOS == "windows" {
-			ext := strings.ToLower(filepath.Ext(name))
-			if ext == ".exe" || ext == ".bat" || ext == ".cmd" {
-				base = strings.TrimSuffix(name, filepath.Ext(name))
-			}
-		}
-		if !strings.HasSuffix(base, ".plugin") {
-			continue
-		}
-		if runtime.GOOS != "windows" {
-			info, err := e.Info()
-			if err != nil || info.Mode()&0o111 == 0 {
-				continue
-			}
-		}
-		out = append(out, Spec{Name: strings.TrimSuffix(base, ".plugin"), Command: filepath.Join(dir, name)})
-	}
-	return out
-}
+func (m *Manager) Err() error { return m.initErr }
 
-// Status snapshots every plugin.
-func (m *Manager) Status() []Status {
+// Run remains available even when the catalog is empty or every plugin has
+// disabled itself. It returns only after cancellation and all workers exit.
+// A manager has a single Run lifetime; repeated calls do not start duplicates.
+func (m *Manager) Run(ctx context.Context) {
+	if err := m.acquire(ctx); err != nil {
+		return
+	}
 	m.mu.Lock()
+	if m.started || m.initErr != nil || ctx.Err() != nil {
+		m.mu.Unlock()
+		m.release()
+		return
+	}
+	m.started, m.running, m.runCtx = true, true, ctx
 	list := append([]*plugin(nil), m.list...)
 	m.mu.Unlock()
-	out := make([]Status, 0, len(list))
 	for _, p := range list {
-		p.mu.Lock()
-		st := Status{
-			Name: p.spec.Name, Command: p.spec.Command, State: p.state, PID: p.pid,
-			Enabled: p.state != StateDisabled, UpdateEvery: p.spec.UpdateEvery,
-			Restarts: p.restart, Error: p.err,
-		}
-		if !p.started.IsZero() {
-			st.Started = p.started.Unix()
-		}
-		p.mu.Unlock()
-		st.Stats = p.parser.Stats()
-		if v := p.parser.Variables(); len(v) > 0 {
-			st.Variables = v
-		}
-		if fn := p.parser.Functions(); len(fn) > 0 {
-			st.Functions = fn
-		}
-		out = append(out, st)
+		m.startWorker(p)
 	}
-	return out
+	m.release()
+	<-ctx.Done()
+	// A committed control action finishes its handoff even if its request ends.
+	// Shutdown then cancels every worker before waiting for any one of them.
+	_ = m.acquire(context.Background())
+	m.mu.Lock()
+	m.running = false
+	list = append([]*plugin(nil), m.list...)
+	m.mu.Unlock()
+	for _, p := range list {
+		if p.cancel != nil {
+			p.cancel()
+		}
+	}
+	for _, p := range list {
+		m.stopWorker(p)
+	}
+	m.release()
 }
 
-// Run starts every enabled plugin and blocks until ctx is done and all
-// processes have exited.
-func (m *Manager) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	for _, p := range m.list {
-		if p.state == StateDisabled {
-			continue
+func (m *Manager) acquire(ctx context.Context) error {
+	select {
+	case m.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			m.release()
+			return err
 		}
-		wg.Add(1)
-		go func(p *plugin) {
-			defer wg.Done()
-			m.supervise(ctx, p)
-		}(p)
-	}
-	wg.Wait()
-}
-
-func (m *Manager) set(p *plugin, st State, err string) {
-	p.mu.Lock()
-	p.state, p.err = st, err
-	if st != StateRunning {
-		p.pid = 0
-	}
-	p.mu.Unlock()
-}
-
-func (m *Manager) supervise(ctx context.Context, p *plugin) {
-	delay := m.opt.RestartMin
-	for {
-		start := time.Now()
-		err := m.runOnce(ctx, p)
-		if ctx.Err() != nil {
-			m.set(p, StateStopped, "")
-			return
-		}
-		switch {
-		case errors.Is(err, ErrDisabled):
-			m.set(p, StateDisabled, "plugin sent DISABLE")
-			m.log.Info("plugin disabled itself", "plugin", p.spec.Name)
-			return
-		case errors.Is(err, errNotStartable):
-			m.set(p, StateFailed, err.Error())
-			m.log.Warn("plugin cannot start", "plugin", p.spec.Name, "err", err)
-			return
-		}
-		msg := "exited"
-		if err != nil {
-			msg = err.Error()
-		}
-		// a plugin that survived long enough earns a fresh back-off
-		if time.Since(start) > 5*m.opt.RestartMax {
-			delay = m.opt.RestartMin
-		}
-		m.set(p, StateWaiting, msg)
-		m.log.Warn("plugin exited, restarting", "plugin", p.spec.Name, "reason", msg, "in", delay)
-		select {
-		case <-ctx.Done():
-			m.set(p, StateStopped, "")
-			return
-		case <-time.After(delay):
-		}
-		p.mu.Lock()
-		p.restart++
-		p.mu.Unlock()
-		delay = min(delay*2, m.opt.RestartMax)
-	}
-}
-
-var errNotStartable = errors.New("not startable")
-
-// runOnce runs the process until it exits, the watchdog fires or ctx ends.
-func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
-	if _, err := os.Stat(p.spec.Command); err != nil {
-		return fmt.Errorf("%w: %v", errNotStartable, err)
-	}
-	pctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	args := append([]string{strconv.Itoa(p.spec.UpdateEvery)}, p.spec.Args...)
-	cmd := exec.CommandContext(pctx, p.spec.Command, args...)
-	cmd.Env = append(os.Environ(),
-		"MONITOR_UPDATE_EVERY="+strconv.Itoa(p.spec.UpdateEvery),
-		"MONITOR_HOSTNAME="+m.reg.Host.Hostname,
-		"MONITOR_PLUGIN="+p.spec.Name,
-		"NETDATA_UPDATE_EVERY="+strconv.Itoa(p.spec.UpdateEvery), // many existing plugins read this
-	)
-	cmd.Env = append(cmd.Env, p.spec.Env...)
-	// Let exec own the OS-pipe copying goroutines. StdoutPipe/StderrPipe
-	// cannot be read concurrently with Wait: Wait closes their read ends as
-	// soon as the process exits, potentially discarding buffered protocol data.
-	stdout, outWriter := io.Pipe()
-	stderr, errWriter := io.Pipe()
-	defer stdout.Close()
-	defer stderr.Close()
-	defer outWriter.Close()
-	defer errWriter.Close()
-	cmd.Stdout, cmd.Stderr = outWriter, errWriter
-	cmd.Stdin = nil
-	cmd.WaitDelay = 3 * time.Second // then force-close pipes held open by orphaned children
-	setProcAttr(cmd)
-	if err := cmd.Start(); err != nil {
-		var pe *os.PathError
-		if errors.As(err, &pe) || errors.Is(err, exec.ErrNotFound) {
-			return fmt.Errorf("%w: %v", errNotStartable, err)
-		}
-		return err
-	}
-	p.mu.Lock()
-	p.state, p.pid, p.started, p.err = StateRunning, cmd.Process.Pid, time.Now(), ""
-	p.mu.Unlock()
-	m.log.Info("plugin started", "plugin", p.spec.Name, "pid", cmd.Process.Pid, "cmd", p.spec.Command)
-
-	// stderr → log
-	go func() {
-		defer stderr.Close()
-		sc := bufio.NewScanner(stderr)
-		sc.Buffer(make([]byte, 0, 4096), 64<<10)
-		for sc.Scan() {
-			m.log.Info("plugin stderr", "plugin", p.spec.Name, "msg", sc.Text())
-		}
-	}()
-
-	// watchdog: kill when no output for Timeout seconds
-	timeout := time.Duration(p.spec.Timeout) * time.Second
-	wdDone := make(chan struct{})
-	var wdErr error
-	go func() {
-		defer close(wdDone)
-		t := time.NewTicker(timeout / 4)
-		defer t.Stop()
-		for {
-			select {
-			case <-pctx.Done():
-				return
-			case <-t.C:
-				if time.Since(p.parser.lastActivity()) > timeout {
-					wdErr = fmt.Errorf("no output for %s", timeout)
-					cancel()
-					return
-				}
-			}
-		}
-	}()
-
-	// Wait drains the exec copying goroutines before we signal EOF to the
-	// parser. WaitDelay still bounds OS pipes held open by orphaned children.
-	waitc := make(chan error, 1)
-	go func() {
-		err := cmd.Wait()
-		_ = outWriter.Close()
-		_ = errWriter.Close()
-		waitc <- err
-	}()
-
-	p.parser.touch()
-	perr := p.parser.Run(stdout)
-	_ = stdout.Close() // DISABLE/EXIT must also unblock an active copying writer.
-	cancel()
-	<-wdDone
-	werr := <-waitc
-	switch {
-	case errors.Is(perr, ErrDisabled), errors.Is(perr, ErrExit):
-		return perr
-	case wdErr != nil:
-		return wdErr
-	case ctx.Err() != nil:
 		return nil
-	case werr != nil && !errors.Is(werr, context.Canceled):
-		return werr
-	case perr != nil && !errors.Is(perr, os.ErrClosed):
-		return perr
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
+}
+func (m *Manager) release() { <-m.gate }
+
+func (m *Manager) startWorker(p *plugin) {
+	p.mu.Lock()
+	enabled := p.enabled
+	if enabled {
+		p.state, p.err = StateStarting, ""
+	}
+	p.mu.Unlock()
+	if !enabled {
+		return
+	}
+	if m.runCtx.Err() != nil {
+		m.set(p, StateStopped, "")
+		return
+	}
+	ctx, cancel := context.WithCancel(m.runCtx)
+	p.cancel, p.done = cancel, make(chan struct{})
+	go func() { defer close(p.done); m.supervise(ctx, p) }()
+}
+
+func (m *Manager) stopWorker(p *plugin) {
+	if p.cancel == nil {
+		return
+	}
+	p.cancel()
+	<-p.done
+	p.cancel, p.done = nil, nil
 }

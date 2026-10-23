@@ -1,4 +1,6 @@
 import type { AlarmSummary } from '../alarms/types'
+import type { PlatformInfo, PluginStatus } from '../plugins/types'
+export type { PluginStatus } from '../plugins/types'
 
 export interface Dimension { id: string; name: string; algorithm: string; hidden?: boolean; anomaly?: boolean }
 export interface Chart {
@@ -9,18 +11,13 @@ export interface Chart {
   anomaly?: boolean
 }
 export interface ChartsResponse { hostname: string; update_every: number; charts_count: number; charts: Record<string, Chart> }
-export interface PluginStatus {
-  name: string; command: string; state: 'starting' | 'running' | 'waiting' | 'stopped' | 'disabled' | 'failed'
-  pid?: number; enabled: boolean; update_every: number; restarts: number; started?: number; error?: string
-  stats: { lines: number; samples: number; charts: number; errors: number; last_error?: string; last_data?: number }
-  variables?: Record<string, number>
-}
 export interface Info {
   version: string; mode: string; uptime: number; charts_count: number; metrics_count: number
   commit?: string; build_time?: string; dirty?: boolean
   host: { id: string; hostname: string; os: string; arch: string; labels: Record<string, string>; update_every: number }
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
   plugins?: PluginStatus[]
+  platform?: PlatformInfo
   db?: { persistence?: { last_checkpoint: number; finished: number; interval_seconds: number; error?: string } }
   alarms: AlarmSummary | null
   user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer'; personal?: boolean }

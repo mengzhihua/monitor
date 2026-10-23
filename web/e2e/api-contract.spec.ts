@@ -5,6 +5,7 @@ import { operationsApi } from '../src/api/operations/client'
 import { configurationApi } from '../src/api/configuration/client'
 import { alarmsApi } from '../src/api/alarms/client'
 import { hubApi } from '../src/api/hub/client'
+import { pluginsApi } from '../src/api/plugins/client'
 
 // These contract tests execute the same clients used by the UI without starting
 // a browser or making network requests. Each worker owns its mocked globals.
@@ -31,6 +32,22 @@ test.afterEach(() => {
   globalThis.fetch = originalFetch
   selection.node = ''
   auth.token = ''
+})
+
+test('plugin platform clients preserve authentication, cancellation and local scope for every operation', async () => {
+  selection.node = 'remote-node-must-not-leak'
+  const signal = new AbortController().signal
+  await pluginsApi.platform(signal)
+  await pluginsApi.catalog(signal)
+  await pluginsApi.act({ name: 'demo', action: 'restart', if_revision: 7 }, signal)
+  expect(calls.map(call => call.url.pathname)).toEqual(['/api/v1/platform', '/api/v1/plugins', '/api/v1/plugins/actions'])
+  for (const call of calls) {
+    expect(call.url.search).toBe('')
+    expect(call.init.signal).toBe(signal)
+    expect(new Headers(call.init.headers).get('Authorization')).toBe('Bearer api-contract-token')
+  }
+  expect(lastCall().init.method).toBe('POST')
+  expect(JSON.parse(String(lastCall().init.body))).toEqual({ name: 'demo', action: 'restart', if_revision: 7 })
 })
 
 test('compatibility facade exports the same domain clients and a shared node selection', async () => {

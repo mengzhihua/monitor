@@ -249,15 +249,22 @@ exit 0
 		t.Fatalf("after stop: %+v", s)
 	}
 
-	// DISABLE ends supervision without restart
+	// DISABLE ends this worker, but the control plane stays available.
 	m2 := New(reg, []Spec{{Name: "quit", Command: filepath.Join(dir, "quit.plugin")}}, Options{RestartMin: time.Millisecond})
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel2()
-	start := time.Now()
-	m2.Run(ctx2)
-	if s := m2.Status()[0]; s.State != StateDisabled || s.Restarts != 0 || time.Since(start) > 4*time.Second {
-		t.Fatalf("quit plugin: %+v after %s", s, time.Since(start))
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() { defer close(done2); m2.Run(ctx2) }()
+	defer func() { cancel2(); <-done2 }()
+	waitFor(t, func() bool { return m2.Status()[0].State == StateDisabled }, "self-disabled worker")
+	if s := m2.Status()[0]; s.Restarts != 0 {
+		t.Fatalf("quit plugin restarted: %+v", s)
 	}
+	select {
+	case <-done2:
+		t.Fatal("control plane exited after self-disable")
+	default:
+	}
+
 }
 
 func TestManagerWatchdogKillsSilentPlugin(t *testing.T) {

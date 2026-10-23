@@ -53,7 +53,7 @@ test:
 test-fast: check-version
 	$(MAKE) test-scripts
 	$(MAKE) test-web
-	cd core && go test ./cmd/monitord ./internal/architecture ./internal/api ./internal/registry ./internal/trapper
+	cd core && go test ./cmd/monitord ./internal/architecture ./internal/api ./internal/registry ./internal/plugins ./internal/trapper
 
 ## test-web: pure models, dependency boundaries and TypeScript (no daemon/browser)
 test-web:
@@ -114,6 +114,7 @@ acceptance:
 	$(MAKE) all
 	$(MAKE) test
 	python3 scripts/verify-default-auth.py
+	python3 scripts/verify-plugin-platform.py
 	python3 scripts/verify-actions.py
 	python3 scripts/verify-ai-analysis.py
 	python3 scripts/verify-operations.py

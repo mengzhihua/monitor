@@ -1,0 +1,12 @@
+{
+  "api_version": 1,
+  "id": "heartbeat",
+  "name": "Heartbeat example",
+  "version": "1.0.0",
+  "description": "A minimal process plugin that publishes a monotonically increasing pulse counter.",
+  "protocol": "plugins.d/v1",
+  "capabilities": ["metrics"],
+  "command": "collector.sh",
+  "update_every": 1,
+  "timeout": 10
+}

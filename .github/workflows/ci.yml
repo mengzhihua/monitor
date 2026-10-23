@@ -86,6 +86,9 @@ jobs:
       - name: default login protection
         if: runner.os != 'Windows'
         run: python3 scripts/verify-default-auth.py
+      - name: local plugin platform lifecycle
+        if: runner.os != 'Windows'
+        run: python3 scripts/verify-plugin-platform.py
       - name: Multi-device protocol fixtures and configuration access
         if: runner.os != 'Windows'
         run: python3 scripts/verify-device-monitoring.py

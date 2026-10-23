@@ -153,5 +153,5 @@ func TestSchedulerRecoveryAndConcurrentToggle(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	s.stop()
+	s.Close()
 }

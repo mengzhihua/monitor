@@ -125,6 +125,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 		localDisabled[n] = true
 	}
 	sched := collect.NewScheduler(reg, log.With("component", "collect"), collect.Options{Names: cfg.Collectors.Enabled, Disabled: localDisabled, Modules: cfg.ModuleDecoders()})
+	defer sched.Close()
 
 	runner := &autoCommandRunner{commands: cfg.Commands, log: log.With("component", "auto-action")}
 	var eng *health.Engine
@@ -152,10 +153,14 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 			pdir = filepath.Join(filepath.Dir(cfgPath), pdir)
 		}
 		pm = plugins.New(reg, cfg.Plugins.List, plugins.Options{
-			Dir:      pdir,
-			Disabled: cfg.Plugins.Disabled,
-			Logger:   log.With("component", "plugins"),
+			Dir:       pdir,
+			Disabled:  cfg.Plugins.Disabled,
+			Logger:    log.With("component", "plugins"),
+			StatePath: filepath.Join(cfg.Global.DataDir, "plugins", "state.json"),
 		})
+		if err := pm.Err(); err != nil {
+			return fmt.Errorf("plugins: %w", err)
+		}
 	}
 
 	var sc *stream.Client
@@ -292,6 +297,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	}
 	srv.Close()
 	workers.wait(shutdownCtx, log)
+	sched.Close()
 	if err := db.Close(); err != nil {
 		log.Error("tsdb close", "err", err)
 	}

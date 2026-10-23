@@ -571,6 +571,8 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 
 服务端启动、HTTP 查询、告警引擎及图表采样的职责划分、生命周期和依赖守卫见[模块边界](docs/26-module-boundaries.md)。
 
+新增采集能力可使用[插件平台](docs/27-plugin-platform.md)：本地版本化清单包支持在线扫描、独立启停/重启和持久化管理，指标自动进入图表、TSDB 与告警链路。管理员在“插件管理”查看状态和诊断；示例见 `examples/plugins/heartbeat`。当前扩展点为外部 metrics 采集进程。
+
 ## 仓库结构
 
 ```text

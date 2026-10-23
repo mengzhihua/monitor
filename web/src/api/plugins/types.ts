@@ -1,0 +1,28 @@
+export interface PlatformInfo {
+  api_version: number
+  scope: 'local'
+  capabilities: string[]
+  plugin_protocols: string[]
+}
+
+export interface PluginManifest {
+  api_version: number; id: string; name: string; version: string; description: string
+  protocol: string; capabilities: string[]
+}
+
+export interface PluginStatus {
+  name: string; command: string; state: 'starting' | 'running' | 'waiting' | 'stopped' | 'disabled' | 'failed'
+  source: 'configured' | 'legacy' | 'manifest'; locked: boolean; manifest?: PluginManifest
+  pid?: number; enabled: boolean; update_every: number; restarts: number; started?: number; error?: string
+  stats: { lines: number; samples: number; charts: number; errors: number; last_error?: string; last_data?: number }
+  variables?: Record<string, number>; functions?: string[]
+}
+
+export interface PluginCatalog {
+  schema_version: 1; revision: number; running: boolean
+  plugins: PluginStatus[]
+  diagnostics: { path: string; error: string }[]
+}
+
+export type PluginAction = 'enable' | 'disable' | 'restart' | 'rescan'
+export interface PluginActionRequest { name?: string; action: PluginAction; if_revision: number }

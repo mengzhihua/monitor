@@ -12,6 +12,7 @@ export const iconPaths = {
   hub: 'M9 9h6v6H9z M12 3v6 M12 15v6 M3 12h6 M15 12h6 M4 3h4 M16 3h4 M4 21h4 M16 21h4',
   cloud: 'M7 18h11a4 4 0 0 0 1-7.9A7 7 0 0 0 5.5 8a5 5 0 0 0 1.5 10Z',
   templates: 'M8 3h13v13H8z M3 8v13h13 M11 7h7 M11 11h4',
+  plugins: 'M9 3h6v4h4v6h-4v4H9v-4H5V7h4Z M12 17v4',
   config: 'M4 7h10 M18 7h2 M4 17h2 M10 17h10 M14 4h4v6h-4z M6 14h4v6H6z',
   weights: 'M3 12h4l3-8 4 16 3-8h4',
   contexts: 'M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z M7 10v4 M17 10v4 M10 7h4 M10 17h4',

@@ -26,6 +26,10 @@ type otlpCollector struct {
 	mapper *ingest.Mapper
 	mu     sync.Mutex
 	reg    *registry.Registry
+	// stopping gates handler registration before Stop waits for them.
+	stopping bool
+	handlers sync.WaitGroup
+	done     chan struct{}
 }
 
 func init() {
@@ -61,19 +65,46 @@ func (o *otlpCollector) Init(reg *registry.Registry) error {
 	mux.HandleFunc("POST /v1/metrics", o.handle)
 	mux.HandleFunc("POST /", o.handle)
 	o.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = o.srv.Serve(ln) }()
+	o.done = make(chan struct{})
+	go func() {
+		defer close(o.done)
+		_ = o.srv.Serve(ln)
+	}()
 	return nil
 }
 
 func (o *otlpCollector) Stop() {
+	o.mu.Lock()
+	o.stopping = true
+	o.mu.Unlock()
+	// Shutdown alone misses a listener if Serve has not started running yet.
+	if o.ln != nil {
+		_ = o.ln.Close()
+	}
 	if o.srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = o.srv.Shutdown(ctx)
+		if err := o.srv.Shutdown(ctx); err != nil {
+			_ = o.srv.Close()
+		}
 	}
+	if o.done != nil {
+		<-o.done
+	}
+	o.handlers.Wait()
 }
 
 func (o *otlpCollector) handle(w http.ResponseWriter, r *http.Request) {
+	o.mu.Lock()
+	if o.stopping {
+		o.mu.Unlock()
+		http.Error(w, "collector stopping", http.StatusServiceUnavailable)
+		return
+	}
+	o.handlers.Add(1)
+	reg := o.reg
+	o.mu.Unlock()
+	defer o.handlers.Done()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -84,9 +115,6 @@ func (o *otlpCollector) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	o.mu.Lock()
-	reg := o.reg
-	o.mu.Unlock()
 	if reg != nil {
 		o.mapper.Apply(reg, time.Now(), samples)
 	}

@@ -36,6 +36,7 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 		"metrics_count": dims,
 		"collectors":    s.sched.Status(),
 		"plugins":       s.pluginStatus(),
+		"platform":      s.platformInfo(r),
 		"alarms":        s.alarmSummary(),
 		"db": map[string]any{
 			"tiers": s.db.Tiers(), "dir": s.db.Dir(), "persistence": s.db.Persistence(),

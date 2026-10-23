@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -14,10 +15,60 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"gopkg.in/yaml.v3"
 
 	"github.com/mengzhihua/monitor/core/internal/backup"
 	"github.com/mengzhihua/monitor/core/internal/config"
 )
+
+func TestFailedStartupClosesInitializedCollectorListeners(t *testing.T) {
+	udp, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsdAddress := udp.LocalAddr().String()
+	udp.Close()
+	cfg := config.Default()
+	cfg.Global.DataDir = t.TempDir()
+	cfg.Web.Listen = unusedListenAddress(t)
+	otlpAddress := unusedListenAddress(t)
+	for otlpAddress == cfg.Web.Listen {
+		otlpAddress = unusedListenAddress(t)
+	}
+	cfg.Collectors.Enabled = []string{"statsd", "otlp"}
+	cfg.Collectors.Modules = map[string]yaml.Node{}
+	for name, address := range map[string]string{"statsd": statsdAddress, "otlp": otlpAddress} {
+		var node yaml.Node
+		if err := node.Encode(map[string]string{"listen": address}); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Collectors.Modules[name] = node
+	}
+	disabled := false
+	cfg.Health.Enabled, cfg.Plugins.Enabled = &disabled, &disabled
+	cfg.Stream.Enabled, cfg.Stream.Destinations = true, nil
+	for range 2 {
+		var logs bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&logs, nil))
+		err := runDaemon(context.Background(), cfg, filepath.Join(cfg.Global.DataDir, "monitor.yaml"), false, logger)
+		if err == nil || !strings.Contains(err.Error(), "stream.destinations") {
+			t.Fatalf("expected post-collector startup failure, got %v", err)
+		}
+		if strings.Contains(logs.String(), "collector: disabled") {
+			t.Fatal("fixture did not successfully initialize its collectors")
+		}
+		udp, err := net.ListenPacket("udp", statsdAddress)
+		if err != nil {
+			t.Fatalf("startup failure retained StatsD listener: %v", err)
+		}
+		udp.Close()
+		tcp, err := net.Listen("tcp", otlpAddress)
+		if err != nil {
+			t.Fatalf("startup failure retained OTLP listener: %v", err)
+		}
+		tcp.Close()
+	}
+}
 
 func TestDaemonCancellationReleasesLiveConnectionsAndData(t *testing.T) {
 	cfg := config.Default()
