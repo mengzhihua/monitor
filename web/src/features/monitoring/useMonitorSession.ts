@@ -50,6 +50,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
   let loginAttempt = 0
   let disposed = false
   let activeLoad: AbortController | undefined
+  let logoutRequest: { token: string; controller: AbortController } | undefined
   const oidcRead = new AbortController()
   const context = () => ({ generation, node: selectedNode.value })
   const isCurrent = (request: ReturnType<typeof context>, signal?: AbortSignal) =>
@@ -65,6 +66,8 @@ export function useMonitorSession(options: MonitorSessionOptions) {
   function unauthorized(request: ReturnType<typeof context>, signal?: AbortSignal) {
     if (!isCurrent(request, signal)) return
     generation++
+    if (logoutRequest?.token === auth.token) auth.token = ''
+    cancelLogout()
     needToken.value = true
     cancelAlarmReads()
     activeLoad?.abort()
@@ -250,9 +253,26 @@ export function useMonitorSession(options: MonitorSessionOptions) {
     alarm.recovery_hold = undefined
   }
 
+  function cancelLogout() {
+    logoutRequest?.controller.abort()
+    logoutRequest = undefined
+  }
+
   async function logout() {
+    const token = auth.token
+    if (disposed || !token || logoutRequest?.token === token) return
+    cancelLogout()
+    const request = logoutRequest = { token, controller: new AbortController() }
+    let timedOut = false
+    const deadline = window.setTimeout(() => { timedOut = true; request.controller.abort() }, 15_000)
+    // A delayed logout belongs to its original credential. Even a login with
+    // the same token starts a new session and cancels this request.
+    const current = () => !disposed && logoutRequest === request && auth.token === token
     try {
-      const response = await fetch('/api/v1/auth/oidc/logout', { method: 'POST', headers: { Authorization: `Bearer ${auth.token}` } })
+      const response = await fetch('/api/v1/auth/oidc/logout', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, signal: request.controller.signal,
+      })
+      if (!current() || request.controller.signal.aborted) return
       if (!response.ok && response.status !== 401) throw new Error('退出失败，请重试')
       generation++
       loginAttempt++
@@ -261,12 +281,17 @@ export function useMonitorSession(options: MonitorSessionOptions) {
       live.stop()
       auth.token = ''
       location.reload()
-    } catch (reason) { if (!disposed) error.value = String(reason) }
+    } catch (reason) { if (current()) error.value = timedOut ? '退出请求超时，请重试。' : String(reason) }
+    finally {
+      window.clearTimeout(deadline)
+      if (logoutRequest === request) logoutRequest = undefined
+    }
   }
 
   async function submitToken() {
     const attempt = ++loginAttempt
     generation++
+    cancelLogout()
     loginError.value = ''
     activeLoad?.abort()
     cancelAlarmReads()
@@ -324,6 +349,7 @@ export function useMonitorSession(options: MonitorSessionOptions) {
     generation++
     activeLoad?.abort()
     oidcRead.abort()
+    cancelLogout()
     cancelAlarmReads()
     live.stop()
     if (live.onState === onLiveState) live.onState = null

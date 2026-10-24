@@ -400,8 +400,19 @@ func (p *Parser) commitDraft() {
 	} else {
 		stored = p.Reg.AddChart(c)
 		if stored != c {
+			_, alreadyDeclared := p.charts[c.ID]
+			// A new process owns a new counter generation, even when its first
+			// raw value exceeds the previous process's final value. Keep history
+			// and same-process redeclarations, but prime the declared counters
+			// again. Legacy collectors may share charts; never reset another
+			// collector's baseline merely because it used the same chart ID.
+			resetCounters := !alreadyDeclared && p.Plugin != "" &&
+				(stored.Plugin == p.Plugin || strings.HasPrefix(stored.Plugin, p.Plugin+"/"))
 			for _, d := range dims {
 				stored.AddDimension(d)
+				if resetCounters {
+					stored.ResetIncremental(d.ID)
+				}
 			}
 			stored.MergeLabels(c.Labels)
 		}

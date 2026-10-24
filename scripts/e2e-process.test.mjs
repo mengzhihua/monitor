@@ -53,18 +53,47 @@ function makeHarness(t, mode) {
   mkdirSync(data);
   const ready = join(root, 'ready.json');
   const pidfile = join(root, 'child.pid');
+  const resultfile = join(root, 'result.json');
+  const probefile = join(root, 'probe.json');
   const harness = join(root, 'harness.mjs');
   const childScript = join(root, 'child.mjs');
   writeFileSync(childScript, `import { writeFileSync } from 'node:fs';
 process.on('SIGINT', () => {}); process.on('SIGTERM', () => {});
 writeFileSync(${JSON.stringify(pidfile)}, String(process.pid));
-${mode === 'normal' ? 'process.exit(7);' : 'setInterval(() => {}, 1000);'}
+${mode === 'normal' || mode === 'permission-error' ? 'process.exit(7);' : 'setInterval(() => {}, 1000);'}
 `);
   writeFileSync(harness, `import { createServer } from 'node:http';
 import { once, EventEmitter } from 'node:events';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { runFixtureProcess } from ${JSON.stringify(helperURL)};
 const sink = createServer((req, res) => { req.resume(); res.end(); });
+${mode === 'zombie' ? `const kill = process.kill.bind(process);
+process.kill = (pid, signal) => {
+  const result = kill(pid, signal);
+  if (signal === 'SIGKILL' && pid === -Number(readFileSync(${JSON.stringify(pidfile)}))) {
+    // Hold this event-loop turn so the real killed child cannot be reaped yet.
+    const deadline = performance.now() + 1000;
+    while (performance.now() < deadline) {
+      try { kill(pid, 0); }
+      catch (error) {
+        if (error.code !== 'EPERM') throw error;
+        writeFileSync(${JSON.stringify(probefile)}, JSON.stringify({ code: error.code, unreaped: kill(-pid, 0) }));
+        break;
+      }
+    }
+  }
+  return result;
+};` : ''}
+${mode === 'permission-error' ? `const kill = process.kill.bind(process);
+let firstDenied;
+process.kill = (pid, signal) => {
+  if (pid < 0) {
+    firstDenied ??= performance.now();
+    writeFileSync(${JSON.stringify(probefile)}, JSON.stringify({ waited: performance.now() - firstDenied }));
+    throw Object.assign(new Error('fixture permission denied'), { code: 'EPERM' });
+  }
+  return kill(pid, signal);
+};` : ''}
 process.exitCode = await runFixtureProcess({
   root: ${JSON.stringify(data)}, sink, command: process.execPath, args: [${JSON.stringify(childScript)}],
   graceMs: 120, killMs: 1000, parentCheckMs: 20,
@@ -75,6 +104,7 @@ process.exitCode = await runFixtureProcess({
     ${mode === 'prepare-signal' ? "await once(new EventEmitter(), 'never', { signal });" : ''}
   },
 });
+writeFileSync(${JSON.stringify(resultfile)}, JSON.stringify({ code: process.exitCode }));
 `);
   t.after(() => {
     if (existsSync(pidfile)) {
@@ -83,7 +113,7 @@ process.exitCode = await runFixtureProcess({
       catch (error) { if (error.code !== 'ESRCH') throw error; }
     }
   });
-  return { root, data, ready, pidfile, harness };
+  return { root, data, ready, pidfile, resultfile, probefile, harness };
 }
 
 test('real e2e entry point cleans its directory when the binary is missing', { timeout: 8000 }, async t => {
@@ -161,7 +191,34 @@ const timer = setInterval(() => { if (existsSync(${JSON.stringify(fixture.pidfil
 `);
   assert.deepEqual(await start(t, parent).done, [0, null]);
   const pid = Number(readFileSync(fixture.pidfile));
-  await waitUntil(() => !existsSync(fixture.data));
+  await waitUntil(() => existsSync(fixture.resultfile));
+  assert.deepEqual(JSON.parse(readFileSync(fixture.resultfile)), { code: 143 });
+  assert.equal(existsSync(fixture.data), false);
   assert.equal(running(pid), false);
+  await assertPortReleased(JSON.parse(readFileSync(fixture.ready)).port);
+});
+
+test('Darwin zombie process groups are reaped before cleanup succeeds', { timeout: 8000, skip: process.platform !== 'darwin' }, async t => {
+  const fixture = makeHarness(t, 'zombie');
+  const runner = start(t, fixture.harness);
+  await waitUntil(() => existsSync(fixture.pidfile));
+  const pid = Number(readFileSync(fixture.pidfile));
+  runner.child.kill('SIGTERM');
+  assert.deepEqual(await runner.done, [143, null]);
+  assert.deepEqual(JSON.parse(readFileSync(fixture.probefile)), { code: 'EPERM', unreaped: true });
+  assert.doesNotMatch(runner.output.stderr, /cleanup failed/);
+  assert.equal(running(pid), false);
+  assert.equal(existsSync(fixture.data), false);
+  await assertPortReleased(JSON.parse(readFileSync(fixture.ready)).port);
+});
+
+test('persistent process-group permission errors remain bounded cleanup failures', { timeout: 8000, skip: process.platform === 'win32' }, async t => {
+  const fixture = makeHarness(t, 'permission-error');
+  const runner = start(t, fixture.harness);
+  assert.deepEqual(await runner.done, [1, null]);
+  assert.match(runner.output.stderr, /Browser fixture cleanup failed \(EPERM\)/);
+  assert.ok(JSON.parse(readFileSync(fixture.probefile)).waited >= 1000, 'permission errors must be retried until the cleanup deadline');
+  assert.equal(running(Number(readFileSync(fixture.pidfile))), false);
+  assert.equal(existsSync(fixture.data), false);
   await assertPortReleased(JSON.parse(readFileSync(fixture.ready)).port);
 });

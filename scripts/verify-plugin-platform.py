@@ -151,7 +151,26 @@ db:
                 action('heartbeat', 'enable', stale, expected=409)
                 assert heartbeat()['state'] == 'disabled'
                 stop()
+                # Configured plugins historically accept longer intervals than
+                # manifests, but overflow must isolate a worker, never panic the daemon.
+                config.write_text(config.read_text().replace('  dir: plugins\n', '''  dir: plugins
+  list:
+    - name: overflow-timeout
+      command: /bin/echo
+      timeout: 9223372037
+    - name: overflow-default
+      command: /bin/echo
+      update_every: 922337204
+'''))
                 start()
+                for name in ('overflow-timeout', 'overflow-default'):
+                    invalid = next(p for p in catalog()['plugins'] if p['name'] == name)
+                    assert invalid['state'] == 'failed' and invalid['locked'] and not invalid['enabled']
+                    assert not invalid.get('pid') and invalid.get('error')
+                    revision = catalog()['revision']
+                    action(name, 'enable', expected=403)
+                    action(name, 'restart', expected=403)
+                    assert catalog()['revision'] == revision
                 assert heartbeat()['state'] == 'disabled' and not heartbeat()['enabled']
                 action('heartbeat', 'enable')
                 second = wait_for(sampled, 'enable after daemon restart')
@@ -222,6 +241,7 @@ done
                     'real_samples_and_history': 'passed', 'independent_lifecycle': 'passed',
                     'persistent_disable': 'passed', 'stale_revision_and_rbac': 'passed',
                     'invalid_package_and_protocol_isolation': 'passed', 'content_update_and_removal': 'passed',
+                    'invalid_timing_isolation': 'passed',
                     'process_cleanup_and_audit': 'passed'}))
             finally:
                 stop()

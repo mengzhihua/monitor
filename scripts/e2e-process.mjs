@@ -19,21 +19,37 @@ function signalChild(child, signal) {
   }
 }
 
-function childAlive(child, exited) {
-  if (!child?.pid) return false;
-  if (process.platform === 'win32') return !exited();
-  return signalChild(child, 0);
-}
-
 async function stopChild(child, exited, graceMs, killMs) {
-  if (!childAlive(child, exited)) return;
-  signalChild(child, 'SIGINT');
+  if (!child?.pid) return;
+  let permissionError;
+  const signal = value => {
+    try {
+      const alive = signalChild(child, value);
+      if (!alive) permissionError = undefined;
+      return alive;
+    } catch (error) {
+      if (error.code !== 'EPERM') throw error;
+      // Darwin can return EPERM for a group containing only unreaped zombies.
+      // This is not proof of exit: retry within the deadline, and keep a real
+      // permission failure visible if the group never becomes absent.
+      permissionError = error;
+      return true;
+    }
+  };
+  const pending = () => {
+    const groupAlive = process.platform !== 'win32' && signal(0);
+    // A group disappearing does not itself reap the ChildProcess. Do not unref
+    // its handle or remove the directory until its exit event has also arrived.
+    return groupAlive || !exited();
+  };
+  if (!pending()) return;
+  signal('SIGINT');
   let deadline = performance.now() + graceMs;
-  while (childAlive(child, exited) && performance.now() < deadline) await delay(20);
-  if (childAlive(child, exited)) signalChild(child, 'SIGKILL');
+  while (pending() && performance.now() < deadline) await delay(20);
+  if (pending()) signal('SIGKILL');
   deadline = performance.now() + killMs;
-  while (childAlive(child, exited) && performance.now() < deadline) await delay(20);
-  if (childAlive(child, exited)) throw new Error('fixture child did not exit after SIGKILL');
+  while (pending() && performance.now() < deadline) await delay(20);
+  if (pending()) throw permissionError ?? new Error('fixture child did not exit after SIGKILL');
 }
 
 async function closeSink(sink) {

@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { openTools } from './mobile-navigation'
 
 const host = { id: 'hub-local', hostname: 'session-fixture', os: 'linux', arch: 'amd64', labels: {}, update_every: 1 }
 const nodes = ['node-a', 'node-b'].map(id => ({ id, hostname: id, os: 'linux', arch: 'amd64', version: 'test',
@@ -133,4 +134,95 @@ test('blocked session storage still initializes authentication and selected node
   await selectNode(page, 'node-b')
   await expect(page.getByRole('status').filter({ hasText: '浏览器无法记住' })).toBeVisible()
   expect(errors).toEqual([])
+})
+
+for (const status of [200, 401, 500]) {
+  test(`a delayed logout ${status} cannot clear or report errors in a replacement login`, async ({ page }) => {
+    await page.clock.install()
+    const pending = gate()
+    let expired = false, logoutRequests = 0, logoutSettled = 0
+    const cancelled: string[] = []
+    page.on('requestfailed', request => cancelled.push(new URL(request.url()).pathname))
+    await fixture(page, async (route, url) => {
+      if (url.pathname === '/api/v1/auth/oidc/logout') {
+        logoutRequests++
+        await pending.wait
+        await route.fulfill({ status, body: status === 500 ? 'logout fixture failed' : '' }).catch(() => {})
+        logoutSettled++
+        return true
+      }
+      if (url.pathname !== '/api/v1/info' || !expired) return false
+      const replacement = route.request().headers().authorization === 'Bearer browser-replacement-token'
+      await route.fulfill(replacement
+        ? { json: { ...info, host: { ...host, hostname: 'replacement-session' } } }
+        : { status: 401, body: 'old session expired' })
+      return true
+    })
+    try {
+      await page.goto('/?view=charts&token=browser-test-token')
+      await expect(page.locator('[title="live"]')).toBeVisible()
+      await openTools(page)
+      await page.getByRole('button', { name: '退出登录', exact: true }).click()
+      await expect.poll(() => logoutRequests).toBe(1)
+      // Repeated clicks must share the pending logout, including in the phone menu.
+      await openTools(page)
+      await page.getByRole('button', { name: '退出登录', exact: true }).click()
+
+      expired = true
+      // Foregrounding refreshes the expired session before the logout deadline.
+      await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')) })
+      await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')) })
+      await expect(page.getByLabel('登录密码或访问令牌', { exact: true })).toBeVisible()
+      await page.getByLabel('登录密码或访问令牌', { exact: true }).fill('browser-replacement-token')
+      await page.getByRole('button', { name: '进入', exact: true }).click()
+      await expect(page.locator('.node-select-btn')).toContainText('replacement-session')
+      await expect.poll(() => cancelled.filter(path => path === '/api/v1/auth/oidc/logout').length).toBe(1)
+      pending.release()
+      await expect.poll(() => logoutSettled).toBe(1)
+      expect(logoutRequests).toBe(1)
+      expect(await page.evaluate(() => sessionStorage.getItem('monitor.token'))).toBe('browser-replacement-token')
+      await expect(page.getByLabel('登录密码或访问令牌', { exact: true })).toHaveCount(0)
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(page.locator('[title="live"]')).toBeVisible()
+    } finally { pending.release() }
+  })
+}
+
+test('a timed-out logout releases its request so the current session can retry', async ({ page }) => {
+  await page.clock.install()
+  const pending = gate()
+  let requests = 0, lateSettled = false
+  await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/v1/auth/oidc/logout') {
+      if (++requests === 1) {
+        await pending.wait
+        await route.fulfill({ status: 500, body: 'late logout failure' }).catch(() => {})
+        lateSettled = true
+      } else await route.fulfill({ status: 200, body: '' })
+      return true
+    }
+    if (url.pathname === '/api/v1/info' && !route.request().headers().authorization) {
+      await route.fulfill({ status: 401, body: 'login required' })
+      return true
+    }
+    return false
+  })
+  try {
+    await page.goto('/?view=charts&token=browser-test-token')
+    await expect(page.locator('[title="live"]')).toBeVisible()
+    await openTools(page)
+    await page.getByRole('button', { name: '退出登录', exact: true }).click()
+    await expect.poll(() => requests).toBe(1)
+    await page.clock.fastForward(16_000)
+    await expect(page.getByRole('alert')).toContainText('退出请求超时，请重试。')
+    expect(await page.evaluate(() => sessionStorage.getItem('monitor.token'))).toBe('browser-test-token')
+    await openTools(page)
+    await page.getByRole('button', { name: '退出登录', exact: true }).click()
+    await expect(page.getByLabel('登录密码或访问令牌', { exact: true })).toBeVisible()
+    expect(await page.evaluate(() => sessionStorage.getItem('monitor.token'))).toBeNull()
+    pending.release()
+    await expect.poll(() => lateSettled).toBe(true)
+    expect(requests).toBe(2)
+    await expect(page.getByRole('alert')).toHaveCount(0)
+  } finally { pending.release() }
 })

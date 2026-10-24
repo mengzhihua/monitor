@@ -57,12 +57,7 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 		seen[sp.Name] = true
 		sp = cloneSpec(sp)
 		sp.Source = source
-		if sp.UpdateEvery <= 0 {
-			sp.UpdateEvery = max(1, m.reg.Host.UpdateEvery)
-		}
-		if sp.Timeout <= 0 {
-			sp.Timeout = max(10*sp.UpdateEvery, 60)
-		}
+		timingErr := normalizePluginTiming(&sp, m.reg.Host.UpdateEvery)
 		if !filepath.IsAbs(sp.Command) && m.opt.Dir != "" {
 			if _, err := os.Stat(filepath.Join(m.opt.Dir, sp.Command)); err == nil {
 				sp.Command = filepath.Join(m.opt.Dir, sp.Command)
@@ -79,6 +74,11 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: newPluginParser(sp, m.reg), stderr: &stderrState{}}
 		if !p.enabled {
 			p.state = StateDisabled
+		}
+		if timingErr != nil {
+			// Configuration errors isolate one worker. Lock it so an API enable
+			// cannot start a process with an overflowing watchdog duration.
+			p.locked, p.enabled, p.state, p.err = true, false, StateFailed, timingErr.Error()
 		}
 		if m.initErr != nil {
 			p.enabled, p.state, p.err = false, StateFailed, "plugin state could not be loaded"
