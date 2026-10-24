@@ -34,7 +34,7 @@ function processExists(pid: number): boolean {
   }
 }
 
-test('real manifest plugin samples and responds to browser disable, enable and restart', async ({ page }) => {
+test('real manifest plugin samples, restarts and recovers after a self-disable policy rejection', async ({ page }) => {
   test.setTimeout(60_000)
   const root = await mkdtemp(join(tmpdir(), 'monitor-plugin-ui-'))
   const pluginPIDs = new Set<number>()
@@ -45,6 +45,11 @@ test('real manifest plugin samples and responds to browser disable, enable and r
   try {
     const pluginDir = join(root, 'plugins', 'heartbeat')
     await cp(fileURLToPath(new URL('../../examples/plugins/heartbeat', import.meta.url)), pluginDir, { recursive: true })
+    const collector = join(pluginDir, 'collector.sh')
+    // A file trigger makes a process-side DISABLE deterministic. It does not
+    // change the manager's catalog revision or submit an administrator action.
+    await writeFile(collector, (await readFile(collector, 'utf8')).replace('while :; do',
+      'while :; do\n  if [ -f "$0.disable" ]; then printf "DISABLE\\n"; exit 0; fi'))
     await chmod(join(pluginDir, 'collector.sh'), 0o700)
     const config = join(root, 'config.yaml')
     // Keep authentication absent so monitord generates a private web-password.
@@ -153,6 +158,35 @@ test('real manifest plugin samples and responds to browser disable, enable and r
     await expect(pid).toHaveText(String(restarted.pid))
     await expect(card.locator('.metrics span').filter({ hasText: /^采样 / }).locator('b')).toHaveText(/[1-9]\d*/)
     expect((await catalog()).diagnostics).toEqual([])
+
+    const beforeSelfDisable = await catalog()
+    let releaseCatalog = false
+    let rejectedRestarts = 0
+    // Preserve the last observed snapshot until the action reaches the server,
+    // reproducing a self-disable between polling and clicking without a sleep race.
+    await page.route(`${origin}/api/v1/plugins`, route => releaseCatalog
+      ? route.continue() : route.fulfill({ json: beforeSelfDisable }))
+    page.on('request', request => {
+      if (request.url() === `${origin}/api/v1/plugins/actions` && request.method() === 'POST') {
+        releaseCatalog = true
+        if (request.postDataJSON().action === 'restart') rejectedRestarts++
+      }
+    })
+    await writeFile(`${collector}.disable`, '')
+    await expect.poll(async () => heartbeat(await catalog()).state,
+      { message: 'collector DISABLE changes runtime state independently' }).toBe('disabled')
+    expect((await catalog()).revision).toBe(beforeSelfDisable.revision)
+    const rejection = page.waitForResponse(response => response.url() === `${origin}/api/v1/plugins/actions`)
+    await card.getByRole('button', { name: '重启', exact: true }).click()
+    expect((await rejection).status()).toBe(403)
+    await expect(panel).toContainText('操作被拒绝，请核对最新插件状态或配置后再操作。')
+    await expect(card.locator('.state')).toHaveText('已停用')
+    await expect(panel.getByRole('button', { name: '刷新目录', exact: true })).toBeEnabled()
+    await expect(card.getByRole('button', { name: '启用', exact: true })).toBeEnabled()
+    expect(rejectedRestarts, 'reconciliation must never replay a denied action').toBe(1)
+    await rm(`${collector}.disable`)
+    await control('启用', 'enable')
+    await running(restarted.pid)
   } finally {
     let shutdownError: string | undefined
     if (child && exited && !spawnError) {

@@ -132,11 +132,20 @@ export function usePlugins(context: PluginContext) {
       notice.value = action === 'rescan' ? '已重新扫描本机插件目录。' : '操作请求已接受，实际运行状态以目录中的最新状态为准。'
     } catch (reason) {
       if (!currentSession(token) || (current.signal.aborted && !deadline.expired()) || actionRequest !== current) return
-      failed(deadline.expired() ? new Error('插件操作请求超时，请刷新目录核对运行状态。') : reason)
-      if (reason instanceof ApiError && reason.status === 409) {
-        notice.value = '插件目录版本已变化，正在读取最新目录；请核对状态后重试。'
+      if (reason instanceof ApiError && reason.status === 403) {
+        // Actions also return 403 for runtime policy (for example a plugin that
+        // sent DISABLE). A fresh catalog read distinguishes this from lost access.
+        catalog.value = null
+        stale.value = true
+        notice.value = '操作被拒绝，请核对最新插件状态或配置后再操作。'
         reconcile = true
-      } else if (!denied.value) notice.value = '操作未获得确认，服务端可能已处理；请刷新目录核对状态后再操作。'
+      } else {
+        failed(deadline.expired() ? new Error('插件操作请求超时，请刷新目录核对运行状态。') : reason)
+        if (reason instanceof ApiError && reason.status === 409) {
+          notice.value = '插件目录版本已变化，正在读取最新目录；请核对状态后重试。'
+          reconcile = true
+        } else if (!denied.value) notice.value = '操作未获得确认，服务端可能已处理；请刷新目录核对状态后再操作。'
+      }
     } finally {
       deadline.clear()
       if (actionRequest === current) { actionRequest = undefined; busy.value = false }

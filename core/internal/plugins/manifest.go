@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,19 +55,33 @@ var packageID = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 // DiscoverManifests reads <dir>/<id>/plugin.json, without executing anything.
 // An invalid package is isolated and reported; other packages remain usable.
 func DiscoverManifests(dir string) ([]Spec, []Diagnostic) {
+	specs, diagnostics, _ := discoverManifests(context.Background(), dir)
+	return specs, diagnostics
+}
+
+func discoverManifests(ctx context.Context, dir string) ([]Spec, []Diagnostic, error) {
 	var specs []Spec
 	diagnostics := []Diagnostic{}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if dir == "" {
-		return specs, diagnostics
+		return specs, diagnostics, nil
 	}
 	entries, err := os.ReadDir(dir)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			diagnostics = append(diagnostics, Diagnostic{Path: ".", Error: "cannot read plugin directory"})
 		}
-		return specs, diagnostics
+		return specs, diagnostics, nil
 	}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		// Do not traverse package symlinks. Report them rather than silently
 		// treating an outside directory as an installed package.
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -80,7 +95,10 @@ func DiscoverManifests(dir string) ([]Spec, []Diagnostic) {
 		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		manifest, command, err := readManifest(path, entry.Name())
+		manifest, command, err := readManifest(ctx, path, entry.Name())
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		if err != nil {
 			diagnostics = append(diagnostics, Diagnostic{Path: filepath.ToSlash(filepath.Join(entry.Name(), "plugin.json")), Error: err.Error()})
 			continue
@@ -88,10 +106,16 @@ func DiscoverManifests(dir string) ([]Spec, []Diagnostic) {
 		specs = append(specs, Spec{Name: manifest.ID, Command: command, Args: append([]string(nil), manifest.Args...),
 			UpdateEvery: manifest.UpdateEvery, Timeout: manifest.Timeout, Source: "manifest", Manifest: manifest})
 	}
-	return specs, diagnostics
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return specs, diagnostics, nil
 }
 
-func readManifest(path, id string) (*Manifest, string, error) {
+func readManifest(ctx context.Context, path, id string) (*Manifest, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 64<<10 {
 		return nil, "", errors.New("manifest must be a regular file of at most 64 KiB")
@@ -101,7 +125,7 @@ func readManifest(path, id string) (*Manifest, string, error) {
 		return nil, "", errors.New("cannot read manifest")
 	}
 	defer f.Close()
-	decoder := json.NewDecoder(io.LimitReader(f, (64<<10)+1))
+	decoder := json.NewDecoder(io.LimitReader(discoveryReader{ctx: ctx, reader: f}, (64<<10)+1))
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
 	if err := decoder.Decode(&manifest); err != nil {

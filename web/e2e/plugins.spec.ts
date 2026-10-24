@@ -396,3 +396,67 @@ test('an old principal action response cannot repopulate the catalog after a tok
     await expect(panel.getByRole('button', { name: '重新扫描' })).toBeEnabled()
   } finally { release() }
 })
+
+test('a policy-rejected action confirms catalog access before restoring controls without retrying the action', async ({ page }) => {
+  await page.clock.install()
+  await metadata(page)
+  let reads = 0, actions = 0
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const stopped = fixture()
+  // A protocol DISABLE changes runtime enablement without changing the catalog revision.
+  stopped.plugins[0] = { ...stopped.plugins[0]!, enabled: false, state: 'disabled', pid: undefined }
+  await page.route('**/api/v1/plugins', async route => {
+    const confirming = ++reads > 1
+    if (confirming) await gate
+    await route.fulfill({ json: confirming ? stopped : fixture() }).catch(() => {})
+  })
+  await page.route('**/api/v1/plugins/actions', route => {
+    actions++
+    return route.fulfill({ status: 403, body: 'plugin action is blocked by policy or disabled state' })
+  })
+  try {
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    const card = panel.getByRole('article', { name: '演示采集器' })
+    await card.getByRole('button', { name: '重启', exact: true }).click()
+    await expect.poll(() => reads).toBe(2)
+    await expect(panel).toContainText('操作被拒绝')
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeDisabled()
+    await expect(panel.getByRole('button', { name: '刷新目录' })).toBeDisabled()
+    expect(actions).toBe(1)
+    release()
+    await expect(card.locator('.state')).toHaveText('已停用')
+    await expect(panel).toContainText('目录版本 4')
+    await expect(panel).toContainText('操作被拒绝')
+    await expect(panel.getByRole('alert')).toHaveCount(0)
+    await expect(card.getByRole('button', { name: '启用', exact: true })).toBeEnabled()
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeEnabled()
+    expect(actions).toBe(1)
+  } finally { release() }
+})
+
+for (const status of [401, 403]) {
+  test(`an action 403 followed by catalog ${status} clears private state and keeps controls locked`, async ({ page }) => {
+    await page.clock.install()
+    await metadata(page)
+    let reads = 0, actions = 0
+    await page.route('**/api/v1/plugins', route => ++reads === 1
+      ? route.fulfill({ json: fixture() }) : route.fulfill({ status, body: 'access revoked' }))
+    await page.route('**/api/v1/plugins/actions', route => {
+      actions++
+      return route.fulfill({ status: 403, body: 'forbidden' })
+    })
+    await page.goto('/?view=plugins&token=browser-test-token')
+    const panel = page.getByRole('region', { name: '本机插件管理', exact: true })
+    await panel.getByRole('article', { name: '演示采集器' }).getByRole('button', { name: '重启', exact: true }).click()
+    await expect.poll(() => reads).toBe(2)
+    await expect(panel.getByRole('alert')).toContainText(status === 401 ? '登录已失效' : '无权管理本机插件')
+    await expect(panel.getByRole('article')).toHaveCount(0)
+    await expect(panel.getByRole('button', { name: '重新扫描' })).toBeDisabled()
+    await expect(panel.getByRole('button', { name: '刷新目录' })).toBeDisabled()
+    await page.clock.fastForward(10_000)
+    expect(reads).toBe(2)
+    expect(actions).toBe(1)
+  })
+}

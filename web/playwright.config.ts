@@ -20,6 +20,8 @@ export default defineConfig({
     command: 'node ../scripts/e2e-server.mjs',
     url: `http://127.0.0.1:${port}/healthz`,
     reuseExistingServer: false,
+    // Let the fixture release its own daemon group, sockets and temporary data.
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     timeout: 30000,
   },
 })

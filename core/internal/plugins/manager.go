@@ -121,7 +121,7 @@ func New(reg *registry.Registry, specs []Spec, opt Options) *Manager {
 		m.specs = append(m.specs, cloneSpec(sp))
 	}
 	m.initErr = m.loadState()
-	m.list, m.diagnostics = m.discoverCatalog()
+	m.list, m.diagnostics, _ = m.discoverCatalog(context.Background())
 	return m
 }
 

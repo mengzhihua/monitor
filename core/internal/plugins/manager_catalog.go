@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -36,16 +37,22 @@ func cloneSpec(sp Spec) Spec {
 	return sp
 }
 
-func (m *Manager) discoverCatalog() ([]*plugin, []Diagnostic) {
+func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	disabled := map[string]bool{}
 	for _, name := range m.opt.Disabled {
 		disabled[name] = true
 	}
 	seen := map[string]bool{}
 	list := []*plugin{}
-	add := func(sp Spec, source string) {
+	add := func(sp Spec, source string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if sp.Name == "" || seen[sp.Name] {
-			return
+			return nil
 		}
 		seen[sp.Name] = true
 		sp = cloneSpec(sp)
@@ -76,45 +83,78 @@ func (m *Manager) discoverCatalog() ([]*plugin, []Diagnostic) {
 		if m.initErr != nil {
 			p.enabled, p.state, p.err = false, StateFailed, "plugin state could not be loaded"
 		}
-		p.fingerprint = specFingerprint(sp)
+		fingerprint, err := specFingerprint(ctx, sp)
+		if err != nil {
+			return err
+		}
+		p.fingerprint = fingerprint
 		list = append(list, p)
+		return nil
 	}
 	for _, sp := range m.specs {
-		add(sp, "configured")
+		if err := add(sp, "configured"); err != nil {
+			return nil, nil, err
+		}
 	}
-	manifests, diagnostics := DiscoverManifests(m.opt.Dir)
+	manifests, diagnostics, err := discoverManifests(ctx, m.opt.Dir)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, sp := range manifests {
-		add(sp, "manifest")
+		if err := add(sp, "manifest"); err != nil {
+			return nil, nil, err
+		}
 	}
-	for _, sp := range discover(m.opt.Dir) {
-		add(sp, "legacy")
+	legacy, err := discover(ctx, m.opt.Dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, sp := range legacy {
+		if err := add(sp, "legacy"); err != nil {
+			return nil, nil, err
+		}
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].spec.Name < list[j].spec.Name })
 	if diagnostics == nil {
 		diagnostics = []Diagnostic{}
 	}
-	return list, diagnostics
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return list, diagnostics, nil
 }
 
 // discover retains legacy executable discovery. A package directory reserves
 // its name even if its manifest is invalid, so a broken package never silently
 // falls back to a same-named legacy executable.
-func discover(dir string) []Spec {
+func discover(ctx context.Context, dir string) ([]Spec, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if dir == "" {
-		return nil
+		return nil, nil
 	}
 	entries, err := os.ReadDir(dir)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	reserved := map[string]bool{}
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			reserved[entry.Name()] = true
 		}
 	}
 	var out []Spec
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if entry.IsDir() {
 			continue
 		}
@@ -138,24 +178,36 @@ func discover(dir string) []Spec {
 		}
 		out = append(out, Spec{Name: id, Command: filepath.Join(dir, name)})
 	}
-	return out
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // Hash the executable as well as its settings, so replacing a binary at the
 // same path is an observable rescan change. Neither args nor env leave this hash.
-func specFingerprint(sp Spec) string {
+func specFingerprint(ctx context.Context, sp Spec) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	h := sha256.New()
 	_ = json.NewEncoder(h).Encode(sp)
 	if info, err := os.Stat(sp.Command); err == nil {
 		fmt.Fprintf(h, "\n%d:%d:%d\n", info.Mode(), info.Size(), info.ModTime().UnixNano())
 		if info.Mode().IsRegular() {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			if f, err := os.Open(sp.Command); err == nil {
-				_, _ = io.Copy(h, f)
+				_, _ = io.Copy(h, discoveryReader{ctx: ctx, reader: f})
 				_ = f.Close()
 			}
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (m *Manager) Catalog() Catalog {

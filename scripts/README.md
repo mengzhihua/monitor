@@ -28,7 +28,7 @@
 | 命令 | 范围 | 前置条件 |
 | --- | --- | --- |
 | `make test-fast` | 版本、脚本 fixture、前端模型/架构/类型和启动/API/Registry/Trapper 等重点 Go 包 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
-| `make test-web` | Node 原生模型测试、架构检查、应用与全部 Playwright 夹具/配置的 TypeScript 检查 | Node 与 Web 依赖，无需服务或浏览器 |
+| `make test-web` | Node 原生模型及进程 fixture、架构检查、应用与全部 Playwright 夹具/配置的 TypeScript 检查 | Node 与 Web 依赖，无需编译服务端或启动浏览器 |
 | `make test-scripts` | 打包、版本同步、App 版本写入、运行基准和 soak 配置 fixture | Python 3，无需真实服务 |
 | `make test` | 脚本、全量 Go vet/race 和前端检查 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
 | `make test-platform` | 顺序重建 Web/服务端，平台相关 Go 竞态、真实插件和 SAML-only 认证、插件管理与 API 浏览器验收 | macOS/Linux、Go/Node/Python 与 Playwright Chromium |
@@ -57,10 +57,15 @@
 | `benchmark-runtime.py` | macOS/Linux 默认采集器下的固定12请求/秒负载、接口延迟及主进程 CPU/RSS | `python3 scripts/benchmark-runtime.py --output reports/runtime.json` |
 | `benchmark-browser.mjs` | 遍历100张模拟图表后的画布、DOM、事件监听器和 GC 后 JS 堆 | `node scripts/benchmark-browser.mjs --output reports/browser.json` |
 | `e2e-server.mjs` | 为 Playwright 启动临时服务 | 由 `web/playwright.config.ts` 调用，无需手动启动 |
+| `e2e-process.test.mjs` | 浏览器服务夹具的真实子进程退出、启动失败与资源清理 | `node --test scripts/e2e-process.test.mjs`，无需编译或浏览器 |
 
 运行验收前先 `make all`。`make acceptance` 串联 Go/Web、默认认证、恢复、运维记录重启持久化、macOS 进程身份、Hub 负载、持续采集、浏览器、Flutter 和跨平台编译，所需环境见 [验收记录](../docs/05-acceptance.md)。进程身份脚本只在 macOS 上运行，`--require-clean-startup` 同时要求启动和稳定阶段的采集失败数为零；其他平台由 Go 测试覆盖通用采集逻辑。
 
 命令行进程测试使用临时配置和数据，读取测试目录生成的密码，不使用部署密码。冒烟占用 `19998` / `18999`，浏览器测试占用 `19997`；其余 Python 进程测试选择本机空闲端口。
+
+浏览器服务夹具统一处理正常退出、二进制缺失、准备失败、SIGINT/SIGTERM 和父 runner 消失：先停止本次子进程，最多等 5 秒后升级 SIGKILL，再等最多 1 秒，随后关闭通知接收器及其活跃连接并删除临时目录。Unix 子进程使用本 fixture 独立进程组，清理不按进程名查找，也不影响其他测试或已部署服务。6 项真实子进程 fixture 已纳入 Web 的 `npm run test:unit`，由 `make test-web` 和 CI 执行；其中 POSIX 信号及父进程重归属用例在 Windows 跳过。
+
+Playwright 显式发送 SIGTERM 并预留 10 秒清理窗口，避免默认强杀包装进程跳过上述退出逻辑。直接 SIGKILL 包装进程本身无法执行清理。
 
 通知验收和浏览器测试的通知接收器仅绑定 `127.0.0.1` 随机端口，分别返回 HTTP 204 / 503，不连接真实第三方通知服务。`verify-notifications.py --binary <路径>` 可直接验证包内二进制。它重启同一临时数据目录，验证通知诊断不会把上次启动的发送结果算作当前进程结果；原有告警日志仍按既有方式保存。
 

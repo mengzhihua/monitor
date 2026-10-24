@@ -133,7 +133,19 @@ func (m *Manager) commit(ctx context.Context, disabled map[string]bool) (uint64,
 }
 
 func (m *Manager) rescan(ctx context.Context) error {
-	next, diagnostics := m.discoverCatalog()
+	// Either the request or manager shutdown can abandon discovery before its
+	// commit. After commit the existing handoff still completes atomically.
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(m.runCtx, cancel)
+	defer stop()
+	defer cancel()
+	if m.runCtx.Err() != nil {
+		return ErrUnavailable
+	}
+	next, diagnostics, err := m.discoverCatalog(ctx)
+	if err != nil {
+		return err
+	}
 	previous := make(map[string]*plugin, len(m.list))
 	for _, p := range m.list {
 		previous[p.spec.Name] = p
@@ -141,6 +153,9 @@ func (m *Manager) rescan(ctx context.Context) error {
 	changed := !reflect.DeepEqual(m.diagnostics, diagnostics)
 	var replacements []*plugin
 	for i, p := range next {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		old := previous[p.spec.Name]
 		if old != nil && old.fingerprint == p.fingerprint {
 			next[i] = old
@@ -160,7 +175,7 @@ func (m *Manager) rescan(ctx context.Context) error {
 		changed = true
 	}
 	if !changed {
-		return nil
+		return ctx.Err()
 	}
 	revision, err := m.commit(ctx, m.disabled)
 	if err != nil {
