@@ -25,11 +25,14 @@ type TierSpec struct {
 	BlockSize int
 }
 
-// DefaultTiers mirrors Netdata's defaults: 1-minute and 1-hour rollups.
+// DefaultTiers keeps 1-minute and 1-hour rollups, with bounded active blocks.
+// A checkpoint persists these buffers but does not evict them; limiting blocks
+// to twelve hours/fifteen days of continuous data halves the buckets per series
+// without the file-count cost of flushing every checkpoint.
 func DefaultTiers() []TierSpec {
 	return []TierSpec{
-		{Every: 60, Retention: 90 * 24 * time.Hour, BlockSize: 1440},
-		{Every: 3600, Retention: 2 * 365 * 24 * time.Hour, BlockSize: 720},
+		{Every: 60, Retention: 90 * 24 * time.Hour, BlockSize: 720},
+		{Every: 3600, Retention: 2 * 365 * 24 * time.Hour, BlockSize: 360},
 	}
 }
 
@@ -287,7 +290,7 @@ func (t *tier) flush(sr *tierSeries) error {
 // suffixBucketsNewerThan keeps buckets strictly after end. done is ordered by TS.
 func suffixBucketsNewerThan(done []Bucket, end int64) []Bucket {
 	i := sort.Search(len(done), func(j int) bool { return done[j].TS > end })
-	return done[i:]
+	return compactTail(done, i)
 }
 
 func (t *tier) all() []*tierSeries {
@@ -318,7 +321,7 @@ func (t *tier) enforceRetention(now time.Time) {
 	for _, sr := range t.all() {
 		sr.mu.Lock()
 		n := sort.Search(len(sr.done), func(i int) bool { return sr.done[i].TS+t.spec.Every > cutoff })
-		sr.done = sr.done[n:]
+		sr.done = compactTail(sr.done, n)
 		if sr.open != nil && sr.open.TS+t.spec.Every <= cutoff {
 			sr.open = nil
 		}

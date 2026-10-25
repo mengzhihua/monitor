@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | `make test-fast` | 版本、脚本 fixture、前端模型/架构/类型和启动/API/Registry/Trapper 等重点 Go 包 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
 | `make test-web` | Node 原生模型及进程 fixture、架构检查、应用与全部 Playwright 夹具/配置的 TypeScript 检查 | Node 与 Web 依赖，无需编译服务端或启动浏览器 |
-| `make test-scripts` | 打包、版本同步、App 版本写入、运行基准和 soak 配置 fixture | Python 3，无需真实服务 |
+| `make test-scripts` | 打包、版本同步、App 版本写入、运行基准、soak 时间线和资源采样器 fixture | Python 3，无需真实服务 |
 | `make test` | 脚本、全量 Go vet/race 和前端检查 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
 | `make test-platform` | 顺序重建 Web/服务端，平台相关 Go 竞态、真实插件和 SAML-only 认证、插件管理与 API 浏览器验收 | macOS/Linux、Go/Node/Python 与 Playwright Chromium |
 
@@ -52,6 +52,7 @@
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
 | `soak.py` | 指定时长的持续采集和查询测量；可 `--seed-data-dir` 复制真实数据、自动 heap、RSS/heap 报警阈值 | `python3 scripts/soak.py --seconds 120` |
+| `sample-resources.py` | 只读观察已有 monitord，每次重新识别 PID，保存资源统计及采样空白 | `python3 scripts/sample-resources.py --seconds 86400 --pid-file /path/to/monitord.pid --output reports/resources.json` |
 | `capture-heap.py` | 对运行中的 monitord 抓取管理员鉴权的 heap profile（可抓两次做 diff） | `python3 scripts/capture-heap.py --url http://127.0.0.1:19999 --token "$TOKEN" --output reports/heap.pb` |
 | `verify-packaging-pidfile.py` | 诱饵进程不得被 start/stop 误杀；真实实例可停 | `python3 scripts/verify-packaging-pidfile.py` |
 | `benchmark-runtime.py` | macOS/Linux 默认采集器下的固定12请求/秒负载、接口延迟及主进程 CPU/RSS | `python3 scripts/benchmark-runtime.py --output reports/runtime.json` |
@@ -84,6 +85,26 @@ python3 scripts/soak.py --seconds 120 --output reports/agent-soak.json
 ```
 
 浏览器截图和 trace 保留 Playwright 的原生位置 `web/test-results/`；Flutter、Gradle 产物保留各工程自己的 `build/`。不要把产物移进源码目录，也不要提交真实配置、密码、备份或日志。
+
+### 已有服务的资源采样
+
+`sample-resources.py` 是仓库提供的替代采样器，适用于 Linux/macOS 上已经运行的服务；不启动或停止被观察进程。每次采样重新读取 `--pid-file` 并校验进程身份；也可用 `--binary` 限定可执行文件。不指定筛选条件时仅匹配名为 `monitord` 的进程，多实例时报告歧义而不盲选。进程消失、PID 切换、探测超时都作为独立状态记录，不把缺失数据写成零资源占用；CPU 增量不会跨进程重启拼接。
+
+```sh
+python3 scripts/sample-resources.py --seconds 86400 --interval 10 \
+  --summary-every 1800 --pid-file /path/to/data/monitord.pid \
+  --output reports/resources-20261025.json
+```
+
+默认每 30 分钟原子更新 JSON 汇总，开始、到期及 SIGINT/SIGTERM 也写汇总；逐次观测写入同名 `.samples.jsonl`，因此中断后仍有中间证据。输出必须使用新路径，防止覆盖旧证据。汇总统计 RSS 和主进程 CPU（一个核心为 100%），记录 wall/monotonic/可用的连续开机时钟及异常跨度；这些时间差是暂停、调度阻塞或时钟调整的线索，不能单凭它们判断平台暂停原因。SIGKILL 或断电无法保证最后一次汇总写入。
+
+`soak.py` 使用自己启动的隔离实例，其 PID 生命周期与上述观察器不同。它每 30 分钟按时间写中间报告（`--report-every`），保存实际时间线和超阈值采样空白；默认空白阈值为 `max(120, 3 * sample_every)` 秒，可用 `--max-sample-gap` 调整。发现断档或明显时钟跳变会使验收失败，不能将机器暂停期间当作连续采集通过。脚本不修改宿主机电源或云平台暂停策略。
+
+CI 的 `browser (desktop)` 和 `browser (mobile)` 分别运行，彼此失败不会取消另一项目；默认和 CI 均为零重试。`retain-on-failure` 从首次执行就记录 trace，失败后保留 `test-results/<用例目录>/trace.zip` 和失败截图，不需要先重试才有证据。CI 另外生成 `playwright-report/index.html` 与 `test-results/results.json`，后者记录项目、用例、错误和尝试序号。
+
+浏览器步骤失败后仍上传 `browser-acceptance-<desktop|mobile>-<run_id>-<run_attempt>`，保留 14 天；手动重跑会使用新的 artifact 名称，便于对照首次失败与后续结果。下载并解压对应手机 artifact 后，从 `web/` 运行 `npx playwright show-report <解压目录>/playwright-report`，或 `npx playwright show-trace <解压目录>/test-results/<用例目录>/trace.zip`。若浏览器安装或服务启动阶段失败，可能没有用例 trace，应同时保留该次 Actions 日志。真实插件进程用例 `plugin-runtime.spec.ts` 因使用临时生成凭据而明确关闭 trace，仍保留断言结果；不要为诊断而强制覆盖该设置。
+
+本地复现应另设 `--output` 目录，避免下一次运行清空首次失败 trace；需要同样的 HTML/JSON 报告时设置 `CI=1`，并用 `PLAYWRIGHT_HTML_OUTPUT_DIR`、`PLAYWRIGHT_JSON_OUTPUT_FILE` 分别指向该次独立证据目录，避免报告被后续运行覆盖。偶发失败即使重跑通过，也应保留原始报告并继续定位，不能据此认定功能缺陷已修复。
 
 两个 `benchmark-*` 脚本都支持 `--binary` 和 `--label`，可对不同版本构建重复同一场景。运行对比时避免同时编译或运行其它压测；运行基准默认先预热15秒再采样60秒，CPU百分比以单个逻辑核为100%，只计 `monitord` 主进程，不含外部采集命令或浏览器。浏览器基准需要先在 `web/` 安装依赖，默认使用 Chrome；`--channel chromium` 使用已安装的 Playwright Chromium。模拟历史数据只有3行，测量的是保留资源，不代表生产查询吞吐或系统总内存。两者均使用自建临时服务并在结束后删除临时凭据和数据，JSON旁保留测试服务日志。
 

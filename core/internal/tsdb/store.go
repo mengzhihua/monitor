@@ -129,6 +129,19 @@ func Open(opt Options) (*Store, error) {
 	if err := s.replayWAL(); err != nil {
 		return nil, err
 	}
+	// A checkpoint written with larger rollup blocks can exceed today's
+	// configured limit. Archive it now, including dormant series that may never
+	// append again. Existing block/checkpoint deduplication makes this safe even
+	// if startup stops before the next checkpoint is written.
+	for _, tier := range s.tiers {
+		for _, sr := range tier.all() {
+			if len(sr.done) >= tier.spec.BlockSize {
+				if err := tier.flush(sr); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	w, err := openWAL(opt.Dir)
 	if err != nil {
 		return nil, err
@@ -551,21 +564,25 @@ func suffixNewerThan(ts []int64, vals []float64, end int64) ([]int64, []float64)
 	if i > len(vals) {
 		i = len(vals)
 	}
-	return compactTail(ts[i:]), compactTail(vals[i:])
+	return compactTail(ts, i), compactTail(vals, i)
 }
 
 // compactTail drops a backing array that is mostly already on disk.
-// A short tail after flush must not keep the hour-sized buffer alive.
-func compactTail[T any](s []T) []T {
-	if len(s) == 0 {
+// Inspect capacity before slicing: even a len=1 cap=1 suffix can pin a whole
+// hour-sized allocation. Keep smaller trims at the allocation's start so a
+// later retention pass can still see and release that capacity.
+func compactTail[T any](s []T, start int) []T {
+	tail := s[start:]
+	if len(tail) == 0 {
 		return nil
 	}
-	if cap(s) > len(s)*2 && cap(s)-len(s) > 32 {
-		out := make([]T, len(s))
-		copy(out, s)
+	if cap(s) > len(tail)*2 && cap(s)-len(tail) > 32 {
+		out := make([]T, len(tail))
+		copy(out, tail)
 		return out
 	}
-	return s
+	copy(s, tail)
+	return s[:len(tail)]
 }
 
 // visibleEndLocked is the newest timestamp still stored in a block or the
@@ -688,8 +705,8 @@ func (s *Store) enforceRetention() {
 		if cutoff > 0 {
 			n := sort.Search(len(sr.ts), func(i int) bool { return sr.ts[i] >= cutoff })
 			if n > 0 {
-				sr.ts = sr.ts[n:]
-				sr.vals = sr.vals[n:]
+				sr.ts = compactTail(sr.ts, n)
+				sr.vals = compactTail(sr.vals, n)
 				s.revision.Add(1)
 			}
 		}

@@ -126,7 +126,12 @@ jobs:
 
   browser:
     needs: web
+    name: browser (${{ matrix.project }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, mobile]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -138,11 +143,19 @@ jobs:
       - run: make core
       - run: npm ci && npx playwright install --with-deps chromium
         working-directory: web
-      - run: npm run test:e2e
+      - name: Browser acceptance (${{ matrix.project }}, no retries)
+        run: npm run test:e2e -- --project=${{ matrix.project }} --retries=0
         working-directory: web
-      - uses: actions/upload-artifact@v4
+      - name: Upload browser report and first-failure traces
+        uses: actions/upload-artifact@v4
         if: always()
-        with: { name: browser-acceptance, path: web/test-results/ }
+        with:
+          name: browser-acceptance-${{ matrix.project }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web/test-results/
+            web/playwright-report/
+          retention-days: 14
+          if-no-files-found: warn
 
   cross:
     needs: web

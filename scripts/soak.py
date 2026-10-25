@@ -14,7 +14,8 @@ generates web-password.
 """
 from __future__ import annotations
 
-import argparse, json, pathlib, re, shutil, signal, socket, statistics, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import argparse, datetime, json, math, os, pathlib, re, shutil, signal, socket, statistics, subprocess, sys, tempfile, time, urllib.error, urllib.request
+from dataclasses import dataclass
 
 DROP_PATHS = {
     ("notify",),
@@ -28,6 +29,132 @@ DROP_PATHS = {
 heap_re = re.compile(r'^monitor_process_heap_alloc_bytes\{[^}]*\} (\d+)', re.M)
 series_re = re.compile(r'^monitor_tsdb_series\{[^}]*\} (\d+)', re.M)
 anomaly_re = re.compile(r'^monitor_ml_train_buffer_bytes\{[^}]*\} (\d+)', re.M)
+
+
+@dataclass(frozen=True)
+class ClockReading:
+    wall: float
+    monotonic: float
+    boottime: float | None = None
+
+
+def read_clocks() -> ClockReading:
+    boot = None
+    if hasattr(time, "CLOCK_BOOTTIME"):
+        try:
+            boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+        except OSError:
+            pass
+    return ClockReading(time.time(), time.monotonic(), boot)
+
+
+def utc_stamp(wall: float) -> str:
+    return datetime.datetime.fromtimestamp(wall, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def clock_span(start: ClockReading, end: ClockReading) -> dict:
+    return {
+        "wall_seconds": end.wall - start.wall,
+        "monotonic_seconds": end.monotonic - start.monotonic,
+        "boottime_seconds": end.boottime - start.boottime if start.boottime is not None and end.boottime is not None else None,
+    }
+
+
+def elapsed_seconds(start: ClockReading, end: ClockReading) -> float:
+    # Monotonic clocks differ by platform in whether they count system sleep.
+    # Any clock reaching the deadline ends the run; disagreements fail validation.
+    return max(0.0, *(value for value in clock_span(start, end).values() if value is not None))
+
+
+class SamplingTimeline:
+    """Sampling evidence, independent of platform-specific sleep-clock semantics."""
+    def __init__(self, started: ClockReading, max_gap: float, sample_every: float):
+        self.started = started
+        self.max_gap = max_gap
+        self.clock_tolerance = max(2.0, min(10.0, sample_every * 0.1))
+        self.sampling_started: ClockReading | None = None
+        self.sampling_ended: ClockReading | None = None
+        self.last_boundary: ClockReading | None = None
+        self.samples: list[dict] = []
+        self.gaps: list[dict] = []
+        self.gap_count = 0
+        self.clock_changes: list[dict] = []
+        self.clock_change_count = 0
+
+    def start_sampling(self, now: ClockReading) -> None:
+        self.sampling_started = self.last_boundary = now
+
+    def observe(self, now: ClockReading, phase: str) -> dict | None:
+        if self.last_boundary is None or self.sampling_ended is not None:
+            return None
+        span = clock_span(self.last_boundary, now)
+        values = [v for v in span.values() if v is not None]
+        uncertain = min(values) < 0 or max(values) - min(values) > self.clock_tolerance
+        entry = {
+            "from_utc": utc_stamp(self.last_boundary.wall), "to_utc": utc_stamp(now.wall),
+            "phase": phase, **span,
+            "classification": "clock_disagreement_unknown_cause" if uncertain else "sampling_gap_unknown_cause",
+        }
+        if uncertain:
+            self.clock_change_count += 1
+            self.clock_changes.append(entry)
+            del self.clock_changes[:-100]
+        if max(values) > self.max_gap:
+            self.gap_count += 1
+            self.gaps.append(entry)
+            del self.gaps[:-100]
+        self.last_boundary = now
+        return span
+
+    def finish_sampling(self, now: ClockReading) -> None:
+        if self.sampling_started is not None and self.sampling_ended is None:
+            self.observe(now, "sampling_end")
+            self.sampling_ended = now
+
+    def record_sample(self, start: ClockReading, end: ClockReading, interval: dict | None) -> None:
+        self.samples.append({
+            "index": len(self.samples) + 1,
+            "started_at_utc": utc_stamp(start.wall), "finished_at_utc": utc_stamp(end.wall),
+            "since_previous_sample": interval, "duration": clock_span(start, end),
+        })
+
+    def alerts(self) -> list[str]:
+        out = []
+        if self.gap_count:
+            out.append(f"sampling gaps: {self.gap_count} intervals exceeded {self.max_gap:g}s; continuous coverage not established")
+        if self.clock_change_count:
+            out.append(f"clock disagreements: {self.clock_change_count}; elapsed time is uncertain (cause unknown)")
+        return out
+
+    def report(self, now: ClockReading) -> dict:
+        return {
+            "started_at_utc": utc_stamp(self.started.wall), "updated_at_utc": utc_stamp(now.wall),
+            "elapsed": clock_span(self.started, now),
+            "sampling_started_at_utc": utc_stamp(self.sampling_started.wall) if self.sampling_started else None,
+            "sampling_ended_at_utc": utc_stamp(self.sampling_ended.wall) if self.sampling_ended else None,
+            "sampling_elapsed": clock_span(self.sampling_started, self.sampling_ended or now) if self.sampling_started else None,
+            "boottime_available": self.started.boottime is not None,
+            "max_sample_gap_seconds": self.max_gap,
+            "sample_count": len(self.samples), "sample_timeline": self.samples,
+            "gap_count": self.gap_count, "gaps": self.gaps,
+            "clock_disagreement_count": self.clock_change_count, "clock_disagreements": self.clock_changes,
+            "diagnostic_entries_limit": 100,
+        }
+
+
+def atomic_write_report(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    name = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as out:
+            name = out.name
+            out.write(text + "\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, path)
+    finally:
+        if name is not None:
+            pathlib.Path(name).unlink(missing_ok=True)
 
 
 def strip_seed_config(text: str) -> str:
@@ -227,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--bin", default="core/bin/monitord")
     p.add_argument("--output")
     p.add_argument("--sample-every", type=float, default=2.0, help="seconds between samples")
+    p.add_argument("--max-sample-gap", type=float, help="fail above this sampling interval in seconds (default max(120, 3 * sample-every))")
+    p.add_argument("--report-every", type=float, default=1800.0, help="seconds between atomic intermediate reports (default 1800)")
     p.add_argument("--heap-dir", help="directory for periodic heap.pprof captures (admin API)")
     p.add_argument("--heap-every", type=int, default=None, help="seconds between heap profiles (default 1800 from 30 minutes, 7200 from 4 hours)")
     p.add_argument("--no-heap", action="store_true", help="disable heap profile capture")
@@ -240,6 +369,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     if args.seconds < 10:
         p.error("use at least 10 seconds")
+    if args.max_sample_gap is None:
+        args.max_sample_gap = max(120.0, 3 * args.sample_every)
+    for name in ("sample_every", "max_sample_gap", "report_every"):
+        value = getattr(args, name)
+        if not math.isfinite(value) or value <= 0:
+            p.error(f"--{name.replace('_', '-')} must be a finite positive number")
 
     heap_dir = args.heap_dir
     if args.no_heap:
@@ -282,10 +417,9 @@ def main(argv: list[str] | None = None) -> int:
             port = s.getsockname()[1]
         base = f"http://127.0.0.1:{port}"
         log = (root / "server.log").open("w")
-        proc = subprocess.Popen(
-            [str(pathlib.Path(args.bin).resolve()), "-config", str(cfg), "-data-dir", str(data), "-listen", f"127.0.0.1:{port}"],
-            stdout=log, stderr=log,
-        )
+        proc = None
+        timeline = SamplingTimeline(read_clocks(), args.max_sample_gap, args.sample_every)
+        last_report = timeline.started
         latencies: list[float] = []
         rss: list[float] = []
         heap: list[float] = []
@@ -301,10 +435,10 @@ def main(argv: list[str] | None = None) -> int:
                 return None
             return samples[-1] - samples[0]
 
-        def report_body(interrupted: bool) -> dict:
+        def report_body(interrupted: bool, now: ClockReading) -> dict:
             rss_growth = growth(rss)
             heap_growth = growth(heap)
-            local_alerts = list(alerts)
+            local_alerts = list(alerts) + timeline.alerts()
             if args.max_rss_mib is not None and rss and max(rss) > args.max_rss_mib:
                 local_alerts.append(f"rss_mib_max {max(rss):.1f} > {args.max_rss_mib}")
             if args.max_rss_growth_mib is not None and rss_growth is not None and rss_growth > args.max_rss_growth_mib:
@@ -317,6 +451,9 @@ def main(argv: list[str] | None = None) -> int:
                 local_alerts.append("anomaly buffer metric missing")
             return {
                 "duration_seconds": args.seconds,
+                **timeline.report(now),
+                "report_every_seconds": args.report_every,
+                "sample_every_seconds": args.sample_every,
                 "interrupted": interrupted,
                 "seed_data_dir": str(pathlib.Path(args.seed_data_dir).resolve()) if args.seed_data_dir else None,
                 "seed_config": str(pathlib.Path(args.seed_config).resolve()) if args.seed_config else None,
@@ -354,26 +491,34 @@ def main(argv: list[str] | None = None) -> int:
             }
 
         def write_report(interrupted: bool, echo: bool) -> dict:
-            body = report_body(interrupted)
+            nonlocal last_report
+            now = read_clocks()
+            body = report_body(interrupted, now)
             text = json.dumps(body, indent=2)
             if echo:
                 print(text, flush=True)
             if args.output:
-                path = pathlib.Path(args.output)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text + "\n")
+                atomic_write_report(pathlib.Path(args.output), text)
+            last_report = now
             return body
 
         def on_stop(signum, _frame):
+            if state["stop"]:
+                return
             state["stop"] = True
             state["signum"] = signum
             errors.append(f"interrupted by signal {signum} before {args.seconds}s")
+            timeline.finish_sampling(read_clocks())
             write_report(True, True)
             raise SystemExit(1)
 
-        signal.signal(signal.SIGTERM, on_stop)
-        signal.signal(signal.SIGINT, on_stop)
+        previous_handlers = {sig: signal.signal(sig, on_stop) for sig in (signal.SIGTERM, signal.SIGINT)}
         try:
+            write_report(False, False)
+            proc = subprocess.Popen(
+                [str(pathlib.Path(args.bin).resolve()), "-config", str(cfg), "-data-dir", str(data), "-listen", f"127.0.0.1:{port}"],
+                stdout=log, stderr=log,
+            )
             for _ in range(200):
                 if state["stop"]:
                     break
@@ -414,12 +559,16 @@ def main(argv: list[str] | None = None) -> int:
                 except (OSError, urllib.error.URLError) as exc:
                     errors.append(f"heap {label}: {exc}")
 
-            started_mono = time.monotonic()
+            timeline.start_sampling(read_clocks())
             capture_heap(heap_label(0))
             next_mark = 1
-            deadline = started_mono + args.seconds
-            samples = 0
-            while time.monotonic() < deadline and not state["stop"]:
+            while not state["stop"]:
+                sample_started = read_clocks()
+                elapsed = elapsed_seconds(timeline.sampling_started, sample_started)
+                interval = timeline.observe(sample_started, "sampling_end" if elapsed >= args.seconds else "sample_start")
+                if elapsed >= args.seconds:
+                    timeline.finish_sampling(sample_started)
+                    break
                 try:
                     started = time.perf_counter()
                     with urllib.request.urlopen(authed("/api/v1/data?chart=system.ram&after=-60&points=60"), timeout=10) as r:
@@ -452,26 +601,51 @@ def main(argv: list[str] | None = None) -> int:
                         raise RuntimeError("agent exited")
                 except Exception as e:
                     errors.append(str(e))
-                samples += 1
-                if samples % 10 == 0:
+                sample_finished = read_clocks()
+                timeline.record_sample(sample_started, sample_finished, interval)
+                if elapsed_seconds(last_report, sample_finished) >= args.report_every:
                     write_report(False, False)
-                elapsed = time.monotonic() - started_mono
+                elapsed = elapsed_seconds(timeline.sampling_started, sample_finished)
                 while next_mark < len(marks) - 1 and elapsed >= marks[next_mark]:
                     capture_heap(heap_label(marks[next_mark]))
                     next_mark += 1
-                time.sleep(min(args.sample_every, max(0, deadline - time.monotonic())))
+                sleep_started = read_clocks()
+                while not state["stop"]:
+                    now = read_clocks()
+                    remaining = min(args.sample_every - elapsed_seconds(sleep_started, now),
+                                    args.seconds - elapsed_seconds(timeline.sampling_started, now))
+                    if remaining <= 0:
+                        break
+                    until_report = args.report_every - elapsed_seconds(last_report, now)
+                    if until_report <= 0:
+                        write_report(False, False)
+                        continue
+                    time.sleep(min(remaining, until_report))
+            timeline.finish_sampling(read_clocks())
             capture_heap(heap_label(args.seconds))
             if len(heap_files) >= 2:
                 state["heap_diff_top"] = heap_diff_top(pathlib.Path(heap_files[0]), pathlib.Path(heap_files[-1]))
+        except Exception as exc:
+            errors.append(str(exc))
         finally:
-            proc.send_signal(signal.SIGINT)
+            timeline.finish_sampling(read_clocks())
             try:
-                proc.wait(timeout=120)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                errors.append("shutdown timed out")
-            log.close()
+                if proc is not None:
+                    if proc.poll() is None:
+                        proc.send_signal(signal.SIGINT)
+                    try:
+                        proc.wait(timeout=120)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                        errors.append("shutdown timed out")
+            finally:
+                log.close()
+                try:
+                    write_report(state["stop"], False)
+                finally:
+                    for sig, handler in previous_handlers.items():
+                        signal.signal(sig, handler)
         if state["stop"]:
             return 1
         body = write_report(False, True)
