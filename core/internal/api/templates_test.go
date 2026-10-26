@@ -255,6 +255,40 @@ func TestRoomMembershipPushesOverlay(t *testing.T) {
 	}
 }
 
+func TestTemplateExportImport(t *testing.T) {
+	ts, _ := newTemplatesServer(t)
+	body := `{"name":"linux","macros":{"T":"1"},"rules":[{"name":"hot","on":"system.cpu","calc":"$user","warn":"$this > {$T}","every":"1s"}]}`
+	resp := tplReq(t, http.MethodPut, ts.URL+"/api/v1/hub/templates", "admin", body)
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("put %d %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+	resp = tplReq(t, http.MethodGet, ts.URL+"/api/v1/hub/templates/export?format=yaml", "viewer", "")
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(raw), "linux") {
+		t.Fatalf("export %d %s", resp.StatusCode, raw)
+	}
+	resp = tplReq(t, http.MethodPost, ts.URL+"/api/v1/hub/templates/import?mode=create", "viewer", string(raw))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer import %d", resp.StatusCode)
+	}
+	resp = tplReq(t, http.MethodPost, ts.URL+"/api/v1/hub/templates/import?mode=create", "admin", string(raw))
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("create existing %d %s", resp.StatusCode, b)
+	}
+	resp = tplReq(t, http.MethodPost, ts.URL+"/api/v1/hub/templates/import?mode=update", "admin", string(raw))
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "linux") {
+		t.Fatalf("update %d %s", resp.StatusCode, b)
+	}
+}
+
 func healthRuleForTest() []health.RuleSpec {
 	return []health.RuleSpec{{Name: "tpl.cpu", On: "system.cpu", Calc: "$user", Warn: "$this > 1", Every: "10s"}}
 }

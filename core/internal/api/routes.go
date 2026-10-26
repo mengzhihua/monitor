@@ -154,6 +154,8 @@ func (s *Server) registerHubRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/hub/templates", s.handleTemplates)
 	m.HandleFunc("PUT /api/v1/hub/templates", s.handleTemplates)
 	m.HandleFunc("DELETE /api/v1/hub/templates", s.handleTemplates)
+	m.HandleFunc("GET /api/v1/hub/templates/export", s.handleTemplateExport)
+	m.HandleFunc("POST /api/v1/hub/templates/import", s.handleTemplateImport)
 	m.HandleFunc("GET /api/v1/hub/templates/effective", s.handleTemplateEffective)
 	m.HandleFunc("GET /api/v1/hub/inventory", s.handleInventory)
 	m.HandleFunc("PUT /api/v1/hub/inventory", s.handleInventory)

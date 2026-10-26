@@ -24,6 +24,13 @@ func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, 
 	if eng != nil {
 		alarms = eng.Alarms
 	}
+	tlsCfg, err := stream.ClientTLS(stream.CertFiles{
+		CertFile: cfg.Stream.CertFile, KeyFile: cfg.Stream.KeyFile, CAFile: cfg.Stream.CAFile,
+		InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
+	})
+	if err != nil {
+		return nil, err
+	}
 	var pushedDisabled = map[string]bool{} // collectors a push disabled; re-enable on unlink
 	sc := stream.NewClient(reg, db, stream.ClientOptions{
 		Alarms:             alarms,
@@ -32,6 +39,7 @@ func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, 
 		PSK:                cfg.Stream.PSK,
 		ClaimToken:         cfg.Stream.ClaimToken,
 		InsecureSkipVerify: cfg.Stream.InsecureSkipVerify,
+		TLS:                tlsCfg,
 		Timeout:            cfg.Stream.Timeout,
 		Replicate:          cfg.Stream.Replicate,
 		Protocol:           cfg.Stream.Protocol,

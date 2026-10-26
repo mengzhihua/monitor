@@ -38,6 +38,9 @@ type Options struct {
 	Keys []string
 	// PSK, when set, must also be sent as X-Monitor-PSK.
 	PSK string
+	// RequireClientCert rejects stream handshakes that did not present a
+	// certificate already verified by the TLS listener.
+	RequireClientCert bool
 	// Replicate bounds how far back agents may backfill on connect.
 	Replicate time.Duration
 	// Quotas guard hub memory/disk against a misbehaving agent; zero means

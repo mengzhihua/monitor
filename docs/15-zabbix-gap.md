@@ -4,7 +4,7 @@
 
 ## 1. 对标结论
 
-Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、模板、宏、清单、动作、SLA 和审计已经落地；触发器表达式以矩阵「表达式函数」行为准（含 stddev、`percentile` 及 `find`/`mad`/`rate`/`between` 等扩展查找与表达式函数）。通用 LLD 原型、图表饼图，以及带时间上限且不能访问主机的 JavaScript 预处理已经落地。仍开放的是非目标里的被动 Agent 协议和 Zabbix JSON-RPC，以及矩阵里标成部分的代理、共识 HA、全实体 CRUD 和独立主机组树。计算项已支持 `{图表:维度}` 的四则运算，以及最多 1 小时的 `avg` / `min` / `max` / `sum` / `count` / `last`。
+Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、模板、宏、清单、动作、SLA 和审计已经落地；触发器表达式以矩阵「表达式函数」行为准（含 stddev、`percentile` 及 `find`/`mad`/`rate`/`between` 等扩展查找与表达式函数）。通用 LLD 原型、图表饼图，以及带时间上限且不能访问主机的 JavaScript 预处理已经落地。Hub 模板可经 `GET/POST /api/v1/hub/templates/export|import` 整包导出再导入；Agent 与 Hub 除 PSK 外可用客户端证书（`stream.ca_file` / `cert_file` / `key_file`，Hub 侧 `web.client_ca` 与 `hub.require_client_cert`）。仍开放的是非目标里的被动 Agent 协议和 Zabbix JSON-RPC，以及矩阵里标成部分的代理、共识 HA、全实体 CRUD 和独立主机组树。计算项已支持 `{图表:维度}` 的四则运算，以及最多 1 小时的 `avg` / `min` / `max` / `sum` / `count` / `last`。
 
 ## 2. 差距矩阵
 
@@ -73,10 +73,10 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP。命名用户的 `expires_at` 到期后该令牌不能再登录；留空则一直有效 | `api/nodes.go`、`api/saml.go`、`api/totp.go` |
 | 管理 | 用户组 + 主机组级权限 | 部分：`web.groups` 递归授予 Room；没有独立的主机组树 | `config/config.go` |
 | 管理 | HA 集群 | 部分：环复制，非共识 HA | `hub/cluster.go` |
-| 管理 | 加密 PSK / 证书 | 部分：TLS；`stream.psk` / `hub.psk` 额外校验 `X-Monitor-PSK` | `hub/ingest.go` |
+| 管理 | 加密 PSK / 证书 | 已有：`stream.psk` / `hub.psk`；`web.tls_cert` 开启 HTTPS；`web.client_ca` 与 `hub.require_client_cert` 要求已验证的客户端证书。Agent 用 `stream.ca_file`、`cert_file`、`key_file` | `stream/tlsconfig.go`、`hub/ingest.go` |
 | 管理 | Agent 自动注册 | 已有 claim token | `api/server.go` |
 | 管理 | 网络发现（IP 段扫描） | 已有：mDNS，以及最多 256 地址的 TCP 扫描 | `collect/netscan.go` |
-| 管理 | 模板导入导出 | 部分：规则 YAML/JSON、看板 JSON | `api/alert_config.go` |
+| 管理 | 模板导入导出 | 已有：`GET /api/v1/hub/templates/export` 与 `POST /api/v1/hub/templates/import`，JSON 或 YAML，按名称创建或覆盖。规则 YAML 和看板 JSON 仍在 | `api/templates.go`、`hub/template_bundle.go` |
 | 管理 | 自监控 | 已有：`monitor.notify_queue` 与 `monitor.hub_nodes` | `api/zplatform.go` |
 
 ## 3. 分阶段开发计划
