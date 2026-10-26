@@ -2,7 +2,8 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// and change (delta). JavaScript preprocessing is not implemented.
+// change (delta), change per second, and value maps. JavaScript preprocessing
+// is not implemented.
 package preprocess
 
 import (
