@@ -716,6 +716,8 @@ plugins:
     #   args: [plugins.d/python_example.plugin.py]
     #   update_every: 5     # default global.update_every
     #   timeout: 120        # kill + restart after this many seconds without output (default 10×update_every, min 60)
+    #   max_charts: 8       # tighten this plugin only; cannot exceed plugins.max_charts (0 means the built-in 128)
+    #   max_line: 8192      # cannot exceed plugins.max_line
     #   env: ["MY_TOKEN=..."]
 
 health:

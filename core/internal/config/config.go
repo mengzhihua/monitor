@@ -244,7 +244,8 @@ type Plugins struct {
 	List     []plugins.Spec `yaml:"list"`     // explicit plugins (command may be relative to dir)
 	// Package budgets apply to manifest plugins. Zero keeps the built-in cap
 	// (128 charts, 64 dimensions, 128 labels, 128 variables, 64 KiB lines).
-	// Legacy *.plugin scripts are not chart-capped; max_line still applies.
+	// list[].max_* can tighten one plugin and cannot exceed this ceiling.
+	// Legacy *.plugin scripts are not chart-capped unless that plugin sets a ceiling; max_line still applies.
 	MaxCharts     int           `yaml:"max_charts"`
 	MaxDimensions int           `yaml:"max_dimensions"`
 	MaxLabels     int           `yaml:"max_labels"`
@@ -504,6 +505,40 @@ func validatePlatform(c *Config) error {
 	timeout := c.Collectors.Timeout
 	if timeout < 0 || (timeout > 0 && (timeout < 100*time.Millisecond || timeout > time.Hour)) {
 		return fmt.Errorf("config: collectors.timeout must be 0 or 100ms..1h")
+	}
+	ceiling := plugins.PackageBudgets{
+		MaxCharts: c.Plugins.MaxCharts, MaxDimensions: c.Plugins.MaxDimensions,
+		MaxLabels: c.Plugins.MaxLabels, MaxVariables: c.Plugins.MaxVariables, MaxLine: c.Plugins.MaxLine,
+	}.Effective()
+	for i, sp := range c.Plugins.List {
+		name := sp.Name
+		if name == "" {
+			name = fmt.Sprintf("%d", i)
+		}
+		limits := []struct {
+			field   string
+			value   int
+			ceiling int
+			minimum int
+			maximum int
+		}{
+			{"max_charts", sp.MaxCharts, ceiling.MaxCharts, 1, 10000},
+			{"max_dimensions", sp.MaxDimensions, ceiling.MaxDimensions, 1, 10000},
+			{"max_labels", sp.MaxLabels, ceiling.MaxLabels, 1, 10000},
+			{"max_variables", sp.MaxVariables, ceiling.MaxVariables, 1, 10000},
+			{"max_line", sp.MaxLine, ceiling.MaxLine, 1024, 1 << 20},
+		}
+		for _, limit := range limits {
+			if limit.value == 0 {
+				continue
+			}
+			if limit.value < limit.minimum || limit.value > limit.maximum {
+				return fmt.Errorf("config: plugins.list[%s].%s must be 0 or %d..%d", name, limit.field, limit.minimum, limit.maximum)
+			}
+			if limit.value > limit.ceiling {
+				return fmt.Errorf("config: plugins.list[%s].%s cannot exceed the platform limit %d", name, limit.field, limit.ceiling)
+			}
+		}
 	}
 	return nil
 }

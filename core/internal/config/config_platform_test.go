@@ -81,6 +81,22 @@ collectors:
 	}
 }
 
+func TestPluginListCeilingCannotExceedThePlatformLimit(t *testing.T) {
+	if _, err := Parse([]byte("plugins:\n  list:\n    - name: heartbeat\n      command: collector.sh\n      max_charts: 200\n")); err == nil || !strings.Contains(err.Error(), "platform limit 128") {
+		t.Fatalf("raised ceiling accepted: %v", err)
+	}
+	c, err := Parse([]byte("plugins:\n  max_charts: 16\n  list:\n    - name: heartbeat\n      command: collector.sh\n      max_charts: 4\n      max_line: 2048\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Plugins.List) != 1 || c.Plugins.List[0].MaxCharts != 4 || c.Plugins.List[0].MaxLine != 2048 {
+		t.Fatalf("%+v", c.Plugins.List)
+	}
+	if _, err := Parse([]byte("plugins:\n  max_charts: 16\n  list:\n    - name: heartbeat\n      command: collector.sh\n      max_charts: 32\n")); err == nil || !strings.Contains(err.Error(), "platform limit 16") {
+		t.Fatalf("list exceeded the configured ceiling: %v", err)
+	}
+}
+
 func TestExampleConfigDocumentsUsableDefaults(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

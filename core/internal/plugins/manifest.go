@@ -20,29 +20,41 @@ const ProtocolV1 = "plugins.d/v1"
 // Manifest is the versioned local package contract. Execution settings are
 // decoded from disk but never serialized into a status/API response.
 type Manifest struct {
-	APIVersion   int      `json:"api_version"`
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Description  string   `json:"description"`
-	Protocol     string   `json:"protocol"`
-	Capabilities []string `json:"capabilities"`
-	Command      string   `json:"command"`
-	Args         []string `json:"args,omitempty"`
-	UpdateEvery  int      `json:"update_every,omitempty"`
-	Timeout      int      `json:"timeout,omitempty"`
+	APIVersion   int               `json:"api_version"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Version      string            `json:"version"`
+	Description  string            `json:"description"`
+	Protocol     string            `json:"protocol"`
+	Capabilities []string          `json:"capabilities"`
+	Command      string            `json:"command"`
+	Args         []string          `json:"args,omitempty"`
+	UpdateEvery  int               `json:"update_every,omitempty"`
+	Timeout      int               `json:"timeout,omitempty"`
+	Resources    *PackageResources `json:"resources,omitempty"`
+}
+
+// PackageResources is the optional ceiling a package declares for itself.
+// Zero fields inherit the process budget. A package cannot raise that budget.
+type PackageResources struct {
+	MaxCharts     int `json:"max_charts,omitempty"`
+	MaxDimensions int `json:"max_dimensions,omitempty"`
+	MaxLabels     int `json:"max_labels,omitempty"`
+	MaxVariables  int `json:"max_variables,omitempty"`
+	MaxLine       int `json:"max_line,omitempty"`
 }
 
 func (m Manifest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		APIVersion   int      `json:"api_version"`
-		ID           string   `json:"id"`
-		Name         string   `json:"name"`
-		Version      string   `json:"version"`
-		Description  string   `json:"description"`
-		Protocol     string   `json:"protocol"`
-		Capabilities []string `json:"capabilities"`
-	}{m.APIVersion, m.ID, m.Name, m.Version, m.Description, m.Protocol, m.Capabilities})
+		APIVersion   int               `json:"api_version"`
+		ID           string            `json:"id"`
+		Name         string            `json:"name"`
+		Version      string            `json:"version"`
+		Description  string            `json:"description"`
+		Protocol     string            `json:"protocol"`
+		Capabilities []string          `json:"capabilities"`
+		Resources    *PackageResources `json:"resources,omitempty"`
+	}{m.APIVersion, m.ID, m.Name, m.Version, m.Description, m.Protocol, m.Capabilities, m.Resources})
 }
 
 type Diagnostic struct {
@@ -104,7 +116,13 @@ func discoverManifests(ctx context.Context, dir string) ([]Spec, []Diagnostic, e
 			continue
 		}
 		specs = append(specs, Spec{Name: manifest.ID, Command: command, Args: append([]string(nil), manifest.Args...),
-			UpdateEvery: manifest.UpdateEvery, Timeout: manifest.Timeout, Source: "manifest", Manifest: manifest})
+			UpdateEvery: manifest.UpdateEvery, Timeout: manifest.Timeout, Source: "manifest", Manifest: manifest,
+			MaxCharts:     resourceField(manifest.Resources, func(r *PackageResources) int { return r.MaxCharts }),
+			MaxDimensions: resourceField(manifest.Resources, func(r *PackageResources) int { return r.MaxDimensions }),
+			MaxLabels:     resourceField(manifest.Resources, func(r *PackageResources) int { return r.MaxLabels }),
+			MaxVariables:  resourceField(manifest.Resources, func(r *PackageResources) int { return r.MaxVariables }),
+			MaxLine:       resourceField(manifest.Resources, func(r *PackageResources) int { return r.MaxLine }),
+		})
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -149,6 +167,9 @@ func readManifest(ctx context.Context, path, id string) (*Manifest, string, erro
 	if manifest.UpdateEvery < 0 || manifest.UpdateEvery > 86400 || manifest.Timeout < 0 || manifest.Timeout > 86400 {
 		return nil, "", errors.New("update_every and timeout must be between 0 and 86400 seconds")
 	}
+	if err := manifest.Resources.validate(); err != nil {
+		return nil, "", err
+	}
 	if len(manifest.Args) > 64 {
 		return nil, "", errors.New("too many plugin arguments")
 	}
@@ -192,15 +213,60 @@ func packageCommand(dir, command string) (string, error) {
 	return path, nil
 }
 
+func resourceField(resources *PackageResources, pick func(*PackageResources) int) int {
+	if resources == nil {
+		return 0
+	}
+	return pick(resources)
+}
+
+func (r *PackageResources) validate() error {
+	if r == nil {
+		return nil
+	}
+	checks := []struct {
+		name    string
+		value   int
+		minimum int
+		maximum int
+	}{
+		{"resources.max_charts", r.MaxCharts, 1, 10000},
+		{"resources.max_dimensions", r.MaxDimensions, 1, 10000},
+		{"resources.max_labels", r.MaxLabels, 1, 10000},
+		{"resources.max_variables", r.MaxVariables, 1, 10000},
+		{"resources.max_line", r.MaxLine, 1024, 1 << 20},
+	}
+	for _, check := range checks {
+		if check.value == 0 {
+			continue
+		}
+		if check.value < check.minimum || check.value > check.maximum {
+			return fmt.Errorf("%s must be 0 or %d..%d", check.name, check.minimum, check.maximum)
+		}
+	}
+	return nil
+}
+
 func newPluginParser(spec Spec, reg *registry.Registry, budgets PackageBudgets) *Parser {
-	budgets = budgets.effective()
-	p := &Parser{Plugin: spec.Name, Reg: reg, MaxLine: budgets.MaxLine}
+	enforced, limited := enforcedBudgets(spec, budgets)
+	p := &Parser{Plugin: spec.Name, Reg: reg}
 	if spec.Manifest != nil {
 		p.Namespace = fmt.Sprintf("plugin.%s.", spec.Manifest.ID)
-		p.MaxCharts = budgets.MaxCharts
-		p.MaxDimensions = budgets.MaxDimensions
-		p.MaxLabels = budgets.MaxLabels
-		p.MaxVariables = budgets.MaxVariables
+		p.MaxCharts = enforced.MaxCharts
+		p.MaxDimensions = enforced.MaxDimensions
+		p.MaxLabels = enforced.MaxLabels
+		p.MaxVariables = enforced.MaxVariables
+		p.MaxLine = enforced.MaxLine
+		return p
+	}
+	if limited {
+		p.MaxLine = enforced.MaxLine
+		p.MaxCharts = enforced.MaxCharts
+		p.MaxDimensions = enforced.MaxDimensions
+		p.MaxLabels = enforced.MaxLabels
+		p.MaxVariables = enforced.MaxVariables
+	} else {
+		p.MaxLine = budgets.Effective().MaxLine
 	}
 	return p
 }

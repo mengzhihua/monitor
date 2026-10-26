@@ -218,17 +218,20 @@ func (m *Manager) Catalog() Catalog {
 	// state/metrics may advance independently; no file IO or worker join holds mu.
 	return Catalog{SchemaVersion: 1, Revision: m.revision, Running: m.running,
 		Budgets:     m.opt.packageBudgets(),
-		Diagnostics: append([]Diagnostic{}, m.diagnostics...), Plugins: snapshotPlugins(m.list)}
+		Diagnostics: append([]Diagnostic{}, m.diagnostics...), Plugins: snapshotPlugins(m.list, m.opt.packageBudgets())}
 }
 
 func (m *Manager) Status() []Status { return m.Catalog().Plugins }
 
-func snapshotPlugins(list []*plugin) []Status {
+func snapshotPlugins(list []*plugin, process PackageBudgets) []Status {
 	out := make([]Status, 0, len(list))
 	for _, p := range list {
 		p.mu.Lock()
 		st := Status{Name: p.spec.Name, Command: p.spec.Command, State: p.state, PID: p.pid, Enabled: p.enabled,
 			UpdateEvery: p.spec.UpdateEvery, Restarts: p.restart, Error: p.err, Source: p.spec.Source, Locked: p.locked}
+		if budgets, ok := enforcedBudgets(p.spec, process); ok {
+			st.Budgets = &budgets
+		}
 		if !p.started.IsZero() {
 			st.Started = p.started.Unix()
 		}
