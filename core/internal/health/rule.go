@@ -85,8 +85,8 @@ type Lookup struct {
 	MinMax     string // "min2max": max-min of the window
 	// Zabbix-style functions. Kind is empty for the classic grouped reduce
 	// above, or one of: nodata, first, change, diff, abschange, stddev, count,
-	// percentile, trendavg, trendmin, trendmax, trendsum, trendcount, forecast,
-	// timeleft.
+	// percentile, mad, trendavg, trendmin, trendmax, trendsum, trendcount,
+	// forecast, timeleft.
 	Kind          string
 	Horizon       time.Duration // forecast: evaluate the linear fit at now+Horizon
 	Target        float64       // timeleft: seconds until the fit reaches Target
@@ -299,6 +299,7 @@ func (r *Rule) Hash() string {
 //	stddev -5m                     population stddev of the window
 //	count  -5m [gt|ge|lt|le|eq|ne <n>]   non-NaN points matching the operator
 //	percentile -5m p 95            P-th percentile, 0–100, Zabbix nearest rank
+//	mad -5m                        median absolute deviation; index n/2 after sorting
 //	trendavg|trendmin|trendmax|trendsum|trendcount -1d
 //	                               rollup-tier equivalents of average/min/max/sum/count
 //	forecast -1h horizon 30m       least-squares linear fit evaluated at now+horizon
@@ -325,7 +326,7 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
-	case "nodata", "first", "change", "diff", "abschange", "stddev", "count", "percentile", "forecast", "timeleft":
+	case "nodata", "first", "change", "diff", "abschange", "stddev", "count", "percentile", "mad", "forecast", "timeleft":
 		l.Kind = strings.ToLower(f[0])
 	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
 		l.Kind = strings.ToLower(f[0])
