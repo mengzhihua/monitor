@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,7 @@ type Server struct {
 	shares             *shareStore
 	audit              *audit.Log
 	saml               *samlState
+	catalog            *sla.Catalog
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -176,6 +178,14 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	}
 	if err := opt.Shell.Validate(); err != nil {
 		return nil, err
+	}
+	catalogPath := ""
+	if opt.OperationsDir != "" {
+		catalogPath = filepath.Join(opt.OperationsDir, "service-catalog.json")
+	}
+	s.catalog, err = sla.OpenCatalog(catalogPath, opt.Services, opt.Links)
+	if err != nil {
+		return nil, fmt.Errorf("open service catalog: %w", err)
 	}
 	s.shell = newShellState()
 	s.live = newLiveHub(reg, s.log)

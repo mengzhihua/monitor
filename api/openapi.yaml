@@ -446,6 +446,12 @@ paths:
         - {in: query, name: window, schema: {type: string}, description: "Duration ending now, default 24h, max 90d"}
       responses:
         "200": {description: "{from,to,services:[{name,status,sla,alarms,children}]}"}
+    put:
+      summary: Replace the service tree. Children must exist and must not cycle.
+      responses:
+        "200": {description: "{services:[...]}"}
+        "400": {description: invalid tree}
+        "403": {description: admin only}
   /api/v1/reports/availability:
     get:
       summary: Per-alarm availability over a window
@@ -459,6 +465,12 @@ paths:
       summary: LLDP neighbors plus manual topology edges
       responses:
         "200": {description: "{edges:[{source,target,kind}]}"}
+    put:
+      summary: Replace manual topology edges. LLDP neighbors stay automatic.
+      responses:
+        "200": {description: "{links:[{source,target}]}"}
+        "400": {description: invalid edge}
+        "403": {description: admin only}
   /api/v1/commands:
     post:
       summary: Run one whitelisted command
