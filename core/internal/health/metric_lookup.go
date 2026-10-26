@@ -140,9 +140,9 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		if err != nil {
 			continue
 		}
-		if l.Kind == "count" {
-			// count answers 0 for a selected dimension that simply has no
-			// matching samples; only query failures keep it out.
+		if l.Kind == "count" || l.Kind == "find" {
+			// These answer 0 for a selected dimension that simply has no
+			// matching samples; only query failures keep them out.
 			matched = true
 		}
 		vals := make([]tsdb.Point, 0, len(pts))
@@ -166,6 +166,10 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += percentileRank(vals, l.Percentile)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
+		case "find":
+			if countMatching(vals, l.CountOp, l.CountVal) > 0 {
+				sum++
+			}
 		case "forecast":
 			a, b, ok := linearFit(vals)
 			if !ok {
