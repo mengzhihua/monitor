@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -81,15 +82,27 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 			return fmt.Errorf("listen %s: %w", cfg.Web.Listen, err)
 		}
 		httpListener, httpDone = ln, make(chan struct{})
+		tlsCfg, err := stream.ServerTLS(stream.CertFiles{
+			CertFile: cfg.Web.TLSCert, KeyFile: cfg.Web.TLSKey, CAFile: cfg.Web.ClientCA,
+			RequireClientCert: cfg.Hub.RequireClientCert,
+		})
+		if err != nil {
+			return fmt.Errorf("web tls: %w", err)
+		}
 		httpSrv = &http.Server{
 			Addr:              cfg.Web.Listen,
 			Handler:           gate,
 			ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig:         tlsCfg,
 		}
-		log.Info("web server listening", "addr", cfg.Web.Listen, "ready", false)
+		log.Info("web server listening", "addr", cfg.Web.Listen, "ready", false, "tls", tlsCfg != nil)
 		go func() {
 			defer close(httpDone)
-			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveLn := ln
+			if tlsCfg != nil {
+				serveLn = tls.NewListener(ln, tlsCfg)
+			}
+			if err := httpSrv.Serve(serveLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errc <- err
 			}
 		}()

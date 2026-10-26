@@ -46,6 +46,9 @@ type Config struct {
 		// configs behave unchanged.
 		Enabled       *bool    `yaml:"enabled"`
 		Listen        string   `yaml:"listen"`
+		TLSCert       string   `yaml:"tls_cert"` // PEM certificate; with tls_key, the listener is HTTPS
+		TLSKey        string   `yaml:"tls_key"`
+		ClientCA      string   `yaml:"client_ca"`  // PEM bundle that may verify agent certificates
 		AllowFrom     []string `yaml:"allow_from"` // CIDRs; empty = all
 		Token         string   `yaml:"token"`      // admin password/bearer token; generated when no auth is configured
 		Users         []User   `yaml:"users"`      // named credentials with roles
@@ -175,6 +178,9 @@ type Stream struct {
 	Destinations       []string      `yaml:"destinations"` // ws://hub:19999 (path optional), tried in order
 	APIKey             string        `yaml:"api_key"`
 	PSK                string        `yaml:"psk"`
+	CAFile             string        `yaml:"ca_file"`
+	CertFile           string        `yaml:"cert_file"`
+	KeyFile            string        `yaml:"key_file"`
 	ClaimToken         string        `yaml:"claim_token"`
 	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
 	Timeout            time.Duration `yaml:"timeout"`
@@ -186,9 +192,10 @@ type Stream struct {
 
 // Hub configures accepting streamed nodes (mode: hub).
 type Hub struct {
-	APIKeys   []string      `yaml:"api_keys"`  // credentials agents present; empty = no ingestion
-	PSK       string        `yaml:"psk"`       // required X-Monitor-PSK header when set
-	Replicate time.Duration `yaml:"replicate"` // max backfill accepted from agents
+	APIKeys           []string      `yaml:"api_keys"`            // credentials agents present; empty = no ingestion
+	PSK               string        `yaml:"psk"`                 // required X-Monitor-PSK header when set
+	RequireClientCert bool          `yaml:"require_client_cert"` // stream connections must present a cert from web.client_ca
+	Replicate         time.Duration `yaml:"replicate"`           // max backfill accepted from agents
 	// Ingest quotas (0 = default: 1000 / 5000 / 1000).
 	MaxNodes         int `yaml:"max_nodes"`
 	MaxChartsPerNode int `yaml:"max_charts_per_node"`

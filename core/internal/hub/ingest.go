@@ -100,6 +100,9 @@ func (n *Nodes) authorize(r *http.Request) (string, bool) {
 	if n.opt.PSK != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Monitor-PSK")), []byte(n.opt.PSK)) != 1 {
 		return "", false
 	}
+	if n.opt.RequireClientCert && (r.TLS == nil || len(r.TLS.VerifiedChains) == 0) {
+		return "", false
+	}
 	return n.authorizeKey(StreamKey(r))
 }
 

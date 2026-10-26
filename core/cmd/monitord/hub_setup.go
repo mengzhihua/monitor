@@ -51,14 +51,15 @@ func configureHub(cfg *config.Config, db *tsdb.Store, apiOpt *api.Options, srv *
 			log.Warn("hub mode without hub.api_keys: agents cannot connect until a claim token is redeemed")
 		}
 		nodes, err = hub.Open(db, hubDir, hub.Options{
-			Keys:             cfg.Hub.APIKeys,
-			PSK:              cfg.Hub.PSK,
-			ExtraKeys:        org.Keys,
-			Replicate:        cfg.Hub.Replicate,
-			MaxNodes:         cfg.Hub.MaxNodes,
-			MaxChartsPerNode: cfg.Hub.MaxChartsPerNode,
-			MaxDimsPerChart:  cfg.Hub.MaxDimsPerChart,
-			Storage:          cfg.Hub.Storage,
+			Keys:              cfg.Hub.APIKeys,
+			PSK:               cfg.Hub.PSK,
+			RequireClientCert: cfg.Hub.RequireClientCert,
+			ExtraKeys:         org.Keys,
+			Replicate:         cfg.Hub.Replicate,
+			MaxNodes:          cfg.Hub.MaxNodes,
+			MaxChartsPerNode:  cfg.Hub.MaxChartsPerNode,
+			MaxDimsPerChart:   cfg.Hub.MaxDimsPerChart,
+			Storage:           cfg.Hub.Storage,
 			NodeConfig: func(nodeID string) *hub.NodeConfig {
 				c, ok := org.GetConfig(nodeID)
 				if !ok {

@@ -414,6 +414,21 @@ paths:
       responses:
         "200": {description: deleted}
         "404": {description: unknown id}
+  /api/v1/hub/templates/export:
+    get:
+      summary: Export one template (?id=) or every template as JSON or YAML (?format=yaml)
+      responses:
+        "200": {description: "{version,templates}"}
+        "404": {description: unknown id}
+  /api/v1/hub/templates/import:
+    post:
+      summary: Import a template bundle. mode=create refuses existing names; mode=update overwrites by name.
+      parameters:
+        - {in: query, name: mode, schema: {type: string, enum: [create, update]}}
+      responses:
+        "200": {description: stored templates}
+        "400": {description: invalid bundle or rule}
+        "409": {description: name already exists}
   /api/v1/hub/templates/effective:
     get:
       summary: Resolved template overlay for a node (?node=)

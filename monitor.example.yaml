@@ -21,6 +21,9 @@ db:
 
 web:
   listen: ":19999"
+  # tls_cert: /etc/monitor/hub.crt   # with tls_key, the listener is HTTPS
+  # tls_key: /etc/monitor/hub.key
+  # client_ca: /etc/monitor/agent-ca.crt
   allow_from: []       # CIDRs allowed to reach the API/UI, e.g. ["10.0.0.0/8", "127.0.0.1"]
   token: ""            # admin login password / bearer token. Empty + no users/OIDC/LDAP generates data_dir/web-password; NEVER enables anonymous access.
   users: []            # named credentials with roles; any token/users setting turns anonymous access off
@@ -51,6 +54,9 @@ stream:
   api_key: ""          # must be listed in the hub's hub.api_keys
   claim_token: ""      # one-time token from POST /api/v1/hub/claim-tokens; minted into api_key on first connect
   insecure_skip_verify: false
+  # ca_file: /etc/monitor/hub-ca.crt
+  # cert_file: /etc/monitor/agent.crt
+  # key_file: /etc/monitor/agent.key
   timeout: 10s
   replicate: 1h        # at most this much history is re-sent after reconnecting
   protocol: stream     # stream = JSON /api/v1/stream; mqtt or aclk = MQTT 3.1.1 over WSS /api/v1/aclk
@@ -70,6 +76,7 @@ hub:
   space: default           # created on first hub start if org.json is empty
   room: default
   storage: full            # full = hub keeps samples; proxy = live-query the agent (TypeQuery)
+  # require_client_cert: false  # with web.client_ca, stream handshakes must present a verified certificate
 
 collectors:
   timeout: 0s          # bound one Collect call; 0 uses global.update_every. Allowed when set: 100ms..1h
