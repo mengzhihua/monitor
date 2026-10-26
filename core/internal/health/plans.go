@@ -30,9 +30,11 @@ var ErrPlanCapacity = errors.New("maintenance plan capacity reached")
 type MaintenanceSpec struct {
 	Title           string `json:"title"`
 	Reason          string `json:"reason"`
-	Scope           string `json:"scope"` // all or an exact chart/alarm pair
+	Scope           string `json:"scope"` // all, alarm, or label
 	Chart           string `json:"chart"`
 	Alarm           string `json:"alarm"`
+	Label           string `json:"label,omitempty"`
+	Value           string `json:"value,omitempty"`
 	StartsAt        int64  `json:"starts_at"` // create: zero means server time now
 	DurationSeconds int64  `json:"duration_seconds"`
 }
@@ -95,9 +97,11 @@ func validPlanSpec(p MaintenanceSpec) bool {
 	}
 	switch p.Scope {
 	case "all":
-		return p.Chart == "" && p.Alarm == ""
+		return p.Chart == "" && p.Alarm == "" && p.Label == "" && p.Value == ""
 	case "alarm":
-		return validPlanText(p.Chart, 256) && validPlanText(p.Alarm, 256)
+		return validPlanText(p.Chart, 256) && validPlanText(p.Alarm, 256) && p.Label == "" && p.Value == ""
+	case "label":
+		return p.Chart == "" && p.Alarm == "" && validPlanText(p.Label, 64) && validPlanText(p.Value, 128)
 	default:
 		return false
 	}
@@ -176,11 +180,29 @@ func (s *MaintenancePlanStore) Snapshot(now int64) MaintenancePlanSnapshot {
 }
 
 func (s *MaintenancePlanStore) Matches(chart, alarm string, now int64) bool {
+	return s.MatchesLabels(chart, alarm, nil, now)
+}
+
+// MatchesLabels reports an active plan for every alarm, one chart/alarm pair,
+// or alarms carrying label=value.
+func (s *MaintenancePlanStore) MatchesLabels(chart, alarm string, labels map[string]string, now int64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, p := range s.state.Plans {
-		if p.Status(now) == "active" && (p.Scope == "all" || (p.Chart == chart && p.Alarm == alarm)) {
+		if p.Status(now) != "active" {
+			continue
+		}
+		switch p.Scope {
+		case "all":
 			return true
+		case "alarm":
+			if p.Chart == chart && p.Alarm == alarm {
+				return true
+			}
+		case "label":
+			if labels[p.Label] == p.Value && p.Value != "" {
+				return true
+			}
 		}
 	}
 	return false

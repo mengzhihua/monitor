@@ -71,8 +71,9 @@ func (h *httpagentCollector) Collect(ctx context.Context, reg *registry.Registry
 		if v, ok := h.prev[j.Name]; ok {
 			prev = v
 		}
+		id := "httpagent." + sanitizeID(j.Name)
 		value, next, perr := preprocess.Apply(j.Steps, body, prev)
-		if err != nil || perr != nil {
+		if err != nil || noteUnsupported(reg, id, perr) {
 			continue
 		}
 		h.prev[j.Name] = next

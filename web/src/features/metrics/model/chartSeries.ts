@@ -67,6 +67,24 @@ export function appendLiveSample(series: ChartSeries, timestamp: number, values:
   return true
 }
 
+export interface PieSlice {
+  id: string
+  name: string
+  value: number
+  fraction: number
+}
+
+/** Pie charts use the last row only. Zero, negative, and missing samples are omitted. */
+export function pieSlices(dimensions: string[], values: (number | null)[][], names: Record<string, string> = {}): PieSlice[] {
+  const rows = dimensions.flatMap((id, index) => {
+    const value = values[index]?.at(-1)
+    return value != null && Number.isFinite(value) && value > 0 ? [{ id, name: names[id] || id, value }] : []
+  })
+  const total = rows.reduce((sum, row) => sum + row.value, 0)
+  if (!(total > 0)) return []
+  return rows.map(row => ({ ...row, fraction: row.value / total }))
+}
+
 /** Stacking is a rendering projection; summaries and exports keep raw samples. */
 export function plotSeries(series: ChartSeries, stacked: boolean): (number | null)[][] {
   if (!stacked) return [series.times, ...series.values]
