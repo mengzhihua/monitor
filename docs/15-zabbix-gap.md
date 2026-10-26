@@ -30,7 +30,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 模型 | 代理 Proxy | 部分：`hub.peers` 环 + proxy 存储模式 | `hub/cluster.go` |
 | 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev | `health/metric_lookup.go` |
 | 触发器 | 依赖 | 已有 `inhibit` | `health/inhibit.go` |
-| 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause` | `health/correlation.go` |
+| 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause`。`equal` 可要求同一图表、上下文或 `label:<key>`；留空则任一 cause 都生效 | `health/correlation.go` |
 | 问题 | 确认 / 指派 / 进度 / 抑制 | 已有 | `operations/` |
 | 问题 | 手动关闭 | 已有：`POST /api/v1/alarms/close` | `api/alarms.go` |
 | 问题 | 维护期 | 已有：全局、精确图表/告警，以及按图表标签 `label=value` 静默。标签维护不会波及没有该标签的告警 | `health/plans.go` |

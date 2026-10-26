@@ -913,6 +913,7 @@ export:
 #       recovery: { role: sysadmin }
 #   correlation:
 #     - { cause: host_down, symptoms: [disk_full] }
+#     - { cause: host_down, symptoms: [disk_full], equal: [chart, "label:service"] }
 #   notify:
 #     script:
 #       path: /usr/local/bin/monitor-notify
