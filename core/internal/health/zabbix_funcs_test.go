@@ -37,6 +37,8 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
 		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
 		{"percentile -5m p 100", want{kind: "percentile", pct: 100}, ""},
+		{"rate -5m", want{kind: "rate"}, ""},
+		{"RATE -1m of used", want{kind: "rate", dims: 1}, ""},
 		{"count -5m", want{kind: "count"}, ""},
 		{"count -5m gt 3.5", want{kind: "count", op: "gt", val: 3.5}, ""},
 		{"count -5m ne 0 of used,free", want{kind: "count", op: "ne", dims: 2}, ""},
@@ -244,6 +246,59 @@ func TestLookupPercentile(t *testing.T) {
 	}
 	if v := lookupValue(t, "percentile -5m p 100", both, now); v != 14 {
 		t.Fatalf("two dimensions: got %v want 14", v)
+	}
+}
+
+func TestLookupRate(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	// 0 at t-30s and 20 at t: 20/30 per second.
+	span := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-30*time.Second), map[string]float64{"used": 0})
+		reg.Collect("system.ram", now, map[string]float64{"used": 20})
+	}
+	if v := lookupValue(t, "rate -5m of used", span, now); math.Abs(v-20.0/30.0) > 1e-9 {
+		t.Fatalf("span: got %v want %v", v, 20.0/30.0)
+	}
+	steady := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-20*time.Second), map[string]float64{"used": 0})
+		reg.Collect("system.ram", now.Add(-10*time.Second), map[string]float64{"used": 10})
+		reg.Collect("system.ram", now, map[string]float64{"used": 20})
+	}
+	if v := lookupValue(t, "rate -5m of used", steady, now); math.Abs(v-1) > 1e-9 {
+		t.Fatalf("steady: got %v want 1", v)
+	}
+	// 10 → 25 → 5 is a reset. Increase is (5-10)+25 = 20 over 20s.
+	reset := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-20*time.Second), map[string]float64{"used": 10})
+		reg.Collect("system.ram", now.Add(-10*time.Second), map[string]float64{"used": 25})
+		reg.Collect("system.ram", now, map[string]float64{"used": 5})
+	}
+	if v := lookupValue(t, "rate -5m of used", reset, now); math.Abs(v-1) > 1e-9 {
+		t.Fatalf("reset: got %v want 1", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 7})
+	}
+	if v := lookupValue(t, "rate -5m of used", one, now); !math.IsNaN(v) {
+		t.Fatalf("one sample: got %v want NaN", v)
+	}
+	if v := lookupValue(t, "rate -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty window: got %v want NaN", v)
+	}
+	bothDims := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-10*time.Second), map[string]float64{"used": 0, "free": 0})
+		reg.Collect("system.ram", now, map[string]float64{"used": 10, "free": 20})
+	}
+	if v := lookupValue(t, "rate -5m", bothDims, now); math.Abs(v-3) > 1e-9 {
+		t.Fatalf("two dimensions: got %v want 3", v)
+	}
+	scrambled := []tsdb.Point{{TS: 30, Value: 20}, {TS: 0, Value: 0}}
+	got, ok := counterRate(scrambled)
+	if !ok || math.Abs(got-20.0/30.0) > 1e-9 {
+		t.Fatalf("time order: got %v ok %v", got, ok)
+	}
+	if _, ok := counterRate([]tsdb.Point{{TS: 1, Value: 1}, {TS: 1, Value: 2}}); ok {
+		t.Fatal("zero span should not produce a rate")
 	}
 }
 

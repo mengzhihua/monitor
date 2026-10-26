@@ -154,6 +154,15 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		if len(vals) == 0 {
 			continue
 		}
+		if l.Kind == "rate" {
+			r, ok := counterRate(vals)
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += r
+			continue
+		}
 		matched = true
 		switch l.Kind {
 		case "first":
@@ -211,6 +220,31 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 // timeLeftSentinel replaces the unbounded Zabbix "never" answer; evaluate()
 // treats +Inf as undefined, so timeleft reports a very large finite value.
 const timeLeftSentinel = 1e15
+
+// counterRate is the per-second increase of a counter, in the same sense as
+// Zabbix rate() and PromQL rate. The elapsed time is the gap between the
+// oldest and newest samples. A drop is a reset to zero: the value before the
+// drop is added back so the new count still contributes. Fewer than two
+// samples, or a zero time span, cannot produce a rate.
+func counterRate(pts []tsdb.Point) (float64, bool) {
+	if len(pts) < 2 {
+		return 0, false
+	}
+	ordered := append([]tsdb.Point(nil), pts...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].TS < ordered[j].TS })
+	first, last := ordered[0], ordered[len(ordered)-1]
+	dt := float64(last.TS - first.TS)
+	if dt <= 0 {
+		return 0, false
+	}
+	inc := last.Value - first.Value
+	for i := 1; i < len(ordered); i++ {
+		if ordered[i].Value < ordered[i-1].Value {
+			inc += ordered[i-1].Value
+		}
+	}
+	return inc / dt, true
+}
 
 // percentileRank is Zabbix's nearest-rank percentile. Values are sorted
 // ascending and the index is ceil(n*p/100)-1, clamped to the sample list.
