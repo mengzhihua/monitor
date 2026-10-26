@@ -102,6 +102,29 @@ test('slow function requests never overlap and background panels stop polling', 
   await expect.poll(() => calls).toBe(before + 1)
 })
 
+test('plugin functions run once until the operator asks again', async ({ page }) => {
+  await page.clock.install()
+  await page.route('**/api/v1/functions*', route => route.fulfill({ json: [
+    { name: 'plugin.demo.ping', help: 'ping once', timeout: 5 },
+  ] }))
+  let calls = 0
+  await page.route('**/api/v1/function?*', async route => {
+    calls++
+    await route.fulfill({ json: { time: 1, function: 'plugin.demo.ping', result: { ok: true } } })
+  })
+  await page.goto('/?view=charts&token=' + token)
+  await openTools(page)
+  await page.getByTitle('Functions（实时进程表等）', { exact: true }).click()
+  const panel = page.locator('.panel')
+  await expect(panel).toContainText('插件函数按次执行')
+  await expect(panel.locator('pre')).toContainText('"ok": true')
+  await expect.poll(() => calls).toBe(1)
+  await page.clock.fastForward(12000)
+  expect(calls).toBe(1)
+  await panel.getByRole('button', { name: '再执行', exact: true }).click()
+  await expect.poll(() => calls).toBe(2)
+})
+
 test('superseded history fetches are aborted when changing the time range', async ({ page }) => {
   let started!: () => void
   const pending = new Promise<void>(resolve => { started = resolve })

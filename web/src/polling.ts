@@ -1,8 +1,9 @@
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { pageVisible } from './visibility'
 
-/** Poll only in the foreground and wait for completion before scheduling again. */
-export function usePolling(task: (signal: AbortSignal) => Promise<void>, delay: number) {
+/** Poll only in the foreground and wait for completion before scheduling again.
+ * A delay of 0 runs once and waits for an explicit refresh. */
+export function usePolling(task: (signal: AbortSignal) => Promise<void>, delay: number | (() => number)) {
   let controller: AbortController | undefined
   let timer: number | undefined
   let disposed = false
@@ -20,7 +21,8 @@ export function usePolling(task: (signal: AbortSignal) => Promise<void>, delay: 
     } finally {
       if (controller === current && !disposed && pageVisible.value) {
         controller = undefined
-        timer = window.setTimeout(() => { void refresh() }, delay)
+        const next = typeof delay === 'function' ? delay() : delay
+        if (next > 0) timer = window.setTimeout(() => { void refresh() }, next)
       }
     }
   }

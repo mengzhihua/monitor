@@ -8,6 +8,8 @@ const props = defineProps<{ functions: FunctionInfo[] }>()
 const emit = defineEmits<{ close: [] }>()
 
 const selected = ref(props.functions[0]?.name ?? '')
+const current = computed(() => props.functions.find(item => item.name === selected.value))
+const onDemand = computed(() => selected.value.startsWith('plugin.'))
 const sort = ref('cpu')
 const filter = ref('')
 const table = shallowRef<FunctionTable | null>(null)
@@ -70,7 +72,7 @@ function sortable(col: string) {
   return !!row && typeof row[col] === 'number'
 }
 
-const refresh = usePolling(load, 2000)
+const refresh = usePolling(load, () => onDemand.value ? 0 : 2000)
 watch([selected, sort], () => { void refresh() })
 </script>
 
@@ -85,9 +87,12 @@ watch([selected, sort], () => { void refresh() })
         <small v-if="table">{{ rows.length }} / {{ table.total }}</small>
         <small v-if="updated"> · {{ new Date(updated * 1000).toLocaleTimeString() }}</small>
       </h3>
+      <button v-if="onDemand" type="button" @click="refresh">再执行</button>
       <input v-model="filter" placeholder="筛选…" />
       <button class="x" @click="emit('close')" title="关闭">×</button>
     </div>
+    <p v-if="current?.help" class="dim">{{ current.help }}</p>
+    <p v-if="onDemand" class="dim">插件函数按次执行，不会每两秒重复调用。</p>
     <div v-if="error" class="err">{{ error }}</div>
     <div v-if="table" class="scroll">
       <table>
@@ -116,7 +121,7 @@ watch([selected, sort], () => { void refresh() })
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 h3 { margin: 0; font-size: 14px; flex: 1; display: flex; align-items: center; gap: 8px; }
 h3 small { color: #64748b; font-weight: 400; }
-select, input { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+select, input, button:not(.x) { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 3px 6px; font-size: 12px; }
 .x { background: none; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; }
 .err { color: #fca5a5; margin-bottom: 8px; }
 .scroll { max-height: 420px; overflow: auto; }
