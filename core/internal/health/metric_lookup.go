@@ -163,13 +163,22 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += r
 			continue
 		}
+		if l.Kind == "stddevsamp" {
+			s, ok := sampleStddev(vals)
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += s
+			continue
+		}
 		matched = true
 		switch l.Kind {
 		case "first":
 			sum += vals[0].Value
 		case "change":
 			sum += vals[len(vals)-1].Value - vals[0].Value
-		case "stddev":
+		case "stddev", "stddevpop":
 			sum += popStddev(vals)
 		case "percentile":
 			sum += percentileRank(vals, l.Percentile)
@@ -411,6 +420,26 @@ func popStddev(pts []tsdb.Point) float64 {
 		v += d * d
 	}
 	return math.Sqrt(v / float64(len(pts)))
+}
+
+// sampleStddev is Zabbix stddevsamp: the square root of the unbiased variance.
+// Fewer than two samples cannot produce it.
+func sampleStddev(pts []tsdb.Point) (float64, bool) {
+	n := len(pts)
+	if n < 2 {
+		return 0, false
+	}
+	var m float64
+	for _, p := range pts {
+		m += p.Value
+	}
+	m /= float64(n)
+	var v float64
+	for _, p := range pts {
+		d := p.Value - m
+		v += d * d
+	}
+	return math.Sqrt(v / float64(n-1)), true
 }
 
 // linearFit is ordinary least squares of (seconds since window start, value).

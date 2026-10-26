@@ -32,6 +32,8 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"FIRST -5m of used", want{kind: "first", dims: 1}, ""},
 		{"change -5m absolute", want{kind: "change"}, ""},
 		{"stddev -5m", want{kind: "stddev"}, ""},
+		{"STDDEVPOP -5m of used", want{kind: "stddevpop", dims: 1}, ""},
+		{"stddevsamp -5m", want{kind: "stddevsamp"}, ""},
 		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
 		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
 		{"percentile -5m p 100", want{kind: "percentile", pct: 100}, ""},
@@ -505,6 +507,8 @@ func TestLookupRate(t *testing.T) {
 		t.Fatal("zero span should not produce a rate")
 	}
 }
+
+
 
 func TestLookupForecastTimeleft(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
