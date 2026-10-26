@@ -201,6 +201,9 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	if err != nil {
 		return err
 	}
+	if eng != nil && apiOpt.Elector != nil {
+		eng.SetActive(apiOpt.Elector.IsLeader)
+	}
 	cfgAbs, err := filepath.Abs(cfgPath)
 	if err != nil {
 		return err

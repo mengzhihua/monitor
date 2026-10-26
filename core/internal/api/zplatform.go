@@ -233,7 +233,7 @@ func (s *Server) roomAllowed(u User, nodeID string) bool {
 				}
 				room = peer.RoomID
 			}
-			return roomVisible(u, room)
+			return s.scopedNode(u, nodeID, room)
 		}
 	}
 	if s.isLocal(nodeID) {
@@ -254,11 +254,20 @@ func (s *Server) roomAllowed(u User, nodeID string) bool {
 					room = localRoom
 				}
 			}
-			return roomVisible(u, room)
+			return s.scopedNode(u, nodeID, room)
 		}
 	}
-	// A scoped identity cannot authorize an unknown or removed remote node.
-	return false
+	// A scoped identity cannot authorize an unknown or removed remote node
+	// unless a granted host group contains it.
+	return s.nodeInHostGroups(u, nodeID)
+}
+
+func (s *Server) scopedNode(u User, nodeID, room string) bool {
+	return roomVisible(u, room) || s.nodeInHostGroups(u, nodeID)
+}
+
+func (s *Server) nodeInHostGroups(u User, nodeID string) bool {
+	return s.opt.Org != nil && s.opt.Org.NodeInHostGroups(nodeID, u.HostGroups)
 }
 
 func unrestrictedRooms(u User) bool {

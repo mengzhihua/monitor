@@ -183,6 +183,18 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, s.inventoryView(nodeID))
 			_ = inv
 		}
+	case http.MethodDelete:
+		if nodeID == "" {
+			http.Error(w, "node parameter required", http.StatusBadRequest)
+			return
+		}
+		if _, err := s.opt.Templates.SetInventory(nodeID, map[string]string{}, nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, s.inventoryView(nodeID))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 

@@ -4,7 +4,7 @@
 
 ## 1. 对标结论
 
-Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、触发器函数、模板、宏、清单、动作、SLA 和审计已经落地。仍开放的差距是 JavaScript 预处理、通用 LLD 原型语言、图表饼图，以及非目标里的被动 Agent 协议和 Zabbix JSON-RPC。计算项已支持 `{图表:维度}` 的四则运算。
+Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、触发器函数、模板、宏、清单、动作、SLA 和审计已经落地。主机组树、代理分配、多数派选主和 Hub 实体 CRUD 也已经落地。仍开放的差距是 JavaScript 预处理、通用 LLD 原型语言、图表饼图、模板整包导入导出，以及非目标里的被动 Agent 协议和 Zabbix JSON-RPC。计算项已支持 `{图表:维度}` 的四则运算。
 
 ## 2. 差距矩阵
 
@@ -23,11 +23,11 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
 | 采集 | 低级发现 LLD + 原型 | 部分：SNMP 表 LLD 开图表；无通用原型继承 | `collect/snmp.go` |
 | 采集 | 值预处理（regex/JSONPath/XPath/JS） | 部分：trim/ltrim/rtrim/replace/regex/jsonpath/xpath/multiplier/bool/matches/not_match/hex/octal/in_range/discard_unchanged/change；无 JavaScript | `preprocess/preprocess.go` |
-| 模型 | 主机 / 主机组 | 已有：Space→Room；`web.groups` 可递归包含其他组的 Room，环被忽略 | `config/config.go` |
+| 模型 | 主机 / 主机组 | 已有：Space→Room，以及独立主机组树（父子、环和超深拒绝）。`web.groups.host_groups` 授权该组及后代里的节点 | `hub/catalog.go`、`config/config.go` |
 | 模型 | 模板（可链接、继承） | 已有：Hub 模板可按节点、Room、标签链接，带宏、标签和采集覆盖 | `hub/templates.go` |
 | 模型 | 用户宏 `{$MACRO}` | 已有：全局与规则级 `{$NAME}` | `config/config.go`、`health/` |
-| 模型 | 主机清单（自动 + 手工） | 已有：自动标签，以及 `GET/PUT /api/v1/hub/inventory` 手工字段 | `api/templates.go` |
-| 模型 | 代理 Proxy | 部分：`hub.peers` 环 + proxy 存储模式 | `hub/cluster.go` |
+| 模型 | 主机清单（自动 + 手工） | 已有：自动标签，以及 `GET/PUT/DELETE /api/v1/hub/inventory` 手工字段 | `api/templates.go` |
+| 模型 | 代理 Proxy | 已有：`hub.storage: proxy` 回查在线 Agent；代理实体可分配节点。active 需心跳后转发，passive 直接拉取代理的 HTTP API。一个节点只属于一个代理 | `hub/catalog.go`、`api/data.go` |
 | 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev | `health/metric_lookup.go` |
 | 触发器 | 依赖 | 已有 `inhibit` | `health/inhibit.go` |
 | 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause` | `health/correlation.go` |
@@ -44,10 +44,10 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图 | `sla/sla.go` |
 | 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV | `api/zplatform.go` |
 | 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
-| 管理 | 完整 CRUD API | 部分：REST + OpenAPI，非全实体 CRUD | `api/openapi.yaml` |
+| 管理 | 完整 CRUD API | 已有：Hub 的 Space（含改名）、Room、主机组、代理、模板、清单走 REST。进程级用户和命令仍由 `PUT /api/v1/manage/config` 整文件更新。不是 Zabbix JSON-RPC | `api/openapi.yaml`、`api/hub_catalog.go` |
 | 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP | `api/saml.go`、`api/totp.go` |
-| 管理 | 用户组 + 主机组级权限 | 部分：`web.groups` 递归授予 Room；没有独立的主机组树 | `config/config.go` |
-| 管理 | HA 集群 | 部分：环复制，非共识 HA | `hub/cluster.go` |
+| 管理 | 用户组 + 主机组级权限 | 已有：`web.groups` 递归授予 Room，并可授予主机组 id；后代节点一并可见。空 Room 列表仍表示不按 Room 限制 | `config/config.go`、`api/zplatform.go` |
+| 管理 | HA 集群 | 已有：环复制样本；`global.hostname` 在 peers 之间做多数派选主。未获多数的节点不发送告警。成员数应为奇数 | `hub/elector.go`、`hub/cluster.go` |
 | 管理 | 加密 PSK / 证书 | 部分：TLS；`stream.psk` / `hub.psk` 额外校验 `X-Monitor-PSK` | `hub/ingest.go` |
 | 管理 | Agent 自动注册 | 已有 claim token | `api/server.go` |
 | 管理 | 网络发现（IP 段扫描） | 已有：mDNS，以及最多 256 地址的 TCP 扫描 | `collect/netscan.go` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。主机组是独立于 Room 的树。用户组可以用 `host_groups` 授权该组及后代中的节点。代理保存 URL、模式和节点；active 代理要先心跳，数据查询才会转到它。配置了 `hub.peers` 时，`global.hostname` 参与多数派选主，备节点抑制告警发送，样本仍由环复制。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。模板导入导出仍是规则 YAML/JSON 与看板 JSON。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|

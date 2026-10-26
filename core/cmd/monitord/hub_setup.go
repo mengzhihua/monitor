@@ -108,6 +108,11 @@ func configureHub(cfg *config.Config, db *tsdb.Store, apiOpt *api.Options, srv *
 			cluster = hub.NewCluster(cfg.Hub.Peers, cfg.Hub.PeerToken, log.With("component", "cluster"))
 			cluster.SetNodes(nodes)
 			apiOpt.Cluster = cluster
+			id := cfg.Global.Hostname
+			if id == "" {
+				id = "hub"
+			}
+			apiOpt.Elector = hub.NewElector(id, cfg.Hub.Peers, cfg.Hub.PeerToken)
 		}
 	}
 	return nodes, cluster, nil

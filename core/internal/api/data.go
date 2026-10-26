@@ -1,7 +1,12 @@
 package api
 
 import (
+	"context"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 )
 
 // handleData implements /api/v1/data?chart=&context=&after=&before=&points=&group=&dimensions=&format=
@@ -32,6 +37,11 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 	if !ok {
 		return
 	}
+	if v.id != "" && s.opt.Org != nil {
+		if base, ok := s.opt.Org.ProxyRoute(v.id, time.Now()); ok && s.relayProxy(w, r, base) {
+			return
+		}
+	}
 	if v.node != nil && s.opt.Nodes != nil && s.opt.Nodes.Storage() == "proxy" && v.node.Online() {
 		args := map[string]string{"chart": q.Get("chart"), "after": q.Get("after"), "before": q.Get("before"), "points": q.Get("points")}
 		raw, err := v.node.Query(r.Context(), args)
@@ -47,4 +57,42 @@ func (s *Server) serveData(w http.ResponseWriter, r *http.Request, api int) {
 		return
 	}
 	writeData(w, q, out)
+}
+
+// relayProxy forwards a successful data read to the proxy that owns the node.
+// Any other result falls through to local storage.
+func (s *Server) relayProxy(w http.ResponseWriter, r *http.Request, base string) bool {
+	target, err := url.Parse(strings.TrimRight(base, "/") + r.URL.RequestURI())
+	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return false
+	}
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil || len(body) == 0 {
+		return false
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	_, _ = w.Write(body)
+	return true
 }

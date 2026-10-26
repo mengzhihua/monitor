@@ -1,6 +1,9 @@
 package api
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // startBackground runs only after all fallible initialization in New succeeds.
 // The Server owns these workers; dependencies supplied to New remain caller-owned.
@@ -12,6 +15,23 @@ func (s *Server) startBackground() {
 	}
 	if s.opt.ReportEvery > 0 && s.opt.ReportDir != "" {
 		s.backgroundWG.Go(func() { s.exportReports(ctx) })
+	}
+	if s.opt.Elector != nil {
+		s.backgroundWG.Go(func() { s.electLeader(ctx) })
+	}
+}
+
+func (s *Server) electLeader(ctx context.Context) {
+	s.opt.Elector.Tick()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.opt.Elector.Tick()
+		}
 	}
 }
 

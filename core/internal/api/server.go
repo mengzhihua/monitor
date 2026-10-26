@@ -59,8 +59,10 @@ type Options struct {
 	Org *hub.Org
 	// Templates is the hub template + node-inventory store (hub mode).
 	Templates *hub.Templates
-	// PeerToken authenticates POST /api/v1/hub/ring from sibling hubs.
+	// PeerToken authenticates POST /api/v1/hub/ring and /api/v1/hub/vote from sibling hubs.
 	PeerToken string
+	// Elector chooses the active hub when peers are configured. Nil means this process notifies.
+	Elector *hub.Elector
 	// OIDC enables browser login against an identity provider.
 	OIDC *OIDCConfig
 	// LDAP enables POST /api/v1/auth/ldap.

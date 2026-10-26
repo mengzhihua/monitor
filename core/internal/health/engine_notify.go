@@ -39,6 +39,11 @@ func (e *Engine) notifyAt(entry LogEntry, at int64) {
 	if a := e.alarms[entry.Name+"|"+entry.Chart]; a != nil && a.ID == entry.AlarmID && at > a.lastNotifyAttempt {
 		a.lastNotifyAttempt = at
 	}
+	if e.active != nil && !e.active() {
+		e.diagnostics.Suppressed++
+		e.addNotificationResultLocked(entry, "", "suppressed", "standby", 0, 0)
+		return
+	}
 	if reason := e.suppressionReasonLocked(entry.Chart, entry.Name); reason != "" {
 		e.diagnostics.Suppressed++
 		e.addNotificationResultLocked(entry, "", "suppressed", reason, 0, 0)

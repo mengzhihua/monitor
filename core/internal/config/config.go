@@ -82,13 +82,13 @@ type Config struct {
 	Trapper  Trapper       `yaml:"trapper"`
 }
 
-// Group grants Room names to the users that list it. Groups lists other
-// group names whose rooms are included, one level of nesting is followed
-// and cycles are ignored.
+// Group grants Room names and host-group ids to the users that list it.
+// Groups lists other group names. Nesting is followed and cycles are ignored.
 type Group struct {
-	Name   string   `yaml:"name"`
-	Rooms  []string `yaml:"rooms"`
-	Groups []string `yaml:"groups"`
+	Name       string   `yaml:"name"`
+	Rooms      []string `yaml:"rooms"`
+	Groups     []string `yaml:"groups"`
+	HostGroups []string `yaml:"host_groups"`
 }
 
 // EffectiveRooms is the user's own rooms plus rooms from named groups.
@@ -128,6 +128,47 @@ func EffectiveRooms(u User, groups []Group) []string {
 	return out
 }
 
+// EffectiveHostGroups is the host-group ids granted directly or through nested
+// user groups. An empty result grants no extra nodes. Descendants are expanded
+// from the hub host-group tree, not from this list.
+func EffectiveHostGroups(u User, groups []Group) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(ids []string) {
+		for _, id := range ids {
+			if id == "" || seen["id:"+id] {
+				continue
+			}
+			seen["id:"+id] = true
+			out = append(out, id)
+		}
+	}
+	add(u.HostGroups)
+	var walk func(name string)
+	walk = func(name string) {
+		if name == "" || seen["group:"+name] {
+			return
+		}
+		seen["group:"+name] = true
+		for _, g := range groups {
+			if g.Name != name {
+				continue
+			}
+			add(g.HostGroups)
+			for _, child := range g.Groups {
+				walk(child)
+			}
+		}
+	}
+	for _, name := range u.Groups {
+		walk(name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Command is a whitelisted absolute argv. The API only accepts the name.
 type Command struct {
 	Name string   `yaml:"name"`
@@ -161,12 +202,13 @@ type SAML struct {
 
 // User is an API credential: role admin | troubleshooter | viewer.
 type User struct {
-	Name   string   `yaml:"name"`
-	Token  string   `yaml:"token"`
-	Role   string   `yaml:"role"`
-	Groups []string `yaml:"groups"`
-	Rooms  []string `yaml:"rooms"`
-	TOTP   string   `yaml:"totp_secret"`
+	Name       string   `yaml:"name"`
+	Token      string   `yaml:"token"`
+	Role       string   `yaml:"role"`
+	Groups     []string `yaml:"groups"`
+	Rooms      []string `yaml:"rooms"`
+	HostGroups []string `yaml:"host_groups"`
+	TOTP       string   `yaml:"totp_secret"`
 }
 
 // Stream configures this agent's upstream connection to a hub.

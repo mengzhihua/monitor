@@ -4,6 +4,21 @@ import (
 	"testing"
 )
 
+func TestStandbyHubSuppressesNotification(t *testing.T) {
+	e := diagnosticsEngine(t, Options{Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}}})
+	e.SetActive(func() bool { return false })
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "disk.space", Status: StatusCritical, When: 5}, 5)
+	d := e.NotificationDiagnostics()
+	if d.Suppressed != 1 || d.Enqueued != 0 || d.Recent[0].Reason != "standby" {
+		t.Fatalf("%+v", d)
+	}
+	e.SetActive(func() bool { return true })
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "disk.space", Status: StatusCritical, When: 6}, 6)
+	if e.NotificationDiagnostics().Enqueued != 1 {
+		t.Fatal(e.NotificationDiagnostics())
+	}
+}
+
 func TestInhibitDependencySuppressesTargetNotification(t *testing.T) {
 	e := diagnosticsEngine(t, Options{
 		Inhibit:   []InhibitRule{{Source: "host_down", Targets: []string{"http_down", "disk_full"}}},
