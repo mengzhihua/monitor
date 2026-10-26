@@ -164,6 +164,8 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += popStddev(vals)
 		case "percentile":
 			sum += percentileRank(vals, l.Percentile)
+		case "monoinc", "monodec":
+			sum += monotonicBit(vals, l.Kind == "monoinc", l.Strict)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
 		case "forecast":
@@ -200,6 +202,38 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 // timeLeftSentinel replaces the unbounded Zabbix "never" answer; evaluate()
 // treats +Inf as undefined, so timeleft reports a very large finite value.
 const timeLeftSentinel = 1e15
+
+// monotonicBit reports whether samples are monotonic in time. One sample is
+// monotonic (1). inc selects monoinc; otherwise the series must not rise.
+// strict rejects equal neighbors. Zabbix's default mode is weak.
+func monotonicBit(pts []tsdb.Point, inc, strict bool) float64 {
+	if len(pts) <= 1 {
+		if len(pts) == 1 {
+			return 1
+		}
+		return math.NaN()
+	}
+	ordered := append([]tsdb.Point(nil), pts...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].TS < ordered[j].TS })
+	for i := 1; i < len(ordered); i++ {
+		prev, next := ordered[i-1].Value, ordered[i].Value
+		var ok bool
+		switch {
+		case inc && strict:
+			ok = next > prev
+		case inc:
+			ok = next >= prev
+		case strict:
+			ok = next < prev
+		default:
+			ok = next <= prev
+		}
+		if !ok {
+			return 0
+		}
+	}
+	return 1
+}
 
 // percentileRank is Zabbix's nearest-rank percentile. Values are sorted
 // ascending and the index is ceil(n*p/100)-1, clamped to the sample list.
