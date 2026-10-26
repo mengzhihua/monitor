@@ -58,6 +58,7 @@ fail() { echo "SMOKE FAIL: $*"; exit 1; }
 
 info=$(curl -sf "http://127.0.0.1:$PORT/api/v1/info") || fail "info"
 echo "$info" | grep '"charts_count":[1-9]' >/dev/null || fail "no charts: $info"
+echo "$info" | python3 -c "import json,sys; db=json.load(sys.stdin)['db']; assert db['block_size']==900 and db['tiers'][1]['block_size']==720 and db['tiers'][2]['block_size']==360, db" || fail "default block sizes: $info"
 
 charts=$(curl -sf "http://127.0.0.1:$PORT/api/v1/charts") || fail "charts"
 echo "$charts" | grep '"system.cpu"' >/dev/null || fail "system.cpu missing"
