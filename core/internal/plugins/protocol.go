@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
@@ -61,6 +63,9 @@ type Parser struct {
 	MaxDimensions int
 	MaxLabels     int
 	MaxVariables  int
+	// AllowsFunctions is set for manifest packages that declare the functions
+	// capability while the process still has plugin functions enabled.
+	AllowsFunctions bool
 
 	mu        sync.Mutex
 	stats     Stats
@@ -68,7 +73,8 @@ type Parser struct {
 	draft     *registry.Chart   // last CHART, registered once its DIMENSION/CLABEL lines are done
 	pending   map[string]string // CLABELs awaiting CLABEL_COMMIT
 	variables map[string]float64
-	functions []string
+	functions []pluginFunction
+	waiters   map[string]chan callResult
 	replace   bool
 
 	cur     *registry.Chart // inside BEGIN..END
@@ -76,6 +82,21 @@ type Parser struct {
 	curTS   time.Time
 	last    time.Time // last line seen (watchdog)
 }
+
+type pluginFunction struct {
+	Name    string
+	Help    string
+	Timeout int
+}
+
+type callResult struct {
+	body string
+	err  error
+}
+
+var errPluginStopped = errors.New("plugin stopped during the call")
+
+var functionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 func (p *Parser) touch() {
 	p.mu.Lock()
@@ -109,17 +130,41 @@ func (p *Parser) Variables() map[string]float64 {
 	return out
 }
 
-// Functions returns names declared with FUNCTION. The agent does not attach
-// the plugin stdin, so these names are reported but not invoked.
+// Functions returns the public names declared with FUNCTION. Manifest packages
+// that declare the functions capability use plugin.<id>.<name>. Legacy scripts
+// keep the declared name; those names are listed but not invoked.
 func (p *Parser) Functions() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]string(nil), p.functions...)
+	out := make([]string, 0, len(p.functions))
+	for _, fn := range p.functions {
+		out = append(out, p.publicFunctionName(fn.Name))
+	}
+	return out
+}
+
+func (p *Parser) publicFunctionName(name string) string {
+	if p.Namespace != "" && p.AllowsFunctions {
+		return p.Namespace + name
+	}
+	return name
+}
+
+func (p *Parser) functionByPublicName(name string) (pluginFunction, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, fn := range p.functions {
+		if p.publicFunctionName(fn.Name) == name {
+			return fn, true
+		}
+	}
+	return pluginFunction{}, false
 }
 
 // Run consumes r until EOF, DISABLE or EXIT. Protocol errors are counted and
 // skipped; only I/O errors and the two control commands end the run.
 func (p *Parser) Run(r io.Reader) error {
+	defer p.failWaits()
 	if p.Now == nil {
 		p.Now = time.Now
 	}
@@ -228,18 +273,9 @@ func (p *Parser) Line(line string) error {
 		}
 		p.Reg.SetHostLabel(f[1], f[2])
 	case "FUNCTION":
-		if p.Namespace != "" {
-			return fmt.Errorf("FUNCTION: callable functions are not supported by the metrics capability")
-		}
-		if len(f) < 2 || f[1] == "" {
-			return fmt.Errorf("FUNCTION: missing name")
-		}
-		for _, name := range p.functions {
-			if name == f[1] {
-				return nil
-			}
-		}
-		p.functions = append(p.functions, f[1])
+		return p.declareFunction(f[1:])
+	case "FUNCTION_RESULT":
+		return p.deliverResult(line)
 	case "BEGIN":
 		if len(f) < 2 {
 			return fmt.Errorf("BEGIN: missing chart id")
@@ -500,4 +536,125 @@ func fields(s string) []string {
 		out = append(out, cur.String())
 	}
 	return out
+}
+
+// declareFunction records one FUNCTION line. The caller holds p.mu.
+func (p *Parser) declareFunction(f []string) error {
+	if p.Namespace != "" && !p.AllowsFunctions {
+		return fmt.Errorf("FUNCTION: this package did not declare the functions capability")
+	}
+	if len(f) < 1 || f[0] == "" {
+		return fmt.Errorf("FUNCTION: missing name")
+	}
+	timeout := 10
+	help := ""
+	if p.AllowsFunctions {
+		if !functionNamePattern.MatchString(f[0]) {
+			return fmt.Errorf("FUNCTION: name must be a short lowercase identifier")
+		}
+		if len(f) >= 2 {
+			n, err := strconv.Atoi(f[1])
+			if err != nil || n < 0 || n > 60 {
+				return fmt.Errorf("FUNCTION: timeout must be 0..60 seconds")
+			}
+			if n > 0 {
+				timeout = n
+			}
+		}
+		if len(f) >= 3 {
+			help = strings.Join(f[2:], " ")
+			if len(help) > 200 {
+				return fmt.Errorf("FUNCTION: help exceeds 200 bytes")
+			}
+		}
+	}
+	for _, fn := range p.functions {
+		if fn.Name == f[0] {
+			return nil
+		}
+	}
+	if p.AllowsFunctions && len(p.functions) >= 32 {
+		return fmt.Errorf("FUNCTION: package function budget exceeded")
+	}
+	p.functions = append(p.functions, pluginFunction{Name: f[0], Help: help, Timeout: timeout})
+	return nil
+}
+
+// deliverResult completes one CALL. The caller holds p.mu.
+func (p *Parser) deliverResult(line string) error {
+	if !p.AllowsFunctions {
+		return fmt.Errorf("FUNCTION_RESULT: functions are not enabled")
+	}
+	i := strings.IndexFunc(line, unicode.IsSpace)
+	if i < 0 {
+		return fmt.Errorf("FUNCTION_RESULT: missing id")
+	}
+	rest := strings.TrimSpace(line[i:])
+	id, body, ok := strings.Cut(rest, " ")
+	if !ok || id == "" || strings.TrimSpace(body) == "" {
+		return fmt.Errorf("FUNCTION_RESULT: missing id or body")
+	}
+	body = strings.TrimSpace(body)
+	if len(body) > p.maxResult() {
+		return p.failCall(id, fmt.Errorf("FUNCTION_RESULT: result exceeds %d bytes", p.maxResult()))
+	}
+	ch := p.waiters[id]
+	delete(p.waiters, id)
+	if ch != nil {
+		ch <- callResult{body: body}
+	}
+	return nil
+}
+
+func (p *Parser) maxResult() int {
+	line := p.MaxLine
+	if line <= 0 {
+		line = 64 << 10
+	}
+	budget := line - 64
+	if budget > 256<<10 {
+		budget = 256 << 10
+	}
+	if budget < 1024 {
+		budget = 1024
+	}
+	return budget
+}
+
+func (p *Parser) failCall(id string, err error) error {
+	ch := p.waiters[id]
+	delete(p.waiters, id)
+	if ch != nil {
+		ch <- callResult{err: err}
+	}
+	return err
+}
+
+func (p *Parser) beginCall(id string) chan callResult {
+	ch := make(chan callResult, 1)
+	p.mu.Lock()
+	if p.waiters == nil {
+		p.waiters = map[string]chan callResult{}
+	}
+	p.waiters[id] = ch
+	p.mu.Unlock()
+	return ch
+}
+
+func (p *Parser) cancelCall(id string) {
+	p.mu.Lock()
+	delete(p.waiters, id)
+	p.mu.Unlock()
+}
+
+func (p *Parser) failWaits() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for id, ch := range p.waiters {
+		select {
+		case ch <- callResult{err: errPluginStopped}:
+		default:
+		}
+		delete(p.waiters, id)
+	}
 }

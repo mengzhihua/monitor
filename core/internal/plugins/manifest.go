@@ -158,8 +158,8 @@ func readManifest(ctx context.Context, path, id string) (*Manifest, string, erro
 	if !packageID.MatchString(manifest.ID) || manifest.ID != id {
 		return nil, "", errors.New("manifest id must match its lowercase package directory")
 	}
-	if len(manifest.Capabilities) != 1 || manifest.Capabilities[0] != "metrics" {
-		return nil, "", errors.New("v1 packages must declare exactly the metrics capability")
+	if err := validateCapabilities(manifest.Capabilities); err != nil {
+		return nil, "", err
 	}
 	if strings.TrimSpace(manifest.Name) == "" || len(manifest.Name) > 120 || strings.TrimSpace(manifest.Version) == "" || len(manifest.Version) > 64 || len(manifest.Description) > 2000 {
 		return nil, "", errors.New("invalid package name, version or description length")
@@ -211,6 +211,32 @@ func packageCommand(dir, command string) (string, error) {
 		}
 	}
 	return path, nil
+}
+
+func validateCapabilities(capabilities []string) error {
+	if len(capabilities) == 0 || len(capabilities) > 2 {
+		return errors.New("v1 packages must declare metrics, functions, or both")
+	}
+	seen := map[string]bool{}
+	for _, capability := range capabilities {
+		if capability != "metrics" && capability != "functions" || seen[capability] {
+			return errors.New("v1 packages must declare metrics, functions, or both")
+		}
+		seen[capability] = true
+	}
+	return nil
+}
+
+func (m *Manifest) allowsFunctions() bool {
+	if m == nil {
+		return false
+	}
+	for _, capability := range m.Capabilities {
+		if capability == "functions" {
+			return true
+		}
+	}
+	return false
 }
 
 func resourceField(resources *PackageResources, pick func(*PackageResources) int) int {

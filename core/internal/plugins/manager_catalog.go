@@ -72,7 +72,7 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 			sp.Command = path
 		}
 		locked := sp.Disabled || disabled[sp.Name]
-		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: newPluginParser(sp, m.reg, m.opt.packageBudgets()), stderr: &stderrState{}}
+		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: m.parserFor(sp), stderr: &stderrState{}, call: make(chan struct{}, 1)}
 		if !p.enabled {
 			p.state = StateDisabled
 		}

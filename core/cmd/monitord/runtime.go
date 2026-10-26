@@ -343,6 +343,7 @@ func collectorOptions(cfg *config.Config, disabled map[string]bool) collect.Opti
 }
 
 func pluginRuntimeOptions(cfg *config.Config, dir string, log *slog.Logger) plugins.Options {
+	functions := cfg.PluginFunctionsEnabled()
 	return plugins.Options{
 		Dir: dir, Disabled: cfg.Plugins.Disabled, Logger: log,
 		StatePath:     filepath.Join(cfg.Global.DataDir, "plugins", "state.json"),
@@ -353,5 +354,6 @@ func pluginRuntimeOptions(cfg *config.Config, dir string, log *slog.Logger) plug
 		MaxLabels:     cfg.Plugins.MaxLabels,
 		MaxVariables:  cfg.Plugins.MaxVariables,
 		MaxLine:       cfg.Plugins.MaxLine,
+		Functions:     &functions,
 	}
 }

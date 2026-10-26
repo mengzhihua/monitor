@@ -53,7 +53,15 @@ func (s *Server) functions() []collect.Function {
 	if s.sched != nil {
 		out = s.sched.Functions()
 	}
-	return append(out, s.opt.ExtraFunctions...)
+	out = append(out, s.opt.ExtraFunctions...)
+	if src, ok := s.opt.Plugins.(interface {
+		Functions() []plugins.FunctionSpec
+	}); ok {
+		for _, fn := range src.Functions() {
+			out = append(out, collect.Function{Name: fn.Name, Help: fn.Help, Timeout: fn.Timeout, Run: fn.Run})
+		}
+	}
+	return out
 }
 
 // handleFunction runs one collector function: ?function=processes plus any

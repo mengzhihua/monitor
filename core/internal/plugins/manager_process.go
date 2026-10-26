@@ -74,7 +74,7 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 		return err
 	}
 	// Parser state is process-local; collected Registry history survives restarts.
-	parser := newPluginParser(p.spec, m.reg, m.opt.packageBudgets())
+	parser := m.parserFor(p.spec)
 	p.mu.Lock()
 	p.parser = parser
 	p.mu.Unlock()
@@ -102,7 +102,22 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 	defer outWriter.Close()
 	defer errWriter.Close()
 	cmd.Stdout, cmd.Stderr = outWriter, errWriter
-	cmd.Stdin = nil
+	var stdinW *io.PipeWriter
+	if parser.AllowsFunctions {
+		stdinR, writer := io.Pipe()
+		stdinW = writer
+		cmd.Stdin = stdinR
+		defer stdinR.Close()
+		defer stdinW.Close()
+		p.mu.Lock()
+		p.stdin = stdinW
+		p.mu.Unlock()
+		defer func() {
+			p.mu.Lock()
+			p.stdin = nil
+			p.mu.Unlock()
+		}()
+	}
 	cmd.WaitDelay = 3 * time.Second // then force-close pipes held open by orphaned children
 	cleanup, startErr := startManagedProcess(cmd)
 	if err := startErr; err != nil {
