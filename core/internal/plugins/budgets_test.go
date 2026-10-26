@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,70 @@ func TestLegacyPluginsIgnorePackageChartBudget(t *testing.T) {
 	}
 	if err := p.Line("CHART system.load"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestManifestResourcesCannotRaiseTheProcessBudget(t *testing.T) {
+	dir := t.TempDir()
+	packageFixture(t, dir, "example", func(m map[string]any) {
+		m["resources"] = map[string]any{"max_charts": 2, "max_line": 4096}
+	})
+	specs, diagnostics := DiscoverManifests(dir)
+	if len(diagnostics) != 0 || len(specs) != 1 || specs[0].MaxCharts != 2 || specs[0].MaxLine != 4096 {
+		t.Fatalf("specs=%+v diagnostics=%v", specs, diagnostics)
+	}
+	public, err := json.Marshal(specs[0].Manifest)
+	if err != nil || !strings.Contains(string(public), `"max_charts":2`) || strings.Contains(string(public), `"command"`) {
+		t.Fatalf("public manifest %s %v", public, err)
+	}
+	reg := newReg(&memSink{})
+	p := newPluginParser(specs[0], reg, PackageBudgets{})
+	if p.MaxCharts != 2 || p.MaxDimensions != 64 || p.MaxLine != 4096 {
+		t.Fatalf("tightened parser %+v", p)
+	}
+	if err := p.Line("CHART plugin.example.one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Line("CHART plugin.example.two"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Line("CHART plugin.example.three"); err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("package ceiling: %v", err)
+	}
+	clamped := newPluginParser(specs[0], newReg(&memSink{}), PackageBudgets{MaxCharts: 1})
+	if clamped.MaxCharts != 1 || clamped.MaxLine != 4096 {
+		t.Fatalf("process ceiling lost %+v", clamped)
+	}
+	bad := t.TempDir()
+	packageFixture(t, bad, "example", func(m map[string]any) {
+		m["resources"] = map[string]any{"max_charts": 10001}
+	})
+	if specs, diagnostics = DiscoverManifests(bad); len(specs) != 0 || len(diagnostics) != 1 {
+		t.Fatalf("oversized resource accepted: %+v %+v", specs, diagnostics)
+	}
+}
+
+func TestConfiguredScriptCeilingCountsItsOwnCharts(t *testing.T) {
+	p := newPluginParser(Spec{Name: "legacy", MaxCharts: 1}, newReg(&memSink{}), PackageBudgets{})
+	if p.Namespace != "" || p.MaxCharts != 1 {
+		t.Fatalf("%+v", p)
+	}
+	if err := p.Line("CHART local.one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Line("CHART local.two"); err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("configured ceiling: %v", err)
+	}
+}
+
+func TestCatalogReportsPerPluginCeiling(t *testing.T) {
+	m := New(newReg(&memSink{}), []Spec{{Name: "example", Command: "example", Manifest: &Manifest{ID: "example"}, MaxCharts: 2}}, Options{})
+	plugins := m.Catalog().Plugins
+	if len(plugins) != 1 || plugins[0].Budgets == nil || plugins[0].Budgets.MaxCharts != 2 || plugins[0].Budgets.MaxDimensions != 64 {
+		t.Fatalf("%+v", plugins)
+	}
+	if m.Catalog().Budgets.MaxCharts != 128 {
+		t.Fatal("process ceiling changed")
 	}
 }
 

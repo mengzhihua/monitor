@@ -16,7 +16,17 @@ const shown = computed(() => {
 })
 const readable = computed(() => pluginAccess(props.platform, props.role, props.authenticated).read)
 const when = (seconds?: number) => seconds ? new Date(seconds * 1000).toLocaleString() : '尚无记录'
-const lineBudget = (bytes: number) => bytes % 1024 === 0 ? `${bytes / 1024} KiB` : `${bytes} 字节`
+const lineBudget = (bytes?: number) => bytes ? (bytes % 1024 === 0 ? `${bytes / 1024} KiB` : `${bytes} 字节`) : '未设置'
+const pluginBudget = (budgets?: { max_charts?: number; max_dimensions?: number; max_labels?: number; max_variables?: number; max_line?: number }) => {
+  if (!budgets) return ''
+  const parts = []
+  if (budgets.max_charts) parts.push(`${budgets.max_charts} 张图表`)
+  if (budgets.max_dimensions) parts.push(`每张 ${budgets.max_dimensions} 个维度`)
+  if (budgets.max_labels) parts.push(`${budgets.max_labels} 个标签`)
+  if (budgets.max_variables) parts.push(`${budgets.max_variables} 个变量`)
+  if (budgets.max_line) parts.push(`单行 ${lineBudget(budgets.max_line)}`)
+  return parts.join('，')
+}
 const title = (plugin: PluginStatus) => plugin.manifest?.name || plugin.name
 function close() { if (canLeave()) emit('close') }
 defineExpose({ canLeave })
@@ -54,6 +64,7 @@ defineExpose({ canLeave })
         <article v-for="plugin in shown" :key="plugin.name" class="plugin-card" :aria-label="title(plugin)">
           <header><div><h3>{{ title(plugin) }}</h3><code>{{ plugin.name }}</code></div><span class="state" :class="{ issue: ['failed', 'waiting'].includes(plugin.state) }">{{ pluginState(plugin.state) }}</span></header>
           <p v-if="plugin.manifest?.description">{{ plugin.manifest.description }}</p>
+          <p v-if="pluginBudget(plugin.budgets)" class="dim">本插件上限：{{ pluginBudget(plugin.budgets) }}。</p>
           <dl class="metadata">
             <div><dt>来源</dt><dd>{{ pluginSource(plugin.source) }}</dd></div>
             <div v-if="plugin.manifest"><dt>版本</dt><dd>{{ plugin.manifest.version }} · API {{ plugin.manifest.api_version }}</dd></div>

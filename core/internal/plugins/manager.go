@@ -21,6 +21,14 @@ type Spec struct {
 	Disabled    bool      `yaml:"disabled"`
 	Source      string    `yaml:"-"`
 	Manifest    *Manifest `yaml:"-"`
+	// Per-plugin ceilings. Zero means the process budget for a manifest package,
+	// and no chart/dimension/label/variable cap for a legacy script. A positive
+	// value cannot raise the process budget. max_line still applies to every plugin.
+	MaxCharts     int `yaml:"max_charts,omitempty" json:"max_charts,omitempty"`
+	MaxDimensions int `yaml:"max_dimensions,omitempty" json:"max_dimensions,omitempty"`
+	MaxLabels     int `yaml:"max_labels,omitempty" json:"max_labels,omitempty"`
+	MaxVariables  int `yaml:"max_variables,omitempty" json:"max_variables,omitempty"`
+	MaxLine       int `yaml:"max_line,omitempty" json:"max_line,omitempty"`
 }
 
 // PackageBudgets are the manifest-package resource limits reported by the
@@ -34,7 +42,8 @@ type PackageBudgets struct {
 	MaxLine       int `json:"max_line"`
 }
 
-func (b PackageBudgets) effective() PackageBudgets {
+// Effective fills zero fields with the built-in package ceilings.
+func (b PackageBudgets) Effective() PackageBudgets {
 	if b.MaxCharts <= 0 {
 		b.MaxCharts = 128
 	}
@@ -72,7 +81,60 @@ func (o Options) packageBudgets() PackageBudgets {
 	return PackageBudgets{
 		MaxCharts: o.MaxCharts, MaxDimensions: o.MaxDimensions,
 		MaxLabels: o.MaxLabels, MaxVariables: o.MaxVariables, MaxLine: o.MaxLine,
-	}.effective()
+	}.Effective()
+}
+
+func (b PackageBudgets) tighten(limit PackageBudgets) PackageBudgets {
+	if limit.MaxCharts > 0 && limit.MaxCharts < b.MaxCharts {
+		b.MaxCharts = limit.MaxCharts
+	}
+	if limit.MaxDimensions > 0 && limit.MaxDimensions < b.MaxDimensions {
+		b.MaxDimensions = limit.MaxDimensions
+	}
+	if limit.MaxLabels > 0 && limit.MaxLabels < b.MaxLabels {
+		b.MaxLabels = limit.MaxLabels
+	}
+	if limit.MaxVariables > 0 && limit.MaxVariables < b.MaxVariables {
+		b.MaxVariables = limit.MaxVariables
+	}
+	if limit.MaxLine > 0 && limit.MaxLine < b.MaxLine {
+		b.MaxLine = limit.MaxLine
+	}
+	return b
+}
+
+func (sp Spec) declaredLimits() PackageBudgets {
+	return PackageBudgets{
+		MaxCharts: sp.MaxCharts, MaxDimensions: sp.MaxDimensions,
+		MaxLabels: sp.MaxLabels, MaxVariables: sp.MaxVariables, MaxLine: sp.MaxLine,
+	}
+}
+
+// enforcedBudgets is the ceiling actually applied to this plugin. Manifest
+// packages always receive a full budget. Legacy scripts stay uncapped unless
+// the operator set a per-plugin ceiling; max_line always has a value.
+func enforcedBudgets(sp Spec, process PackageBudgets) (PackageBudgets, bool) {
+	process = process.Effective().tighten(sp.declaredLimits())
+	if sp.Manifest != nil {
+		return process, true
+	}
+	if sp.MaxCharts == 0 && sp.MaxDimensions == 0 && sp.MaxLabels == 0 && sp.MaxVariables == 0 && sp.MaxLine == 0 {
+		return PackageBudgets{}, false
+	}
+	out := PackageBudgets{MaxLine: process.MaxLine}
+	if sp.MaxCharts > 0 {
+		out.MaxCharts = process.MaxCharts
+	}
+	if sp.MaxDimensions > 0 {
+		out.MaxDimensions = process.MaxDimensions
+	}
+	if sp.MaxLabels > 0 {
+		out.MaxLabels = process.MaxLabels
+	}
+	if sp.MaxVariables > 0 {
+		out.MaxVariables = process.MaxVariables
+	}
+	return out, true
 }
 
 type State string
@@ -102,6 +164,7 @@ type Status struct {
 	Functions   []string           `json:"functions,omitempty"`
 	Source      string             `json:"source"`
 	Manifest    *Manifest          `json:"manifest,omitempty"`
+	Budgets     *PackageBudgets    `json:"budgets,omitempty"`
 	Locked      bool               `json:"locked"`
 	Stderr      StderrStats        `json:"stderr"`
 }

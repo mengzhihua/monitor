@@ -45,7 +45,9 @@ plugins.d/
 
 `HOST_LABEL` 和 `FUNCTION` 不属于 metrics 能力，清单包使用时记入协议错误。非有限数值不会进入采样/变量状态。其他文本协议见 [plugins.d 协议](03-plugins-d-protocol.md)。
 
-上述 128 / 64 / 128 / 128 和 64 KiB 是默认预算。`plugins.max_charts`、`max_dimensions`、`max_labels`、`max_variables`、`max_line` 可以覆盖，0 保持默认；`max_line` 也限制旧脚本的单行长度，其余预算仍只约束清单包。`plugins.restart_min` / `restart_max` 覆盖重启退避，默认 1 秒 / 1 分钟。目录接口的 `budgets` 返回实际生效值。采集器启用仍由 `collectors.enabled` / `disabled` 决定，`collectors.timeout` 限制单次采集，0 表示一个采集周期。已有配置不写这些键时行为不变。
+上述 128 / 64 / 128 / 128 和 64 KiB 是进程级默认预算。`plugins.max_charts`、`max_dimensions`、`max_labels`、`max_variables`、`max_line` 可以覆盖，0 保持默认；`max_line` 也限制旧脚本的单行长度，其余预算仍只约束清单包。`plugins.restart_min` / `restart_max` 覆盖重启退避，默认 1 秒 / 1 分钟。目录接口的 `budgets` 返回进程级上限。采集器启用仍由 `collectors.enabled` / `disabled` 决定，`collectors.timeout` 限制单次采集，0 表示一个采集周期。已有配置不写这些键时行为不变。
+
+单个插件可以再收紧，不能放宽进程级上限。清单里的可选 `resources` 对象使用相同字段名，例如 `"resources": {"max_charts": 4}`；省略的字段继承进程预算，超出进程预算的声明会在运行时按进程预算截断，超出允许范围的值使该包进入目录诊断且不执行。`plugins.list[]` 的同名字段是操作员给这一条配置的上限，超过进程预算会在配置校验时失败。旧脚本默认仍不限制图表数量；给它写上 `max_charts` 后只统计该插件自己发布的图表。目录里每个因此受到单独上限的插件带有自己的 `budgets`，表示实际生效值。
 
 ## 发现、更新与兼容
 

@@ -6,7 +6,7 @@ import (
 )
 
 func (p *Parser) checkLabel(key string) error {
-	if p.Namespace == "" {
+	if p.Namespace == "" && p.MaxLabels <= 0 {
 		return nil
 	}
 	labels := map[string]string{}
@@ -33,34 +33,45 @@ func (p *Parser) checkLabel(key string) error {
 }
 
 func (p *Parser) checkChart(id string) error {
-	if p.Namespace == "" {
-		return nil
-	}
-	if !strings.HasPrefix(id, p.Namespace) || len(id) <= len(p.Namespace) || len(id) > 200 {
-		return fmt.Errorf("CHART: id must be inside %s with at most 200 bytes", p.Namespace)
-	}
-	if existing, ok := p.Reg.Chart(id); ok {
-		// Namespace alone is insufficient if a legacy collector already owns
-		// that name. Never attach dimensions to or overwrite another owner.
-		if existing.Plugin != p.Plugin && !strings.HasPrefix(existing.Plugin, p.Plugin+"/") {
-			return fmt.Errorf("CHART: id is owned by another collector")
+	if p.Namespace != "" {
+		if !strings.HasPrefix(id, p.Namespace) || len(id) <= len(p.Namespace) || len(id) > 200 {
+			return fmt.Errorf("CHART: id must be inside %s with at most 200 bytes", p.Namespace)
 		}
+		if existing, ok := p.Reg.Chart(id); ok {
+			// Namespace alone is insufficient if a legacy collector already owns
+			// that name. Never attach dimensions to or overwrite another owner.
+			if existing.Plugin != p.Plugin && !strings.HasPrefix(existing.Plugin, p.Plugin+"/") {
+				return fmt.Errorf("CHART: id is owned by another collector")
+			}
+			return nil
+		}
+	} else if existing, ok := p.Reg.Chart(id); ok && (existing.Plugin == p.Plugin || strings.HasPrefix(existing.Plugin, p.Plugin+"/")) {
 		return nil
 	}
+	if p.MaxCharts <= 0 || p.ownedCharts() < p.MaxCharts {
+		return nil
+	}
+	return fmt.Errorf("CHART: package chart budget exceeded")
+}
+
+func (p *Parser) ownedCharts() int {
 	count := 0
 	for _, chart := range p.Reg.Charts() {
-		if strings.HasPrefix(chart.ID, p.Namespace) {
+		if p.Namespace != "" {
+			if strings.HasPrefix(chart.ID, p.Namespace) {
+				count++
+			}
+			continue
+		}
+		if chart.Plugin == p.Plugin || strings.HasPrefix(chart.Plugin, p.Plugin+"/") {
 			count++
 		}
 	}
-	if p.MaxCharts > 0 && count >= p.MaxCharts {
-		return fmt.Errorf("CHART: package chart budget exceeded")
-	}
-	return nil
+	return count
 }
 
 func (p *Parser) checkDimension(id string) error {
-	if p.Namespace == "" {
+	if p.Namespace == "" && p.MaxDimensions <= 0 {
 		return nil
 	}
 	if len(id) > 128 {
