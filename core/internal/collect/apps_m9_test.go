@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,74 @@ func TestZooKeeperMNTR(t *testing.T) {
 	}
 	if _, ok := reg.Chart("zookeeper.watches"); !ok {
 		t.Fatal("missing zookeeper.watches")
+	}
+}
+
+func TestZooKeeperFailureMarksUnsupported(t *testing.T) {
+	mntr := "zk_avg_latency\t1\nzk_server_state\tleader\nzk_uptime\t99\n"
+	phase := "ok"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 16)
+				_, _ = c.Read(buf)
+				body := mntr
+				if phase == "bad" {
+					body = "mntr is not in the whitelist\n"
+				}
+				_, _ = io.WriteString(c, body)
+			}(c)
+		}
+	}()
+	z := &zookeeperCollector{cfg: zookeeperConfig{Address: ln.Addr().String(), Timeout: 200 * time.Millisecond}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := z.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := z.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	uptime := mustChart(t, reg, "zookeeper.uptime")
+	state := mustChart(t, reg, "zookeeper.server_state")
+	if _, vals := uptime.LastValues(); vals["uptime"] != 99 || uptime.Unsupported != "" {
+		t.Fatalf("uptime %+v %q", vals, uptime.Unsupported)
+	}
+	saved := z.cfg.Address
+	z.cfg.Address = "127.0.0.1:1"
+	if err := z.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || state.Unsupported == "" || uptime.LastCollectionTime() != now.Unix() {
+		t.Fatalf("uptime %q at %d state %q", uptime.Unsupported, uptime.LastCollectionTime(), state.Unsupported)
+	}
+	z.cfg.Address = saved
+	phase = "bad"
+	if err := z.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || !strings.Contains(uptime.Unsupported, "mntr disabled") {
+		t.Fatalf("whitelist %q", uptime.Unsupported)
+	}
+	phase = "ok"
+	if err := z.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported != "" || state.Unsupported != "" {
+		t.Fatalf("stuck uptime %q state %q", uptime.Unsupported, state.Unsupported)
+	}
+	if _, vals := uptime.LastValues(); vals["uptime"] != 99 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 
