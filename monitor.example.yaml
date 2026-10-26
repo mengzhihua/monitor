@@ -909,6 +909,7 @@ export:
 #     - name: page
 #       severities: [CRITICAL]
 #       alarms: ["disk_*"]
+#       ack: no            # yes runs when the problem is acknowledged; no waits until it is not
 #       steps:
 #         - { role: sysadmin, command: echo-ok }
 #         - { delay: 5m, role: pager }
