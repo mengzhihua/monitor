@@ -207,6 +207,61 @@ func TestParseBindJSON(t *testing.T) {
 	}
 }
 
+func TestBindFailureMarksUnsupported(t *testing.T) {
+	raw := `{"opcodes":{"QUERY":20,"UPDATE":1},"nsstats":{"QrySuccess":15},"qtypes":{"A":10}}`
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		_, _ = w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+	b := &bindCollector{cfg: bindConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := b.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := b.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	opcodes := mustChart(t, reg, "bind.in_opcodes")
+	qtypes := mustChart(t, reg, "bind.in_qtypes")
+	if opcodes.Unsupported != "" || opcodes.LastCollectionTime() != now.Unix() {
+		t.Fatalf("opcodes %q at %d", opcodes.Unsupported, opcodes.LastCollectionTime())
+	}
+	mode = "down"
+	if err := b.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if opcodes.Unsupported == "" || qtypes.Unsupported == "" || opcodes.LastCollectionTime() != now.Unix() {
+		t.Fatalf("opcodes %q at %d qtypes %q", opcodes.Unsupported, opcodes.LastCollectionTime(), qtypes.Unsupported)
+	}
+	mode = "bad"
+	if err := b.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if opcodes.Unsupported == "" {
+		t.Fatal("bad JSON stayed supported")
+	}
+	mode = "ok"
+	if err := b.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if opcodes.Unsupported != "" || qtypes.Unsupported != "" {
+		t.Fatalf("stuck opcodes %q qtypes %q", opcodes.Unsupported, qtypes.Unsupported)
+	}
+	if opcodes.LastCollectionTime() != now.Add(3*time.Second).Unix() {
+		t.Fatalf("recovered at %d", opcodes.LastCollectionTime())
+	}
+}
+
 func TestParseUnboundStats(t *testing.T) {
 	s := "total.num.queries=100\ntotal.num.cachehits=80\ntotal.num.cachemiss=20\ntotal.num.prefetch=2\ntotal.num.recursivereplies=20\ntotal.requestlist.avg=0.5\ntotal.requestlist.max=3\n"
 	m := parseUnboundStats(s)
