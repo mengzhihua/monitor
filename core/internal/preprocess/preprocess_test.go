@@ -94,6 +94,37 @@ func TestZabbixPreprocessSteps(t *testing.T) {
 	}
 }
 
+func TestDiscardUnchangedHeartbeat(t *testing.T) {
+	steps := []Step{{Type: "discard_unchanged_heartbeat", Seconds: 10}}
+	value, prev, emit, err := ApplyWithHeartbeat(steps, "4", math.NaN(), 0, 100)
+	if err != nil || value != 4 || prev != 4 || emit != 100 {
+		t.Fatalf("first %v %v %v %v", value, prev, emit, err)
+	}
+	if _, next, kept, err := ApplyWithHeartbeat(steps, "4", prev, emit, 109); !errors.Is(err, ErrUnchanged) || next != prev || kept != emit {
+		t.Fatalf("inside window next=%v kept=%v err=%v", next, kept, err)
+	}
+	value, prev, emit, err = ApplyWithHeartbeat(steps, "4", prev, emit, 110)
+	if err != nil || value != 4 || prev != 4 || emit != 110 {
+		t.Fatalf("heartbeat %v %v %v %v", value, prev, emit, err)
+	}
+	value, prev, emit, err = ApplyWithHeartbeat(steps, "9", prev, emit, 112)
+	if err != nil || value != 9 || prev != 9 || emit != 112 {
+		t.Fatalf("change resets %v %v %v %v", value, prev, emit, err)
+	}
+	if _, _, _, err := ApplyWithHeartbeat(steps, "9", prev, emit, 115); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("new window should still discard, err=%v", err)
+	}
+	if _, _, err := Apply(steps, "9", prev); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("Apply without a clock should discard, err=%v", err)
+	}
+	if err := Validate([]Step{{Type: "discard_unchanged_heartbeat", Seconds: 0}}); err == nil {
+		t.Fatal("accepted a zero heartbeat")
+	}
+	if _, _, _, err := ApplyWithHeartbeat([]Step{{Type: "discard_unchanged_heartbeat", Seconds: 86401}}, "1", math.NaN(), 0, 1); err == nil {
+		t.Fatal("accepted a heartbeat longer than a day")
+	}
+}
+
 func TestJavaScriptPreprocessIsBounded(t *testing.T) {
 	v, _, err := Apply([]Step{{Type: "javascript", Script: "return Number(value) * 2"}}, "3", math.NaN())
 	if err != nil || v != 6 {

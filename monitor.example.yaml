@@ -882,6 +882,7 @@ export:
 #     dependent:
 #       items:
 #         - { name: used_x2, chart: system.ram, dimension: used, preprocess: [{ type: multiplier, factor: 2 }, { type: discard_unchanged }] }
+#         - { name: used_alive, chart: system.ram, dimension: used, preprocess: [{ type: discard_unchanged_heartbeat, seconds: 60 }] }
 #     calculated:
 #       items:
 #         - { name: used_pct, formula: "100 * {system.ram:used} / ({system.ram:used} + {system.ram:free})" }

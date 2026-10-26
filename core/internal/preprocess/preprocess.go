@@ -2,8 +2,9 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// and change (delta). JavaScript runs operator config in a time-limited
-// interpreter that has no host, network, or filesystem API.
+// discard-unchanged with heartbeat, and change (delta). JavaScript runs
+// operator config in a time-limited interpreter that has no host, network, or
+// filesystem API.
 package preprocess
 
 import (
@@ -29,19 +30,44 @@ type Step struct {
 	Min         *float64 `yaml:"min,omitempty" json:"min,omitempty"`
 	Max         *float64 `yaml:"max,omitempty" json:"max,omitempty"`
 	Script      string   `yaml:"script,omitempty" json:"script,omitempty"`
+	Seconds     int      `yaml:"seconds,omitempty" json:"seconds,omitempty"`
 }
+
+// maxHeartbeat is the longest discard_unchanged_heartbeat period.
+const maxHeartbeat = 86400
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
 // Callers skip the sample and keep the previous stored value.
 var ErrUnchanged = errors.New("preprocess: discard unchanged")
 
+// Validate checks step parameters that cannot be corrected at runtime.
+func Validate(steps []Step) error {
+	for _, st := range steps {
+		if strings.EqualFold(strings.TrimSpace(st.Type), "discard_unchanged_heartbeat") && (st.Seconds < 1 || st.Seconds > maxHeartbeat) {
+			return fmt.Errorf("discard_unchanged_heartbeat: seconds must be from 1 to 86400")
+		}
+	}
+	return nil
+}
+
 // Apply runs steps against input. prev is the previous numeric sample for a
 // change step; pass math.NaN when there is none. The returned prev is the
-// value to store for the next change step.
+// value to store for the next change step. Heartbeat steps need
+// ApplyWithHeartbeat so a repeated value can be written again.
 func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
+	value, next, _, err := ApplyWithHeartbeat(steps, input, prev, 0, 0)
+	return value, next, err
+}
+
+// ApplyWithHeartbeat is Apply plus the clock for discard_unchanged_heartbeat.
+// lastEmit and now are unix seconds. lastEmit is 0 when nothing has been kept.
+// An equal value is kept again when now is at least lastEmit plus the step's
+// seconds. The returned emit time is the one to store after a successful step.
+func ApplyWithHeartbeat(steps []Step, input string, prev float64, lastEmit, now int64) (float64, float64, int64, error) {
 	text := input
 	value := math.NaN()
 	have := false
+	emit := lastEmit
 	for _, st := range steps {
 		var err error
 		switch strings.ToLower(strings.TrimSpace(st.Type)) {
@@ -53,7 +79,7 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			text = trimSide(text, st.Pattern, false)
 		case "replace":
 			if st.Pattern == "" {
-				return 0, prev, fmt.Errorf("replace: pattern required")
+				return 0, prev, lastEmit, fmt.Errorf("replace: pattern required")
 			}
 			text = strings.ReplaceAll(text, st.Pattern, st.Replacement)
 		case "regex":
@@ -76,7 +102,7 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 		case "bool":
 			re, e := regexp.Compile(st.Pattern)
 			if e != nil {
-				return 0, prev, e
+				return 0, prev, lastEmit, e
 			}
 			if re.MatchString(text) {
 				value = 1
@@ -87,74 +113,84 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			have = true
 		case "matches":
 			if err = mustMatch(st.Pattern, text, true); err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 		case "not_match":
 			if err = mustMatch(st.Pattern, text, false); err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 		case "hex", "octal":
 			value, err = parseBase(text, st.Type)
 			if err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 			text = strconv.FormatInt(int64(value), 10)
 			have = true
 		case "in_range":
 			value, err = parseNum(text)
 			if err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 			if st.Min == nil && st.Max == nil {
-				return 0, prev, fmt.Errorf("in_range: min or max required")
+				return 0, prev, lastEmit, fmt.Errorf("in_range: min or max required")
 			}
 			if st.Min != nil && value < *st.Min || st.Max != nil && value > *st.Max {
-				return 0, prev, fmt.Errorf("in_range: %v outside bounds", value)
+				return 0, prev, lastEmit, fmt.Errorf("in_range: %v outside bounds", value)
 			}
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
-		case "discard_unchanged":
+		case "discard_unchanged", "discard_unchanged_heartbeat":
+			heartbeat := strings.EqualFold(strings.TrimSpace(st.Type), "discard_unchanged_heartbeat")
+			if heartbeat && (st.Seconds < 1 || st.Seconds > maxHeartbeat) {
+				return 0, prev, lastEmit, fmt.Errorf("discard_unchanged_heartbeat: seconds must be from 1 to 86400")
+			}
 			value, err = parseNum(text)
 			if err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 			if !math.IsNaN(prev) && value == prev {
-				return 0, prev, ErrUnchanged
+				due := heartbeat && emit > 0 && now >= emit && now-emit >= int64(st.Seconds)
+				if !due {
+					return 0, prev, lastEmit, ErrUnchanged
+				}
 			}
 			prev = value
+			if heartbeat && now >= emit {
+				emit = now
+			}
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
 		case "javascript", "js":
 			text, err = applyJS(st.Script, text)
 			if err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 			have = false
 		case "change":
 			value, err = parseNum(text)
 			if err != nil {
-				return 0, prev, err
+				return 0, prev, lastEmit, err
 			}
 			if math.IsNaN(prev) {
-				return 0, value, fmt.Errorf("change: no previous value")
+				return 0, value, lastEmit, fmt.Errorf("change: no previous value")
 			}
 			delta := value - prev
-			return delta, value, nil
+			return delta, value, emit, nil
 		default:
-			return 0, prev, fmt.Errorf("unknown preprocess step %q", st.Type)
+			return 0, prev, lastEmit, fmt.Errorf("unknown preprocess step %q", st.Type)
 		}
 		if err != nil {
-			return 0, prev, err
+			return 0, prev, lastEmit, err
 		}
 	}
 	if !have {
 		var err error
 		value, err = parseNum(text)
 		if err != nil {
-			return 0, prev, err
+			return 0, prev, lastEmit, err
 		}
 	}
-	return value, prev, nil
+	return value, prev, emit, nil
 }
 
 func trimSide(text, pattern string, left bool) string {

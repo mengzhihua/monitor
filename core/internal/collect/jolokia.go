@@ -27,9 +27,10 @@ type jolokiaJob struct {
 }
 
 type jolokiaCollector struct {
-	cfg    jolokiaConfig
-	client *http.Client
-	prev   map[string]float64
+	cfg     jolokiaConfig
+	client  *http.Client
+	prev    map[string]float64
+	emitted map[string]int64
 }
 
 func init() { Register("jolokia", func() Collector { return &jolokiaCollector{} }) }
@@ -47,6 +48,9 @@ func (j *jolokiaCollector) Configure(decode func(v any) error) error {
 		if !validItemName(job.Name) || job.URL == "" || job.MBean == "" || job.Attribute == "" || strings.ContainsAny(job.MBean+job.Attribute+job.Path, "?\n#") {
 			return fmt.Errorf("jolokia: job %q needs name, url, mbean, attribute", job.Name)
 		}
+		if err := preprocess.Validate(job.Steps); err != nil {
+			return fmt.Errorf("jolokia: job %q: %w", job.Name, err)
+		}
 	}
 	return nil
 }
@@ -62,6 +66,7 @@ func (j *jolokiaCollector) Init(reg *registry.Registry) error {
 	}
 	j.client = &http.Client{Timeout: j.cfg.Timeout}
 	j.prev = map[string]float64{}
+	j.emitted = map[string]int64{}
 	for _, job := range j.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "jolokia." + sanitizeID(job.Name), Context: "jolokia.value", Title: "Jolokia " + job.Name,
 			Units: "value", Family: "jmx", Plugin: "jolokia", Module: "jolokia", Priority: 56300,
@@ -86,11 +91,12 @@ func (j *jolokiaCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		if v, ok := j.prev[job.Name]; ok {
 			prev = v
 		}
-		value, next, perr := preprocess.Apply(steps, body, prev)
+		value, next, emitted, perr := preprocess.ApplyWithHeartbeat(steps, body, prev, j.emitted[job.Name], now.Unix())
 		if err != nil || perr != nil {
 			continue
 		}
 		j.prev[job.Name] = next
+		j.emitted[job.Name] = emitted
 		_ = reg.Collect("jolokia."+sanitizeID(job.Name), now, map[string]float64{"value": value})
 	}
 	return nil
