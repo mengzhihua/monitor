@@ -174,14 +174,16 @@ func BenchmarkDecodeBlock3600(b *testing.B) {
 
 func BenchmarkReadBlockData3600(b *testing.B) {
 	ts, values := codecSeries(3600, "gauge")
-	block, err := writeBlock(b.TempDir(), "system.cpu|user", ts, values)
+	dir := b.TempDir()
+	block, err := writeBlock(dir, "system.cpu|user", ts, values)
 	if err != nil {
 		b.Fatal(err)
 	}
+	path := blockFile(dir, block.start)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		meta, data, err := readBlockData(block.path)
+		meta, data, err := readBlockData(path)
 		if err != nil || meta.count != len(ts) {
 			b.Fatalf("block count=%d, error=%v", meta.count, err)
 		}
