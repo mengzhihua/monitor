@@ -212,7 +212,9 @@ data/
 | `find -5m gt 10` | 每个选中维度有匹配样本则为 1，否则 0。比较符与 `count` 相同。空窗口为 0；多维度分别计算后相加 |
 | `percentile -5m p 95` | 窗口百分位，p 为 0 到 100。升序后取 `ceil(n*p/100)-1`；多维度分别计算后相加 |
 | `countunique -5m` | 窗口内不同数值的个数。比较符与 `count` 相同；空窗口为 0；多维度分别计算后相加 |
-| `changecount -5m` | 相邻样本发生变化的次数。`mode inc` 只计上升，`mode dec` 只计下降，默认全部。空窗口为 0；多维度分别计算后相加 |
+| `changecount -5m` |
+| `rate -5m` | 计数器每秒增量；回绕按重置累加；少于两个样本或零时间跨度为 NaN；多维度分别计算后相加 |
+ 相邻样本发生变化的次数。`mode inc` 只计上升，`mode dec` 只计下降，默认全部。空窗口为 0；多维度分别计算后相加 |
 | `mad -5m` | 绝对偏差的中位数。升序后取下标 `n/2`。一个样本为 0，空窗口为 NaN；多维度分别计算后相加 |
 | `monoinc -5m` / `monodec -5m` | 窗口按时间是否单调上升或下降。默认允许相等；`strict` 或 `mode strict` 要求严格增减。一个样本为 1，空窗口为 NaN；多维度分别计算后相加 |
 | `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |

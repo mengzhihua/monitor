@@ -83,7 +83,7 @@ type Lookup struct {
 	AnomalyBit bool   // query 0–100 anomaly rates instead of raw values
 	MinMax     string // "min2max": max-min of the window
 	// Zabbix-style functions. Kind is empty for the classic grouped reduce
-	// above, or one of: nodata, first, change, stddev, count, countunique, changecount, find, percentile, mad,
+	// above, or one of: nodata, first, change, stddev, count, countunique, changecount, rate, find, percentile, mad,
 	// monoinc, monodec, trendavg, trendmin, trendmax, trendsum, trendcount, forecast, timeleft.
 	Kind          string
 	Horizon       time.Duration // forecast: evaluate the linear fit at now+Horizon
@@ -295,6 +295,7 @@ func (r *Rule) Hash() string {
 //	                               distinct values matching the operator; empty is 0
 //	changecount -5m [mode all|inc|dec]
 //	                               adjacent changes; inc/dec count only rises or falls
+//	rate -5m                       per-second counter increase; reset on drop; <2 samples is NaN
 //	find   -5m <op> <n>          1 if any sample matches, else 0 (empty is 0)
 //	percentile -5m p 95            P-th percentile, 0–100, Zabbix nearest rank
 //	mad -5m                        median absolute deviation; index n/2 after sorting
@@ -326,7 +327,7 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
-	case "nodata", "first", "change", "stddev", "count", "countunique", "changecount", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
+	case "nodata", "first", "change", "stddev", "count", "countunique", "changecount", "rate", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
 		l.Kind = strings.ToLower(f[0])
 	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
 		l.Kind = strings.ToLower(f[0])
