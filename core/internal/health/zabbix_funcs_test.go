@@ -594,6 +594,8 @@ func TestLookupVariance(t *testing.T) {
 	}
 }
 
+
+
 func TestLookupForecastTimeleft(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	// Perfectly linear ramp: value = seconds elapsed (slope 1/s over 60 s).

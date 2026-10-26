@@ -181,6 +181,19 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += v
 			continue
 		}
+		if l.Kind == "skewness" || l.Kind == "kurtosis" {
+			order := 4
+			if l.Kind == "skewness" {
+				order = 3
+			}
+			v, ok := standardizedMoment(vals, order)
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += v
+			continue
+		}
 		matched = true
 		switch l.Kind {
 		case "first":
@@ -387,6 +400,41 @@ func countMatching(pts []tsdb.Point, op string, v float64) int {
 		}
 	}
 	return n
+}
+
+// standardizedMoment is the Pearson moment coefficient. order 3 is skewness
+// (m3 / m2^1.5) and order 4 is raw kurtosis (m4 / m2^2), not the excess
+// kurtosis that subtracts 3. Moments divide by the sample count. Zero
+// variance, or fewer than two samples, is undefined.
+func standardizedMoment(pts []tsdb.Point, order int) (float64, bool) {
+	n := len(pts)
+	if n < 2 {
+		return 0, false
+	}
+	var mean float64
+	for _, p := range pts {
+		mean += p.Value
+	}
+	mean /= float64(n)
+	var m2, mk float64
+	for _, p := range pts {
+		d := p.Value - mean
+		m2 += d * d
+		pow := d
+		for i := 1; i < order; i++ {
+			pow *= d
+		}
+		mk += pow
+	}
+	m2 /= float64(n)
+	mk /= float64(n)
+	if m2 == 0 {
+		return 0, false
+	}
+	if order == 3 {
+		return mk / (m2 * math.Sqrt(m2)), true
+	}
+	return mk / (m2 * m2), true
 }
 
 // countUnique is the number of distinct finite values. An operator keeps only
