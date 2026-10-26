@@ -873,6 +873,7 @@ export:
 #     httpagent:
 #       jobs:
 #         - { name: users, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: regex, pattern: "ready_users ([0-9]+)" }] }
+#         - { name: ok_requests, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: prometheus, pattern: 'http_requests_total{code="200"}', output: sum }] }
 #     webscenario:
 #       jobs:
 #         - name: login
