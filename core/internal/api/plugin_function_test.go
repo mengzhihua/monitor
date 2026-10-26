@@ -11,7 +11,7 @@ import (
 
 type pluginFunctionRuntime struct{ pluginRuntimeFixture }
 
-func (pluginFunctionRuntime) Functions() []plugins.FunctionSpec {
+func (p *pluginFunctionRuntime) Functions() []plugins.FunctionSpec {
 	return []plugins.FunctionSpec{{
 		Name: "plugin.demo.ping", Help: "ping", Timeout: 5,
 		Run: func(_ context.Context, args map[string]string) (any, error) {
