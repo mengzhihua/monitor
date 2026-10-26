@@ -89,6 +89,9 @@ type Alarm struct {
 	HoldUntil        int64   `json:"hold_until,omitempty"`    // keep_firing_for deadline, unix seconds
 	RecoveryHold     bool    `json:"recovery_hold,omitempty"` // raised until the recovery expression is true
 	Cause            string  `json:"correlated_cause,omitempty"`
+	Acknowledged     bool    `json:"acknowledged,omitempty"`
+	AckUser          string  `json:"ack_user,omitempty"`
+	AckNote          string  `json:"ack_note,omitempty"`
 
 	// notification pacing
 	DelayUpTo    int64 `json:"delay_up_to_timestamp,omitempty"`
@@ -112,32 +115,33 @@ type Alarm struct {
 
 // LogEntry records a status transition (or a repeat notification).
 type LogEntry struct {
-	UniqueID   uint64  `json:"unique_id"`
-	AlarmID    uint64  `json:"alarm_id"`
-	When       int64   `json:"when"`
-	Updated    int64   `json:"updated,omitempty"` // last evaluation time; set on state snapshots
-	Hostname   string  `json:"hostname"`
-	Name       string  `json:"name"`
-	Chart      string  `json:"chart"`
-	Context    string  `json:"context"`
-	Family     string  `json:"family"`
-	Class      string  `json:"class,omitempty"`
-	Type       string  `json:"type,omitempty"`
-	Component  string  `json:"component,omitempty"`
-	Status     Status  `json:"status"`
-	OldStatus  Status  `json:"old_status"`
-	Value      float64 `json:"value"`
-	OldValue   float64 `json:"old_value"`
-	Units      string  `json:"units"`
-	Info       string  `json:"info"`
-	Recipient  string  `json:"recipient"`
-	Delay      int64   `json:"delay"`
-	Repeat     bool    `json:"repeat,omitempty"`
-	Notified   bool    `json:"notified"`
-	NotifiedAt int64   `json:"notified_at,omitempty"`
-	Manual     bool    `json:"manual,omitempty"` // operator-closed problem (Zabbix "close problem")
-	User       string  `json:"user,omitempty"`   // who closed it
-	Comment    string  `json:"comment,omitempty"`
+	UniqueID     uint64  `json:"unique_id"`
+	AlarmID      uint64  `json:"alarm_id"`
+	When         int64   `json:"when"`
+	Updated      int64   `json:"updated,omitempty"` // last evaluation time; set on state snapshots
+	Hostname     string  `json:"hostname"`
+	Name         string  `json:"name"`
+	Chart        string  `json:"chart"`
+	Context      string  `json:"context"`
+	Family       string  `json:"family"`
+	Class        string  `json:"class,omitempty"`
+	Type         string  `json:"type,omitempty"`
+	Component    string  `json:"component,omitempty"`
+	Status       Status  `json:"status"`
+	OldStatus    Status  `json:"old_status"`
+	Value        float64 `json:"value"`
+	OldValue     float64 `json:"old_value"`
+	Units        string  `json:"units"`
+	Info         string  `json:"info"`
+	Recipient    string  `json:"recipient"`
+	Delay        int64   `json:"delay"`
+	Repeat       bool    `json:"repeat,omitempty"`
+	Notified     bool    `json:"notified"`
+	NotifiedAt   int64   `json:"notified_at,omitempty"`
+	Manual       bool    `json:"manual,omitempty"` // operator-closed problem (Zabbix "close problem")
+	Acknowledged bool    `json:"acknowledged,omitempty"`
+	User         string  `json:"user,omitempty"` // who closed it
+	Comment      string  `json:"comment,omitempty"`
 
 	testChannel string // explicit admin test; never serialized or persisted as an alarm
 }
