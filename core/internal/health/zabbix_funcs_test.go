@@ -40,6 +40,8 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"count -5m", want{kind: "count"}, ""},
 		{"count -5m gt 3.5", want{kind: "count", op: "gt", val: 3.5}, ""},
 		{"count -5m ne 0 of used,free", want{kind: "count", op: "ne", dims: 2}, ""},
+		{"countunique -5m", want{kind: "countunique"}, ""},
+		{"countunique -5m eq 1 of used", want{kind: "countunique", op: "eq", val: 1, dims: 1}, ""},
 		{"trendavg -1d", want{kind: "trendavg"}, ""},
 		{"trendmin -1d", want{kind: "trendmin"}, ""},
 		{"trendmax -1d", want{kind: "trendmax"}, ""},
@@ -244,6 +246,41 @@ func TestLookupPercentile(t *testing.T) {
 	}
 	if v := lookupValue(t, "percentile -5m p 100", both, now); v != 14 {
 		t.Fatalf("two dimensions: got %v want 14", v)
+	}
+}
+
+func TestLookupCountUnique(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 1, 2, 2, 3} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "countunique -5m of used", seed, now); v != 3 {
+		t.Fatalf("unique: got %v want 3", v)
+	}
+	if v := lookupValue(t, "count -5m of used", seed, now); v != 5 {
+		t.Fatalf("count still counts repeats: got %v want 5", v)
+	}
+	if v := lookupValue(t, "countunique -5m gt 1 of used", seed, now); v != 2 {
+		t.Fatalf("unique gt 1: got %v want 2", v)
+	}
+	if v := lookupValue(t, "countunique -5m eq 1 of used", seed, now); v != 1 {
+		t.Fatalf("unique eq 1: got %v want 1", v)
+	}
+	if v := lookupValue(t, "countunique -5m of used", nil, now); v != 0 {
+		t.Fatalf("empty window: got %v want 0", v)
+	}
+	both := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 1, 2} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-2)*time.Second), map[string]float64{
+				"used": value,
+				"free": 5,
+			})
+		}
+	}
+	if v := lookupValue(t, "countunique -5m", both, now); v != 3 {
+		t.Fatalf("two dimensions: got %v want 3", v)
 	}
 }
 

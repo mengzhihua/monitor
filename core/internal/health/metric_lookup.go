@@ -140,9 +140,9 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		if err != nil {
 			continue
 		}
-		if l.Kind == "count" {
-			// count answers 0 for a selected dimension that simply has no
-			// matching samples; only query failures keep it out.
+		if l.Kind == "count" || l.Kind == "countunique" {
+			// These answer 0 for a selected dimension that simply has no
+			// matching samples; only query failures keep them out.
 			matched = true
 		}
 		vals := make([]tsdb.Point, 0, len(pts))
@@ -177,6 +177,8 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += percentileRank(vals, l.Percentile)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
+		case "countunique":
+			sum += float64(countUnique(vals, l.CountOp, l.CountVal))
 		case "forecast":
 			a, b, ok := linearFit(vals)
 			if !ok {
@@ -241,26 +243,43 @@ func percentileRank(pts []tsdb.Point, p float64) float64 {
 func countMatching(pts []tsdb.Point, op string, v float64) int {
 	var n int
 	for _, p := range pts {
-		ok := true
-		switch op {
-		case "gt":
-			ok = p.Value > v
-		case "ge":
-			ok = p.Value >= v
-		case "lt":
-			ok = p.Value < v
-		case "le":
-			ok = p.Value <= v
-		case "eq":
-			ok = p.Value == v
-		case "ne":
-			ok = p.Value != v
-		}
-		if ok {
+		if valueMatches(p.Value, op, v) {
 			n++
 		}
 	}
 	return n
+}
+
+// countUnique is the number of distinct finite values. An operator keeps only
+// the values that pass it, matching Zabbix countunique.
+func countUnique(pts []tsdb.Point, op string, v float64) int {
+	seen := make(map[float64]struct{}, len(pts))
+	for _, p := range pts {
+		if !valueMatches(p.Value, op, v) {
+			continue
+		}
+		seen[p.Value] = struct{}{}
+	}
+	return len(seen)
+}
+
+func valueMatches(value float64, op string, v float64) bool {
+	switch op {
+	case "gt":
+		return value > v
+	case "ge":
+		return value >= v
+	case "lt":
+		return value < v
+	case "le":
+		return value <= v
+	case "eq":
+		return value == v
+	case "ne":
+		return value != v
+	default:
+		return true
+	}
 }
 
 func popStddev(pts []tsdb.Point) float64 {

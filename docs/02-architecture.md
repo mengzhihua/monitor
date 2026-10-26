@@ -211,6 +211,7 @@ data/
 | `diff -5m` / `abschange -5m` | 最近两个样本：不同为 1，否则 0；或它们的绝对差。只有一个样本时为 0 |
 | `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
 | `percentile -5m p 95` | 窗口百分位，p 为 0 到 100。升序后取 `ceil(n*p/100)-1`；多维度分别计算后相加 |
+| `countunique -5m` | 窗口内不同数值的个数。比较符与 `count` 相同；空窗口为 0；多维度分别计算后相加 |
 | `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
 | `forecast -1h horizon 30m` | 最小二乘线性拟合在 now+horizon 的取值 |
 | `timeleft -1h target 0` | 拟合到达 target 的剩余秒数（跨维度取最小；永不收敛返回 1e15） |

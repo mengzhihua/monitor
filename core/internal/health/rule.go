@@ -85,12 +85,12 @@ type Lookup struct {
 	MinMax     string // "min2max": max-min of the window
 	// Zabbix-style functions. Kind is empty for the classic grouped reduce
 	// above, or one of: nodata, first, change, diff, abschange, stddev, count,
-	// percentile, trendavg, trendmin, trendmax, trendsum, trendcount, forecast,
-	// timeleft.
+	// countunique, percentile, trendavg, trendmin, trendmax, trendsum,
+	// trendcount, forecast, timeleft.
 	Kind          string
 	Horizon       time.Duration // forecast: evaluate the linear fit at now+Horizon
 	Target        float64       // timeleft: seconds until the fit reaches Target
-	CountOp       string        // count: gt|ge|lt|le|eq|ne, empty = all points
+	CountOp       string        // count/countunique: gt|ge|lt|le|eq|ne, empty = all points
 	CountVal      float64
 	Percentile    float64 // percentile: rank in [0, 100]
 	hasTarget     bool
@@ -298,6 +298,8 @@ func (r *Rule) Hash() string {
 //	abschange -5m                  absolute difference of the two newest values
 //	stddev -5m                     population stddev of the window
 //	count  -5m [gt|ge|lt|le|eq|ne <n>]   non-NaN points matching the operator
+//	countunique -5m [gt|ge|lt|le|eq|ne <n>]
+//	                               distinct values matching the operator; empty is 0
 //	percentile -5m p 95            P-th percentile, 0–100, Zabbix nearest rank
 //	trendavg|trendmin|trendmax|trendsum|trendcount -1d
 //	                               rollup-tier equivalents of average/min/max/sum/count
@@ -325,7 +327,7 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
-	case "nodata", "first", "change", "diff", "abschange", "stddev", "count", "percentile", "forecast", "timeleft":
+	case "nodata", "first", "change", "diff", "abschange", "stddev", "count", "countunique", "percentile", "forecast", "timeleft":
 		l.Kind = strings.ToLower(f[0])
 	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
 		l.Kind = strings.ToLower(f[0])
@@ -394,8 +396,8 @@ func ParseLookup(s string) (*Lookup, error) {
 					return nil, fmt.Errorf("bad percentile %q", v)
 				}
 				l.Percentile, l.hasPercentile = n, true
-			default: // count comparison operator
-				if l.Kind != "count" {
+			default: // count / countunique comparison operator
+				if l.Kind != "count" && l.Kind != "countunique" {
 					return nil, fmt.Errorf("option %q only applies to count", opt)
 				}
 				n, err := strconv.ParseFloat(v, 64)

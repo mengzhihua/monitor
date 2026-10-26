@@ -744,7 +744,7 @@ health:
   alarms: []           # inline rules, e.g.
   # - name: ram_in_use
   #   on: system.ram                      # chart id, or a context (e.g. disk.space) to bind every matching chart
-  #   lookup: average -1m percentage of used  # or percentile -5m p 95 of used
+  #   lookup: average -1m percentage of used  # or percentile -5m p 95 of used, or countunique -5m of used
   #   units: '%'
   #   every: 10s
   #   tags: { scope: storage }
