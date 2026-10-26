@@ -21,6 +21,7 @@ func TestParseLookupZabbix(t *testing.T) {
 		op      string
 		val     float64
 		pct     float64
+		within  time.Duration
 		dims    int
 	}
 	cases := []struct {
@@ -35,6 +36,7 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
 		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
 		{"percentile -5m p 100", want{kind: "percentile", pct: 100}, ""},
+		{"fuzzytime -5m within 60s", want{kind: "fuzzytime", within: 60 * time.Second}, ""},
 		{"count -5m", want{kind: "count"}, ""},
 		{"count -5m gt 3.5", want{kind: "count", op: "gt", val: 3.5}, ""},
 		{"count -5m ne 0 of used,free", want{kind: "count", op: "ne", dims: 2}, ""},
@@ -56,6 +58,11 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"percentile -5m p 100.1", want{}, "bad percentile"},
 		{"percentile -5m p -0.1", want{}, "bad percentile"},
 		{"average -5m p 95", want{}, "only applies to percentile"},
+		{"fuzzytime -5m", want{}, "fuzzytime requires"},
+		{"fuzzytime -5m within", want{}, "missing value"},
+		{"fuzzytime -5m within nope", want{}, "bad within"},
+		{"fuzzytime -5m within 0s", want{}, "bad within"},
+		{"average -5m within 60s", want{}, "only applies to fuzzytime"},
 		{"average -5m gt 1", want{}, "only applies to count"},
 		{"count -5m gt", want{}, "missing value"},
 		{"count -5m gt x", want{}, "bad count operand"},
@@ -73,7 +80,7 @@ func TestParseLookupZabbix(t *testing.T) {
 		}
 		if l.Kind != c.want.kind || l.Horizon != c.want.horizon || l.Target != c.want.target ||
 			l.CountOp != c.want.op || l.CountVal != c.want.val || l.Percentile != c.want.pct ||
-			len(l.Dimensions) != c.want.dims {
+			l.Within != c.want.within || len(l.Dimensions) != c.want.dims {
 			t.Fatalf("%q: %+v", c.in, l)
 		}
 		if c.want.kind == "percentile" && !l.hasPercentile {
@@ -197,6 +204,44 @@ func TestLookupPercentile(t *testing.T) {
 	}
 	if v := lookupValue(t, "percentile -5m p 100", both, now); v != 14 {
 		t.Fatalf("two dimensions: got %v want 14", v)
+	}
+}
+
+func TestLookupFuzzytime(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	fresh := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-10*time.Second), map[string]float64{"used": 1, "free": 2})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s", fresh, now); v != 1 {
+		t.Fatalf("fresh: got %v want 1", v)
+	}
+	// Exactly on the limit is still fresh.
+	edge := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-60*time.Second), map[string]float64{"used": 1})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", edge, now); v != 1 {
+		t.Fatalf("edge: got %v want 1", v)
+	}
+	stale := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-61*time.Second), map[string]float64{"used": 1})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", stale, now); v != 0 {
+		t.Fatalf("stale: got %v want 0", v)
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", nil, now); v != 0 {
+		t.Fatalf("empty: got %v want 0", v)
+	}
+	// An older sample in the window does not hide a newer stale gap: the newest
+	// free sample is 2m old while used is fresh, so the chart is not fresh.
+	mixed := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-2*time.Minute), map[string]float64{"used": 1, "free": 9})
+		reg.Collect("system.ram", now.Add(-5*time.Second), map[string]float64{"used": 2})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s", mixed, now); v != 0 {
+		t.Fatalf("one stale dimension: got %v want 0", v)
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", mixed, now); v != 1 {
+		t.Fatalf("selected fresh dimension: got %v want 1", v)
 	}
 }
 

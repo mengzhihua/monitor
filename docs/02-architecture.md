@@ -210,6 +210,7 @@ data/
 | `first -5m` / `change -5m` / `stddev -5m` | 首值 / 末值−首值 / 总体标准差 |
 | `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
 | `percentile -5m p 95` | 窗口百分位，p 为 0 到 100。升序后取 `ceil(n*p/100)-1`；多维度分别计算后相加 |
+| `fuzzytime -5m within 60s` | 每个选中维度的最新样本距窗口结束都不超过该时长时为 1，否则为 0 |
 | `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
 | `forecast -1h horizon 30m` | 最小二乘线性拟合在 now+horizon 的取值 |
 | `timeleft -1h target 0` | 拟合到达 target 的剩余秒数（跨维度取最小；永不收敛返回 1e15） |
