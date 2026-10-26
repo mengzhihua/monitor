@@ -154,6 +154,15 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		if len(vals) == 0 {
 			continue
 		}
+		if l.Kind == "varpop" || l.Kind == "varsamp" {
+			v, ok := variance(vals, l.Kind == "varsamp")
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += v
+			continue
+		}
 		matched = true
 		switch l.Kind {
 		case "first":
@@ -264,6 +273,31 @@ func popStddev(pts []tsdb.Point) float64 {
 		v += d * d
 	}
 	return math.Sqrt(v / float64(len(pts)))
+}
+
+// variance is the mean squared deviation. sample selects Zabbix varsamp,
+// which divides by n-1 and needs at least two samples. varpop divides by n,
+// so one sample is 0.
+func variance(pts []tsdb.Point, sample bool) (float64, bool) {
+	n := len(pts)
+	if n == 0 || (sample && n < 2) {
+		return 0, false
+	}
+	var m float64
+	for _, p := range pts {
+		m += p.Value
+	}
+	m /= float64(n)
+	var v float64
+	for _, p := range pts {
+		d := p.Value - m
+		v += d * d
+	}
+	denom := float64(n)
+	if sample {
+		denom = float64(n - 1)
+	}
+	return v / denom, true
 }
 
 // linearFit is ordinary least squares of (seconds since window start, value).

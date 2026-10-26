@@ -208,6 +208,7 @@ data/
 |---|---|
 | `nodata -5m` | 窗口内无任何非 NaN 点返回 1，否则 0（绝不返回 NaN） |
 | `first -5m` / `change -5m` / `stddev -5m` | 首值 / 末值−首值 / 总体标准差 |
+| `varpop -5m` / `varsamp -5m` | 总体方差除以样本数，一个样本为 0。样本方差除以样本数减 1，少于两个样本为 NaN。多维度分别计算后相加 |
 | `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
 | `percentile -5m p 95` | 窗口百分位，p 为 0 到 100。升序后取 `ceil(n*p/100)-1`；多维度分别计算后相加 |
 | `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
