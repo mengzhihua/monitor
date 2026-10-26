@@ -87,6 +87,56 @@ func TestConsulCollector(t *testing.T) {
 	}
 }
 
+func TestConsulFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/health/state/any", func(w http.ResponseWriter, _ *http.Request) {
+		if mode != "ok" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]string{{"Status": "passing"}})
+	})
+	mux.HandleFunc("/v1/agent/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"Gauges": []map[string]any{
+			{"Name": "consul.raft.peers", "Value": 3},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := &consulCollector{cfg: consulConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := c.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	peers := mustChart(t, reg, "consul.raft_peers")
+	health := mustChart(t, reg, "consul.health_checks")
+	if _, vals := peers.LastValues(); vals["peers"] != 3 || peers.Unsupported != "" {
+		t.Fatalf("peers %+v %q", vals, peers.Unsupported)
+	}
+	mode = "down"
+	if err := c.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if peers.Unsupported == "" || health.Unsupported == "" || peers.LastCollectionTime() != now.Unix() {
+		t.Fatalf("peers %q at %d health %q", peers.Unsupported, peers.LastCollectionTime(), health.Unsupported)
+	}
+	mode = "ok"
+	if err := c.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if peers.Unsupported != "" || health.Unsupported != "" {
+		t.Fatalf("stuck peers %q health %q", peers.Unsupported, health.Unsupported)
+	}
+	if _, vals := peers.LastValues(); vals["peers"] != 3 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestParseWhoisExpiry(t *testing.T) {
 	t0, err := parseWhoisExpiry("Registry Expiry Date: 2030-01-02T03:04:05Z\n")
 	if err != nil || t0.Year() != 2030 || t0.Month() != 1 || t0.Day() != 2 {
