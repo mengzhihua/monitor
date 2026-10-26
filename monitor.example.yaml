@@ -885,6 +885,7 @@ export:
 #     calculated:
 #       items:
 #         - { name: used_pct, formula: "100 * {system.ram:used} / ({system.ram:used} + {system.ram:free})" }
+#         - { name: used_avg, formula: "avg({system.ram:used}, 5m)" }
 #     netscan:
 #       networks:
 #         - { name: lab, cidr: 192.168.1.0/28, ports: [22, 443] }
