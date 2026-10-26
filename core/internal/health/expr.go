@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -115,6 +116,8 @@ func (n callNode) eval(vars func(string) (float64, bool)) float64 {
 		a[i] = x.eval(vars)
 	}
 	switch n.fn {
+	case "dayofweek", "dayofmonth", "time", "date":
+		return clockValue(n.fn, vars)
 	case "abs":
 		return math.Abs(a[0])
 	case "isnan":
@@ -144,6 +147,32 @@ func b2f(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// clockValue reads $now as Unix seconds and reports the server's local civil
+// time. dayofweek is Monday=1 through Sunday=7. time is HHMMSS. date is YYYYMMDD.
+func clockValue(fn string, vars func(string) (float64, bool)) float64 {
+	sec, ok := vars("now")
+	if !ok || math.IsNaN(sec) || math.IsInf(sec, 0) {
+		return math.NaN()
+	}
+	t := time.Unix(int64(sec), 0)
+	switch fn {
+	case "dayofweek":
+		if t.Weekday() == time.Sunday {
+			return 7
+		}
+		return float64(t.Weekday())
+	case "dayofmonth":
+		return float64(t.Day())
+	case "time":
+		return float64(t.Hour()*10000 + t.Minute()*100 + t.Second())
+	case "date":
+		y, m, d := t.Date()
+		return float64(y*10000 + int(m)*100 + d)
+	default:
+		return math.NaN()
+	}
 }
 
 // Eval evaluates the expression; unknown variables evaluate to NaN.
@@ -413,6 +442,10 @@ func (p *parser) parsePrimary() (node, error) {
 		case "abs", "isnan", "isinf":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("%s() takes one argument", fn)
+			}
+		case "dayofweek", "dayofmonth", "time", "date":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("%s() takes no arguments", fn)
 			}
 		case "min", "max":
 			if len(args) < 1 {

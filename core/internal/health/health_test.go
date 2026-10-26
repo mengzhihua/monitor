@@ -64,13 +64,48 @@ func TestExpr(t *testing.T) {
 			t.Errorf("%q = %v, want %v", src, got, want)
 		}
 	}
-	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "3 4"} {
+	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "dayofweek(1)", "3 4"} {
 		if _, err := ParseExpr(bad); err == nil {
 			t.Errorf("%q should not parse", bad)
 		}
 	}
 	if e, err := ParseExpr("  "); err != nil || e != nil {
 		t.Fatalf("empty expr = %v %v", e, err)
+	}
+}
+
+func TestClockFunctions(t *testing.T) {
+	when := time.Date(2023, 11, 12, 15, 4, 5, 0, time.Local)
+	if when.Weekday() != time.Sunday {
+		t.Fatalf("fixture weekday %s", when.Weekday())
+	}
+	vars := func(n string) (float64, bool) {
+		if n == "now" {
+			return float64(when.Unix()), true
+		}
+		return 0, false
+	}
+	cases := map[string]float64{
+		"dayofweek()":  7,
+		"dayofmonth()": 12,
+		"time()":       150405,
+		"date()":       20231112,
+	}
+	for src, want := range cases {
+		e, err := ParseExpr(src)
+		if err != nil {
+			t.Fatalf("%q: %v", src, err)
+		}
+		if got := e.Eval(vars); got != want {
+			t.Fatalf("%q = %v, want %v", src, got, want)
+		}
+	}
+	e, err := ParseExpr("dayofweek()")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Eval(func(string) (float64, bool) { return 0, false }); !math.IsNaN(got) {
+		t.Fatalf("missing now = %v", got)
 	}
 }
 
