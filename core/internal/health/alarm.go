@@ -133,6 +133,7 @@ type LogEntry struct {
 	Recipient  string  `json:"recipient"`
 	Delay      int64   `json:"delay"`
 	Repeat     bool    `json:"repeat,omitempty"`
+	Multiple   bool    `json:"multiple,omitempty"` // a new problem event while the trigger stayed raised
 	Notified   bool    `json:"notified"`
 	NotifiedAt int64   `json:"notified_at,omitempty"`
 	Manual     bool    `json:"manual,omitempty"` // operator-closed problem (Zabbix "close problem")

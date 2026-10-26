@@ -57,6 +57,15 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		e.transition(a, entry, now)
 		return
 	}
+	// multiple: the problem expression is still true, so record another event
+	// without moving the original raise time.
+	if a.rule.Multiple && !result.policyApplied && result.status == old && (old == StatusWarning || old == StatusCritical) {
+		entry := e.newEntry(a, old, oldValue, now)
+		entry.Multiple = true
+		e.mu.Unlock()
+		e.transition(a, entry, now)
+		return
+	}
 	// repeat notifications while raised
 	if rep := e.repeatAfter(a); rep > 0 && a.pending == nil && a.Status == a.notifiedSt && a.lastNotifyAttempt > 0 && now.Sub(time.Unix(a.lastNotifyAttempt, 0)) >= rep {
 		entry := e.newEntry(a, old, oldValue, now)

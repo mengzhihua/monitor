@@ -30,6 +30,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 模型 | 代理 Proxy | 部分：`hub.peers` 环 + proxy 存储模式 | `hub/cluster.go` |
 | 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev | `health/metric_lookup.go` |
 | 触发器 | 依赖 | 已有 `inhibit` | `health/inhibit.go` |
+| 触发器 | 问题事件生成 | 已有：`events: single` 在恢复前只保留一条问题；`events: multiple` 在条件持续成立时每次求值再记一条新事件。默认 single | `health/engine_evaluate.go` |
 | 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause`。`equal` 可要求同一图表、上下文或 `label:<key>`；留空则任一 cause 都生效 | `health/correlation.go` |
 | 问题 | 确认 / 指派 / 进度 / 抑制 | 已有 | `operations/` |
 | 问题 | 手动关闭 | 已有：`POST /api/v1/alarms/close` | `api/alarms.go` |
@@ -56,7 +57,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号。告警规则 `events: multiple` 会在问题条件持续成立时每次求值再记一条事件，默认 `single` 仍只保留一条直到恢复。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|

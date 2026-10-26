@@ -62,6 +62,7 @@ type RuleSpec struct {
 	Delay        string            `yaml:"delay" json:"delay,omitempty"`
 	Repeat       string            `yaml:"repeat" json:"repeat,omitempty"`
 	Info         string            `yaml:"info" json:"info,omitempty"`
+	Events       string            `yaml:"events,omitempty" json:"events,omitempty"` // single (default) or multiple
 	To           string            `yaml:"to" json:"to,omitempty"`
 	Labels       map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
 	Disabled     bool              `yaml:"disabled" json:"disabled,omitempty"`
@@ -124,9 +125,21 @@ type Rule struct {
 	ExecErrState EvalStatePolicy
 	Info         string // Spec.Info with macros expanded
 	Units        string // Spec.Units with macros expanded
+	Multiple     bool   // true: each evaluation while raised records a new problem event
 	Source       string
 
 	expandedHash string // hash of the macro-resolved spec (set by CompileWith)
+}
+
+func parseEventMode(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "single":
+		return false, nil
+	case "multiple":
+		return true, nil
+	default:
+		return false, fmt.Errorf("events must be single or multiple")
+	}
 }
 
 var macroRef = regexp.MustCompile(`\{\$[A-Za-z_][A-Za-z0-9_]*\}`)
@@ -204,7 +217,11 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
-	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units}
+	multiple, err := parseEventMode(spec.Events)
+	if err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units, Multiple: multiple}
 	if spec.Lookup != "" {
 		if r.Lookup, err = ParseLookup(spec.Lookup); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q lookup: %w", source, spec.Name, err)
