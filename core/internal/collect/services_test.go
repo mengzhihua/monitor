@@ -50,6 +50,65 @@ func TestNginxStubStatus(t *testing.T) {
 	}
 }
 
+func TestNginxStatusFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not stub status"))
+			return
+		}
+		_, _ = w.Write([]byte("Active connections: 4 \nserver accepts handled requests\n 10 10 20 \nReading: 1 Writing: 2 Waiting: 1 \n"))
+	}))
+	defer srv.Close()
+
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	n := &nginxCollector{}
+	_ = n.Configure(func(v any) error { v.(*nginxConfig).URL = srv.URL; return nil })
+	if err := n.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := n.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	active := mustChart(t, reg, "nginx.connections")
+	status := mustChart(t, reg, "nginx.connections_status")
+	if _, vals := active.LastValues(); vals["active"] != 4 || active.Unsupported != "" {
+		t.Fatalf("active %+v %q", vals, active.Unsupported)
+	}
+
+	mode = "down"
+	if err := n.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if active.Unsupported == "" || status.Unsupported == "" || active.LastCollectionTime() != now.Unix() {
+		t.Fatalf("active %q at %d status %q", active.Unsupported, active.LastCollectionTime(), status.Unsupported)
+	}
+
+	mode = "bad"
+	if err := n.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if active.Unsupported == "" {
+		t.Fatal("bad body stayed supported")
+	}
+
+	mode = "ok"
+	if err := n.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if active.Unsupported != "" || status.Unsupported != "" {
+		t.Fatalf("stuck active %q status %q", active.Unsupported, status.Unsupported)
+	}
+	if _, vals := active.LastValues(); vals["active"] != 4 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 // fakeRedis speaks just enough RESP for AUTH + INFO.
 func fakeRedis(t *testing.T, password string, info func() string) string {
 	t.Helper()

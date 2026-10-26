@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -129,11 +130,21 @@ func (n *nginxCollector) fetch(ctx context.Context) (nginxStatus, error) {
 func (n *nginxCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	st, err := n.fetch(ctx)
 	if err != nil {
-		return err
+		n.markNginx(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	n.markNginx(reg, nil)
 	_ = reg.Collect("nginx.connections", now, map[string]float64{"active": st.active})
 	_ = reg.Collect("nginx.connections_status", now, map[string]float64{"reading": st.reading, "writing": st.writing, "waiting": st.waiting})
 	_ = reg.Collect("nginx.connections_accepted_handled", now, map[string]float64{"accepted": st.accepted, "handled": st.handled})
 	_ = reg.Collect("nginx.requests", now, map[string]float64{"requests": st.requests})
 	return nil
+}
+
+func (n *nginxCollector) markNginx(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "nginx" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
