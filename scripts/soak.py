@@ -332,6 +332,20 @@ def apply_duration_thresholds(seconds: int, args) -> None:
         args.max_anomaly_buffer_mib = caps[3]
 
 
+def append_rss_trend(path: str | None, elapsed: float, rss_mib: float, heap_mib: float | None) -> None:
+    """Append one sample. The first line of a new file is a column header."""
+    if not path:
+        return
+    dest = pathlib.Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    new = not dest.exists() or dest.stat().st_size == 0
+    heap = "" if heap_mib is None else f"{heap_mib:.2f}"
+    with dest.open("a", encoding="utf-8") as fh:
+        if new:
+            fh.write("unix_s\telapsed_s\trss_mib\theap_mib\n")
+        fh.write(f"{int(time.time())}\t{elapsed:.0f}\t{rss_mib:.2f}\t{heap}\n")
+
+
 def heap_diff_top(older: pathlib.Path, newer: pathlib.Path) -> str:
     """Text diff of two heap profiles. Empty when go tool pprof cannot run."""
     go = shutil.which("go")
@@ -366,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-heap-growth-mib", type=float, help="fail if heap alloc growth exceeds this MiB")
     p.add_argument("--max-rss-growth-mib", type=float, help="fail if RSS growth exceeds this MiB")
     p.add_argument("--max-anomaly-buffer-mib", type=float, help="fail if ML train buffer exceeds this MiB")
+    p.add_argument("--rss-log", help="append unix, elapsed, rss_mib, heap_mib lines (for example reports/rss-trend-1026.log)")
     args = p.parse_args(argv)
     if args.seconds < 10:
         p.error("use at least 10 seconds")
@@ -585,14 +600,18 @@ def main(argv: list[str] | None = None) -> int:
                         errors.append("checkpoint overdue")
                     errors.extend(c["name"] + ": " + c["error"] for c in info["collectors"] if c.get("error"))
                     usage = subprocess.check_output(["ps", "-o", "rss=", "-p", str(proc.pid)], text=True).strip()
-                    rss.append(int(usage) / 1024)
+                    rss_mib = int(usage) / 1024
+                    rss.append(rss_mib)
                     with urllib.request.urlopen(authed("/metrics"), timeout=10) as r:
                         metrics = r.read().decode("utf-8", "replace")
                     hm = heap_re.search(metrics)
                     sm = series_re.search(metrics)
                     am = anomaly_re.search(metrics)
+                    heap_mib = None
                     if hm:
-                        heap.append(int(hm.group(1)) / (1024 * 1024))
+                        heap_mib = int(hm.group(1)) / (1024 * 1024)
+                        heap.append(heap_mib)
+                    append_rss_trend(args.rss_log, elapsed, rss_mib, heap_mib)
                     if sm:
                         series.append(int(sm.group(1)))
                     if am:

@@ -199,7 +199,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/monitord -config /etc/monitor/monitor.yaml -data-dir $DATA
-Restart=on-failure
+# SIGTERM is a clean exit. Restart=on-failure left the unit inactive after an
+# external kill (systemctl stop still does not schedule a restart).
+Restart=always
 RestartSec=2
 User=monitor
 Group=monitor

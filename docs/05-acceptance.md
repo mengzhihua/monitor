@@ -449,6 +449,8 @@ python3 scripts/soak.py --seconds 600 --output reports/soak.json
 # 不少于 2 小时且未单独传阈值时，套用上面的 450/80/120/16 MiB 上限。
 # 24h 在自建 runner（标签 self-hosted、linux）上跑：Weekly soak 工作流。
 # 定时是周日 02:15（UTC+8）。GitHub 的 cron 用 UTC，所以表达式是周六 18:15 UTC（15 18 * * 6）。也可以手动触发；任务被调度不等于 runner 已接单。
+# 2026-10-24 20:47 UTC 的定时运行 40131339050 排队 24 小时、没有任何 step，随后被取消：仓库里没有 self-hosted,linux runner。注册令牌要仓库管理员在 Settings → Actions → Runners 签发，本环境的令牌没有这个权限。
+# 每次采样追加 reports/rss-trend-MMDD.log（上海时区月日），列是 unix_s、elapsed_s、rss_mib、heap_mib。生产上曾见到 RSS 约 260–350 MiB；那是更大的采集集合，不能直接拿默认 cpu/mem/load/disk/net/ml 的短跑数字代替。
 # 以前它挂在 Nightly soak 里，定时运行时 if 条件不成立，任务一直是 skipped。
 # ≥24h 默认套用 800/200/300/16 MiB 阈值：
 python3 scripts/soak.py --seconds 86400 --sample-every 30 \
