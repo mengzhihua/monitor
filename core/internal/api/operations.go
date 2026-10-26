@@ -648,6 +648,11 @@ func (s *Server) handleProblemChange(w http.ResponseWriter, r *http.Request, wor
 		http.Error(w, fmt.Sprintf("could not save handling record: %v", err), 503)
 		return
 	}
+	if s.opt.Health != nil && target.Node == "" && (body.Action == "acknowledge" || body.Action == "unacknowledge") {
+		if err := s.opt.Health.SetAcknowledged(target.Chart, target.Name, body.Action == "acknowledge", userOf(r).Name, body.Note); err != nil && !errors.Is(err, health.ErrAlarmNotFound) && !errors.Is(err, health.ErrAlarmNotRaised) {
+			s.log.Warn("acknowledge alarm", "err", err)
+		}
+	}
 	s.postTicket(record)
 	writeJSON(w, record)
 }
