@@ -137,6 +137,66 @@ func TestMemcachedStats(t *testing.T) {
 	}
 }
 
+func TestMemcachedStatsFailureMarksUnsupported(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				buf := make([]byte, 64)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte("STAT bytes 1048576\r\nSTAT limit_maxbytes 2097152\r\nSTAT curr_connections 3\r\nEND\r\n"))
+			}()
+		}
+	}()
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	m := &memcachedCollector{}
+	_ = m.Configure(func(v any) error {
+		c := v.(*memcachedConfig)
+		c.Address = ln.Addr().String()
+		c.Timeout = 200 * time.Millisecond
+		return nil
+	})
+	if err := m.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := m.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	cache := mustChart(t, reg, "memcached.cache")
+	items := mustChart(t, reg, "memcached.items")
+	if _, vals := cache.LastValues(); vals["used"] != 1 || cache.Unsupported != "" {
+		t.Fatalf("cache %+v %q", vals, cache.Unsupported)
+	}
+	saved := m.cfg.Address
+	m.cfg.Address = "127.0.0.1:1"
+	if err := m.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if cache.Unsupported == "" || items.Unsupported == "" || cache.LastCollectionTime() != now.Unix() {
+		t.Fatalf("cache %q at %d items %q", cache.Unsupported, cache.LastCollectionTime(), items.Unsupported)
+	}
+	m.cfg.Address = saved
+	if err := m.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if cache.Unsupported != "" || items.Unsupported != "" {
+		t.Fatalf("stuck cache %q items %q", cache.Unsupported, items.Unsupported)
+	}
+	if _, vals := cache.LastValues(); vals["used"] != 1 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestMLAnomalyRate(t *testing.T) {
 	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
 	reg.AddChart(&registry.Chart{ID: "demo.x", Dimensions: []*registry.Dimension{{ID: "v"}}})
