@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
-
-	"github.com/mengzhihua/monitor/core/internal/sliceutil"
 )
 
 // logUpdate is appended to alarm-log.jsonl when a previously written entry
@@ -50,7 +48,7 @@ func (e *Engine) loadLog(path string) error {
 			e.nextID = le.AlarmID + 1
 		}
 	}
-	e.entries = sliceutil.KeepTail(e.entries, e.opt.LogKeep)
+	e.entries = keepTail(e.entries, e.opt.LogKeep)
 	return sc.Err()
 }
 
@@ -60,7 +58,7 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 	entry.UniqueID = e.nextLog
 	e.nextLog++
 	e.entries = append(e.entries, entry)
-	e.entries = sliceutil.KeepTail(e.entries, e.opt.LogKeep)
+	e.entries = keepTail(e.entries, e.opt.LogKeep)
 	if e.logFile != nil {
 		if b, err := json.Marshal(entry); err == nil {
 			_, _ = e.logFile.Write(append(b, '\n'))
@@ -109,5 +107,19 @@ func (e *Engine) Log(after uint64) []LogEntry {
 			out = append(out, le)
 		}
 	}
+	return out
+}
+
+// keepTail copies the retained suffix. A reslice would keep the discarded
+// entries, including their strings, reachable for the life of the backing array.
+func keepTail[T any](s []T, keep int) []T {
+	if keep < 0 {
+		keep = 0
+	}
+	if len(s) <= keep {
+		return s
+	}
+	out := make([]T, keep)
+	copy(out, s[len(s)-keep:])
 	return out
 }
