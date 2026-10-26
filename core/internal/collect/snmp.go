@@ -57,6 +57,7 @@ type snmpCollector struct {
 	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen      map[string]bool
 	prev      map[string]float64
+	kept      map[string]int64
 	targets   []*snmpCollector
 	counter64 map[string]bool
 }
@@ -137,6 +138,11 @@ func (s *snmpCollector) Configure(decode func(v any) error) error {
 	if _, err := s.snmpArgs("1.3.6.1.2.1.1.3.0"); err != nil {
 		return err
 	}
+	for _, item := range s.cfg.Items {
+		if err := preprocess.Validate(item.Steps); err != nil {
+			return fmt.Errorf("snmp: item %q: %w", item.Name, err)
+		}
+	}
 	return nil
 }
 
@@ -175,6 +181,7 @@ func (s *snmpCollector) chartID(id string) string {
 func (s *snmpCollector) initCharts(reg *registry.Registry) {
 	s.seen = map[string]bool{}
 	s.prev = map[string]float64{}
+	s.kept = map[string]int64{}
 	s.counter64 = map[string]bool{}
 	c := &registry.Chart{ID: s.chartID("snmp.device_sysuptime"), Context: "snmp.device_sysuptime", Title: "SNMP sysUpTime", Units: "seconds", Priority: 56100,
 		Dimensions: []*registry.Dimension{{ID: "uptime"}}}
@@ -322,11 +329,15 @@ func (s *snmpCollector) collectItems(ctx context.Context, reg *registry.Registry
 		if _, ok := s.prev[item.Name]; !ok {
 			prev = math.NaN()
 		}
-		value, next, err := preprocess.Apply(item.Steps, raw, prev)
+		value, next, keptAt, err := preprocess.ApplyTimed(item.Steps, raw, prev, s.kept[item.Name], now.Unix())
+		if errors.Is(err, preprocess.ErrThrottled) {
+			continue
+		}
 		s.prev[item.Name] = next
 		if err != nil {
 			continue
 		}
+		s.kept[item.Name] = keptAt
 		if ctx.Err() != nil {
 			return
 		}

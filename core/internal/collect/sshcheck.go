@@ -31,6 +31,7 @@ type sshcheckCollector struct {
 	cfg  sshcheckConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	prev map[string]float64
+	kept map[string]int64
 }
 
 func init() { Register("sshcheck", func() Collector { return &sshcheckCollector{} }) }
@@ -68,6 +69,9 @@ func validateSSHJob(j sshJob) error {
 	if j.KeyFile != "" && strings.ContainsAny(j.KeyFile, "\n\r") {
 		return fmt.Errorf("sshcheck %s: key file", j.Name)
 	}
+	if err := preprocess.Validate(j.Steps); err != nil {
+		return fmt.Errorf("sshcheck %s: %w", j.Name, err)
+	}
 	return nil
 }
 
@@ -81,6 +85,7 @@ func (s *sshcheckCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("sshcheck: no jobs")
 	}
 	s.prev = map[string]float64{}
+	s.kept = map[string]int64{}
 	for _, j := range s.cfg.Jobs {
 		ch := &registry.Chart{ID: "sshcheck." + sanitizeID(j.Name), Context: "sshcheck.value", Title: "SSH " + j.Name, Units: "value",
 			Family: "ssh", Plugin: "sshcheck", Module: "sshcheck", Priority: 56200,
@@ -107,9 +112,10 @@ func (s *sshcheckCollector) Collect(ctx context.Context, reg *registry.Registry,
 		if v, ok := s.prev[j.Name]; ok {
 			prev = v
 		}
-		value, next, perr := preprocess.Apply(j.Steps, raw, prev)
+		value, next, keptAt, perr := preprocess.ApplyTimed(j.Steps, raw, prev, s.kept[j.Name], now.Unix())
 		if perr == nil {
 			s.prev[j.Name] = next
+			s.kept[j.Name] = keptAt
 		}
 		if err != nil || perr != nil {
 			value = math.NaN()

@@ -32,6 +32,7 @@ type telnetJob struct {
 type telnetCollector struct {
 	cfg  telnetConfig
 	prev map[string]float64
+	kept map[string]int64
 	dial func(ctx context.Context, address string) (net.Conn, error)
 }
 
@@ -53,6 +54,9 @@ func (t *telnetCollector) Configure(decode func(v any) error) error {
 		if _, _, err := net.SplitHostPort(j.Address); err != nil {
 			return fmt.Errorf("telnet %s: address must be host:port", j.Name)
 		}
+		if err := preprocess.Validate(j.Steps); err != nil {
+			return fmt.Errorf("telnet %s: %w", j.Name, err)
+		}
 	}
 	return nil
 }
@@ -62,6 +66,7 @@ func (t *telnetCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("telnet: no jobs")
 	}
 	t.prev = map[string]float64{}
+	t.kept = map[string]int64{}
 	for _, j := range t.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "telnet." + sanitizeID(j.Name), Context: "telnet.value", Title: "Telnet " + j.Name,
 			Units: "value", Family: "telnet", Plugin: "telnet", Module: "telnet", Priority: 56250,
@@ -81,11 +86,12 @@ func (t *telnetCollector) Collect(ctx context.Context, reg *registry.Registry, n
 		if len(steps) == 0 && j.Expect != "" {
 			steps = []preprocess.Step{{Type: "bool", Pattern: j.Expect}}
 		}
-		value, next, perr := preprocess.Apply(steps, raw, prev)
+		value, next, keptAt, perr := preprocess.ApplyTimed(steps, raw, prev, t.kept[j.Name], now.Unix())
 		if err != nil || perr != nil || math.IsNaN(value) {
 			continue
 		}
 		t.prev[j.Name] = next
+		t.kept[j.Name] = keptAt
 		_ = reg.Collect("telnet."+sanitizeID(j.Name), now, map[string]float64{"value": value})
 	}
 	return nil

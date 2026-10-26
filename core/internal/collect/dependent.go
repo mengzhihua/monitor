@@ -26,6 +26,7 @@ type dependentItem struct {
 type dependentCollector struct {
 	cfg  dependentConfig
 	prev map[string]float64
+	kept map[string]int64
 }
 
 func init() { Register("dependent", func() Collector { return &dependentCollector{} }) }
@@ -43,6 +44,9 @@ func (d *dependentCollector) Configure(decode func(v any) error) error {
 		if !validItemName(it.Name) || it.Chart == "" || it.Dimension == "" {
 			return fmt.Errorf("dependent: item %q needs chart and dimension", it.Name)
 		}
+		if err := preprocess.Validate(it.Steps); err != nil {
+			return fmt.Errorf("dependent: item %q: %w", it.Name, err)
+		}
 	}
 	return nil
 }
@@ -52,6 +56,7 @@ func (d *dependentCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("dependent: no items")
 	}
 	d.prev = map[string]float64{}
+	d.kept = map[string]int64{}
 	for _, it := range d.cfg.Items {
 		reg.AddChart(&registry.Chart{ID: "dependent." + sanitizeID(it.Name), Context: "dependent.value", Title: "Dependent " + it.Name,
 			Units: "value", Family: "calc", Plugin: "dependent", Module: "dependent", Priority: 56600,
@@ -76,11 +81,12 @@ func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, 
 		if v, ok := d.prev[it.Name]; ok {
 			prev = v
 		}
-		value, next, err := preprocess.Apply(it.Steps, strconv.FormatFloat(raw, 'f', -1, 64), prev)
+		value, next, keptAt, err := preprocess.ApplyTimed(it.Steps, strconv.FormatFloat(raw, 'f', -1, 64), prev, d.kept[it.Name], now.Unix())
 		if err != nil {
 			continue
 		}
 		d.prev[it.Name] = next
+		d.kept[it.Name] = keptAt
 		_ = reg.Collect("dependent."+sanitizeID(it.Name), now, map[string]float64{"value": value})
 	}
 	return nil

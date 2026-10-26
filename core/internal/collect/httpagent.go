@@ -29,6 +29,7 @@ type httpagentCollector struct {
 	cfg    httpagentConfig
 	client *http.Client
 	prev   map[string]float64
+	kept   map[string]int64
 }
 
 func init() { Register("httpagent", func() Collector { return &httpagentCollector{} }) }
@@ -46,6 +47,9 @@ func (h *httpagentCollector) Configure(decode func(v any) error) error {
 		if !validItemName(j.Name) || j.URL == "" {
 			return fmt.Errorf("httpagent: job %q needs a name and url", j.Name)
 		}
+		if err := preprocess.Validate(j.Steps); err != nil {
+			return fmt.Errorf("httpagent: job %q: %w", j.Name, err)
+		}
 	}
 	return nil
 }
@@ -56,6 +60,7 @@ func (h *httpagentCollector) Init(reg *registry.Registry) error {
 	}
 	h.client = &http.Client{Timeout: h.cfg.Timeout}
 	h.prev = map[string]float64{}
+	h.kept = map[string]int64{}
 	for _, j := range h.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "httpagent." + sanitizeID(j.Name), Context: "httpagent.value", Title: "HTTP agent " + j.Name,
 			Units: "value", Family: "http", Plugin: "httpagent", Module: "httpagent", Priority: 56400,
@@ -71,11 +76,12 @@ func (h *httpagentCollector) Collect(ctx context.Context, reg *registry.Registry
 		if v, ok := h.prev[j.Name]; ok {
 			prev = v
 		}
-		value, next, perr := preprocess.Apply(j.Steps, body, prev)
+		value, next, keptAt, perr := preprocess.ApplyTimed(j.Steps, body, prev, h.kept[j.Name], now.Unix())
 		if err != nil || perr != nil {
 			continue
 		}
 		h.prev[j.Name] = next
+		h.kept[j.Name] = keptAt
 		_ = reg.Collect("httpagent."+sanitizeID(j.Name), now, map[string]float64{"value": value})
 	}
 	return nil
