@@ -44,6 +44,11 @@ func Parse(b []byte) (*Config, error) {
 	if err := validatePlatform(c); err != nil {
 		return nil, err
 	}
+	for _, user := range c.Web.Users {
+		if user.ExpiresAt < 0 || user.ExpiresAt > 4102444800 {
+			return nil, fmt.Errorf("config: web.users %q: expires_at must be 0 or a unix time through 2100-01-01", user.Name)
+		}
+	}
 	return c, nil
 }
 

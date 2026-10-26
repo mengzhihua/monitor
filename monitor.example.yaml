@@ -24,7 +24,7 @@ web:
   allow_from: []       # CIDRs allowed to reach the API/UI, e.g. ["10.0.0.0/8", "127.0.0.1"]
   token: ""            # admin login password / bearer token. Empty + no users/OIDC/LDAP generates data_dir/web-password; NEVER enables anonymous access.
   users: []            # named credentials with roles; any token/users setting turns anonymous access off
-  # - { name: ops,   token: "change-me-1", role: admin }          # everything, incl. DELETE /api/v1/nodes
+  # - { name: ops,   token: "change-me-1", role: admin, expires_at: 1893456000 } # unix seconds; omit to keep the token valid
   # - { name: oncall, token: "change-me-2", role: troubleshooter } # read + Functions (processes table…)
   # - { name: tv,    token: "change-me-3", role: viewer }         # read-only metrics/alarms/nodes
   oidc:                  # optional OpenID Connect; login at /api/v1/auth/oidc/login
