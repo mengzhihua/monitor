@@ -68,6 +68,8 @@ type Alarm struct {
 	Component string            `json:"component,omitempty"`
 	Units     string            `json:"units"`
 	Info      string            `json:"info"`
+	URL       string            `json:"url,omitempty"`
+	OpData    string            `json:"opdata,omitempty"`
 	Lookup    string            `json:"lookup,omitempty"`
 	Calc      string            `json:"calc,omitempty"`
 	Warn      string            `json:"warn,omitempty"`
@@ -133,6 +135,8 @@ type LogEntry struct {
 	OldValue     float64 `json:"old_value"`
 	Units        string  `json:"units"`
 	Info         string  `json:"info"`
+	URL          string  `json:"url,omitempty"`
+	OpData       string  `json:"opdata,omitempty"`
 	Recipient    string  `json:"recipient"`
 	Delay        int64   `json:"delay"`
 	Repeat       bool    `json:"repeat,omitempty"`

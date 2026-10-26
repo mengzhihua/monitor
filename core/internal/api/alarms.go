@@ -123,7 +123,7 @@ func writeAlarmCSV(w http.ResponseWriter, entries []health.LogEntry) {
 	w.Header().Set("Content-Disposition", `attachment; filename="alarm-log.csv"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	out := csv.NewWriter(w)
-	_ = out.Write([]string{"unique_id", "when", "hostname", "name", "chart", "status", "value", "units", "info"})
+	_ = out.Write([]string{"unique_id", "when", "hostname", "name", "chart", "status", "value", "units", "info", "url", "opdata"})
 	for _, e := range entries {
 		_ = out.Write([]string{
 			strconv.FormatUint(e.UniqueID, 10),
@@ -135,6 +135,8 @@ func writeAlarmCSV(w http.ResponseWriter, entries []health.LogEntry) {
 			strconv.FormatFloat(e.Value, 'f', -1, 64),
 			csvText(e.Units),
 			csvText(e.Info),
+			csvText(e.URL),
+			csvText(e.OpData),
 		})
 	}
 	out.Flush()

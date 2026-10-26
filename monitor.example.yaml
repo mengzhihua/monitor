@@ -757,6 +757,8 @@ health:
   #   delay: down 15m multiplier 1.5 max 1h
   #   repeat: warning 1h critical 15m
   #   info: system memory utilization
+  #   url: https://runbook.example/{HOST.NAME}
+  #   opdata: "used {EVENT.VALUE}{EVENT.UNITS}"
   #   to: sysadmin
   notify:
     roles: {}          # alarm `to:` → channels, e.g. sysadmin: [slack, email]; unknown/empty role = all channels

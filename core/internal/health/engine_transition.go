@@ -20,13 +20,16 @@ func (e *Engine) repeatAfter(a *Alarm) time.Duration {
 }
 
 func (e *Engine) newEntry(a *Alarm, old Status, oldValue float64, now time.Time) LogEntry {
-	return LogEntry{
+	entry := LogEntry{
 		AlarmID: a.ID, When: now.Unix(), Hostname: e.opt.Hostname,
 		Name: a.Name, Chart: a.Chart, Context: a.Context, Family: a.Family,
 		Class: a.Class, Type: a.Type, Component: a.Component,
 		Status: a.Status, OldStatus: old, Value: a.Value, OldValue: oldValue,
 		Units: a.Units, Info: a.Info, Recipient: a.Recipient,
 	}
+	entry.URL = renderEventField(a.URL, entry)
+	entry.OpData = renderEventField(a.OpData, entry)
+	return entry
 }
 
 // transition applies the notification delay: the log entry is written now,

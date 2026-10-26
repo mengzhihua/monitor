@@ -62,6 +62,8 @@ type RuleSpec struct {
 	Delay        string            `yaml:"delay" json:"delay,omitempty"`
 	Repeat       string            `yaml:"repeat" json:"repeat,omitempty"`
 	Info         string            `yaml:"info" json:"info,omitempty"`
+	URL          string            `yaml:"url,omitempty" json:"url,omitempty"`
+	OpData       string            `yaml:"opdata,omitempty" json:"opdata,omitempty"`
 	To           string            `yaml:"to" json:"to,omitempty"`
 	Labels       map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
 	Disabled     bool              `yaml:"disabled" json:"disabled,omitempty"`
@@ -126,6 +128,8 @@ type Rule struct {
 	ExecErrState EvalStatePolicy
 	Info         string // Spec.Info with macros expanded
 	Units        string // Spec.Units with macros expanded
+	URL          string // Spec.URL with macros expanded; event tokens render per transition
+	OpData       string // Spec.OpData with macros expanded; event tokens render per transition
 	Source       string
 
 	expandedHash string // hash of the macro-resolved spec (set by CompileWith)
@@ -142,7 +146,7 @@ var ErrUnknownMacro = errors.New("unknown macro")
 func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
 	fields := []*string{&spec.Lookup, &spec.Calc, &spec.Warn, &spec.Crit,
 		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.NoDataState,
-		&spec.ExecErrState, &spec.Delay, &spec.Repeat, &spec.Info, &spec.Units}
+		&spec.ExecErrState, &spec.Delay, &spec.Repeat, &spec.Info, &spec.Units, &spec.URL, &spec.OpData}
 	// Expand iteratively so a macro value may itself contain {$OTHER}. An
 	// acyclic chain resolves within #macros rounds; the +1 leaves room for
 	// the no-change pass that terminates expansion.
@@ -206,7 +210,13 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
-	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units}
+	if err := validateTriggerURL(spec.URL); err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	if err := validateEventTemplate("opdata", spec.OpData); err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units, URL: spec.URL, OpData: spec.OpData}
 	if spec.Lookup != "" {
 		if r.Lookup, err = ParseLookup(spec.Lookup); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q lookup: %w", source, spec.Name, err)

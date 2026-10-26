@@ -16,6 +16,8 @@ var messageTokens = map[string]func(LogEntry) string{
 	"EVENT.UNITS":  func(e LogEntry) string { return e.Units },
 	"EVENT.CHART":  func(e LogEntry) string { return e.Chart },
 	"EVENT.INFO":   func(e LogEntry) string { return e.Info },
+	"EVENT.URL":    func(e LogEntry) string { return e.URL },
+	"EVENT.OPDATA": func(e LogEntry) string { return e.OpData },
 }
 
 // RenderMessage substitutes {TOKEN} placeholders. Unknown tokens and an
@@ -44,4 +46,50 @@ func RenderMessage(tmpl string, e LogEntry) (string, error) {
 		i += end + 1
 	}
 	return b.String(), nil
+}
+
+func validateEventTemplate(kind, tmpl string) error {
+	if len(tmpl) > maxMessageTemplate {
+		return fmt.Errorf("%s is too long", kind)
+	}
+	if strings.ContainsAny(tmpl, "\r\n") {
+		return fmt.Errorf("%s contains a line break", kind)
+	}
+	if _, err := RenderMessage(tmpl, LogEntry{}); err != nil {
+		return fmt.Errorf("%s: %w", kind, err)
+	}
+	return nil
+}
+
+func validateTriggerURL(tmpl string) error {
+	if err := validateEventTemplate("url", tmpl); err != nil {
+		return err
+	}
+	if tmpl == "" {
+		return nil
+	}
+	rendered, err := RenderMessage(tmpl, LogEntry{Hostname: "host", Name: "alarm", Chart: "chart", Status: StatusWarning, Value: 1, Units: "u", Info: "info"})
+	if err != nil {
+		return err
+	}
+	if rendered == "" || strings.HasPrefix(rendered, "https://") || strings.HasPrefix(rendered, "http://") || strings.HasPrefix(rendered, "/") {
+		return nil
+	}
+	return fmt.Errorf("url must start with http://, https://, or /")
+}
+
+func renderEventField(tmpl string, e LogEntry) string {
+	if tmpl == "" {
+		return ""
+	}
+	out, err := RenderMessage(tmpl, e)
+	if err != nil {
+		return ""
+	}
+	out = strings.ReplaceAll(strings.ReplaceAll(out, "\r", ""), "\n", "")
+	runes := []rune(out)
+	if len(runes) > maxMessageTemplate {
+		return string(runes[:maxMessageTemplate])
+	}
+	return out
 }
