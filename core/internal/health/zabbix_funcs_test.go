@@ -35,6 +35,8 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
 		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
 		{"percentile -5m p 100", want{kind: "percentile", pct: 100}, ""},
+		{"sumofsquares -5m", want{kind: "sumofsquares"}, ""},
+		{"SUMOFSQUARES -1m of used,free", want{kind: "sumofsquares", dims: 2}, ""},
 		{"count -5m", want{kind: "count"}, ""},
 		{"count -5m gt 3.5", want{kind: "count", op: "gt", val: 3.5}, ""},
 		{"count -5m ne 0 of used,free", want{kind: "count", op: "ne", dims: 2}, ""},
@@ -197,6 +199,34 @@ func TestLookupPercentile(t *testing.T) {
 	}
 	if v := lookupValue(t, "percentile -5m p 100", both, now); v != 14 {
 		t.Fatalf("two dimensions: got %v want 14", v)
+	}
+}
+
+func TestLookupSumOfSquares(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, -2, 3} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-2)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "sumofsquares -5m of used", seed, now); v != 14 {
+		t.Fatalf("squares: got %v want 14", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 4})
+	}
+	if v := lookupValue(t, "sumofsquares -5m of used", one, now); v != 16 {
+		t.Fatalf("one sample: got %v want 16", v)
+	}
+	if v := lookupValue(t, "sumofsquares -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty window: got %v want NaN", v)
+	}
+	both := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 1, "free": 3})
+		reg.Collect("system.ram", now, map[string]float64{"used": 2, "free": 3})
+	}
+	if v := lookupValue(t, "sumofsquares -5m", both, now); v != 23 {
+		t.Fatalf("two dimensions: got %v want 23", v)
 	}
 }
 
