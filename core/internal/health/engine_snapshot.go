@@ -23,7 +23,7 @@ func (e *Engine) Alarms() []Alarm {
 				}
 			}
 		}
-		cp.Cause = e.correlatedCauseLocked(a.Name)
+		cp.Cause = e.correlatedCauseLocked(a)
 		out = append(out, cp)
 	}
 	e.mu.RUnlock()
