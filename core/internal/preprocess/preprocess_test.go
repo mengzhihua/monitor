@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestApplyPipeline(t *testing.T) {
@@ -90,5 +91,19 @@ func TestZabbixPreprocessSteps(t *testing.T) {
 	v, prev, err = Apply([]Step{{Type: "discard_unchanged"}}, "5", prev)
 	if err != nil || v != 5 || prev != 5 {
 		t.Fatalf("changed value %v %v %v", v, prev, err)
+	}
+}
+
+func TestJavaScriptPreprocessIsBounded(t *testing.T) {
+	v, _, err := Apply([]Step{{Type: "javascript", Script: "return Number(value) * 2"}}, "3", math.NaN())
+	if err != nil || v != 6 {
+		t.Fatalf("javascript %v %v", v, err)
+	}
+	started := time.Now()
+	if _, _, err = Apply([]Step{{Type: "javascript", Script: "while (true) {}"}}, "1", math.NaN()); err == nil || time.Since(started) > 2*time.Second {
+		t.Fatalf("loop err=%v elapsed=%s", err, time.Since(started))
+	}
+	if _, _, err = Apply([]Step{{Type: "javascript", Script: "return require('fs')"}}, "1", math.NaN()); err == nil {
+		t.Fatal("javascript could call require")
 	}
 }
