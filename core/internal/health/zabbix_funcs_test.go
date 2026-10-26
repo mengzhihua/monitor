@@ -538,6 +538,62 @@ func TestLookupSumOfSquares(t *testing.T) {
 	}
 }
 
+func TestLookupVariance(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": float64(i)})
+		}
+	}
+	// Values 0,1,2,3,4. Sum of squared deviations from 2 is 10.
+	if v := lookupValue(t, "varpop -5m of used", seed, now); math.Abs(v-2) > 1e-9 {
+		t.Fatalf("population: got %v want 2", v)
+	}
+	if v := lookupValue(t, "varsamp -5m of used", seed, now); math.Abs(v-2.5) > 1e-9 {
+		t.Fatalf("sample: got %v want 2.5", v)
+	}
+	pop := lookupValue(t, "stddev -5m of used", seed, now)
+	if math.Abs(pop*pop-2) > 1e-9 {
+		t.Fatalf("stddev squared: got %v want 2", pop*pop)
+	}
+	flat := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-2*time.Second), map[string]float64{"used": 5})
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 5})
+	}
+	if v := lookupValue(t, "varsamp -5m of used", flat, now); v != 0 {
+		t.Fatalf("identical pair: got %v want 0", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 7})
+	}
+	if v := lookupValue(t, "varpop -5m of used", one, now); v != 0 {
+		t.Fatalf("one sample population: got %v want 0", v)
+	}
+	if v := lookupValue(t, "varsamp -5m of used", one, now); !math.IsNaN(v) {
+		t.Fatalf("one sample: got %v want NaN", v)
+	}
+	if v := lookupValue(t, "varpop -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty population: got %v want NaN", v)
+	}
+	if v := lookupValue(t, "varsamp -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty sample: got %v want NaN", v)
+	}
+	both := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{
+				"used": float64(i),
+				"free": 10,
+			})
+		}
+	}
+	if v := lookupValue(t, "varpop -5m", both, now); math.Abs(v-2) > 1e-9 {
+		t.Fatalf("two dimensions population: got %v want 2", v)
+	}
+	if v := lookupValue(t, "varsamp -5m", both, now); math.Abs(v-2.5) > 1e-9 {
+		t.Fatalf("two dimensions sample: got %v want 2.5", v)
+	}
+}
+
 func TestLookupForecastTimeleft(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	// Perfectly linear ramp: value = seconds elapsed (slope 1/s over 60 s).

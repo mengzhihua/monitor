@@ -172,6 +172,15 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += s
 			continue
 		}
+		if l.Kind == "varpop" || l.Kind == "varsamp" {
+			v, ok := variance(vals, l.Kind == "varsamp")
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += v
+			continue
+		}
 		matched = true
 		switch l.Kind {
 		case "first":
@@ -426,11 +435,12 @@ func popStddev(pts []tsdb.Point) float64 {
 	return math.Sqrt(v / float64(len(pts)))
 }
 
-// sampleStddev is Zabbix stddevsamp: the square root of the unbiased variance.
-// Fewer than two samples cannot produce it.
-func sampleStddev(pts []tsdb.Point) (float64, bool) {
+// variance is the mean squared deviation. sample selects Zabbix varsamp,
+// which divides by n-1 and needs at least two samples. varpop divides by n,
+// so one sample is 0.
+func variance(pts []tsdb.Point, sample bool) (float64, bool) {
 	n := len(pts)
-	if n < 2 {
+	if n == 0 || (sample && n < 2) {
 		return 0, false
 	}
 	var m float64
@@ -443,7 +453,21 @@ func sampleStddev(pts []tsdb.Point) (float64, bool) {
 		d := p.Value - m
 		v += d * d
 	}
-	return math.Sqrt(v / float64(n-1)), true
+	denom := float64(n)
+	if sample {
+		denom = float64(n - 1)
+	}
+	return v / denom, true
+}
+
+// sampleStddev is Zabbix stddevsamp: the square root of the unbiased variance.
+// Fewer than two samples cannot produce it.
+func sampleStddev(pts []tsdb.Point) (float64, bool) {
+	v, ok := variance(pts, true)
+	if !ok {
+		return 0, false
+	}
+	return math.Sqrt(v), true
 }
 
 // linearFit is ordinary least squares of (seconds since window start, value).
