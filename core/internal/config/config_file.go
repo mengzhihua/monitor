@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
+	"github.com/mengzhihua/monitor/core/internal/sla"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,6 +44,9 @@ func Parse(b []byte) (*Config, error) {
 	}
 	if err := validatePlatform(c); err != nil {
 		return nil, err
+	}
+	if err := sla.Validate(c.Services); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	return c, nil
 }

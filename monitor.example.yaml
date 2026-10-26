@@ -889,7 +889,7 @@ export:
 #       networks:
 #         - { name: lab, cidr: 192.168.1.0/28, ports: [22, 443] }
 # services:
-#   - { name: edge, children: [site] }
+#   - { name: edge, children: [site], status_rules: [{ type: children_at_least, n: 1, at_least: CRITICAL, status: CRITICAL }, { type: ok }] }
 #   - { name: site, alarms: [http_down] }
 # topology:
 #   - { source: core, target: edge-sw }
