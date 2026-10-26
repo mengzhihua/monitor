@@ -210,6 +210,7 @@ data/
 | `first -5m` / `change -5m` / `stddev -5m` | 首值 / 末值−首值 / 总体标准差 |
 | `diff -5m` / `abschange -5m` | 最近两个样本：不同为 1，否则 0；或它们的绝对差。只有一个样本时为 0 |
 | `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
+| `find -5m gt 10` | 每个选中维度有匹配样本则为 1，否则 0。比较符与 `count` 相同。空窗口为 0；多维度分别计算后相加 |
 | `percentile -5m p 95` | 窗口百分位，p 为 0 到 100。升序后取 `ceil(n*p/100)-1`；多维度分别计算后相加 |
 | `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
 | `forecast -1h horizon 30m` | 最小二乘线性拟合在 now+horizon 的取值 |
