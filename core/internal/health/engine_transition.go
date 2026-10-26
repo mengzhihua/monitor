@@ -2,10 +2,14 @@ package health
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
 func (e *Engine) repeatAfter(a *Alarm) time.Duration {
+	if a.Acknowledged {
+		return 0
+	}
 	switch a.Status {
 	case StatusWarning:
 		return a.rule.Repeat.Warning
@@ -121,6 +125,55 @@ func (e *Engine) flushPending(now time.Time) {
 	for _, p := range ready {
 		e.notifyAt(p, now.Unix())
 	}
+}
+
+// SetAcknowledged pauses repeat notifications for one raised alarm until its
+// status changes or acknowledgement is cleared. The evaluated severity stays.
+func (e *Engine) SetAcknowledged(chart, name string, on bool, user, note string) error {
+	if e == nil {
+		return ErrAlarmNotFound
+	}
+	note = clipAckNote(note)
+	e.mu.Lock()
+	var alarm *Alarm
+	for _, cand := range e.alarms {
+		if cand.Active && cand.Chart == chart && cand.Name == name {
+			alarm = cand
+			break
+		}
+	}
+	if alarm == nil {
+		e.mu.Unlock()
+		return ErrAlarmNotFound
+	}
+	if alarm.Status != StatusWarning && alarm.Status != StatusCritical {
+		e.mu.Unlock()
+		return ErrAlarmNotRaised
+	}
+	alarm.Acknowledged = on
+	if on {
+		alarm.AckUser = user
+		alarm.AckNote = note
+	} else {
+		alarm.AckUser = ""
+		alarm.AckNote = ""
+	}
+	entry := e.newEntry(alarm, alarm.Status, alarm.Value, e.now())
+	entry.Acknowledged = on
+	entry.User = user
+	entry.Comment = note
+	e.mu.Unlock()
+	e.record(entry, false)
+	return nil
+}
+
+func clipAckNote(note string) string {
+	note = strings.TrimSpace(note)
+	runes := []rune(note)
+	if len(runes) > 256 {
+		return string(runes[:256])
+	}
+	return note
 }
 
 var ErrAlarmNotFound = errors.New("alarm not found")
