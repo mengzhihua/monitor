@@ -85,6 +85,8 @@ type Options struct {
 	Modules map[string]func(v any) error
 	// Timeout bounds one Collect call; defaults to the update interval.
 	Timeout time.Duration
+	// History supplies stored samples to calculated window functions.
+	History SeriesHistory
 }
 
 // Factory returns a fresh instance, including when a failed Init is retried.
@@ -167,6 +169,7 @@ type Scheduler struct {
 	initWG  sync.WaitGroup
 
 	scheduleMu    sync.Mutex // guards starting work against Close's wait
+	history       SeriesHistory
 	lifecycleOnce sync.Once
 	stopCtx       context.Context
 	cancel        context.CancelFunc
@@ -193,7 +196,7 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 	if opt.Timeout <= 0 {
 		opt.Timeout = time.Duration(reg.Host.UpdateEvery) * time.Second
 	}
-	s := &Scheduler{reg: reg, log: log, timeout: opt.Timeout}
+	s := &Scheduler{reg: reg, log: log, timeout: opt.Timeout, history: opt.History}
 	for n := range opt.Modules {
 		if _, ok := catalog[n]; !ok {
 			log.Warn("collector: config for unknown module", "name", n)
@@ -206,10 +209,13 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 			continue
 		}
 		if opt.Disabled[n] {
-			s.cols = append(s.cols, &running{c: f(), factory: f, decode: opt.Modules[n], status: Status{Name: n}})
+			c := f()
+			bindHistory(c, opt.History)
+			s.cols = append(s.cols, &running{c: c, factory: f, decode: opt.Modules[n], status: Status{Name: n}})
 			continue
 		}
 		c := f()
+		bindHistory(c, opt.History)
 		r := &running{c: c, factory: f, decode: opt.Modules[n], desired: true, status: Status{Name: n, Enabled: true}}
 		err := configure(c, opt.Modules[n])
 		r.configFailed = err != nil
@@ -232,6 +238,15 @@ func NewScheduler(reg *registry.Registry, log *slog.Logger, opt Options) *Schedu
 		s.cols = append(s.cols, r)
 	}
 	return s
+}
+
+func bindHistory(c Collector, h SeriesHistory) {
+	if h == nil {
+		return
+	}
+	if setter, ok := c.(interface{ SetHistory(SeriesHistory) }); ok {
+		setter.SetHistory(h)
+	}
 }
 
 func configure(c Collector, decode func(v any) error) error {
@@ -344,6 +359,7 @@ func (s *Scheduler) prepare(r *running, now time.Time) bool {
 	// must remain readable even when a retry takes the full probe timeout.
 	r.stop()
 	c := r.factory()
+	bindHistory(c, s.history)
 	r.c, r.stopped = c, false
 	err := configure(c, r.decode)
 	configFailed := err != nil
