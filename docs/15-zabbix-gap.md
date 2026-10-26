@@ -33,7 +33,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause` | `health/correlation.go` |
 | 问题 | 确认 / 指派 / 进度 / 抑制 | 已有 | `operations/` |
 | 问题 | 手动关闭 | 已有：`POST /api/v1/alarms/close` | `api/alarms.go` |
-| 问题 | 维护期 | 已有 | `health/maint.go`、`plans.go` |
+| 问题 | 维护期 | 已有：全局、精确图表/告警，以及按图表标签 `label=value` 静默。标签维护不会波及没有该标签的告警 | `health/plans.go` |
 | 动作 | 多步升级、恢复操作 | 已有：`health.actions` 步骤延迟、角色和恢复操作 | `health/actions.go` |
 | 动作 | 远程命令 / 全局脚本 | 已有：配置 argv 白名单，`POST /api/v1/commands` | `api/zplatform.go` |
 | 动作 | 媒介类型 | 已有：含短信网关与脚本渠道 | `health/notify_mobile.go`、`notify_script.go` |
