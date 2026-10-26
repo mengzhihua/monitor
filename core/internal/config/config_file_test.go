@@ -28,6 +28,9 @@ func TestParseValidAndInvalid(t *testing.T) {
 	if _, err = Parse([]byte("mode: satellite")); err == nil || !strings.Contains(err.Error(), "mode") {
 		t.Fatalf("unknown mode should fail with a mode error, got %v", err)
 	}
+	if _, err = Parse([]byte("web:\n  users:\n    - {name: ops, token: secret, role: viewer, expires_at: -1}\n")); err == nil || !strings.Contains(err.Error(), "expires_at") {
+		t.Fatalf("negative token expiry: %v", err)
+	}
 }
 
 func TestSaveWritesContentAndBackup(t *testing.T) {

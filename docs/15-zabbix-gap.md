@@ -45,7 +45,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV。告警日志可用 `GET /api/v1/alarm_log?format=csv` 导出，公式文本会加前缀避免被表格软件执行 | `api/zplatform.go`、`api/alarms.go` |
 | 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
 | 管理 | 完整 CRUD API | 部分：REST + OpenAPI，非全实体 CRUD | `api/openapi.yaml` |
-| 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP | `api/saml.go`、`api/totp.go` |
+| 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP。命名用户的 `expires_at` 到期后该令牌不能再登录；留空则一直有效 | `api/nodes.go`、`api/saml.go`、`api/totp.go` |
 | 管理 | 用户组 + 主机组级权限 | 部分：`web.groups` 递归授予 Room；没有独立的主机组树 | `config/config.go` |
 | 管理 | HA 集群 | 部分：环复制，非共识 HA | `hub/cluster.go` |
 | 管理 | 加密 PSK / 证书 | 部分：TLS；`stream.psk` / `hub.psk` 额外校验 `X-Monitor-PSK` | `hub/ingest.go` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号。命名用户令牌可以用 `expires_at` 设置失效时间，到期后拒绝登录。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|

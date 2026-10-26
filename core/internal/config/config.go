@@ -161,12 +161,13 @@ type SAML struct {
 
 // User is an API credential: role admin | troubleshooter | viewer.
 type User struct {
-	Name   string   `yaml:"name"`
-	Token  string   `yaml:"token"`
-	Role   string   `yaml:"role"`
-	Groups []string `yaml:"groups"`
-	Rooms  []string `yaml:"rooms"`
-	TOTP   string   `yaml:"totp_secret"`
+	Name      string   `yaml:"name"`
+	Token     string   `yaml:"token"`
+	Role      string   `yaml:"role"`
+	Groups    []string `yaml:"groups"`
+	Rooms     []string `yaml:"rooms"`
+	TOTP      string   `yaml:"totp_secret"`
+	ExpiresAt int64    `yaml:"expires_at,omitempty"`
 }
 
 // Stream configures this agent's upstream connection to a hub.
