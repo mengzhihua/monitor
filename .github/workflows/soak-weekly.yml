@@ -7,6 +7,11 @@ name: Weekly soak
 # Actions evaluates cron in UTC, so Sunday 02:15 UTC+8 is Saturday 18:15 UTC.
 # A timeout or SIGTERM is a failure. soak.py writes the partial JSON first, and
 # the artifact step still uploads that file plus heap profiles.
+# GitHub cancels a job that stays queued for 24h. Run 40131339050 (scheduled
+# 2026-10-24 20:47 UTC, commit 82c115d) had no steps: no self-hosted,linux
+# runner accepted it. Register one under Settings → Actions → Runners with
+# those two labels, then run this workflow by hand. Do not expect a GitHub-hosted
+# runner to finish the 24h profile.
 on:
   schedule:
     - cron: "15 18 * * 6" # Saturday 18:15 UTC = Sunday 02:15 UTC+8
@@ -41,4 +46,5 @@ jobs:
           path: |
             reports/soak-nightly.json
             reports/soak-heaps/
+            reports/rss-trend-*.log
           if-no-files-found: warn

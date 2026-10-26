@@ -64,9 +64,11 @@ else
   heap_growth=80
   rss_growth=120
 fi
+rss_log="reports/rss-trend-$(TZ=Asia/Shanghai date +%m%d).log"
 python3 scripts/soak.py \
   --seconds "$seconds" \
   --sample-every 30 \
+  --rss-log "$rss_log" \
   --bin core/bin/monitord \
   --seed-data-dir reports/seed-data \
   --seed-config reports/seed-config.yaml \

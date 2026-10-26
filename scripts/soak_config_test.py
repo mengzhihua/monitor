@@ -54,6 +54,19 @@ class FakeClock:
                                        old.boottime + (seconds if boottime is None else boottime))
 
 
+class RssTrendTests(unittest.TestCase):
+    def test_header_is_written_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(pathlib.Path(tmp) / "rss-trend-1026.log")
+            soak.append_rss_trend(path, 0, 40.5, 3.25)
+            soak.append_rss_trend(path, 30, 41, None)
+            lines = pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[0], "unix_s\telapsed_s\trss_mib\theap_mib")
+        self.assertEqual(len(lines), 3)
+        self.assertIn("\t0\t40.50\t3.25", lines[1])
+        self.assertTrue(lines[2].endswith("\t30\t41.00\t"))
+
+
 class SoakTimelineTests(unittest.TestCase):
     def timeline(self):
         clock = FakeClock()

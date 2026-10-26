@@ -48,4 +48,5 @@ jobs:
           path: |
             reports/soak-nightly.json
             reports/soak-heaps/
+            reports/rss-trend-*.log
           if-no-files-found: warn

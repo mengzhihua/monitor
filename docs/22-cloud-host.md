@@ -41,6 +41,8 @@ ok version=3.0.17 mode=agent dir=/var/lib/monitor/db charts=<N> cpu_points=<M>
 | 监听 | `127.0.0.1:19999` |
 | AI 配置 | `/var/lib/monitor/operations/ai-settings.json`，`0600` |
 
+进程自己收到 SIGTERM 后以状态 0 退出。`Restart=on-failure` 把这种退出当成正常结束，服务会一直停着，直到有人再执行 `systemctl start`。单元现在是 `Restart=always`：外部杀掉进程会拉起来；`systemctl stop` 仍然不会自动再起。安装脚本会 `systemctl enable --now`，开机进入 multi-user 时也会拉起。2026-10-25 约 10:30（UTC+8）停了大约 23 小时，和「进程被终止后单元不再拉起」一致；这台环境看不到那台宿主机的暂停或审计日志，不能把原因写成已经核实的某一种。
+
 密码是 32 字节的 base64（Raw URL，无 `=`），共 43 个字符，文件末尾一个换行。Bearer 使用去掉空白后的 43 个字符。日志里有 `password_file=/var/lib/monitor/web-password` 和 `addr=127.0.0.1:19999`，没有密码正文。
 
 安全组入方向保留 TCP 22。不放行来自 `0.0.0.0/0` 的 TCP 19999。数据目录所在文件系统至少留 4GiB（原始块预算 1GiB，另有检查点和降采样）。

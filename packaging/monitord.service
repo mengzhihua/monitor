@@ -7,7 +7,9 @@ Wants=network-online.target
 Type=simple
 # Align with packaging/README MONITOR_* defaults: config under /etc, data under /var/lib.
 ExecStart=/usr/bin/monitord -config /etc/monitor/monitor.yaml -data-dir /var/lib/monitor
-Restart=on-failure
+# SIGTERM is a clean exit. Restart=on-failure left the unit inactive after an
+# external kill (systemctl stop still does not schedule a restart).
+Restart=always
 RestartSec=2
 User=monitor
 Group=monitor
