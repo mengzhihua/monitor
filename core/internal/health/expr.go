@@ -133,6 +133,22 @@ func (n callNode) eval(vars func(string) (float64, bool)) float64 {
 			m = math.Max(m, v)
 		}
 		return m
+	case "bitand":
+		return bitBinary(a[0], a[1], func(x, y uint64) uint64 { return x & y })
+	case "bitor":
+		return bitBinary(a[0], a[1], func(x, y uint64) uint64 { return x | y })
+	case "bitxor":
+		return bitBinary(a[0], a[1], func(x, y uint64) uint64 { return x ^ y })
+	case "bitnot":
+		x, ok := asBits(a[0])
+		if !ok {
+			return math.NaN()
+		}
+		return float64(^x)
+	case "bitlshift":
+		return bitShift(a[0], a[1], true)
+	case "bitrshift":
+		return bitShift(a[0], a[1], false)
 	}
 	return math.NaN()
 }
@@ -144,6 +160,49 @@ func b2f(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// asBits truncates toward zero and reads the result as an unsigned 64-bit
+// pattern. A negative value uses the two's-complement bits of its int64 form.
+func asBits(v float64) (uint64, bool) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	t := math.Trunc(v)
+	if t >= 0 {
+		if t > math.MaxUint64 {
+			return 0, false
+		}
+		return uint64(t), true
+	}
+	if t < math.MinInt64 {
+		return 0, false
+	}
+	return uint64(int64(t)), true
+}
+
+func bitBinary(a, b float64, op func(uint64, uint64) uint64) float64 {
+	x, ok1 := asBits(a)
+	y, ok2 := asBits(b)
+	if !ok1 || !ok2 {
+		return math.NaN()
+	}
+	return float64(op(x, y))
+}
+
+func bitShift(v, n float64, left bool) float64 {
+	x, ok := asBits(v)
+	if !ok || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+		return math.NaN()
+	}
+	if n >= 64 {
+		return 0
+	}
+	bits := uint(n)
+	if left {
+		return float64(x << bits)
+	}
+	return float64(x >> bits)
 }
 
 // Eval evaluates the expression; unknown variables evaluate to NaN.
@@ -410,9 +469,13 @@ func (p *parser) parsePrimary() (node, error) {
 			}
 		}
 		switch fn {
-		case "abs", "isnan", "isinf":
+		case "abs", "isnan", "isinf", "bitnot":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("%s() takes one argument", fn)
+			}
+		case "bitand", "bitor", "bitxor", "bitlshift", "bitrshift":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("%s() takes two arguments", fn)
 			}
 		case "min", "max":
 			if len(args) < 1 {

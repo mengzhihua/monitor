@@ -46,6 +46,16 @@ func TestExpr(t *testing.T) {
 		"$missing":                                       math.NaN(),
 		"isnan($missing) ? 5 : 6":                        5,
 		"abs(-3) + min(4, 2, 9) + max(1, 7)":             12,
+		"bitand(6, 3)":                                   2,
+		"bitor(1, 2)":                                    3,
+		"bitxor(6, 3)":                                   5,
+		"bitand(-1, 255)":                                255,
+		"bitlshift(1, 4)":                                16,
+		"bitlshift(1, 3.9)":                              8,
+		"bitrshift(16, 2)":                               4,
+		"bitlshift(1, 64)":                               0,
+		"bitlshift(1, -1)":                               math.NaN(),
+		"bitand($missing, 1)":                            math.NaN(),
 		"$this > 50 && $this < 100":                      1,
 		"$this > 50 AND NOT ($this < 100)":               0,
 		"10 % 3":                                         1,
@@ -64,7 +74,14 @@ func TestExpr(t *testing.T) {
 			t.Errorf("%q = %v, want %v", src, got, want)
 		}
 	}
-	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "3 4"} {
+	not, err := ParseExpr("bitnot(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := not.Eval(vars); got != float64(^uint64(0)) {
+		t.Fatalf("bitnot(0) = %v", got)
+	}
+	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "bitnot(1, 2)", "bitand(1)", "3 4"} {
 		if _, err := ParseExpr(bad); err == nil {
 			t.Errorf("%q should not parse", bad)
 		}
