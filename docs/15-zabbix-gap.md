@@ -42,7 +42,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 可视化 | 图类型（饼 / 堆叠） | 部分：uPlot 线 / 面 / 堆叠；服务 SLA 有饼图；图表类型仍无饼图 | `web/`、`ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |
 | 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图 | `sla/sla.go` |
-| 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV | `api/zplatform.go` |
+| 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV。告警日志可用 `GET /api/v1/alarm_log?format=csv` 导出，公式文本会加前缀避免被表格软件执行 | `api/zplatform.go`、`api/alarms.go` |
 | 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
 | 管理 | 完整 CRUD API | 部分：REST + OpenAPI，非全实体 CRUD | `api/openapi.yaml` |
 | 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP | `api/saml.go`、`api/totp.go` |
