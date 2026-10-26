@@ -26,6 +26,7 @@ type httpJob struct {
 	Headers         map[string]string `yaml:"headers"`
 	StatusOK        []int             `yaml:"status_accepted"` // legacy explicit codes
 	StatusCodes     []string          `yaml:"status_codes,omitempty"`
+	Contains        string            `yaml:"contains,omitempty"`
 	FollowRedirects *bool             `yaml:"follow_redirects,omitempty"`
 	spans           []statusSpan
 	TLS             struct {
@@ -77,6 +78,9 @@ func (h *httpcheckCollector) Init(reg *registry.Registry) error {
 		}
 		if j.Timeout <= 0 {
 			j.Timeout = h.cfg.Timeout
+		}
+		if len(j.Contains) > 256 {
+			return fmt.Errorf("httpcheck job %q: contains must be at most 256 bytes", j.Name)
 		}
 		spans, err := httpcheckStatusSpans(j)
 		if err != nil {
@@ -192,9 +196,19 @@ func (h *httpcheckCollector) do(ctx context.Context, j httpJob) (ok bool, length
 		return false, 0, 0, 0, err
 	}
 	defer resp.Body.Close()
-	// Only the byte count is used. Stream into Discard's pooled buffer rather
-	// than retaining and repeatedly growing a response-sized byte slice.
-	n, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	var (
+		body    []byte
+		n       int64
+		readErr error
+	)
+	if j.Contains != "" {
+		body, readErr = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		n = int64(len(body))
+	} else {
+		// Only the byte count is used. Stream into Discard's pooled buffer rather
+		// than retaining and repeatedly growing a response-sized byte slice.
+		n, readErr = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	}
 	code = resp.StatusCode
 	length = int(n)
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
@@ -204,10 +218,13 @@ func (h *httpcheckCollector) do(ctx context.Context, j httpJob) (ok bool, length
 	if readErr != nil {
 		return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: read response: %w", j.Name, readErr)
 	}
-	if statusAllowed(j.spans, code) {
-		return true, length, code, expiryDays, nil
+	if !statusAllowed(j.spans, code) {
+		return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: status %d", j.Name, code)
 	}
-	return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: status %d", j.Name, code)
+	if j.Contains != "" && !strings.Contains(string(body), j.Contains) {
+		return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: response missing required text", j.Name)
+	}
+	return true, length, code, expiryDays, nil
 }
 
 func httpcheckStatusSpans(j *httpJob) ([]statusSpan, error) {
