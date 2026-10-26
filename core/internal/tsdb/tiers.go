@@ -326,9 +326,10 @@ func (t *tier) enforceRetention(now time.Time) {
 			sr.open = nil
 		}
 		keep := sr.blocks[:0]
+		dir := t.seriesDir(sr.id)
 		for _, b := range sr.blocks {
 			if b.end+t.spec.Every <= cutoff {
-				_ = os.Remove(b.path)
+				_ = os.Remove(blockFile(dir, b.start))
 				continue
 			}
 			keep = append(keep, b)
@@ -391,8 +392,9 @@ func (t *tier) walk(id string, after, before int64, cols [5]bool, emit func(Buck
 	if !ok {
 		return nil
 	}
+	dir := t.seriesDir(id)
 	for _, b := range blocks {
-		meta, data, err := readBlockData(b.path)
+		meta, data, err := readBlockData(blockFile(dir, b.start))
 		if err != nil {
 			continue
 		}

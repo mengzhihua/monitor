@@ -76,8 +76,8 @@ func BenchmarkRollupResidentHeap(b *testing.B) {
 }
 
 // Model the retained in-memory block index at the default 90-day/730-day
-// horizons. No data files are created; path lengths follow the benchmark's
-// temporary directory, so this is a metadata cost model, not a production heap.
+// horizons. No data files are created. Block paths are not stored; this is a
+// metadata cost model, not a production heap.
 func BenchmarkRollupRetainedIndex(b *testing.B) {
 	for _, test := range []struct {
 		name  string
@@ -99,10 +99,9 @@ func BenchmarkRollupRetainedIndex(b *testing.B) {
 					blocks := ([]int{90 * 24 * 60, 730 * 24}[idx] + limit - 1) / limit
 					for i := range 2000 {
 						sr := t.getOrCreate(fmt.Sprintf("metric.%04d", i))
-						dir := t.seriesDir(sr.id)
 						for n := range blocks {
 							start := int64(n*limit) * t.spec.Every
-							sr.blocks = append(sr.blocks, blockMeta{path: filepath.Join(dir, fmt.Sprintf("%d.blk", start)), start: start, end: start + int64(limit-1)*t.spec.Every, count: limit})
+							sr.blocks = append(sr.blocks, blockMeta{start: start, end: start + int64(limit-1)*t.spec.Every, count: limit})
 							count++
 						}
 					}

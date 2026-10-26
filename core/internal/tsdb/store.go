@@ -50,11 +50,16 @@ type Point struct {
 }
 
 type blockMeta struct {
-	path  string
 	start int64
 	end   int64
 	count int
 	size  int64
+}
+
+// blockFile is the on-disk name of a raw or rollup block. The file is always
+// <series dir>/<start>.blk, so the index does not keep a path string per block.
+func blockFile(dir string, start int64) string {
+	return filepath.Join(dir, strconv.FormatInt(start, 10)+".blk")
 }
 
 type series struct {
@@ -385,10 +390,12 @@ func (s *Store) Query(id string, after, before int64) ([]Point, error) {
 	sr.mu.Unlock()
 
 	out := make([]Point, 0, len(active)+len(blocks)*s.opt.BlockSize/4)
+	dir := s.seriesDir(id)
 	for _, b := range blocks {
-		ts, vals, err := readBlock(b.path)
+		path := blockFile(dir, b.start)
+		ts, vals, err := readBlock(path)
 		if err != nil {
-			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
+			s.log.Warn("tsdb: unreadable block", "path", path, "err", err)
 			continue
 		}
 		for i, t := range ts {
@@ -431,8 +438,9 @@ func (s *Store) foldTier(id string, tier int, after, before int64, f *fold) erro
 		return nil
 	}
 	every := t.spec.Every
+	dir := t.seriesDir(id)
 	for _, b := range blocks {
-		meta, data, err := readBlockData(b.path)
+		meta, data, err := readBlockData(blockFile(dir, b.start))
 		if err != nil {
 			continue
 		}
@@ -471,10 +479,12 @@ func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
 	activeTS := append([]int64(nil), sr.ts[lo:hi]...)
 	activeVals := append([]float64(nil), sr.vals[lo:hi]...)
 	sr.mu.Unlock()
+	dir := s.seriesDir(id)
 	for _, b := range blocks {
-		meta, data, err := readBlockData(b.path)
+		path := blockFile(dir, b.start)
+		meta, data, err := readBlockData(path)
 		if err != nil {
-			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
+			s.log.Warn("tsdb: unreadable block", "path", path, "err", err)
 			continue
 		}
 		f.save()
@@ -486,7 +496,7 @@ func (s *Store) foldRaw(id string, after, before int64, f *fold) error {
 		putBuf(data)
 		if err != nil {
 			f.restore()
-			s.log.Warn("tsdb: unreadable block", "path", b.path, "err", err)
+			s.log.Warn("tsdb: unreadable block", "path", path, "err", err)
 		}
 	}
 	for i, t := range activeTS {
@@ -711,9 +721,10 @@ func (s *Store) enforceRetention() {
 			}
 		}
 		keep := sr.blocks[:0]
+		dir := s.seriesDir(sr.id)
 		for _, b := range sr.blocks {
 			if cutoff > 0 && b.end < cutoff {
-				_ = os.Remove(b.path)
+				_ = os.Remove(blockFile(dir, b.start))
 				continue
 			}
 			keep = append(keep, b)
@@ -731,11 +742,11 @@ func (s *Store) enforceRetention() {
 		if total <= s.opt.RetentionSize {
 			break
 		}
-		_ = os.Remove(r.b.path)
+		_ = os.Remove(blockFile(s.seriesDir(r.sr.id), r.b.start))
 		total -= r.b.size
 		r.sr.mu.Lock()
 		for i, b := range r.sr.blocks {
-			if b.path == r.b.path {
+			if b.start == r.b.start && b.end == r.b.end {
 				r.sr.blocks = append(r.sr.blocks[:i], r.sr.blocks[i+1:]...)
 				break
 			}
@@ -813,7 +824,7 @@ func writeBlockFile(path, id string, start, end int64, count int, data []byte) (
 	if err := syncBlockDir(filepath.Dir(path)); err != nil {
 		return blockMeta{}, err
 	}
-	return blockMeta{path: path, start: start, end: end, count: count, size: int64(hdr.Len() + len(data))}, nil
+	return blockMeta{start: start, end: end, count: count, size: int64(hdr.Len() + len(data))}, nil
 }
 
 func readHeader(path string) (string, blockMeta, error) {
@@ -826,7 +837,6 @@ func readHeader(path string) (string, blockMeta, error) {
 	if err != nil {
 		return "", blockMeta{}, err
 	}
-	meta.path = path
 	st, err := f.Stat()
 	if err == nil {
 		meta.size = st.Size()
