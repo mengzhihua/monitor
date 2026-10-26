@@ -2,7 +2,7 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// change (delta), Prometheus text to JSON, XML to JSON, and CSV to JSON. A step can set on_fail to
+// change (delta), Prometheus text to JSON, XML to JSON, CSV to JSON, and SNMP walk to JSON. A step can set on_fail to
 // discard, value, or error.
 // JavaScript runs operator config in a time-limited interpreter that has no
 // host, network, or filesystem API.
@@ -23,21 +23,28 @@ import (
 
 // Step is one preprocessing operation. Unused fields are ignored for that type.
 type Step struct {
-	Type        string   `yaml:"type" json:"type"`
-	Pattern     string   `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Group       int      `yaml:"group,omitempty" json:"group,omitempty"`
-	Path        string   `yaml:"path,omitempty" json:"path,omitempty"`
-	Factor      float64  `yaml:"factor,omitempty" json:"factor,omitempty"`
-	Replacement string   `yaml:"replacement,omitempty" json:"replacement,omitempty"`
-	Min         *float64 `yaml:"min,omitempty" json:"min,omitempty"`
-	Max         *float64 `yaml:"max,omitempty" json:"max,omitempty"`
-	Script      string   `yaml:"script,omitempty" json:"script,omitempty"`
-	OnFail      string   `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
-	FailValue   string   `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
-	Delimiter   string   `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`
-	Qualifier   string   `yaml:"qualifier,omitempty" json:"qualifier,omitempty"`
-	Header      bool     `yaml:"header,omitempty" json:"header,omitempty"`
-	NoQuote     bool     `yaml:"no_quote,omitempty" json:"no_quote,omitempty"`
+	Type        string      `yaml:"type" json:"type"`
+	Pattern     string      `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Group       int         `yaml:"group,omitempty" json:"group,omitempty"`
+	Path        string      `yaml:"path,omitempty" json:"path,omitempty"`
+	Factor      float64     `yaml:"factor,omitempty" json:"factor,omitempty"`
+	Replacement string      `yaml:"replacement,omitempty" json:"replacement,omitempty"`
+	Min         *float64    `yaml:"min,omitempty" json:"min,omitempty"`
+	Max         *float64    `yaml:"max,omitempty" json:"max,omitempty"`
+	Script      string      `yaml:"script,omitempty" json:"script,omitempty"`
+	OnFail      string      `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
+	FailValue   string      `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
+	Delimiter   string      `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`
+	Qualifier   string      `yaml:"qualifier,omitempty" json:"qualifier,omitempty"`
+	Header      bool        `yaml:"header,omitempty" json:"header,omitempty"`
+	NoQuote     bool        `yaml:"no_quote,omitempty" json:"no_quote,omitempty"`
+	Fields      []WalkField `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// WalkField is one column of an snmp_walk_to_json step. Name is a {#MACRO}.
+type WalkField struct {
+	Name string `yaml:"name" json:"name"`
+	OID  string `yaml:"oid" json:"oid"`
 }
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
@@ -157,6 +164,12 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			have = false
 		case "csv_to_json":
 			text, err = applyCSVToJSON(st, text)
+			if err != nil {
+				return failStep(st, prev, err)
+			}
+			have = false
+		case "snmp_walk_to_json":
+			text, err = applySNMPWalkJSON(st, text)
 			if err != nil {
 				return failStep(st, prev, err)
 			}
