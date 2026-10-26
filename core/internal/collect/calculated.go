@@ -14,8 +14,9 @@ import (
 )
 
 // calculated items combine chart dimensions with + - * / and parentheses.
-// {chart:dimension} is the latest value. avg, min, max, and sum read stored
-// samples over a window from 1s to 1h. This is not a general scripting language.
+// {chart:dimension} is the latest value. avg, min, max, sum, count, and last
+// read stored samples over a window from 1s to 1h. This is not a general
+// scripting language.
 
 // SeriesHistory reads stored samples for one series id ("chart|dimension").
 type SeriesHistory interface {
@@ -38,7 +39,7 @@ type calculatedCollector struct {
 	history SeriesHistory
 }
 
-// SetHistory supplies stored samples for avg, min, max, and sum.
+// SetHistory supplies stored samples for avg, min, max, sum, count, and last.
 func (c *calculatedCollector) SetHistory(h SeriesHistory) { c.history = h }
 
 func init() { Register("calculated", func() Collector { return &calculatedCollector{} }) }
@@ -208,7 +209,7 @@ func (p *formulaParser) parseCall() (float64, error) {
 	}
 	name := p.s[start:p.i]
 	switch name {
-	case "avg", "min", "max", "sum":
+	case "avg", "min", "max", "sum", "count", "last":
 	default:
 		return 0, fmt.Errorf("unknown function %q", name)
 	}
@@ -342,7 +343,8 @@ func (c *calculatedCollector) windowValue(fn, chart, dim string, seconds int, no
 
 func reduceWindow(fn string, pts []tsdb.Point) (float64, bool) {
 	var n int
-	var sum, lo, hi float64
+	var sum, lo, hi, last float64
+	var lastTS int64
 	for _, p := range pts {
 		if math.IsNaN(p.Value) || math.IsInf(p.Value, 0) {
 			continue
@@ -353,8 +355,15 @@ func reduceWindow(fn string, pts []tsdb.Point) (float64, bool) {
 		if n == 0 || p.Value > hi {
 			hi = p.Value
 		}
+		if n == 0 || p.TS >= lastTS {
+			lastTS = p.TS
+			last = p.Value
+		}
 		sum += p.Value
 		n++
+	}
+	if fn == "count" {
+		return float64(n), true
 	}
 	if n == 0 {
 		return 0, false
@@ -368,6 +377,8 @@ func reduceWindow(fn string, pts []tsdb.Point) (float64, bool) {
 		return hi, true
 	case "sum":
 		return sum, true
+	case "last":
+		return last, true
 	default:
 		return 0, false
 	}
