@@ -40,8 +40,8 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 动作 | 动作条件 | 已有：动作按严重级别和告警名匹配 | `health/actions.go` |
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
 | 可视化 | 图类型（饼 / 堆叠） | 部分：uPlot 线 / 面 / 堆叠；服务 SLA 有饼图；图表类型仍无饼图 | `web/`、`ServicesPanel.vue` |
-| 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |
-| 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图 | `sla/sla.go` |
+| 可视化 | 网络拓扑图 | 已有：LLDP 邻居自动边，手工边可用 `PUT /api/v1/topology` 替换并在重启后保留 | `api/zplatform.go`、`sla/catalog.go` |
+| 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图。`PUT /api/v1/services` 可替换服务树，拒绝成环和缺失的子服务，并在重启后保留 | `sla/sla.go`、`sla/catalog.go` |
 | 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV | `api/zplatform.go` |
 | 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
 | 管理 | 完整 CRUD API | 部分：REST + OpenAPI，非全实体 CRUD | `api/openapi.yaml` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。服务树和手工拓扑可以在运行中替换，写入数据目录后重启仍然保留。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|

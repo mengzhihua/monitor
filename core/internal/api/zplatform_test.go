@@ -15,6 +15,69 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/sla"
 )
 
+func TestServiceAndTopologyEdits(t *testing.T) {
+	ts, _ := newTestServer(t, Options{
+		OperationsDir: t.TempDir(),
+		Services:      []sla.Service{{Name: "edge", Alarms: []string{"down"}}},
+		Links:         []sla.Link{{Source: "a", Target: "b"}},
+		Users:         []User{{Name: "boss", Token: "admin", Role: RoleAdmin}, {Name: "reader", Token: "viewer", Role: RoleViewer}},
+	})
+	viewer, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"services":[]}`))
+	viewer.Header.Set("Authorization", "Bearer viewer")
+	resp, err := http.DefaultClient.Do(viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer put %d", resp.StatusCode)
+	}
+	bad, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"services":[{"name":"edge","children":["core"]},{"name":"core","children":["edge"]}]}`))
+	bad.Header.Set("Authorization", "Bearer admin")
+	resp, err = http.DefaultClient.Do(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cycle %d", resp.StatusCode)
+	}
+	okReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"services":[{"name":"edge","children":["core"]},{"name":"core","alarms":["down"]}]}`))
+	okReq.Header.Set("Authorization", "Bearer admin")
+	resp, err = http.DefaultClient.Do(okReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put services %d", resp.StatusCode)
+	}
+	linkReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/topology", strings.NewReader(`{"links":[{"source":"core","target":"edge"}]}`))
+	linkReq.Header.Set("Authorization", "Bearer admin")
+	resp, err = http.DefaultClient.Do(linkReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put topology %d", resp.StatusCode)
+	}
+	var report sla.Report
+	getJSON(t, ts.URL+"/api/v1/services?token=admin", &report)
+	if len(report.Services) != 2 || report.Services[0].Name != "edge" || len(report.Services[0].Children) != 1 {
+		t.Fatalf("%+v", report)
+	}
+	var topo struct {
+		Edges []struct {
+			Source, Target, Kind string
+		} `json:"edges"`
+	}
+	getJSON(t, ts.URL+"/api/v1/topology?token=viewer", &topo)
+	if len(topo.Edges) != 1 || topo.Edges[0].Kind != "manual" || topo.Edges[0].Source != "core" {
+		t.Fatalf("%+v", topo)
+	}
+}
+
 func TestServicesTopologyAndCommand(t *testing.T) {
 	log, err := audit.Open(t.TempDir(), 100)
 	if err != nil {
