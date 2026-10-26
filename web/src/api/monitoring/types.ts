@@ -5,7 +5,7 @@ export type { PluginStatus } from '../plugins/types'
 export interface Dimension { id: string; name: string; algorithm: string; hidden?: boolean; anomaly?: boolean }
 export interface Chart {
   id: string; context: string; family: string; title: string; units: string
-  chart_type: 'line' | 'area' | 'stacked'; priority: number; update_every: number
+  chart_type: 'line' | 'area' | 'stacked' | 'pie'; priority: number; update_every: number
   plugin: string; module: string; labels: Record<string, string> | null
   dimensions: Dimension[]; first_entry: number; last_entry: number
   anomaly?: boolean
