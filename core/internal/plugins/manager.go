@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -75,6 +76,19 @@ type Options struct {
 	MaxLabels     int
 	MaxVariables  int
 	MaxLine       int
+	// Functions enables calls for packages that declare the functions capability.
+	// Nil means enabled. False rejects FUNCTION lines and hides the functions.
+	Functions *bool
+}
+
+func (o Options) functionsEnabled() bool { return o.Functions == nil || *o.Functions }
+
+func (m *Manager) parserFor(spec Spec) *Parser {
+	p := newPluginParser(spec, m.reg, m.opt.packageBudgets())
+	if m.opt.functionsEnabled() && spec.Manifest.allowsFunctions() {
+		p.AllowsFunctions = true
+	}
+	return p
 }
 
 func (o Options) packageBudgets() PackageBudgets {
@@ -186,6 +200,8 @@ type plugin struct {
 	stderr *stderrState
 	cancel context.CancelFunc
 	done   chan struct{}
+	stdin  io.WriteCloser
+	call   chan struct{}
 }
 
 // Manager owns plugin workers. Catalog reads use mu; lifecycle and control

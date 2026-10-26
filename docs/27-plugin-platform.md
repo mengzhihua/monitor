@@ -35,7 +35,7 @@ plugins.d/
 ```
 
 - `id` 必须与目录名相同，格式为小写字母开头，后续允许小写字母、数字、下划线和连字符，最多 64 字节。
-- `api_version` 当前为 `1`，`protocol` 为 `plugins.d/v1`，能力必须恰好为 `["metrics"]`。未知字段、版本、协议或能力会产生目录诊断，该包不会执行。
+- `api_version` 当前为 `1`，`protocol` 为 `plugins.d/v1`。能力是 `metrics`、`functions`，或两者同时声明；未知能力、重复能力和空列表会产生目录诊断，该包不会执行。
 - `name`、`version` 必填；`description` 可省略。`version` 是插件作者提供的版本标签，不会触发网络下载或依赖解析。
 - `command` 必须是包内相对文件，不能越过目录或符号链接；包目录和清单也不能是符号链接。可选 `args` 会追加在采样间隔参数之后，管理响应不返回执行参数。
 - 清单最大 64 KiB，最多 64 个参数，每个参数最多 4096 字节。`update_every`、`timeout` 接受 0～86400 秒，0 采用原有默认值。
@@ -43,7 +43,7 @@ plugins.d/
 
 清单包输出的图表 ID 必须以 `plugin.<id>.` 开头，例如 `plugin.heartbeat.pulse`。每个包最多保留 128 张图表，每张最多 64 个维度、128 个标签，最多 128 个变量；已注册定义跨插件进程重启计入预算。重复声明仍保留历史；清单包禁止 `OVERWRITE`，避免替换定义后绕过累积维度预算。已有其他采集器占用的同名图表不会被接管。这些预算约束当前服务进程保留的定义，不是磁盘配额。
 
-`HOST_LABEL` 和 `FUNCTION` 不属于 metrics 能力，清单包使用时记入协议错误。非有限数值不会进入采样/变量状态。其他文本协议见 [plugins.d 协议](03-plugins-d-protocol.md)。
+`HOST_LABEL` 不属于 metrics 或 functions 能力，清单包使用时记入协议错误。只声明 metrics 的包发送 `FUNCTION` 也记入协议错误。声明了 `functions` 的包可以发送 `FUNCTION <name> <timeout> [help]`，名称是小写标识，超时是 0～60 秒，最多 32 个函数。调用走现有 `GET /api/v1/function?function=plugin.<id>.<name>`，agent 向插件 stdin 写一行 `CALL <id> <name> <json>`，插件在 stdout 回一行 `FUNCTION_RESULT <id> <json>`。参数最多 16 个，结果必须是一行 JSON，并且不能超过协议行预算。`plugins.functions: false` 关闭注册和调用。未运行或已有调用未完成时，新的调用会失败。非有限数值不会进入采样/变量状态。其他文本协议见 [plugins.d 协议](03-plugins-d-protocol.md)。
 
 上述 128 / 64 / 128 / 128 和 64 KiB 是进程级默认预算。`plugins.max_charts`、`max_dimensions`、`max_labels`、`max_variables`、`max_line` 可以覆盖，0 保持默认；`max_line` 也限制旧脚本的单行长度，其余预算仍只约束清单包。`plugins.restart_min` / `restart_max` 覆盖重启退避，默认 1 秒 / 1 分钟。目录接口的 `budgets` 返回进程级上限。采集器启用仍由 `collectors.enabled` / `disabled` 决定，`collectors.timeout` 限制单次采集，0 表示一个采集周期。已有配置不写这些键时行为不变。
 

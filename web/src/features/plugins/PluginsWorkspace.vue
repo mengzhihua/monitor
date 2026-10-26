@@ -65,6 +65,7 @@ defineExpose({ canLeave })
           <header><div><h3>{{ title(plugin) }}</h3><code>{{ plugin.name }}</code></div><span class="state" :class="{ issue: ['failed', 'waiting'].includes(plugin.state) }">{{ pluginState(plugin.state) }}</span></header>
           <p v-if="plugin.manifest?.description">{{ plugin.manifest.description }}</p>
           <p v-if="pluginBudget(plugin.budgets)" class="dim">本插件上限：{{ pluginBudget(plugin.budgets) }}。</p>
+          <p v-if="plugin.functions?.length" class="dim">插件函数：{{ plugin.functions.join('、') }}</p>
           <dl class="metadata">
             <div><dt>来源</dt><dd>{{ pluginSource(plugin.source) }}</dd></div>
             <div v-if="plugin.manifest"><dt>版本</dt><dd>{{ plugin.manifest.version }} · API {{ plugin.manifest.api_version }}</dd></div>

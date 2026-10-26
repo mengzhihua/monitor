@@ -238,10 +238,11 @@ func (c *Config) ModuleDecoders() map[string]func(v any) error {
 
 // Plugins configures external plugins.d collectors.
 type Plugins struct {
-	Enabled  *bool          `yaml:"enabled"`  // default true
-	Dir      string         `yaml:"dir"`      // scanned for executable *.plugin files, relative to the config file
-	Disabled []string       `yaml:"disabled"` // plugin names not to start
-	List     []plugins.Spec `yaml:"list"`     // explicit plugins (command may be relative to dir)
+	Enabled   *bool          `yaml:"enabled"`   // default true
+	Functions *bool          `yaml:"functions"` // nil = allow functions declared by packages
+	Dir       string         `yaml:"dir"`       // scanned for executable *.plugin files, relative to the config file
+	Disabled  []string       `yaml:"disabled"`  // plugin names not to start
+	List      []plugins.Spec `yaml:"list"`      // explicit plugins (command may be relative to dir)
 	// Package budgets apply to manifest plugins. Zero keeps the built-in cap
 	// (128 charts, 64 dimensions, 128 labels, 128 variables, 64 KiB lines).
 	// list[].max_* can tighten one plugin and cannot exceed this ceiling.
@@ -388,6 +389,13 @@ func (c *Config) HealthEnabled() bool { return c.Health.Enabled == nil || *c.Hea
 
 // PluginsEnabled reports whether external plugins are started.
 func (c *Config) PluginsEnabled() bool { return c.Plugins.Enabled == nil || *c.Plugins.Enabled }
+
+// PluginFunctionsEnabled reports whether manifest packages may register and
+// serve FUNCTION calls. Unset stays on; the package must still declare the
+// functions capability.
+func (c *Config) PluginFunctionsEnabled() bool {
+	return c.Plugins.Functions == nil || *c.Plugins.Functions
+}
 
 // HealthBuiltin reports whether the shipped rules are loaded.
 func (c *Config) HealthBuiltin() bool { return c.Health.Builtin == nil || *c.Health.Builtin }

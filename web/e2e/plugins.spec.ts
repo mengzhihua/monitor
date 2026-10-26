@@ -9,7 +9,8 @@ function fixture(): PluginCatalog {
       enabled: true, pid: 120, update_every: 1, restarts: 2, started: 100,
       manifest: { api_version: 1, id: 'demo', name: '演示采集器', version: '1.2.0', description: '本机插件平台测试', protocol: 'plugins.d/v1', capabilities: ['metrics'] },
       stats: { lines: 12, samples: 4, charts: 1, errors: 1, last_data: 110, last_error: '历史解析错误' },
-      budgets: { max_charts: 4, max_dimensions: 8, max_line: 4096 } },
+      budgets: { max_charts: 4, max_dimensions: 8, max_line: 4096 },
+      functions: ['plugin.demo.ping'] },
     { name: 'locked', command: '/plugins/locked.plugin', state: 'disabled', source: 'configured', locked: true,
       enabled: false, update_every: 5, restarts: 0, stats: { lines: 0, samples: 0, charts: 0, errors: 0 } },
   ] }
@@ -50,6 +51,7 @@ test('local plugin catalog shows metadata and locks while actions use revisions 
   await expect(plugin).toContainText('1.2.0')
   await expect(plugin).toContainText('清单插件包')
   await expect(plugin).toContainText('本插件上限：4 张图表，每张 8 个维度，单行 4 KiB')
+  await expect(plugin).toContainText('插件函数：plugin.demo.ping')
   await expect(panel.getByRole('region', { name: '插件目录诊断' })).toContainText('/plugins/broken/plugin.json')
   await expect(panel).toContainText('清单包预算：32 张图表，每张 8 个维度、16 个标签、4 个变量，单行上限 64 KiB')
   await expect(panel.getByRole('article', { name: 'locked' }).getByRole('button', { name: '启用', exact: true })).toBeDisabled()

@@ -701,6 +701,7 @@ collectors:
 
 plugins:
   enabled: true
+  functions: true      # allow FUNCTION calls from packages that declare the functions capability; false disables them
   dir: plugins.d       # every executable *.plugin here is started as "<file> <update_every>"
   disabled: []         # plugin names not to start, e.g. ["example"]
   max_charts: 128      # manifest packages only. 0 keeps 128. Legacy *.plugin scripts stay uncapped

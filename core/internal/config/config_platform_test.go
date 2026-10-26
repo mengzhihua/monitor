@@ -19,6 +19,13 @@ func TestUnsetPlatformFieldsKeepEngineDefaults(t *testing.T) {
 	if c.Plugins.MaxCharts != 0 || c.Plugins.MaxDimensions != 0 || c.Plugins.MaxLine != 0 || c.Plugins.RestartMin != 0 || c.Plugins.RestartMax != 0 {
 		t.Fatalf("plugin limits changed an existing file: %+v", c.Plugins)
 	}
+	if !c.PluginFunctionsEnabled() {
+		t.Fatal("plugin functions must stay available when the key is omitted")
+	}
+	disabled, err := Parse([]byte("plugins:\n  functions: false\n"))
+	if err != nil || disabled.PluginFunctionsEnabled() {
+		t.Fatalf("functions: false was not honored: %v %+v", err, disabled)
+	}
 	if c.Collectors.Timeout != 0 || !c.PluginsEnabled() {
 		t.Fatalf("collector timeout or plugin enablement changed: timeout=%s enabled=%v", c.Collectors.Timeout, c.PluginsEnabled())
 	}
