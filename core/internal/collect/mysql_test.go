@@ -135,10 +135,95 @@ func TestPostgresCollectorAgainstFake(t *testing.T) {
 	if err := p.Init(reg); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Collect(context.Background(), reg, time.Now()); err != nil {
-		// Init already consumed the only connection; a second Collect may fail.
-		_ = err
+}
+
+func TestPostgresQueryFailureMarksUnsupported(t *testing.T) {
+	ln := serveOnePostgres(t)
+	defer ln.Close()
+	p := &postgresCollector{cfg: postgresConfig{Address: ln.Addr().String(), User: "u", Database: "postgres", Timeout: 300 * time.Millisecond}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := p.Init(reg); err != nil {
+		t.Fatal(err)
 	}
+	now := time.Unix(1_700_000_000, 0)
+	p.cfg.Address = "127.0.0.1:1"
+	if err := p.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	conn := mustChart(t, reg, "postgres.connections")
+	locks := mustChart(t, reg, "postgres.locks")
+	if conn.Unsupported == "" || locks.Unsupported == "" || conn.LastCollectionTime() != 0 {
+		t.Fatalf("connections %q at %d locks %q", conn.Unsupported, conn.LastCollectionTime(), locks.Unsupported)
+	}
+	marked := 0
+	for _, ch := range reg.Charts() {
+		if ch.Plugin == "postgres" && ch.Unsupported != "" {
+			marked++
+		}
+	}
+	if marked < 2 {
+		t.Fatalf("marked %d postgres charts", marked)
+	}
+
+	again := serveOnePostgres(t)
+	defer again.Close()
+	p.cfg.Address = again.Addr().String()
+	if err := p.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conn.Unsupported != "" || locks.Unsupported != "" {
+		t.Fatalf("stuck connections %q locks %q", conn.Unsupported, locks.Unsupported)
+	}
+	if _, vals := conn.LastValues(); vals["used"] != 4 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
+func serveOnePostgres(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		var hdr [4]byte
+		if _, err := io.ReadFull(c, hdr[:]); err != nil {
+			return
+		}
+		n := int(binary.BigEndian.Uint32(hdr[:])) - 4
+		if n > 0 {
+			_, _ = io.ReadFull(c, make([]byte, n))
+		}
+		_ = pgWriteMsg(c, 'R', binary.BigEndian.AppendUint32(nil, 0))
+		_ = pgWriteMsg(c, 'Z', []byte{'I'})
+		typ, _, err := pgReadMsg(c)
+		if err != nil || typ != 'Q' {
+			return
+		}
+		rd := make([]byte, 2)
+		binary.BigEndian.PutUint16(rd, 17)
+		for i := 0; i < 17; i++ {
+			rd = append(rd, []byte("c\x00")...)
+			rd = append(rd, make([]byte, 18)...)
+		}
+		_ = pgWriteMsg(c, 'T', rd)
+		vals := []string{"4", "1", "10", "2", "3", "4", "5", "6", "7", "1024", "1", "2", "3", "4", "5", "6", "8"}
+		var row []byte
+		row = binary.BigEndian.AppendUint16(row, uint16(len(vals)))
+		for _, v := range vals {
+			row = binary.BigEndian.AppendUint32(row, uint32(len(v)))
+			row = append(row, v...)
+		}
+		_ = pgWriteMsg(c, 'D', row)
+		_ = pgWriteMsg(c, 'C', []byte("SELECT 1\x00"))
+		_ = pgWriteMsg(c, 'Z', []byte{'I'})
+	}()
+	return ln
 }
 
 func TestKS2AndVolume(t *testing.T) {
