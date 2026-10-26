@@ -1,6 +1,7 @@
 package preprocess
 
 import (
+	"errors"
 	"math"
 	"testing"
 )
@@ -40,5 +41,54 @@ func TestApplyPipeline(t *testing.T) {
 	}
 	if _, _, err = Apply([]Step{{Type: "nope"}}, "1", math.NaN()); err == nil {
 		t.Fatal("accepted unknown step")
+	}
+}
+
+func TestZabbixPreprocessSteps(t *testing.T) {
+	v, _, err := Apply([]Step{{Type: "replace", Pattern: ",", Replacement: "."}}, "1,5", math.NaN())
+	if err != nil || v != 1.5 {
+		t.Fatalf("replace %v %v", v, err)
+	}
+	v, _, err = Apply([]Step{{Type: "ltrim", Pattern: "x"}, {Type: "rtrim", Pattern: "x"}}, "xx12xx", math.NaN())
+	if err != nil || v != 12 {
+		t.Fatalf("trim sides %v %v", v, err)
+	}
+	v, _, err = Apply([]Step{{Type: "hex"}}, "0x10", math.NaN())
+	if err != nil || v != 16 {
+		t.Fatalf("hex %v %v", v, err)
+	}
+	v, _, err = Apply([]Step{{Type: "octal"}}, "075", math.NaN())
+	if err != nil || v != 61 {
+		t.Fatalf("octal %v %v", v, err)
+	}
+	v, _, err = Apply([]Step{{Type: "octal"}}, "0", math.NaN())
+	if err != nil || v != 0 {
+		t.Fatalf("octal zero %v %v", v, err)
+	}
+	v, _, err = Apply([]Step{{Type: "matches", Pattern: `^[0-9]+$`}}, "12", math.NaN())
+	if err != nil || v != 12 {
+		t.Fatalf("matches %v %v", v, err)
+	}
+	if _, _, err = Apply([]Step{{Type: "not_match", Pattern: `err`}}, "err", math.NaN()); err == nil {
+		t.Fatal("not_match accepted a match")
+	}
+	min, max := 1.0, 10.0
+	v, _, err = Apply([]Step{{Type: "in_range", Min: &min, Max: &max}}, "10", math.NaN())
+	if err != nil || v != 10 {
+		t.Fatalf("in_range %v %v", v, err)
+	}
+	if _, _, err = Apply([]Step{{Type: "in_range", Min: &min, Max: &max}}, "11", math.NaN()); err == nil {
+		t.Fatal("in_range accepted 11")
+	}
+	v, prev, err := Apply([]Step{{Type: "discard_unchanged"}}, "4", math.NaN())
+	if err != nil || v != 4 || prev != 4 {
+		t.Fatalf("first unchanged %v %v %v", v, prev, err)
+	}
+	if _, next, err := Apply([]Step{{Type: "discard_unchanged"}}, "4", prev); !errors.Is(err, ErrUnchanged) || next != prev {
+		t.Fatalf("repeat should discard, next=%v err=%v", next, err)
+	}
+	v, prev, err = Apply([]Step{{Type: "discard_unchanged"}}, "5", prev)
+	if err != nil || v != 5 || prev != 5 {
+		t.Fatalf("changed value %v %v %v", v, prev, err)
 	}
 }

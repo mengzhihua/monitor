@@ -1,10 +1,10 @@
 # Zabbix 能力对标与开发计划
 
-数据口径：main 提交 8c0125e，对照 Zabbix 7.0 LTS 功能面。状态：已有 / 部分 / 缺失。
+数据口径：对照 Zabbix 7.0 LTS 功能面，并按当前代码复核。状态：已有 / 部分 / 缺失。矩阵里已经落地的 Z1–Z6 不再标成缺失。
 
 ## 1. 对标结论
 
-Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度（约 233 个采集器源文件）与 Zabbix 内置项相当，但无代理（Agentless）协议深度不足（SNMPv3、SSH、通用 JMX、多步 Web 场景、值预处理）。
+Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、触发器函数、模板、宏、清单、动作、SLA 和审计已经落地。仍开放的差距是 JavaScript 预处理、通用 LLD 原型语言、图表饼图，以及非目标里的被动 Agent 协议和 Zabbix JSON-RPC。计算项已支持 `{图表:维度}` 的四则运算。
 
 ## 2. 差距矩阵
 
@@ -20,33 +20,33 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
 | 采集 | Trapper / zabbix_sender 推送 | 已有：`ZBXD\x01` sender 监听，可选 psk 与来源网段 | `trapper/trapper.go` |
-| 采集 | 计算项 / 聚合项 / 依赖项 | 部分：查询期聚合仍在；依赖项读主图表维度再预处理 | `collect/dependent.go` |
+| 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
 | 采集 | 低级发现 LLD + 原型 | 部分：SNMP 表 LLD 开图表；无通用原型继承 | `collect/snmp.go` |
-| 采集 | 值预处理（regex/JSONPath/XPath/JS） | 部分：trim/regex/jsonpath/xpath/multiplier/bool/change；无 JS | `preprocess/preprocess.go` |
-| 模型 | 主机 / 主机组 | 已有 / 部分：Space→Room，无嵌套、无组级权限 | `hub/org.go` |
-| 模型 | 模板（可链接、继承） | 缺失（规则按 `on:` + `chart_labels` 匹配） | `health/rule.go` |
-| 模型 | 用户宏 `{$MACRO}` | 缺失 | — |
-| 模型 | 主机清单（自动 + 手工） | 部分：仅自动标签 | `hub/nodes.go` |
+| 采集 | 值预处理（regex/JSONPath/XPath/JS） | 部分：trim/ltrim/rtrim/replace/regex/jsonpath/xpath/multiplier/bool/matches/not_match/hex/octal/in_range/discard_unchanged/change；无 JavaScript | `preprocess/preprocess.go` |
+| 模型 | 主机 / 主机组 | 已有：Space→Room；`web.groups` 可递归包含其他组的 Room，环被忽略 | `config/config.go` |
+| 模型 | 模板（可链接、继承） | 已有：Hub 模板可按节点、Room、标签链接，带宏、标签和采集覆盖 | `hub/templates.go` |
+| 模型 | 用户宏 `{$MACRO}` | 已有：全局与规则级 `{$NAME}` | `config/config.go`、`health/` |
+| 模型 | 主机清单（自动 + 手工） | 已有：自动标签，以及 `GET/PUT /api/v1/hub/inventory` 手工字段 | `api/templates.go` |
 | 模型 | 代理 Proxy | 部分：`hub.peers` 环 + proxy 存储模式 | `hub/cluster.go` |
-| 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 缺失（现有 average/min/max/sum/median/last/min2max） | `health/rule.go` |
+| 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev | `health/metric_lookup.go` |
 | 触发器 | 依赖 | 已有 `inhibit` | `health/inhibit.go` |
 | 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause` | `health/correlation.go` |
 | 问题 | 确认 / 指派 / 进度 / 抑制 | 已有 | `operations/` |
-| 问题 | 手动关闭 | 缺失 | — |
+| 问题 | 手动关闭 | 已有：`POST /api/v1/alarms/close` | `api/alarms.go` |
 | 问题 | 维护期 | 已有 | `health/maint.go`、`plans.go` |
 | 动作 | 多步升级、恢复操作 | 已有：`health.actions` 步骤延迟、角色和恢复操作 | `health/actions.go` |
 | 动作 | 远程命令 / 全局脚本 | 已有：配置 argv 白名单，`POST /api/v1/commands` | `api/zplatform.go` |
 | 动作 | 媒介类型 | 已有：含短信网关与脚本渠道 | `health/notify_mobile.go`、`notify_script.go` |
 | 动作 | 动作条件 | 已有：动作按严重级别和告警名匹配 | `health/actions.go` |
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
-| 可视化 | 图类型（饼 / 堆叠） | 部分：uPlot 线 / 面 / 堆叠，无饼图 | `web/` |
+| 可视化 | 图类型（饼 / 堆叠） | 部分：uPlot 线 / 面 / 堆叠；服务 SLA 有饼图；图表类型仍无饼图 | `web/`、`ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |
 | 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图 | `sla/sla.go` |
 | 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV | `api/zplatform.go` |
-| 管理 | 审计日志 | 缺失 | — |
+| 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
 | 管理 | 完整 CRUD API | 部分：REST + OpenAPI，非全实体 CRUD | `api/openapi.yaml` |
 | 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP | `api/saml.go`、`api/totp.go` |
-| 管理 | 用户组 + 主机组级权限 | 部分：`web.groups` 可再包含其他组的 Room；无主机组树 | `config/config.go` |
+| 管理 | 用户组 + 主机组级权限 | 部分：`web.groups` 递归授予 Room；没有独立的主机组树 | `config/config.go` |
 | 管理 | HA 集群 | 部分：环复制，非共识 HA | `hub/cluster.go` |
 | 管理 | 加密 PSK / 证书 | 部分：TLS；`stream.psk` / `hub.psk` 额外校验 `X-Monitor-PSK` | `hub/ingest.go` |
 | 管理 | Agent 自动注册 | 已有 claim token | `api/server.go` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。JS 预处理仍不在本轮。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|
