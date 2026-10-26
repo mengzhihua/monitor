@@ -446,6 +446,10 @@ paths:
         "200": {description: merged inventory view}
         "400": {description: node parameter required}
         "409": {description: revision conflict}
+    delete:
+      summary: Clear manual inventory fields (?node=)
+      responses:
+        "200": {description: merged inventory view}
   /api/v1/hub/spaces:
     get:
       summary: Hub spaces
@@ -454,6 +458,11 @@ paths:
           description: spaces
         "404":
           description: this process is not a hub
+    put:
+      summary: Rename a space (?id=)
+      responses:
+        "200": {description: renamed space}
+        "404": {description: unknown space}
   /api/v1/services:
     get:
       summary: Service tree status and SLA
@@ -521,6 +530,59 @@ paths:
         "200": {description: "{cidr,hosts,open}"}
         "400": {description: network too large or ports invalid}
         "403": {description: admin only}
+  /api/v1/hub/host-groups:
+    get:
+      summary: Host group tree
+      responses:
+        "200": {description: "{host_groups:[{id,name,parent_id,nodes}]}"}
+    post:
+      summary: Create a host group
+      responses:
+        "200": {description: created group}
+        "400": {description: invalid name, parent, or duplicate}
+    put:
+      summary: Rename, reparent, or replace nodes (?id=)
+      responses:
+        "200": {description: updated group}
+    delete:
+      summary: Delete a childless host group (?id=)
+      responses:
+        "204": {description: deleted}
+        "400": {description: group has children}
+  /api/v1/hub/proxies:
+    get:
+      summary: Proxies without their heartbeat tokens
+      responses:
+        "200": {description: "{proxies:[{id,name,url,mode,last_seen,nodes}]}"}
+    post:
+      summary: Create a proxy and return its heartbeat token once
+      responses:
+        "200": {description: proxy including token}
+    put:
+      summary: Update a proxy (?id=). A node moves off any other proxy.
+      responses:
+        "200": {description: updated proxy without token}
+    delete:
+      summary: Delete a proxy (?id=)
+      responses:
+        "204": {description: deleted}
+  /api/v1/hub/proxies/heartbeat:
+    post:
+      summary: Active proxy heartbeat. Body id plus token, or Authorization bearer token.
+      responses:
+        "204": {description: recorded}
+        "401": {description: token rejected}
+  /api/v1/hub/leader:
+    get:
+      summary: Whether this hub is the elected active member
+      responses:
+        "200": {description: "{id,leader,term,active,mode}"}
+  /api/v1/hub/vote:
+    post:
+      summary: Peer vote or heartbeat. Requires hub.peer_token when one is set.
+      responses:
+        "200": {description: "{term,granted}"}
+        "401": {description: peer token rejected}
   /api/v1/auth/saml/login:
     get:
       summary: Redirect to the configured SAML IdP

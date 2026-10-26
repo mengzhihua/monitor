@@ -16,7 +16,7 @@ import (
 func serverOptions(cfg *config.Config, cfgPath string, eng *health.Engine, pm *plugins.Manager, sc *stream.Client, auditLog *audit.Log, log *slog.Logger) api.Options {
 	var users []api.User
 	for _, u := range cfg.Web.Users {
-		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role), Rooms: config.EffectiveRooms(u, cfg.Web.Groups), TOTP: u.TOTP, ExpiresAt: u.ExpiresAt})
+		users = append(users, api.User{Name: u.Name, Token: u.Token, Role: api.Role(u.Role), Rooms: config.EffectiveRooms(u, cfg.Web.Groups), HostGroups: config.EffectiveHostGroups(u, cfg.Web.Groups), TOTP: u.TOTP, ExpiresAt: u.ExpiresAt})
 	}
 
 	apiOpt := api.Options{

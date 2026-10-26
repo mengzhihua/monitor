@@ -77,6 +77,18 @@ type AnomalySource interface {
 	RatesBetween(chart, dim string, after, before int64) []float64
 }
 
+// SetActive reports whether this process should deliver notifications.
+// A nil function, or a nil engine, keeps the current behavior. The function
+// runs while the engine lock is held and must not call back into the engine.
+func (e *Engine) SetActive(active func() bool) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.active = active
+	e.mu.Unlock()
+}
+
 // Engine evaluates rules and tracks alarms for one host.
 //
 // tickMu serializes a complete evaluation cycle, rule mutation and manual
@@ -107,6 +119,7 @@ type Engine struct {
 	closeOnce   sync.Once
 	closed      bool                 // notifyCh closed; guarded by mu
 	diagnostics NotificationSnapshot // guarded by mu; current process only
+	active      func() bool          // guarded by mu; nil means this process may notify
 	plans       *MaintenancePlanStore
 
 	lastNotificationTest time.Time // guarded by mu; global test rate limit

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -72,6 +73,8 @@ type Org struct {
 	configs     map[string]*NodeConfig
 	keys        []string
 	memberships map[string]roomMembership
+	hostGroups  map[string]*HostGroup
+	proxies     map[string]*Proxy
 }
 
 type roomMembership struct {
@@ -80,11 +83,13 @@ type roomMembership struct {
 }
 
 type orgFile struct {
-	Spaces  []*Space               `json:"spaces"`
-	Rooms   []*Room                `json:"rooms"`
-	Claims  []*Claim               `json:"claims"`
-	Configs map[string]*NodeConfig `json:"configs"`
-	Keys    []string               `json:"keys"`
+	Spaces     []*Space               `json:"spaces"`
+	Rooms      []*Room                `json:"rooms"`
+	Claims     []*Claim               `json:"claims"`
+	Configs    map[string]*NodeConfig `json:"configs"`
+	Keys       []string               `json:"keys"`
+	HostGroups []*HostGroup           `json:"host_groups,omitempty"`
+	Proxies    []*Proxy               `json:"proxies,omitempty"`
 }
 
 // OpenOrg loads org.json from dir (created on first save).
@@ -94,7 +99,8 @@ func OpenOrg(dir string) (*Org, error) {
 	}
 	o := &Org{path: filepath.Join(dir, "org.json"), now: time.Now,
 		spaces: map[string]*Space{}, rooms: map[string]*Room{},
-		claims: map[string]*Claim{}, configs: map[string]*NodeConfig{}, memberships: map[string]roomMembership{}}
+		claims: map[string]*Claim{}, configs: map[string]*NodeConfig{}, memberships: map[string]roomMembership{},
+		hostGroups: map[string]*HostGroup{}, proxies: map[string]*Proxy{}}
 	b, err := os.ReadFile(o.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -111,6 +117,16 @@ func OpenOrg(dir string) (*Org, error) {
 	}
 	for _, r := range f.Rooms {
 		o.rooms[r.ID] = r
+	}
+	for _, g := range f.HostGroups {
+		if g != nil && g.ID != "" {
+			o.hostGroups[g.ID] = g
+		}
+	}
+	for _, p := range f.Proxies {
+		if p != nil && p.ID != "" {
+			o.proxies[p.ID] = p
+		}
 	}
 	o.rebuildMembershipsLocked()
 	for _, c := range f.Claims {
@@ -145,9 +161,17 @@ func (o *Org) saveLocked() error {
 	for _, c := range o.claims {
 		f.Claims = append(f.Claims, c)
 	}
+	for _, g := range o.hostGroups {
+		f.HostGroups = append(f.HostGroups, g)
+	}
+	for _, p := range o.proxies {
+		f.Proxies = append(f.Proxies, p)
+	}
 	sort.Slice(f.Spaces, func(i, j int) bool { return f.Spaces[i].ID < f.Spaces[j].ID })
 	sort.Slice(f.Rooms, func(i, j int) bool { return f.Rooms[i].ID < f.Rooms[j].ID })
 	sort.Slice(f.Claims, func(i, j int) bool { return f.Claims[i].Token < f.Claims[j].Token })
+	sort.Slice(f.HostGroups, func(i, j int) bool { return f.HostGroups[i].ID < f.HostGroups[j].ID })
+	sort.Slice(f.Proxies, func(i, j int) bool { return f.Proxies[i].ID < f.Proxies[j].ID })
 	b, err := json.MarshalIndent(f, "", " ")
 	if err != nil {
 		return err
@@ -220,6 +244,26 @@ func (o *Org) CreateSpace(name string) (Space, error) {
 	s := &Space{ID: id, Name: name, Created: o.now().Unix()}
 	o.spaces[id] = s
 	return *s, o.saveLocked()
+}
+
+func (o *Org) RenameSpace(id, name string) (Space, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 128 {
+		return Space{}, errors.New("name required")
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	s, ok := o.spaces[id]
+	if !ok {
+		return Space{}, errors.New("unknown space")
+	}
+	previous := s.Name
+	s.Name = name
+	if err := o.saveLocked(); err != nil {
+		s.Name = previous
+		return Space{}, err
+	}
+	return *s, nil
 }
 
 func (o *Org) DeleteSpace(id string) error {

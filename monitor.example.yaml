@@ -71,7 +71,7 @@ hub:
   max_nodes: 0             # 1000
   max_charts_per_node: 0   # 5000
   max_dims_per_chart: 0    # 1000
-  peers: []                # other hub base URLs, e.g. ["http://hub2:19999"]
+  peers: []                # other hub base URLs, e.g. ["http://hub2:19999"]. global.hostname is this hub's election id and must be unique; self plus peers should be an odd count
   peer_token: ""           # Bearer token presented to peers (usually their web.token); also required on POST /api/v1/hub/ring
   space: default           # created on first hub start if org.json is empty
   room: default
