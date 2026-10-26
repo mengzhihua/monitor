@@ -26,6 +26,7 @@ const (
 	Line    ChartType = "line"
 	Area    ChartType = "area"
 	Stacked ChartType = "stacked"
+	Pie     ChartType = "pie"
 )
 
 type Host struct {

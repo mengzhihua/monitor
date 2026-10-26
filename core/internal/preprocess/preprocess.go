@@ -2,7 +2,8 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// and change (delta). JavaScript preprocessing is not implemented.
+// and change (delta). JavaScript runs operator config in a time-limited
+// interpreter that has no host, network, or filesystem API.
 package preprocess
 
 import (
@@ -27,6 +28,7 @@ type Step struct {
 	Replacement string   `yaml:"replacement,omitempty" json:"replacement,omitempty"`
 	Min         *float64 `yaml:"min,omitempty" json:"min,omitempty"`
 	Max         *float64 `yaml:"max,omitempty" json:"max,omitempty"`
+	Script      string   `yaml:"script,omitempty" json:"script,omitempty"`
 }
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
@@ -122,6 +124,12 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			prev = value
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
+		case "javascript", "js":
+			text, err = applyJS(st.Script, text)
+			if err != nil {
+				return 0, prev, err
+			}
+			have = false
 		case "change":
 			value, err = parseNum(text)
 			if err != nil {
