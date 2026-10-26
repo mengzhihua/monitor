@@ -27,8 +27,11 @@ import (
 const (
 	blockMagic   = "MONB"
 	blockVersion = 1
-	// DefaultBlockSize is the number of samples per on-disk block (1h at 1s).
-	DefaultBlockSize = 3600
+	// DefaultBlockSize is the number of raw samples kept in memory per series
+	// before they are archived (15 minutes at 1s). A full hour kept about four
+	// times this many points resident; archived files increase by the same
+	// factor. Older one-hour blocks remain readable.
+	DefaultBlockSize = 900
 	// Upper bounds used to reject corrupt headers before allocating.
 	maxBlockSamples = 1 << 22
 	maxBlockBytes   = 64 << 20
