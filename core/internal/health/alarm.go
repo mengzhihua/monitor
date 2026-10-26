@@ -76,6 +76,7 @@ type Alarm struct {
 	Recipient string            `json:"recipient"`
 	Source    string            `json:"source"`
 	Labels    map[string]string `json:"chart_labels,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
 
 	Status           Status  `json:"status"`
 	Value            float64 `json:"value"`

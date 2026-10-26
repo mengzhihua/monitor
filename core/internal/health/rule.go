@@ -64,6 +64,7 @@ type RuleSpec struct {
 	Info         string            `yaml:"info" json:"info,omitempty"`
 	To           string            `yaml:"to" json:"to,omitempty"`
 	Labels       map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
+	Tags         map[string]string `yaml:"tags" json:"tags,omitempty"`
 	Disabled     bool              `yaml:"disabled" json:"disabled,omitempty"`
 	Macros       map[string]string `yaml:"macros" json:"macros,omitempty"` // rule-level {$NAME} overrides
 }
@@ -201,6 +202,11 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
 	}
 	spec = resolved
+	tags, err := cleanTags(spec.Tags)
+	if err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	orig.Tags = tags
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
