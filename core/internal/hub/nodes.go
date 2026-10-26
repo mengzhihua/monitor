@@ -19,7 +19,6 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
-	"github.com/mengzhihua/monitor/core/internal/sliceutil"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -569,7 +568,7 @@ func (nd *Node) recordAlarm(e health.LogEntry) {
 		current.Updated = max(e.Updated, e.When)
 	}
 	nd.alarms[key] = current
-	nd.alog = sliceutil.KeepTail(append(nd.alog, e), alarmLogKeep)
+	nd.alog = keepTail(append(nd.alog, e), alarmLogKeep)
 	nd.mu.Unlock()
 }
 
@@ -602,7 +601,7 @@ func (nd *Node) replaceAlarms(snapshot []health.LogEntry) []health.LogEntry {
 	}
 	nd.alarms = fresh
 	if len(changed) > 0 {
-		nd.alog = sliceutil.KeepTail(append(nd.alog, changed...), alarmLogKeep)
+		nd.alog = keepTail(append(nd.alog, changed...), alarmLogKeep)
 	}
 	return changed
 }
@@ -697,6 +696,20 @@ func (n *Nodes) Storage() string {
 		return "full"
 	}
 	return s
+}
+
+// keepTail copies the retained suffix. A reslice would keep the discarded
+// alarm entries, including their strings, reachable for the life of the backing array.
+func keepTail[T any](s []T, keep int) []T {
+	if keep < 0 {
+		keep = 0
+	}
+	if len(s) <= keep {
+		return s
+	}
+	out := make([]T, keep)
+	copy(out, s[len(s)-keep:])
+	return out
 }
 
 func (nd *Node) deliverResult(f stream.Frame) {

@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-
-	"github.com/mengzhihua/monitor/core/internal/sliceutil"
 )
 
 // Entry is one audited request or auth event.
@@ -71,7 +69,7 @@ func Open(dir string, max int) (*Log, error) {
 			}
 		}
 		f.Close()
-		l.entries = sliceutil.KeepTail(l.entries, max)
+		l.entries = keepTail(l.entries, max)
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -97,7 +95,7 @@ func (l *Log) Append(e Entry) {
 		}
 	}
 	if len(l.entries) > 2*l.max {
-		l.entries = sliceutil.KeepTail(l.entries, l.max)
+		l.entries = keepTail(l.entries, l.max)
 		l.rewriteLocked()
 	}
 }
@@ -184,4 +182,18 @@ func (l *Log) Close() {
 		l.file.Close()
 		l.file = nil
 	}
+}
+
+// keepTail copies the retained suffix. A reslice would keep the discarded
+// entries, including their strings, reachable for the life of the backing array.
+func keepTail[T any](s []T, keep int) []T {
+	if keep < 0 {
+		keep = 0
+	}
+	if len(s) <= keep {
+		return s
+	}
+	out := make([]T, keep)
+	copy(out, s[len(s)-keep:])
+	return out
 }
