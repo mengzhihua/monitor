@@ -26,12 +26,14 @@ type sshJob struct {
 	KeyFile string            `yaml:"key_file"`
 	Command string            `yaml:"command"`
 	Steps   []preprocess.Step `yaml:"preprocess"`
+	Every   time.Duration     `yaml:"every,omitempty"`
 }
 
 type sshcheckCollector struct {
 	cfg  sshcheckConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	prev map[string]float64
+	last map[string]time.Time
 }
 
 func init() { Register("sshcheck", func() Collector { return &sshcheckCollector{} }) }
@@ -69,6 +71,9 @@ func validateSSHJob(j sshJob) error {
 	if j.KeyFile != "" && strings.ContainsAny(j.KeyFile, "\n\r") {
 		return fmt.Errorf("sshcheck %s: key file", j.Name)
 	}
+	if err := itemEvery("sshcheck "+j.Name, j.Every); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -82,6 +87,7 @@ func (s *sshcheckCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("sshcheck: no jobs")
 	}
 	s.prev = map[string]float64{}
+	s.last = map[string]time.Time{}
 	for _, j := range s.cfg.Jobs {
 		ch := &registry.Chart{ID: "sshcheck." + sanitizeID(j.Name), Context: "sshcheck.value", Title: "SSH " + j.Name, Units: "value",
 			Family: "ssh", Plugin: "sshcheck", Module: "sshcheck", Priority: 56200,
@@ -97,6 +103,9 @@ func (s *sshcheckCollector) Collect(ctx context.Context, reg *registry.Registry,
 		run = execRun(s.cfg.Timeout)
 	}
 	for _, j := range s.cfg.Jobs {
+		if !markItemDue(s.last, j.Name, j.Every, now) {
+			continue
+		}
 		args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=5"}
 		if j.KeyFile != "" {
 			args = append(args, "-i", j.KeyFile)

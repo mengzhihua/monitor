@@ -27,11 +27,13 @@ type telnetJob struct {
 	Send    string            `yaml:"send"`
 	Expect  string            `yaml:"expect"`
 	Steps   []preprocess.Step `yaml:"preprocess"`
+	Every   time.Duration     `yaml:"every,omitempty"`
 }
 
 type telnetCollector struct {
 	cfg  telnetConfig
 	prev map[string]float64
+	last map[string]time.Time
 	dial func(ctx context.Context, address string) (net.Conn, error)
 }
 
@@ -53,6 +55,9 @@ func (t *telnetCollector) Configure(decode func(v any) error) error {
 		if _, _, err := net.SplitHostPort(j.Address); err != nil {
 			return fmt.Errorf("telnet %s: address must be host:port", j.Name)
 		}
+		if err := itemEvery("telnet "+j.Name, j.Every); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -62,6 +67,7 @@ func (t *telnetCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("telnet: no jobs")
 	}
 	t.prev = map[string]float64{}
+	t.last = map[string]time.Time{}
 	for _, j := range t.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "telnet." + sanitizeID(j.Name), Context: "telnet.value", Title: "Telnet " + j.Name,
 			Units: "value", Family: "telnet", Plugin: "telnet", Module: "telnet", Priority: 56250,
@@ -72,6 +78,9 @@ func (t *telnetCollector) Init(reg *registry.Registry) error {
 
 func (t *telnetCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	for _, j := range t.cfg.Jobs {
+		if !markItemDue(t.last, j.Name, j.Every, now) {
+			continue
+		}
 		raw, err := t.session(ctx, j)
 		prev := math.NaN()
 		if v, ok := t.prev[j.Name]; ok {

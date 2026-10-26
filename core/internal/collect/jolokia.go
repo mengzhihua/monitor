@@ -25,12 +25,14 @@ type jolokiaJob struct {
 	Attribute string            `yaml:"attribute"`
 	Path      string            `yaml:"path"`
 	Steps     []preprocess.Step `yaml:"preprocess"`
+	Every     time.Duration     `yaml:"every,omitempty"`
 }
 
 type jolokiaCollector struct {
 	cfg    jolokiaConfig
 	client *http.Client
 	prev   map[string]float64
+	last   map[string]time.Time
 }
 
 func init() { Register("jolokia", func() Collector { return &jolokiaCollector{} }) }
@@ -48,6 +50,9 @@ func (j *jolokiaCollector) Configure(decode func(v any) error) error {
 		if !validItemName(job.Name) || job.URL == "" || job.MBean == "" || job.Attribute == "" || strings.ContainsAny(job.MBean+job.Attribute+job.Path, "?\n#") {
 			return fmt.Errorf("jolokia: job %q needs name, url, mbean, attribute", job.Name)
 		}
+		if err := itemEvery("jolokia "+job.Name, job.Every); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -63,6 +68,7 @@ func (j *jolokiaCollector) Init(reg *registry.Registry) error {
 	}
 	j.client = &http.Client{Timeout: j.cfg.Timeout}
 	j.prev = map[string]float64{}
+	j.last = map[string]time.Time{}
 	for _, job := range j.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "jolokia." + sanitizeID(job.Name), Context: "jolokia.value", Title: "Jolokia " + job.Name,
 			Units: "value", Family: "jmx", Plugin: "jolokia", Module: "jolokia", Priority: 56300,
@@ -74,6 +80,9 @@ func (j *jolokiaCollector) Init(reg *registry.Registry) error {
 
 func (j *jolokiaCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	for _, job := range j.cfg.Jobs {
+		if !markItemDue(j.last, job.Name, job.Every, now) {
+			continue
+		}
 		u := stringsTrimRightSlash(job.URL) + "/read/" + job.MBean + "/" + job.Attribute
 		if job.Path != "" {
 			u += "/" + job.Path

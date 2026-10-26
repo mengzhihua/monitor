@@ -21,11 +21,13 @@ type dependentItem struct {
 	Chart     string            `yaml:"chart"`
 	Dimension string            `yaml:"dimension"`
 	Steps     []preprocess.Step `yaml:"preprocess"`
+	Every     time.Duration     `yaml:"every,omitempty"`
 }
 
 type dependentCollector struct {
 	cfg  dependentConfig
 	prev map[string]float64
+	last map[string]time.Time
 }
 
 func init() { Register("dependent", func() Collector { return &dependentCollector{} }) }
@@ -43,6 +45,9 @@ func (d *dependentCollector) Configure(decode func(v any) error) error {
 		if !validItemName(it.Name) || it.Chart == "" || it.Dimension == "" {
 			return fmt.Errorf("dependent: item %q needs chart and dimension", it.Name)
 		}
+		if err := itemEvery("dependent "+it.Name, it.Every); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -52,6 +57,7 @@ func (d *dependentCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("dependent: no items")
 	}
 	d.prev = map[string]float64{}
+	d.last = map[string]time.Time{}
 	for _, it := range d.cfg.Items {
 		reg.AddChart(&registry.Chart{ID: "dependent." + sanitizeID(it.Name), Context: "dependent.value", Title: "Dependent " + it.Name,
 			Units: "value", Family: "calc", Plugin: "dependent", Module: "dependent", Priority: 56600,
@@ -63,6 +69,9 @@ func (d *dependentCollector) Init(reg *registry.Registry) error {
 
 func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
 	for _, it := range d.cfg.Items {
+		if !markItemDue(d.last, it.Name, it.Every, now) {
+			continue
+		}
 		ch, ok := reg.Chart(it.Chart)
 		if !ok {
 			continue
