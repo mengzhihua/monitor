@@ -66,6 +66,7 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"countunique -5m p 95", want{}, "only applies to percentile"},
 		{"count -5m gt", want{}, "missing value"},
 		{"count -5m gt x", want{}, "bad count operand"},
+		{"fuzzytime -5m", want{}, "fuzzytime requires"},
 		{"find -5m", want{}, "find requires"},
 		{"changecount -5m mode", want{}, "missing value"},
 		{"changecount -5m mode nope", want{}, "bad mode"},
@@ -595,6 +596,44 @@ func TestLookupVariance(t *testing.T) {
 }
 
 
+
+func TestLookupFuzzytime(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	fresh := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-10*time.Second), map[string]float64{"used": 1, "free": 2})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s", fresh, now); v != 1 {
+		t.Fatalf("fresh: got %v want 1", v)
+	}
+	// Exactly on the limit is still fresh.
+	edge := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-60*time.Second), map[string]float64{"used": 1})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", edge, now); v != 1 {
+		t.Fatalf("edge: got %v want 1", v)
+	}
+	stale := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-61*time.Second), map[string]float64{"used": 1})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", stale, now); v != 0 {
+		t.Fatalf("stale: got %v want 0", v)
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", nil, now); v != 0 {
+		t.Fatalf("empty: got %v want 0", v)
+	}
+	// An older sample in the window does not hide a newer stale gap: the newest
+	// free sample is 2m old while used is fresh, so the chart is not fresh.
+	mixed := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-2*time.Minute), map[string]float64{"used": 1, "free": 9})
+		reg.Collect("system.ram", now.Add(-5*time.Second), map[string]float64{"used": 2})
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s", mixed, now); v != 0 {
+		t.Fatalf("one stale dimension: got %v want 0", v)
+	}
+	if v := lookupValue(t, "fuzzytime -5m within 60s of used", mixed, now); v != 1 {
+		t.Fatalf("selected fresh dimension: got %v want 1", v)
+	}
+}
 
 func TestLookupForecastTimeleft(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)

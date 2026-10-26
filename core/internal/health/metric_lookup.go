@@ -123,6 +123,47 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		}
 		return 1
 	}
+	if l.Kind == "fuzzytime" {
+		// 1 only when every selected dimension has a non-NaN sample whose
+		// timestamp is within Within of the window end. Missing or stale
+		// data is 0, never NaN.
+		limit := int64(l.Within / time.Second)
+		saw := false
+		for _, d := range c.Dims() {
+			if !isSel(d) {
+				continue
+			}
+			saw = true
+			pts, err := q.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			var newest int64
+			var ok bool
+			if err == nil {
+				for _, p := range pts {
+					if math.IsNaN(p.Value) {
+						continue
+					}
+					if !ok || p.TS > newest {
+						newest = p.TS
+						ok = true
+					}
+				}
+			}
+			if !ok {
+				return 0
+			}
+			age := before - newest
+			if age < 0 {
+				age = -age
+			}
+			if age > limit {
+				return 0
+			}
+		}
+		if !saw {
+			return 0
+		}
+		return 1
+	}
 	if l.Kind == "trendavg" || l.Kind == "trendmin" || l.Kind == "trendmax" ||
 		l.Kind == "trendsum" || l.Kind == "trendcount" {
 		return q.trend(c, l, selected, after, before)

@@ -83,7 +83,7 @@ type Lookup struct {
 	AnomalyBit bool   // query 0–100 anomaly rates instead of raw values
 	MinMax     string // "min2max": max-min of the window
 	// Zabbix-style functions. Kind is empty for the classic grouped reduce
-	// above, or one of: nodata, first, change, stddev, count, countunique, changecount, rate, stddevpop, stddevsamp, sumofsquares, varpop, varsamp, skewness, kurtosis, find, percentile, mad,
+	// above, or one of: nodata, first, change, stddev, count, countunique, changecount, rate, stddevpop, stddevsamp, sumofsquares, varpop, varsamp, skewness, kurtosis, fuzzytime, find, percentile, mad,
 	// monoinc, monodec, trendavg, trendmin, trendmax, trendsum, trendcount, forecast, timeleft.
 	Kind          string
 	Horizon       time.Duration // forecast: evaluate the linear fit at now+Horizon
@@ -92,6 +92,7 @@ type Lookup struct {
 	CountVal      float64
 	Percentile    float64 // percentile: rank in [0, 100]
 	Mode          string  // changecount: all (default), inc, or dec
+	Within        time.Duration // fuzzytime: newest sample must be this close to the window end
 	Strict        bool    // monoinc/monodec: require a strict step, not equals
 	hasTarget     bool
 	hasPercentile bool
@@ -290,6 +291,8 @@ func (r *Rule) Hash() string {
 //	first  -5m                     oldest value in the window
 //	change -5m                     last - first value in the window
 //	stddev -5m                     population stddev of the window
+//	fuzzytime -5m within 60s       1 when every selected dimension's newest sample
+//	                               is within 60s of the window end; otherwise 0
 //	count  -5m [gt|ge|lt|le|eq|ne <n>]   non-NaN points matching the operator
 //	countunique -5m [gt|ge|lt|le|eq|ne <n>]
 //	                               distinct values matching the operator; empty is 0
@@ -327,7 +330,7 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
-	case "nodata", "first", "change", "stddev", "stddevpop", "stddevsamp", "sumofsquares", "varpop", "varsamp", "skewness", "kurtosis", "count", "countunique", "changecount", "rate", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
+	case "nodata", "first", "change", "stddev", "stddevpop", "stddevsamp", "sumofsquares", "varpop", "varsamp", "skewness", "kurtosis", "fuzzytime", "count", "countunique", "changecount", "rate", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
 		l.Kind = strings.ToLower(f[0])
 	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
 		l.Kind = strings.ToLower(f[0])
@@ -357,7 +360,7 @@ func ParseLookup(s string) (*Lookup, error) {
 				return nil, fmt.Errorf("option %q only applies to monoinc and monodec", opt)
 			}
 			l.Strict = true
-		case "at", "horizon", "target", "p", "mode", "gt", "ge", "lt", "le", "eq", "ne":
+		case "at", "horizon", "target", "p", "within", "mode", "gt", "ge", "lt", "le", "eq", "ne":
 			if i+1 >= len(f) {
 				return nil, fmt.Errorf("missing value after %q", f[i])
 			}
@@ -392,6 +395,15 @@ func ParseLookup(s string) (*Lookup, error) {
 					return nil, fmt.Errorf("bad target %q", v)
 				}
 				l.Target, l.hasTarget = t, true
+			case "within":
+				if l.Kind != "fuzzytime" {
+					return nil, fmt.Errorf("option %q only applies to fuzzytime", opt)
+				}
+				w, err := parseDuration(v)
+				if err != nil || w <= 0 {
+					return nil, fmt.Errorf("bad within %q", v)
+				}
+				l.Within = w
 			case "mode":
 				switch l.Kind {
 				case "changecount":
@@ -445,6 +457,9 @@ func ParseLookup(s string) (*Lookup, error) {
 		default:
 			return nil, fmt.Errorf("unsupported lookup option %q (supported: unaligned, absolute, percentage, anomaly-bit, at <offset>, horizon, target, count ops, strict, mode, of dims)", f[i])
 		}
+	}
+	if l.Kind == "fuzzytime" && l.Within <= 0 {
+		return nil, fmt.Errorf("fuzzytime requires `within <duration>`")
 	}
 	if l.Kind == "forecast" && l.Horizon <= 0 {
 		return nil, fmt.Errorf("forecast requires `horizon <duration>`")
