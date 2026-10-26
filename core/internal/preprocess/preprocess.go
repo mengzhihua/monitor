@@ -43,6 +43,9 @@ var ErrUnchanged = errors.New("preprocess: discard unchanged")
 // ErrDiscard means on_fail discard dropped the sample.
 var ErrDiscard = errors.New("preprocess: discard value")
 
+// ErrNotSupported means not_supported matched and the item should show that error.
+var ErrNotSupported = errors.New("preprocess: not supported")
+
 // Apply runs steps against input. prev is the previous numeric sample for a
 // change step; pass math.NaN when there is none. The returned prev is the
 // value to store for the next change step.
@@ -142,6 +145,25 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 				return failStep(st, prev, err)
 			}
 			have = false
+		case "not_supported":
+			if strings.TrimSpace(st.Pattern) == "" || len(st.Pattern) > 256 {
+				return 0, prev, fmt.Errorf("not_supported: pattern must be 1 to 256 bytes")
+			}
+			re, e := regexp.Compile(st.Pattern)
+			if e != nil {
+				return 0, prev, e
+			}
+			if re.MatchString(text) {
+				msg := re.FindString(text)
+				if msg == "" {
+					msg = strings.TrimSpace(text)
+				}
+				runes := []rune(msg)
+				if len(runes) > 128 {
+					msg = string(runes[:128])
+				}
+				return failStep(st, prev, fmt.Errorf("%w: %s", ErrNotSupported, msg))
+			}
 		case "javascript", "js":
 			text, err = applyJS(st.Script, text)
 			if err != nil {
