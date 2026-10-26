@@ -178,6 +178,7 @@ func clipAckNote(note string) string {
 
 var ErrAlarmNotFound = errors.New("alarm not found")
 var ErrAlarmNotRaised = errors.New("alarm not raised")
+var ErrManualCloseDisabled = errors.New("manual close is disabled for this alarm")
 
 // CloseAlarm is Zabbix's "close problem": an operator forces a raised alarm back
 // to CLEAR. The CLEAR transition goes through the normal path so notifiers
@@ -207,6 +208,10 @@ func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
 	if a.Status <= StatusClear {
 		e.mu.Unlock()
 		return ErrAlarmNotRaised
+	}
+	if a.rule != nil && !a.rule.AllowClose {
+		e.mu.Unlock()
+		return ErrManualCloseDisabled
 	}
 	old, oldValue := a.Status, a.Value
 	a.Status = StatusClear

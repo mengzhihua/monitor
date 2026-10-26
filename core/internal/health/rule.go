@@ -66,6 +66,10 @@ type RuleSpec struct {
 	Labels       map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
 	Disabled     bool              `yaml:"disabled" json:"disabled,omitempty"`
 	Macros       map[string]string `yaml:"macros" json:"macros,omitempty"` // rule-level {$NAME} overrides
+	// ManualClose reports whether an operator may close the problem. Nil and
+	// true allow it, which matches alarms that omit the field. False rejects
+	// POST /api/v1/alarms/close.
+	ManualClose *bool `yaml:"manual_close,omitempty" json:"manual_close,omitempty"`
 }
 
 type ruleFile struct {
@@ -124,6 +128,7 @@ type Rule struct {
 	KeepFiring   time.Duration // hold a raised status after the condition clears; 0 = immediate
 	NoDataState  EvalStatePolicy
 	ExecErrState EvalStatePolicy
+	AllowClose   bool   // operator close; false only when manual_close is explicitly false
 	Info         string // Spec.Info with macros expanded
 	Units        string // Spec.Units with macros expanded
 	Source       string
@@ -206,7 +211,7 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
-	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units}
+	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units, AllowClose: orig.ManualClose == nil || *orig.ManualClose}
 	if spec.Lookup != "" {
 		if r.Lookup, err = ParseLookup(spec.Lookup); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q lookup: %w", source, spec.Name, err)

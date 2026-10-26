@@ -750,6 +750,7 @@ health:
   #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'
   #   crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
   #   recovery: '$this < 70'         # stay raised until warn/crit are false and this is true
+  #   manual_close: true             # false rejects POST /api/v1/alarms/close; omit allows it
   #   for: 1m                         # status stays put until warn/crit holds this long; empty = immediate
   #   keep_firing_for: 5m            # stay raised this long after the condition clears
   #   no_data_state: undefined       # undefined|ok|alerting|keep_last when lookup has no samples

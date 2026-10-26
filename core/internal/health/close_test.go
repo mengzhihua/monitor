@@ -63,3 +63,34 @@ func TestManualClose(t *testing.T) {
 		}
 	}
 }
+
+func TestManualCloseCanBeDisabled(t *testing.T) {
+	e, reg := newTestEngine(t, ramRule+"    manual_close: false\n")
+	defer e.Close()
+	now := time.Unix(1_700_000_000, 0)
+	reg.Collect("system.ram", now, map[string]float64{"used": 950, "free": 50})
+	e.Tick(now)
+	var raised *Alarm
+	for _, a := range e.Alarms() {
+		if a.Status >= StatusWarning {
+			cp := a
+			raised = &cp
+		}
+	}
+	if raised == nil {
+		t.Fatal("alarm did not raise")
+	}
+	if err := e.CloseAlarm(raised.ID, "ops", "no"); !errors.Is(err, ErrManualCloseDisabled) {
+		t.Fatalf("close: %v", err)
+	}
+	for _, a := range e.Alarms() {
+		if a.ID == raised.ID && a.Status < StatusWarning {
+			t.Fatalf("disabled close cleared the alarm: %s", a.Status)
+		}
+	}
+	allowed, _ := newTestEngine(t, ramRule+"    manual_close: true\n")
+	defer allowed.Close()
+	if !allowed.Rules()[0].AllowClose {
+		t.Fatal("explicit true did not allow close")
+	}
+}

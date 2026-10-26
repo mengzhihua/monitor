@@ -265,7 +265,7 @@ func (s *Server) handleAlarmClose(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, health.ErrAlarmNotFound):
 			http.Error(w, err.Error(), http.StatusNotFound)
-		case errors.Is(err, health.ErrAlarmNotRaised):
+		case errors.Is(err, health.ErrAlarmNotRaised), errors.Is(err, health.ErrManualCloseDisabled):
 			http.Error(w, err.Error(), http.StatusConflict)
 		default:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
