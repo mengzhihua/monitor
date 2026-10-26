@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -84,12 +85,15 @@ func (h *hdfsCollector) Init(reg *registry.Registry) error {
 func (h *hdfsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	b, err := httpGet(ctx, h.client, h.url)
 	if err != nil {
-		return err
+		h.markHDFS(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
 	st, err := parseHDFSJMX(b)
 	if err != nil {
-		return err
+		h.markHDFS(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	h.markHDFS(reg, nil)
 	_ = reg.Collect("hdfs.capacity", now, map[string]float64{"used": st.used, "remaining": st.remaining})
 	_ = reg.Collect("hdfs.files_total", now, map[string]float64{"files": st.files})
 	_ = reg.Collect("hdfs.blocks_total", now, map[string]float64{"blocks": st.blocks})
@@ -98,6 +102,14 @@ func (h *hdfsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	_ = reg.Collect("hdfs.data_nodes", now, map[string]float64{"live": st.live, "dead": st.dead})
 	_ = reg.Collect("hdfs.load", now, map[string]float64{"load": st.load})
 	return nil
+}
+
+func (h *hdfsCollector) markHDFS(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "hdfs" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 type hdfsStats struct {
