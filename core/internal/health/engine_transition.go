@@ -74,9 +74,9 @@ func (e *Engine) transition(a *Alarm, entry LogEntry, now time.Time) {
 	// what notifiers last heard.
 	e.mu.Lock()
 	noData := entry.Status <= StatusUndefined
-	silent := noData ||
+	silent := !entry.Multiple && (noData ||
 		(entry.Status == StatusClear && a.notifiedSt <= StatusClear) ||
-		entry.Status == a.notifiedSt
+		entry.Status == a.notifiedSt)
 	if silent {
 		a.pending = nil
 		a.DelayUpTo = 0

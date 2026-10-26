@@ -761,6 +761,7 @@ health:
   #   info: system memory utilization
   #   url: https://runbook.example/{HOST.NAME}
   #   opdata: "used {EVENT.VALUE}{EVENT.UNITS}"
+  #   events: single                  # multiple records a new problem event on every evaluation while raised
   #   to: sysadmin
   notify:
     roles: {}          # alarm `to:` → channels, e.g. sysadmin: [slack, email]; unknown/empty role = all channels
