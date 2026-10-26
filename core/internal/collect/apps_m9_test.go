@@ -98,6 +98,60 @@ func TestNATSVarz(t *testing.T) {
 	}
 }
 
+func TestNATSFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "down" || r.URL.Path != "/varz" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"connections": 4, "cpu": 2.5})
+	}))
+	defer srv.Close()
+	n := &natsCollector{cfg: natsConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := n.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := n.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	conns := mustChart(t, reg, "nats.server_connections")
+	cpu := mustChart(t, reg, "nats.server_cpu_usage")
+	if _, vals := conns.LastValues(); vals["active"] != 4 || conns.Unsupported != "" {
+		t.Fatalf("connections %+v %q", vals, conns.Unsupported)
+	}
+	mode = "down"
+	if err := n.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conns.Unsupported == "" || cpu.Unsupported == "" || conns.LastCollectionTime() != now.Unix() {
+		t.Fatalf("connections %q at %d cpu %q", conns.Unsupported, conns.LastCollectionTime(), cpu.Unsupported)
+	}
+	mode = "bad"
+	if err := n.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conns.Unsupported == "" {
+		t.Fatal("bad JSON stayed supported")
+	}
+	mode = "ok"
+	if err := n.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conns.Unsupported != "" || cpu.Unsupported != "" {
+		t.Fatalf("stuck connections %q cpu %q", conns.Unsupported, cpu.Unsupported)
+	}
+	if _, vals := conns.LastValues(); vals["active"] != 4 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestParseVarnishJSON(t *testing.T) {
 	raw := `{"counters":{"MAIN.client_req":{"value":10},"MAIN.cache_hit":{"value":7},"MAIN.cache_miss":{"value":3},"MAIN.n_object":{"value":5},"MAIN.backend_req":{"value":4},"MAIN.threads":{"value":8}}}`
 	m, err := parseVarnishJSON([]byte(raw))
