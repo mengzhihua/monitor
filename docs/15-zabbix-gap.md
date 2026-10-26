@@ -14,7 +14,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | 被动 Agent（服务端拉取） | 部分：`hub.storage: proxy` 实时回查；无独立被动协议 | `core/internal/hub/cluster.go` |
 | 采集 | SNMP v1/v2c/v3、Trap | 已有：v2c IF-MIB、v3 USM、自定义 OID、表 LLD、Trap | `collect/snmp.go` |
 | 采集 | IPMI | 已有 | `collect/ipmi.go` |
-| 采集 | JMX 通用客户端 | 已有：Jolokia HTTP 读取 + 预处理 | `collect/jolokia.go` |
+| 采集 | JMX 通用客户端 | 已有：Jolokia HTTP 读取 + 预处理。请求失败或 JSON `status` 不是 200 时该项记为 `unsupported`，下一次成功采集会清除 | `collect/jolokia.go` |
 | 采集 | SSH / Telnet 检查 | 已有：SSH BatchMode；Telnet 为 TCP 发送一行并读到 expect | `collect/sshcheck.go`、`telnet.go` |
 | 采集 | ICMP / TCP / 简单检查 | 已有 | `collect/ping.go`、`portcheck.go` |
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|
