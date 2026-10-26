@@ -152,4 +152,47 @@ func TestRedisInfo(t *testing.T) {
 	}
 }
 
+func TestRedisInfoFailureMarksUnsupported(t *testing.T) {
+	addr := fakeRedis(t, "", func() string {
+		return "# Server\r\nuptime_in_seconds:42\r\n# Clients\r\nconnected_clients:3\r\n"
+	})
+	reg := registry.New(&registry.Host{UpdateEvery: 1}, nil)
+	r := &redisCollector{}
+	_ = r.Configure(func(v any) error {
+		c := v.(*redisConfig)
+		c.Address = addr
+		c.Timeout = 200 * time.Millisecond
+		return nil
+	})
+	if err := r.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := r.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	uptime := mustChart(t, reg, "redis.uptime")
+	clients := mustChart(t, reg, "redis.clients")
+	if _, vals := uptime.LastValues(); vals["uptime"] != 42 || uptime.Unsupported != "" {
+		t.Fatalf("uptime %v %q", vals, uptime.Unsupported)
+	}
+	r.cfg.Address = "127.0.0.1:1"
+	if err := r.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || clients.Unsupported == "" || uptime.LastCollectionTime() != now.Unix() {
+		t.Fatalf("uptime %q at %d clients %q", uptime.Unsupported, uptime.LastCollectionTime(), clients.Unsupported)
+	}
+	r.cfg.Address = addr
+	if err := r.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported != "" || clients.Unsupported != "" {
+		t.Fatalf("stuck uptime %q clients %q", uptime.Unsupported, clients.Unsupported)
+	}
+	if _, vals := uptime.LastValues(); vals["uptime"] != 42 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func itoa(n int) string { return strconv.Itoa(n) }

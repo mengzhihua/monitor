@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -202,8 +203,10 @@ func infoNum(m map[string]string, key string) float64 {
 func (r *redisCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	m, err := r.info(ctx)
 	if err != nil {
-		return err
+		r.markRedis(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	r.markRedis(reg, nil)
 	_ = reg.Collect("redis.connections", now, map[string]float64{"accepted": infoNum(m, "total_connections_received"), "rejected": infoNum(m, "rejected_connections")})
 	_ = reg.Collect("redis.clients", now, map[string]float64{"connected": infoNum(m, "connected_clients"), "blocked": infoNum(m, "blocked_clients")})
 	_ = reg.Collect("redis.commands", now, map[string]float64{"processed": infoNum(m, "total_commands_processed")})
@@ -233,4 +236,12 @@ func (r *redisCollector) Collect(ctx context.Context, reg *registry.Registry, no
 	}
 	_ = reg.Collect("redis.keys", now, keys)
 	return nil
+}
+
+func (r *redisCollector) markRedis(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "redis" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
