@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"io"
@@ -110,7 +111,33 @@ func (s *Server) handleAlarmLog(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []health.LogEntry{}
 	}
+	if r.URL.Query().Get("format") == "csv" {
+		writeAlarmCSV(w, entries)
+		return
+	}
 	writeJSON(w, entries)
+}
+
+func writeAlarmCSV(w http.ResponseWriter, entries []health.LogEntry) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="alarm-log.csv"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	out := csv.NewWriter(w)
+	_ = out.Write([]string{"unique_id", "when", "hostname", "name", "chart", "status", "value", "units", "info"})
+	for _, e := range entries {
+		_ = out.Write([]string{
+			strconv.FormatUint(e.UniqueID, 10),
+			strconv.FormatInt(e.When, 10),
+			csvText(e.Hostname),
+			csvText(e.Name),
+			csvText(e.Chart),
+			csvText(e.Status.String()),
+			strconv.FormatFloat(e.Value, 'f', -1, 64),
+			csvText(e.Units),
+			csvText(e.Info),
+		})
+	}
+	out.Flush()
 }
 
 // GET /api/v2/alert_transitions and /api/v1/alarm_transitions wrap alarm_log

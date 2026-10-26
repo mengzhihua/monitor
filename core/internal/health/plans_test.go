@@ -14,6 +14,31 @@ import (
 	"time"
 )
 
+func TestMaintenanceLabelScope(t *testing.T) {
+	s, err := openMaintenancePlans(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := MaintenanceSpec{Title: "API freeze", Reason: "deploy", Scope: "label", Label: "service", Value: "api", DurationSeconds: 60}
+	if _, err := s.Create(0, spec, "operator", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if s.Matches("system.cpu", "hot", 1000) {
+		t.Fatal("label plan matched an alarm without labels")
+	}
+	if !s.MatchesLabels("system.cpu", "hot", map[string]string{"service": "api"}, 1000) {
+		t.Fatal("label plan missed service=api")
+	}
+	if s.MatchesLabels("system.cpu", "hot", map[string]string{"service": "db"}, 1000) {
+		t.Fatal("label plan matched a different service")
+	}
+	bad := spec
+	bad.Label = ""
+	if _, err := s.Create(1, bad, "operator", 1000); !errors.Is(err, ErrPlanInvalid) {
+		t.Fatal(err)
+	}
+}
+
 func planSpec() MaintenanceSpec {
 	return MaintenanceSpec{Title: "RAM upgrade", Reason: "replace memory", Scope: "alarm", Chart: "system.ram", Alarm: "ram_test", DurationSeconds: 60}
 }

@@ -134,7 +134,9 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	for _, n := range cfg.Collectors.Disabled {
 		localDisabled[n] = true
 	}
-	sched := collect.NewScheduler(reg, log.With("component", "collect"), collectorOptions(cfg, localDisabled))
+	collectOpt := collectorOptions(cfg, localDisabled)
+	collectOpt.History = db
+	sched := collect.NewScheduler(reg, log.With("component", "collect"), collectOpt)
 	defer sched.Close()
 
 	runner := &autoCommandRunner{commands: cfg.Commands, log: log.With("component", "auto-action")}

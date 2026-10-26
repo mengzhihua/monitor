@@ -13,7 +13,7 @@ func (e *Engine) Alarms() []Alarm {
 	allSilent := (e.silenceAll && (e.silenceUntil == 0 || now < e.silenceUntil)) || e.inMaintenanceLocked(e.now())
 	for _, a := range e.alarms {
 		cp := *a
-		if allSilent || e.plans.Matches(a.Chart, a.Name, now) {
+		if allSilent || e.plans.MatchesLabels(a.Chart, a.Name, a.Labels, now) {
 			cp.Silenced = true
 		} else {
 			for _, key := range []string{a.Chart + "." + a.Name, a.Name} {
@@ -23,7 +23,7 @@ func (e *Engine) Alarms() []Alarm {
 				}
 			}
 		}
-		cp.Cause = e.correlatedCauseLocked(a.Name)
+		cp.Cause = e.correlatedCauseLocked(a)
 		out = append(out, cp)
 	}
 	e.mu.RUnlock()

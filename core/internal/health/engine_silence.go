@@ -9,7 +9,12 @@ func (e *Engine) IsSilenced(chart, name string) bool {
 
 func (e *Engine) suppressionReasonLocked(chart, name string) string {
 	now := e.now().Unix()
-	if e.plans.Matches(chart, name, now) {
+	alarm := e.alarms[name+"|"+chart]
+	var labels map[string]string
+	if alarm != nil {
+		labels = alarm.Labels
+	}
+	if e.plans.MatchesLabels(chart, name, labels, now) {
 		return "planned_maintenance"
 	}
 	if e.inMaintenanceLocked(e.now()) {

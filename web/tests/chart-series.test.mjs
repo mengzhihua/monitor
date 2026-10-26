@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { appendLiveSample, chartDefinition, collectionStep, emptySeries, historySeries, plotSeries } from '../src/features/metrics/model/chartSeries.ts'
+import { appendLiveSample, chartDefinition, collectionStep, emptySeries, historySeries, pieSlices, plotSeries } from '../src/features/metrics/model/chartSeries.ts'
 import { chartCSV } from '../src/chartExport.ts'
 import { summarizeSeries } from '../src/chartInspection.ts'
 
@@ -156,6 +156,12 @@ test('stack projection leaves raw export and inspection values unchanged across 
   appendLiveSample(series, 15, { a: 2, b: 3, missing: -1 }, 300, 5)
   assert.deepEqual(plotSeries(series, true), [[5, 10, 15], [null, null, 4], [10, null, 5], [0, -4, 2]])
   assert.deepEqual(series.values, [[0, -4, 2], [10, null, 3], [null, null, -1]])
+})
+
+test('pie slices use only the last positive row', () => {
+  const slices = pieSlices(['used', 'free', 'idle', 'missing'], [[1, 30], [9, 10], [4, 0], [2, null]], { used: '已用', free: '空闲' })
+  assert.deepEqual(slices.map(slice => [slice.name, slice.value, slice.fraction]), [['已用', 30, 0.75], ['空闲', 10, 0.25]])
+  assert.deepEqual(pieSlices(['idle'], [[0]]), [])
 })
 
 test('historical definitions ignore current anomaly flags but retain structural changes', () => {
