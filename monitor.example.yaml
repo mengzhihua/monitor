@@ -117,7 +117,7 @@ collectors:
       jobs: []           # e.g. [{ name: ssh, host: 127.0.0.1, port: 22 }]
     ping:
       timeout: 2s
-      jobs: []           # e.g. [{ name: gw, host: 1.1.1.1, protocol: icmp }]
+      jobs: []           # e.g. [{ name: gw, host: 1.1.1.1, protocol: icmp, count: 3 }]
     ml:                  # edge anomaly detection (k-means + k-sigma fallback)
       enabled: true
       window: 120
