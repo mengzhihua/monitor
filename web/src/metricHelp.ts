@@ -64,5 +64,10 @@ const cpuNames: Record<string, string> = { user: '用户程序执行时间占比
 export function dimensionHelp(chart: Chart, dim: Dimension): string {
   const context = chart.context || chart.id
   const meaning = (['system.cpu', 'cpu.cpu'].includes(context) ? cpuNames[dim.id] : undefined) || dimensionNames[dim.id]
-  return `${meaning || '该采集器定义的序列或实例，名称不直接代表健康状态'}。\n维度：${dim.name || dim.id}（${dim.id}）。${unitHelp(chart.units)}\n数值对应鼠标选中的采样时刻；“-”不等于 0。${chart.chart_type === 'stacked' ? '堆叠图的图例显示该维度自身的值，不是累计高度。' : ''}`
+  const shape = chart.chart_type === 'stacked'
+    ? '堆叠图的图例显示该维度自身的值，不是累计高度。'
+    : chart.chart_type === 'pie'
+      ? '饼图只使用每个维度的末行采样，只把大于 0 的值计入占比。'
+      : ''
+  return `${meaning || '该采集器定义的序列或实例，名称不直接代表健康状态'}。\n维度：${dim.name || dim.id}（${dim.id}）。${unitHelp(chart.units)}\n数值对应鼠标选中的采样时刻；“-”不等于 0。${shape}`
 }

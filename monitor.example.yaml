@@ -849,8 +849,16 @@ export:
 #       priv_passphrase: example-priv
 #       items:
 #         - { name: load, oid: "1.3.6.1.4.1.2021.10.1.3.1", preprocess: [{ type: regex, pattern: "([0-9.]+)" }] }
+#         - { name: load_pct, oid: "1.3.6.1.4.1.2021.10.1.3.1", preprocess: [{ type: javascript, script: "return Number(value) * 100" }] }
 #       lld:
 #         - { name: disks, table: "1.3.6.1.4.1.2021.9.1.2", value: "1.3.6.1.4.1.2021.9.1.9" }
+#     lld:
+#       rules:
+#         - name: disks
+#           url: http://127.0.0.1:9/discovery
+#           prototypes:
+#             - { name: used, title: "{#NAME} used", key: "{#NAME}", value: "{#USED}", units: "%" }
+#             - { name: share, title: "{#NAME}", key: "{#NAME}", value: "{#USED}", units: "%", type: pie, layout: graph, filter_macro: "{#NAME}", filter: "^sd" }
 #     sshcheck:
 #       jobs:
 #         - { name: load, address: 10.0.0.8, user: monitor, command: "cat /proc/loadavg", preprocess: [{ type: regex, pattern: "^([0-9.]+)" }] }
