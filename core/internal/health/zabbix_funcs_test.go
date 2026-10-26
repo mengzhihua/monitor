@@ -279,6 +279,84 @@ func TestLookupMad(t *testing.T) {
 	}
 }
 
+func TestLookupMono(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	strict, err := ParseLookup("monodec -5m strict")
+	if err != nil || strict.Kind != "monodec" || !strict.Strict {
+		t.Fatalf("strict parse: %+v %v", strict, err)
+	}
+	weak, err := ParseLookup("monoinc -5m mode weak")
+	if err != nil || weak.Strict {
+		t.Fatalf("weak parse: %+v %v", weak, err)
+	}
+	up := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": float64(i)})
+		}
+	}
+	if v := lookupValue(t, "monoinc -5m of used", up, now); v != 1 {
+		t.Fatalf("rising monoinc: got %v want 1", v)
+	}
+	if v := lookupValue(t, "monoinc -5m strict of used", up, now); v != 1 {
+		t.Fatalf("rising strict: got %v want 1", v)
+	}
+	if v := lookupValue(t, "monodec -5m of used", up, now); v != 0 {
+		t.Fatalf("rising monodec: got %v want 0", v)
+	}
+	flat := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 4; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-3)*time.Second), map[string]float64{"used": 5})
+		}
+	}
+	if v := lookupValue(t, "monoinc -5m of used", flat, now); v != 1 {
+		t.Fatalf("flat monoinc: got %v want 1", v)
+	}
+	if v := lookupValue(t, "monoinc -5m mode strict of used", flat, now); v != 0 {
+		t.Fatalf("flat strict: got %v want 0", v)
+	}
+	if v := lookupValue(t, "monodec -5m strict of used", flat, now); v != 0 {
+		t.Fatalf("flat monodec strict: got %v want 0", v)
+	}
+	dip := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 3, 2} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-2)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "monoinc -5m of used", dip, now); v != 0 {
+		t.Fatalf("dip: got %v want 0", v)
+	}
+	if v := lookupValue(t, "monodec -5m of used", dip, now); v != 0 {
+		t.Fatalf("dip monodec: got %v want 0", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 7})
+	}
+	if v := lookupValue(t, "monoinc -5m strict of used", one, now); v != 1 {
+		t.Fatalf("one sample: got %v want 1", v)
+	}
+	if v := lookupValue(t, "monodec -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty window: got %v want NaN", v)
+	}
+	both := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 4; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-3)*time.Second), map[string]float64{
+				"used": float64(i),
+				"free": 10,
+			})
+		}
+	}
+	if v := lookupValue(t, "monoinc -5m", both, now); v != 2 {
+		t.Fatalf("two dimensions weak: got %v want 2", v)
+	}
+	if v := lookupValue(t, "monoinc -5m strict", both, now); v != 1 {
+		t.Fatalf("two dimensions strict: got %v want 1", v)
+	}
+	scrambled := []tsdb.Point{{TS: 30, Value: 3}, {TS: 10, Value: 1}, {TS: 20, Value: 2}}
+	if v := monotonicBit(scrambled, true, true); v != 1 {
+		t.Fatalf("time order: got %v want 1", v)
+	}
+}
+
 func TestLookupForecastTimeleft(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	// Perfectly linear ramp: value = seconds elapsed (slope 1/s over 60 s).
