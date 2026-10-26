@@ -298,6 +298,8 @@ type Notify struct {
 		PasswordEnv string   `yaml:"password_env"`
 		TLSMode     string   `yaml:"tls_mode"`
 		Insecure    bool     `yaml:"insecure_skip_verify"`
+		Subject     string   `yaml:"subject"` // optional {HOST.NAME} {EVENT.NAME} template
+		Body        string   `yaml:"body"`
 	} `yaml:"email"`
 	DingTalk struct {
 		WebhookURL string `yaml:"webhook_url"`

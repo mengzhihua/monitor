@@ -4,7 +4,7 @@
 
 ## 1. 对标结论
 
-Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、触发器函数、模板、宏、清单、动作、SLA 和审计已经落地。仍开放的差距是 JavaScript 预处理、通用 LLD 原型语言、图表饼图，以及非目标里的被动 Agent 协议和 Zabbix JSON-RPC。计算项已支持 `{图表:维度}` 的四则运算。
+Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、触发器函数、模板、宏、清单、动作、SLA 和审计已经落地。通用 LLD 原型、图表饼图，以及带时间上限且不能访问主机的 JavaScript 预处理已经落地。仍开放的是非目标里的被动 Agent 协议和 Zabbix JSON-RPC，以及矩阵里标成部分的代理、共识 HA、全实体 CRUD 和独立主机组树。计算项已支持 `{图表:维度}` 的四则运算，以及最多 1 小时的 `avg` / `min` / `max` / `sum`。
 
 ## 2. 差距矩阵
 
@@ -20,9 +20,9 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
 | 采集 | Trapper / zabbix_sender 推送 | 已有：`ZBXD\x01` sender 监听，可选 psk 与来源网段 | `trapper/trapper.go` |
-| 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
-| 采集 | 低级发现 LLD + 原型 | 部分：SNMP 表 LLD 开图表；无通用原型继承 | `collect/snmp.go` |
-| 采集 | 值预处理（regex/JSONPath/XPath/JS） | 部分：trim/ltrim/rtrim/replace/regex/jsonpath/xpath/multiplier/bool/matches/not_match/hex/octal/in_range/discard_unchanged/change；无 JavaScript | `preprocess/preprocess.go` |
+| 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算，并用 `avg`/`min`/`max`/`sum` 读取最多 1 小时的已存储样本。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
+| 采集 | 低级发现 LLD + 原型 | 已有：SNMP 表 LLD；通用 `{#MACRO}` 原型可按实体开图表，或合成一张图 | `collect/snmp.go`、`collect/lld.go` |
+| 采集 | 值预处理（regex/JSONPath/XPath/JS） | 已有：trim/ltrim/rtrim/replace/regex/jsonpath/xpath/multiplier/bool/matches/not_match/hex/octal/in_range/discard_unchanged/change/javascript/prometheus_to_json/not_supported。`not_supported` 命中后图表带 `unsupported`，后续成功样本会清掉。Prometheus 文本可转成 JSON 再用 JSONPath 取值；步骤可用 `on_fail`。JavaScript 最长 4096 字节、100ms，无主机 API | `preprocess/preprocess.go`、`registry/registry.go` |
 | 模型 | 主机 / 主机组 | 已有：Space→Room；`web.groups` 可递归包含其他组的 Room，环被忽略 | `config/config.go` |
 | 模型 | 模板（可链接、继承） | 已有：Hub 模板可按节点、Room、标签链接，带宏、标签和采集覆盖 | `hub/templates.go` |
 | 模型 | 用户宏 `{$MACRO}` | 已有：全局与规则级 `{$NAME}` | `config/config.go`、`health/` |
@@ -30,19 +30,19 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 模型 | 代理 Proxy | 部分：`hub.peers` 环 + proxy 存储模式 | `hub/cluster.go` |
 | 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev | `health/metric_lookup.go` |
 | 触发器 | 依赖 | 已有 `inhibit` | `health/inhibit.go` |
-| 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause` | `health/correlation.go` |
+| 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause`。`equal` 可要求同一图表、上下文或 `label:<key>`；留空则任一 cause 都生效 | `health/correlation.go` |
 | 问题 | 确认 / 指派 / 进度 / 抑制 | 已有 | `operations/` |
 | 问题 | 手动关闭 | 已有：`POST /api/v1/alarms/close` | `api/alarms.go` |
-| 问题 | 维护期 | 已有 | `health/maint.go`、`plans.go` |
+| 问题 | 维护期 | 已有：全局、精确图表/告警，以及按图表标签 `label=value` 静默。标签维护不会波及没有该标签的告警 | `health/plans.go` |
 | 动作 | 多步升级、恢复操作 | 已有：`health.actions` 步骤延迟、角色和恢复操作 | `health/actions.go` |
 | 动作 | 远程命令 / 全局脚本 | 已有：配置 argv 白名单，`POST /api/v1/commands` | `api/zplatform.go` |
-| 动作 | 媒介类型 | 已有：含短信网关与脚本渠道 | `health/notify_mobile.go`、`notify_script.go` |
+| 动作 | 媒介类型 | 已有：含短信网关与脚本渠道。邮件主题和正文可用 `{HOST.NAME}`、`{EVENT.NAME}`、`{EVENT.STATUS}`、`{EVENT.VALUE}`、`{EVENT.UNITS}`、`{EVENT.CHART}`、`{EVENT.INFO}` | `health/message.go`、`health/notify.go` |
 | 动作 | 动作条件 | 已有：严重级别、告警名、图表通配，以及规则上的触发器标签。标签必须都存在，值可用末尾 `*` | `health/actions.go`、`health/rule.go` |
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
-| 可视化 | 图类型（饼 / 堆叠） | 部分：uPlot 线 / 面 / 堆叠；服务 SLA 有饼图；图表类型仍无饼图 | `web/`、`ServicesPanel.vue` |
+| 可视化 | 图类型（饼 / 堆叠） | 已有：uPlot 线 / 面 / 堆叠；图表类型 `pie` 按末行正值画占比；服务 SLA 另有饼图 | `web/src/features/metrics/chartRenderer.ts`、`ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |
 | 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图 | `sla/sla.go` |
-| 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV | `api/zplatform.go` |
+| 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV。告警日志可用 `GET /api/v1/alarm_log?format=csv` 导出，公式文本会加前缀避免被表格软件执行 | `api/zplatform.go`、`api/alarms.go` |
 | 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
 | 管理 | 完整 CRUD API | 部分：REST + OpenAPI，非全实体 CRUD | `api/openapi.yaml` |
 | 管理 | 认证 内部 / LDAP / SAML / 2FA | 已有：token、OIDC、LDAP、SAML ACS 验签、TOTP | `api/saml.go`、`api/totp.go` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|

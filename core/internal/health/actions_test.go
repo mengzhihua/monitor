@@ -172,6 +172,38 @@ func TestCorrelationSuppressesSymptom(t *testing.T) {
 	}
 }
 
+func TestCorrelationCanRequireTheSameChartOrLabel(t *testing.T) {
+	e := diagnosticsEngine(t, Options{
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Correlation: []CorrelationRule{{
+			Cause: "host_down", Symptoms: []string{"disk_full"}, Equal: []string{"chart", "label:service"},
+		}},
+	})
+	e.alarms["host_down|disk.space"] = &Alarm{Name: "host_down", Chart: "disk.space", Status: StatusCritical, Labels: map[string]string{"service": "db"}}
+	e.alarms["disk_full|disk.space"] = &Alarm{Name: "disk_full", Chart: "disk.space", Status: StatusWarning, Labels: map[string]string{"service": "db"}}
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "disk.space", Status: StatusWarning, When: 5}, 5)
+	if e.NotificationDiagnostics().Suppressed != 1 || causeOf(e.Alarms(), "disk_full") != "host_down" {
+		t.Fatalf("same chart %+v", e.NotificationDiagnostics())
+	}
+	e.alarms["disk_full|other.space"] = &Alarm{Name: "disk_full", Chart: "other.space", Status: StatusWarning, Labels: map[string]string{"service": "db"}}
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "other.space", Status: StatusWarning, When: 6}, 6)
+	if other := alarmNamed(e.Alarms(), "disk_full", "other.space"); other.Cause != "" {
+		t.Fatalf("other chart cause %q", other.Cause)
+	}
+	if _, err := compileCorrelation([]CorrelationRule{{Cause: "host_down", Symptoms: []string{"disk_full"}, Equal: []string{"host"}}}); err == nil {
+		t.Fatal("accepted an unknown equal field")
+	}
+}
+
+func alarmNamed(alarms []Alarm, name, chart string) Alarm {
+	for _, alarm := range alarms {
+		if alarm.Name == name && alarm.Chart == chart {
+			return alarm
+		}
+	}
+	return Alarm{}
+}
+
 func causeOf(alarms []Alarm, name string) string {
 	for _, a := range alarms {
 		if a.Name == name {

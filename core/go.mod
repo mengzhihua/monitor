@@ -6,6 +6,7 @@ require (
 	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/beevik/etree v1.1.0
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/dop251/goja v0.0.0-20261024144015-2a9269b6b6de
 	github.com/ebitengine/purego v0.8.1
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/gofrs/flock v0.12.1
@@ -20,7 +21,10 @@ require (
 
 require (
 	github.com/creack/pty v1.1.24 // indirect
+	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
+	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
@@ -29,4 +33,5 @@ require (
 	github.com/tklauser/numcpus v0.8.0 // indirect
 	github.com/u-root/u-root v0.16.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )

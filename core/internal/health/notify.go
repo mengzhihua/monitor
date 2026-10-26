@@ -156,6 +156,9 @@ type EmailNotifier struct {
 	Password string
 	Insecure bool   // skip certificate verification and allow plaintext auth
 	TLSMode  string // auto (465 implicit TLS, otherwise opportunistic STARTTLS), starttls, tls
+	// Subject and Body are optional {TOKEN} templates. Empty keeps the built-in text.
+	Subject string
+	Body    string
 }
 
 // Validate rejects incomplete SMTP settings before any connection is opened.
@@ -167,6 +170,12 @@ func (n *EmailNotifier) Validate() error {
 	}
 	if n.TLSMode != "" && n.TLSMode != "auto" && n.TLSMode != "starttls" && n.TLSMode != "tls" {
 		return fmt.Errorf("email: tls_mode must be auto, starttls or tls")
+	}
+	if _, err := RenderMessage(n.Subject, LogEntry{}); n.Subject != "" && err != nil {
+		return fmt.Errorf("email: subject: %w", err)
+	}
+	if _, err := RenderMessage(n.Body, LogEntry{}); n.Body != "" && err != nil {
+		return fmt.Errorf("email: body: %w", err)
 	}
 	if len(n.To) == 0 {
 		return fmt.Errorf("email: at least one recipient is required")
@@ -186,6 +195,20 @@ func headerSafe(s string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 }
 
+func (n *EmailNotifier) subject(e LogEntry) (string, error) {
+	if n.Subject == "" {
+		return fmt.Sprintf("[%s] %s: %s is %s", e.Hostname, e.Status, e.Name, formatValue(e.Value)+" "+e.Units), nil
+	}
+	return RenderMessage(n.Subject, e)
+}
+
+func (n *EmailNotifier) body(e LogEntry) (string, error) {
+	if n.Body == "" {
+		return Summarize(e), nil
+	}
+	return RenderMessage(n.Body, e)
+}
+
 func (n *EmailNotifier) Name() string { return "email" }
 
 func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
@@ -194,12 +217,19 @@ func (n *EmailNotifier) Notify(ctx context.Context, e LogEntry) error {
 	}
 	host, port, _ := net.SplitHostPort(n.Server)
 	var err error
-	subject := fmt.Sprintf("[%s] %s: %s is %s", e.Hostname, e.Status, e.Name, formatValue(e.Value)+" "+e.Units)
+	subject, err := n.subject(e)
+	if err != nil {
+		return err
+	}
+	body, err := n.body(e)
+	if err != nil {
+		return err
+	}
 	var msg bytes.Buffer
 	fmt.Fprintf(&msg, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\nDate: %s\r\n\r\n",
 		n.From, strings.Join(n.To, ", "), mime.QEncoding.Encode("UTF-8", headerSafe(subject)), time.Unix(e.When, 0).Format(time.RFC1123Z))
 	writer := quotedprintable.NewWriter(&msg)
-	_, _ = writer.Write([]byte(strings.NewReplacer("*", "", "`", "").Replace(Summarize(e)) + "\r\n"))
+	_, _ = writer.Write([]byte(strings.NewReplacer("*", "", "`", "").Replace(body) + "\r\n"))
 	_ = writer.Close()
 
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
