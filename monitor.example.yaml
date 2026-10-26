@@ -897,6 +897,7 @@ export:
 #     - name: page
 #       severities: [CRITICAL]
 #       alarms: ["disk_*"]
+#       labels: { service: api, region: "prod*" }
 #       steps:
 #         - { role: sysadmin, command: echo-ok }
 #         - { delay: 5m, role: pager }

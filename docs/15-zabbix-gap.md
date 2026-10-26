@@ -37,7 +37,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 动作 | 多步升级、恢复操作 | 已有：`health.actions` 步骤延迟、角色和恢复操作 | `health/actions.go` |
 | 动作 | 远程命令 / 全局脚本 | 已有：配置 argv 白名单，`POST /api/v1/commands` | `api/zplatform.go` |
 | 动作 | 媒介类型 | 已有：含短信网关与脚本渠道 | `health/notify_mobile.go`、`notify_script.go` |
-| 动作 | 动作条件 | 已有：动作按严重级别和告警名匹配 | `health/actions.go` |
+| 动作 | 动作条件 | 已有：严重级别、告警名、图表通配，以及图表标签。标签必须都存在，值可用末尾 `*`。条件按 AND 组合 | `health/actions.go` |
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
 | 可视化 | 图类型（饼 / 堆叠） | 部分：uPlot 线 / 面 / 堆叠；服务 SLA 有饼图；图表类型仍无饼图 | `web/`、`ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |

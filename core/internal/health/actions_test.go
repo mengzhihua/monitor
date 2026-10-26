@@ -51,6 +51,35 @@ func TestActionEscalatesAndRunsCommandOnce(t *testing.T) {
 	}
 }
 
+func TestActionLabelFilter(t *testing.T) {
+	e := diagnosticsEngine(t, Options{
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Roles:     map[string][]string{"pager": {"slack"}},
+		Actions: []Action{{
+			Name: "api", Labels: map[string]string{"service": "api", "region": "prod*"},
+			Steps: []ActionStep{{Role: "pager"}},
+		}},
+	})
+	e.alarms["hot|system.cpu"] = &Alarm{Name: "hot", Chart: "system.cpu", Status: StatusCritical, LastStatusChange: 1, Labels: map[string]string{"service": "api", "region": "prod-east"}}
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: 1, Recipient: "sysadmin"}, 1)
+	if got := <-e.notifyCh; got.Recipient != "pager" {
+		t.Fatalf("matching labels %s", got.Recipient)
+	}
+	e.alarms["hot|system.cpu"].Labels = map[string]string{"service": "db", "region": "prod-east"}
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: 2, Recipient: "sysadmin"}, 2)
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("other service was paged: %s", got.Recipient)
+	}
+	e.alarms["hot|system.cpu"].Labels = map[string]string{"region": "prod-east"}
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: 3, Recipient: "sysadmin"}, 3)
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("missing label was paged: %s", got.Recipient)
+	}
+	if _, err := compileActions([]Action{{Name: "bad", Labels: map[string]string{"": "api"}, Steps: []ActionStep{{Role: "pager"}}}}); err == nil {
+		t.Fatal("accepted an empty label key")
+	}
+}
+
 func TestActionChartFilterSkipsOtherCharts(t *testing.T) {
 	e := diagnosticsEngine(t, Options{
 		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
