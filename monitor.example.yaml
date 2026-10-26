@@ -872,7 +872,7 @@ export:
 #         - { name: heap, url: http://127.0.0.1:8778/jolokia, mbean: "java.lang:type=Memory", attribute: HeapMemoryUsage, path: used }
 #     httpagent:
 #       jobs:
-#         - { name: users, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: regex, pattern: "ready_users ([0-9]+)" }] }
+#         - { name: users, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: regex, pattern: "ready_users ([0-9]+)", on_fail: value, fail_value: "0" }] }
 #     webscenario:
 #       jobs:
 #         - name: login
