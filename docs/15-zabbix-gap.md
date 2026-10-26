@@ -17,7 +17,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | JMX 通用客户端 | 已有：Jolokia HTTP 读取 + 预处理。请求失败或 JSON `status` 不是 200 时该项记为 `unsupported`，下一次成功采集会清除 | `collect/jolokia.go` |
 | 采集 | SSH / Telnet 检查 | 已有：SSH BatchMode；Telnet 为 TCP 发送一行并读到 expect | `collect/sshcheck.go`、`telnet.go` |
 | 采集 | ICMP / TCP / 简单检查 | 已有：`httpcheck` 可用 Zabbix 风格 `status_codes`（如 `200` 或 `200-299`），也可用旧字段 `status_accepted` 列举整数码。`follow_redirects: true` 时跟随跳转，默认只看首跳响应 | `collect/ping.go`、`portcheck.go`、`httpcheck.go` |
-| 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
+| 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理。`status_codes` 可限制 `200` 或 `200-299`，不匹配则该项记为不支持。`retrieve` 取 `body`、`headers` 或 `status`。`follow_redirects` 默认跟随跳转。webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
 | 采集 | Squid | 已有。计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
 | 采集 | Tomcat | 已有。管理状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除 | `collect/tomcat.go` |
@@ -60,6 +60,25 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 ## 3. 分阶段开发计划
 
 按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`xml_to_json` 把一个 XML 文档转成 JSON：属性以 `@` 开头，混合文本放在 `#text`，同名子节点收成数组；不解析 DOCTYPE。`csv_to_json` 把 CSV 转成 JSON，默认逗号分隔、双引号转义；`header: true` 时首行成为字段名。`snmp_walk_to_json` 把 snmpwalk 文本按字段 OID 收成 JSON，每行带 `{#SNMPINDEX}`。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。`httpcheck` 可用 `status_codes` 限制状态码，并用 `follow_redirects` 跟随跳转。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。`diff -5m` 看最近两个样本是否不同，`abschange -5m` 取它们的绝对差；只有一个样本时为 0，空窗口为 NaN。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。Squid 计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。Tomcat 状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除。Varnish `varnishstat` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
+
+| 阶段 | 内容 | 主要改动 |
+|---|---|---|
+| Z1 触发器与规则 | `nodata / change / diff / abschange / count / first / stddev / percentile / trendavg / forecast / timeleft` 查询方法；用户宏 `{$NAME}`（全局 + 规则级）；问题手动关闭 `POST /api/v1/alarms/close`；审计日志 `GET /api/v1/audit` | `health/`、`api/`、新增 `audit/` |
+| Z2 模板与主机模型 | 模板实体（规则集 + 采集配置 + 宏，可链接节点 / Room，继承覆盖）；主机组嵌套；可编辑主机清单；模板 YAML 导入导出 | `hub/`、`health/`、`api/`、Web |
+| Z3 无代理采集 | SNMPv3 USM + 自定义 OID 项 + SNMP LLD；SSH 检查；通用 JMX（Jolokia）；HTTP Agent 项（JSONPath / regex / XPath 预处理）；多步 Web 场景；值预处理管线；依赖项 | `collect/`、新增 `preprocess/` |
+| Z4 动作与自动化 | 多步升级链（步骤 / 操作 / 恢复操作）；动作条件引擎；远程命令 / 全局脚本（Agent 侧白名单执行）；短信与脚本渠道；事件关联规则 | `health/`、`stream/`、`api/` |
+| Z5 服务与可视化 | 服务树 + SLA 计算与报表；网络拓扑图（LLDP 自动 + 手工）；可用性报表；定时报表导出；饼图组件 | 新增 `sla/`、Web |
+| Z6 企业管理 | 用户组 + Room 级权限；TOTP 2FA；SAML；IP 段扫描发现；zabbix_sender 兼容 trapper 端口；PSK；Hub 队列自监控 | `api/`、`hub/`、`discover/` |
+
+## 4. 非目标
+
+- 不实现 Zabbix 数据库 schema / JSON-RPC API 兼容；对外仍为 REST + OpenAPI。
+- 不引入外部数据库依赖；配置实体持久化沿用 JSON/YAML 文件 + CAS。
+- 被动 Agent 协议（服务端主动连 10050）不作为默认；通过 Hub proxy 模式覆盖场景。
+
+## 3. 分阶段开发计划
+
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`xml_to_json` 把一个 XML 文档转成 JSON：属性以 `@` 开头，混合文本放在 `#text`，同名子节点收成数组；不解析 DOCTYPE。`csv_to_json` 把 CSV 转成 JSON，默认逗号分隔、双引号转义；`header: true` 时首行成为字段名。`snmp_walk_to_json` 把 snmpwalk 文本按字段 OID 收成 JSON，每行带 `{#SNMPINDEX}`。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。HTTP Agent 可以用 `status_codes` 要求状态码，并用 `retrieve` 取正文、响应头或状态码。`httpcheck` 可用 `status_codes` 限制状态码，并用 `follow_redirects` 跟随跳转。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。`diff -5m` 看最近两个样本是否不同，`abschange -5m` 取它们的绝对差；只有一个样本时为 0，空窗口为 NaN。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。Squid 计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。Tomcat 状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除。Varnish `varnishstat` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|
