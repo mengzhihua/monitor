@@ -52,6 +52,32 @@ func TestActionEscalatesAndRunsCommandOnce(t *testing.T) {
 	}
 }
 
+func TestActionTimeWindowUsesLocalClock(t *testing.T) {
+	night := time.Date(2026, 10, 26, 23, 0, 0, 0, time.Local) // Monday
+	day := time.Date(2026, 10, 26, 12, 0, 0, 0, time.Local)
+	e := diagnosticsEngine(t, Options{
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Roles:     map[string][]string{"pager": {"slack"}},
+		Actions: []Action{{
+			Name: "night", Start: "22:00", End: "07:00", Weekdays: []string{"mon"},
+			Steps: []ActionStep{{Role: "pager"}},
+		}},
+	})
+	e.alarms["hot|system.cpu"] = &Alarm{Name: "hot", Chart: "system.cpu", Status: StatusCritical, LastStatusChange: day.Unix()}
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: day.Unix(), Recipient: "sysadmin"}, day.Unix())
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("daytime action ran: %s", got.Recipient)
+	}
+	e.alarms["hot|system.cpu"].LastStatusChange = night.Unix()
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: night.Unix(), Recipient: "sysadmin"}, night.Unix())
+	if got := <-e.notifyCh; got.Recipient != "pager" {
+		t.Fatalf("night action %s", got.Recipient)
+	}
+	if _, err := compileActions([]Action{{Name: "bad", Start: "25:00", End: "26:00", Steps: []ActionStep{{Role: "pager"}}}}); err == nil {
+		t.Fatal("accepted an invalid clock")
+	}
+}
+
 func TestActionChartFilterSkipsOtherCharts(t *testing.T) {
 	e := diagnosticsEngine(t, Options{
 		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},

@@ -2,6 +2,7 @@ package health
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,7 +22,12 @@ type Action struct {
 	Charts     []string `yaml:"charts,omitempty" json:"charts,omitempty"`
 	// Ack limits the action to acknowledged (yes) or unacknowledged (no) problems.
 	// Empty matches either state and does not run when acknowledgement is set.
-	Ack      string       `yaml:"ack,omitempty" json:"ack,omitempty"`
+	Ack string `yaml:"ack,omitempty" json:"ack,omitempty"`
+	// Start and End are a local clock window, HH:MM. An empty pair matches
+	// all day. Overnight windows such as 22:00-07:00 wrap midnight.
+	Start    string       `yaml:"start,omitempty" json:"start,omitempty"`
+	End      string       `yaml:"end,omitempty" json:"end,omitempty"`
+	Weekdays []string     `yaml:"weekdays,omitempty" json:"weekdays,omitempty"`
 	Steps    []ActionStep `yaml:"steps" json:"steps"`
 	Recovery *ActionStep  `yaml:"recovery,omitempty" json:"recovery,omitempty"`
 }
@@ -39,6 +45,7 @@ type compiledAction struct {
 	alarms     []string
 	charts     []string
 	ack        ackMatch
+	window     *MaintenanceWindow
 	steps      []compiledStep
 	recovery   *compiledStep
 }
@@ -85,6 +92,11 @@ func compileActions(actions []Action) ([]compiledAction, error) {
 				compiled.severities[st] = true
 			}
 		}
+		window, err := actionWindow(name, raw.Start, raw.End, raw.Weekdays)
+		if err != nil {
+			return nil, err
+		}
+		compiled.window = window
 		if len(raw.Steps) == 0 || len(raw.Steps) > maxSteps {
 			return nil, fmt.Errorf("action %s: 1..%d steps", name, maxSteps)
 		}
@@ -177,7 +189,7 @@ func parseActionStatus(raw string) (Status, error) {
 	}
 }
 
-func (a compiledAction) matches(name, chart string, status Status) bool {
+func (a compiledAction) matches(name, chart string, status Status, now time.Time) bool {
 	if status == StatusClear {
 		if a.recovery == nil {
 			return false
@@ -188,7 +200,54 @@ func (a compiledAction) matches(name, chart string, status Status) bool {
 	if !matchGlob(a.alarms, name) || !matchGlob(a.charts, chart) {
 		return false
 	}
+	if a.window != nil && !a.window.covers(now) {
+		return false
+	}
 	return true
+}
+
+func actionWindow(name, start, end string, weekdays []string) (*MaintenanceWindow, error) {
+	start, end = strings.TrimSpace(start), strings.TrimSpace(end)
+	if start == "" && end == "" && len(weekdays) == 0 {
+		return nil, nil
+	}
+	if start == "" || end == "" {
+		return nil, fmt.Errorf("action %s: start and end are both required", name)
+	}
+	if err := validClock(start); err != nil {
+		return nil, fmt.Errorf("action %s: start: %w", name, err)
+	}
+	if err := validClock(end); err != nil {
+		return nil, fmt.Errorf("action %s: end: %w", name, err)
+	}
+	for _, day := range weekdays {
+		if !validWeekday(day) {
+			return nil, fmt.Errorf("action %s: weekday %q", name, day)
+		}
+	}
+	return &MaintenanceWindow{Start: start, End: end, Weekdays: weekdays}, nil
+}
+
+func validClock(raw string) error {
+	parts := strings.Split(raw, ":")
+	if len(parts) != 2 || len(parts[0]) == 0 || len(parts[1]) != 2 {
+		return fmt.Errorf("clock %q", raw)
+	}
+	hour, errH := strconv.Atoi(parts[0])
+	min, errM := strconv.Atoi(parts[1])
+	if errH != nil || errM != nil || hour < 0 || hour > 23 || min < 0 || min > 59 {
+		return fmt.Errorf("clock %q", raw)
+	}
+	return nil
+}
+
+func validWeekday(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "sun", "sunday", "mon", "monday", "tue", "tuesday", "wed", "wednesday", "thu", "thursday", "fri", "friday", "sat", "saturday":
+		return len(strings.TrimSpace(raw)) >= 3
+	default:
+		return false
+	}
 }
 
 func matchGlob(pats []string, value string) bool {
@@ -231,7 +290,7 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 	}
 	acked := alarm != nil && alarm.Acknowledged
 	for _, action := range e.actions {
-		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status) || !action.ackAllows(acked) {
+		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status, time.Unix(at, 0)) || !action.ackAllows(acked) {
 			continue
 		}
 		if entry.Status == StatusClear {
@@ -287,7 +346,7 @@ func (e *Engine) dispatchAckActions(entry LogEntry) {
 		return
 	}
 	for _, action := range e.actions {
-		if action.ack != ackYes || !action.matches(entry.Name, entry.Chart, entry.Status) {
+		if action.ack != ackYes || !action.matches(entry.Name, entry.Chart, entry.Status, time.Unix(entry.When, 0)) {
 			continue
 		}
 		step := action.steps[0]
@@ -329,7 +388,7 @@ func (e *Engine) noteInhibitedActionLocked(entry *LogEntry, at int64, reason str
 	}
 	acked := alarm.Acknowledged
 	for _, action := range e.actions {
-		if !action.matches(entry.Name, entry.Chart, entry.Status) || !action.ackAllows(acked) {
+		if !action.matches(entry.Name, entry.Chart, entry.Status, time.Unix(at, 0)) || !action.ackAllows(acked) {
 			continue
 		}
 		since := entry.When

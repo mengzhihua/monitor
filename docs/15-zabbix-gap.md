@@ -19,7 +19,9 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | ICMP / TCP / 简单检查 | 已有 | `collect/ping.go`、`portcheck.go` |
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
-| 采集 | Squid | 已有。| 采集 | Tomcat | 已有。| 采集 | Varnish | 已有。`varnishstat -j` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除 | `collect/varnish.go` |计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |管理状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除 | `collect/tomcat.go` |计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
+| 采集 | Squid | 已有。计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
+| 采集 | Tomcat | 已有。管理状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除 | `collect/tomcat.go` |
+| 采集 | Varnish | 已有。`varnishstat -j` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除 | `collect/varnish.go` |
 | 采集 | Trapper / zabbix_sender 推送 | 已有：`ZBXD\x01` sender 监听，可选 psk 与来源网段 | `trapper/trapper.go` |
 | 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算，并用 `avg`/`min`/`max`/`sum` 读取最多 1 小时的已存储样本。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
 | 采集 | 低级发现 LLD + 原型 | 已有：SNMP 表 LLD；通用 `{#MACRO}` 原型可按实体开图表，或合成一张图 | `collect/snmp.go`、`collect/lld.go` |
@@ -38,7 +40,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 动作 | 多步升级、恢复操作 | 已有：`health.actions` 步骤延迟、角色和恢复操作 | `health/actions.go` |
 | 动作 | 远程命令 / 全局脚本 | 已有：配置 argv 白名单，`POST /api/v1/commands` | `api/zplatform.go` |
 | 动作 | 媒介类型 | 已有：含短信网关与脚本渠道。邮件主题和正文可用 `{HOST.NAME}`、`{EVENT.NAME}`、`{EVENT.STATUS}`、`{EVENT.VALUE}`、`{EVENT.UNITS}`、`{EVENT.CHART}`、`{EVENT.INFO}` | `health/message.go`、`health/notify.go` |
-| 动作 | 动作条件 | 已有：严重级别、告警名和图表通配，以及 `ack: yes` / `ack: no`。确认后只运行 `ack: yes` 的动作；未确认时 `ack: no` 才运行。留空则两种状态都匹配，确认本身不触发它。条件按 AND 组合 | `health/actions.go` |
+| 动作 | 动作条件 | 已有：严重级别、告警名和图表通配，以及 `ack: yes` / `ack: no` 与本地时钟时段和星期。确认后只运行 `ack: yes` 的动作；未确认时 `ack: no` 才运行。留空则两种状态都匹配，确认本身不触发它。条件按 AND 组合 | `health/actions.go` |
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
 | 可视化 | 图类型（饼 / 堆叠） | 已有：uPlot 线 / 面 / 堆叠；图表类型 `pie` 按末行正值画占比；服务 SLA 另有饼图 | `web/src/features/metrics/chartRenderer.ts`、`ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |
