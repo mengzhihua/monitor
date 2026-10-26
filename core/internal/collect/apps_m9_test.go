@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -223,6 +224,61 @@ func TestParseUnboundStats(t *testing.T) {
 	}
 	if err := u.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUnboundFailureMarksUnsupported(t *testing.T) {
+	stats := "total.num.queries=100\ntotal.num.cachehits=80\ntotal.requestlist.avg=0.5\ntotal.requestlist.max=3\n"
+	phase := "ok"
+	u := &unboundCollector{
+		cfg: unboundConfig{Command: "unbound-control", Timeout: time.Second},
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			switch phase {
+			case "fail":
+				return nil, errors.New("unbound-control: connection refused")
+			case "empty":
+				return []byte("other=1\n"), nil
+			default:
+				return []byte(stats), nil
+			}
+		},
+	}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := u.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := u.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	usage := mustChart(t, reg, "unbound.request_list_usage")
+	queries := mustChart(t, reg, "unbound.queries")
+	if _, vals := usage.LastValues(); vals["avg"] != 0.5 || usage.Unsupported != "" {
+		t.Fatalf("usage %+v %q", vals, usage.Unsupported)
+	}
+	phase = "fail"
+	if err := u.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Unsupported == "" || queries.Unsupported == "" || usage.LastCollectionTime() != now.Unix() {
+		t.Fatalf("usage %q at %d queries %q", usage.Unsupported, usage.LastCollectionTime(), queries.Unsupported)
+	}
+	phase = "empty"
+	if err := u.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Unsupported == "" {
+		t.Fatal("missing queries stayed supported")
+	}
+	phase = "ok"
+	if err := u.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Unsupported != "" || queries.Unsupported != "" {
+		t.Fatalf("stuck usage %q queries %q", usage.Unsupported, queries.Unsupported)
+	}
+	if _, vals := usage.LastValues(); vals["avg"] != 0.5 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 
