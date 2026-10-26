@@ -31,6 +31,8 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"nodata -5m", want{kind: "nodata"}, ""},
 		{"FIRST -5m of used", want{kind: "first", dims: 1}, ""},
 		{"change -5m absolute", want{kind: "change"}, ""},
+		{"diff -5m", want{kind: "diff"}, ""},
+		{"abschange -5m of used", want{kind: "abschange", dims: 1}, ""},
 		{"stddev -5m", want{kind: "stddev"}, ""},
 		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
 		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
@@ -157,6 +159,51 @@ func TestLookupFirstChangeStddevCount(t *testing.T) {
 	}
 	if v := lookupValue(t, "count -5m gt 2 of used", seed, now); v != 2 {
 		t.Fatalf("count gt 2: got %v want 2", v)
+	}
+}
+
+func TestLookupDiffAndAbsChange(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i, v := range []float64{0, 1, 2, 3, 10} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": v})
+		}
+	}
+	// The two newest samples are 3 and 10. change still spans the whole window.
+	if v := lookupValue(t, "change -5m of used", seed, now); v != 10 {
+		t.Fatalf("change: got %v want 10", v)
+	}
+	if v := lookupValue(t, "diff -5m of used", seed, now); v != 1 {
+		t.Fatalf("diff: got %v want 1", v)
+	}
+	if v := lookupValue(t, "abschange -5m of used", seed, now); v != 7 {
+		t.Fatalf("abschange: got %v want 7", v)
+	}
+	flat := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-2*time.Second), map[string]float64{"used": 4, "free": 1})
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 4, "free": 3})
+	}
+	if v := lookupValue(t, "diff -5m of used", flat, now); v != 0 {
+		t.Fatalf("unchanged diff: got %v want 0", v)
+	}
+	if v := lookupValue(t, "abschange -5m of used", flat, now); v != 0 {
+		t.Fatalf("unchanged abschange: got %v want 0", v)
+	}
+	// used stays 4 (0) and free moves 1→3 (1); the dimensions are added.
+	if v := lookupValue(t, "diff -5m", flat, now); v != 1 {
+		t.Fatalf("two dimensions: got %v want 1", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 4})
+	}
+	if v := lookupValue(t, "diff -5m of used", one, now); v != 0 {
+		t.Fatalf("one sample diff: got %v want 0", v)
+	}
+	if v := lookupValue(t, "abschange -5m of used", one, now); v != 0 {
+		t.Fatalf("one sample abschange: got %v want 0", v)
+	}
+	if v := lookupValue(t, "diff -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty diff: got %v want NaN", v)
 	}
 }
 
