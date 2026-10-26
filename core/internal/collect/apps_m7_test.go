@@ -35,6 +35,52 @@ http,BACKEND,3,1,2,100,40,200,300,0,0,0,UP,1,2,1,1,0,10,0,2,1,0
 	}
 }
 
+func TestHAProxyFailureMarksUnsupported(t *testing.T) {
+	csv := "# pxname,svname,qcur,scur,smax,slim,stot,bin,bout,ereq,econ,eresp,status,weight,act,bck,type,hrsp_1xx,hrsp_2xx,hrsp_3xx,hrsp_4xx,hrsp_5xx,hrsp_other\n" +
+		"http,FRONTEND,,2,10,100,50,200,300,1,0,0,OPEN,,,0,0,0,10,0,2,0,0\n" +
+		"http,BACKEND,3,1,2,100,40,200,300,0,0,0,UP,1,2,1,1,0,10,0,2,1,0\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode != "ok" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(csv))
+	}))
+	defer srv.Close()
+	h := &haproxyCollector{cfg: haproxyConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := h.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := h.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	sessions := mustChart(t, reg, "haproxy.frontend_current_sessions")
+	status := mustChart(t, reg, "haproxy.backend_status")
+	if _, vals := sessions.LastValues(); vals["current"] != 2 || sessions.Unsupported != "" {
+		t.Fatalf("sessions %+v %q", vals, sessions.Unsupported)
+	}
+	mode = "down"
+	if err := h.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.Unsupported == "" || status.Unsupported == "" || sessions.LastCollectionTime() != now.Unix() {
+		t.Fatalf("sessions %q at %d status %q", sessions.Unsupported, sessions.LastCollectionTime(), status.Unsupported)
+	}
+	mode = "ok"
+	if err := h.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.Unsupported != "" || status.Unsupported != "" {
+		t.Fatalf("stuck sessions %q status %q", sessions.Unsupported, status.Unsupported)
+	}
+	if _, vals := sessions.LastValues(); vals["current"] != 2 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestLighttpdStatus(t *testing.T) {
 	body := "Total Accesses: 9\nTotal kBytes: 4\nUptime: 100\nBusyServers: 2\nIdleServers: 6\nScoreboard: .WrC\n"
 	st, err := parseLighttpdStatus(body)
