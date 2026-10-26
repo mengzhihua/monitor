@@ -67,6 +67,15 @@ func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, 
 		if !ok {
 			continue
 		}
+		id := "dependent." + sanitizeID(it.Name)
+		if msg := ch.UnsupportedMessage(); msg != "" {
+			runes := []rune(msg)
+			if len(runes) > 128 {
+				msg = string(runes[:128])
+			}
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: master: %s", preprocess.ErrNotSupported, msg))
+			continue
+		}
 		_, vals := ch.LastValues()
 		raw, ok := vals[it.Dimension]
 		if !ok || math.IsNaN(raw) || math.IsInf(raw, 0) {
@@ -76,7 +85,6 @@ func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, 
 		if v, ok := d.prev[it.Name]; ok {
 			prev = v
 		}
-		id := "dependent." + sanitizeID(it.Name)
 		value, next, err := preprocess.Apply(it.Steps, strconv.FormatFloat(raw, 'f', -1, 64), prev)
 		if noteUnsupported(reg, id, err) {
 			continue
