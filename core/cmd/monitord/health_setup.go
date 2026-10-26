@@ -53,7 +53,8 @@ func newHealth(cfg *config.Config, cfgPath string, reg *registry.Registry, db *t
 	}
 	if n.Email.Server != "" || n.Email.From != "" || len(n.Email.To) > 0 || n.Email.Username != "" || n.Email.Password != "" {
 		email := &health.EmailNotifier{Server: n.Email.Server, From: n.Email.From, To: n.Email.To,
-			Username: n.Email.Username, Password: n.Email.Password, Insecure: n.Email.Insecure, TLSMode: n.Email.TLSMode}
+			Username: n.Email.Username, Password: n.Email.Password, Insecure: n.Email.Insecure, TLSMode: n.Email.TLSMode,
+			Subject: n.Email.Subject, Body: n.Email.Body}
 		if err := email.Validate(); err != nil {
 			return nil, err
 		}

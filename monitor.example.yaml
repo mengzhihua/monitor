@@ -774,6 +774,8 @@ health:
       password: ""
       password_env: "" # optional environment variable name; overrides password, required nonempty when set
       tls_mode: auto   # auto: implicit TLS on 465; starttls: require STARTTLS; tls: implicit TLS on any port
+      # subject: "[{HOST.NAME}] {EVENT.NAME} is {EVENT.STATUS}"
+      # body: "{EVENT.CHART} {EVENT.VALUE}{EVENT.UNITS} {EVENT.INFO}"
       # skip TLS verification and allow AUTH over plaintext (not recommended)
       insecure_skip_verify: false
     dingtalk:
