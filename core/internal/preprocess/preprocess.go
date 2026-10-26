@@ -1,26 +1,37 @@
 // Package preprocess turns a raw item value into a number. Steps run in order
-// and match the Zabbix preprocessing steps this agent implements: trim, regex,
-// JSONPath, a small XPath, multiplier, boolean match, and change (delta).
+// and match the Zabbix preprocessing steps this agent implements: trim, left
+// and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
+// match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
+// and change (delta). JavaScript preprocessing is not implemented.
 package preprocess
 
 import (
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Step is one preprocessing operation. Unused fields are ignored for that type.
 type Step struct {
-	Type    string  `yaml:"type" json:"type"`
-	Pattern string  `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Group   int     `yaml:"group,omitempty" json:"group,omitempty"`
-	Path    string  `yaml:"path,omitempty" json:"path,omitempty"`
-	Factor  float64 `yaml:"factor,omitempty" json:"factor,omitempty"`
+	Type        string   `yaml:"type" json:"type"`
+	Pattern     string   `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Group       int      `yaml:"group,omitempty" json:"group,omitempty"`
+	Path        string   `yaml:"path,omitempty" json:"path,omitempty"`
+	Factor      float64  `yaml:"factor,omitempty" json:"factor,omitempty"`
+	Replacement string   `yaml:"replacement,omitempty" json:"replacement,omitempty"`
+	Min         *float64 `yaml:"min,omitempty" json:"min,omitempty"`
+	Max         *float64 `yaml:"max,omitempty" json:"max,omitempty"`
 }
+
+// ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
+// Callers skip the sample and keep the previous stored value.
+var ErrUnchanged = errors.New("preprocess: discard unchanged")
 
 // Apply runs steps against input. prev is the previous numeric sample for a
 // change step; pass math.NaN when there is none. The returned prev is the
@@ -34,6 +45,15 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 		switch strings.ToLower(strings.TrimSpace(st.Type)) {
 		case "trim":
 			text = strings.TrimSpace(text)
+		case "ltrim":
+			text = trimSide(text, st.Pattern, true)
+		case "rtrim":
+			text = trimSide(text, st.Pattern, false)
+		case "replace":
+			if st.Pattern == "" {
+				return 0, prev, fmt.Errorf("replace: pattern required")
+			}
+			text = strings.ReplaceAll(text, st.Pattern, st.Replacement)
 		case "regex":
 			text, err = applyRegex(st, text)
 		case "jsonpath":
@@ -63,6 +83,45 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			}
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
+		case "matches":
+			if err = mustMatch(st.Pattern, text, true); err != nil {
+				return 0, prev, err
+			}
+		case "not_match":
+			if err = mustMatch(st.Pattern, text, false); err != nil {
+				return 0, prev, err
+			}
+		case "hex", "octal":
+			value, err = parseBase(text, st.Type)
+			if err != nil {
+				return 0, prev, err
+			}
+			text = strconv.FormatInt(int64(value), 10)
+			have = true
+		case "in_range":
+			value, err = parseNum(text)
+			if err != nil {
+				return 0, prev, err
+			}
+			if st.Min == nil && st.Max == nil {
+				return 0, prev, fmt.Errorf("in_range: min or max required")
+			}
+			if st.Min != nil && value < *st.Min || st.Max != nil && value > *st.Max {
+				return 0, prev, fmt.Errorf("in_range: %v outside bounds", value)
+			}
+			text = strconv.FormatFloat(value, 'f', -1, 64)
+			have = true
+		case "discard_unchanged":
+			value, err = parseNum(text)
+			if err != nil {
+				return 0, prev, err
+			}
+			if !math.IsNaN(prev) && value == prev {
+				return 0, prev, ErrUnchanged
+			}
+			prev = value
+			text = strconv.FormatFloat(value, 'f', -1, 64)
+			have = true
 		case "change":
 			value, err = parseNum(text)
 			if err != nil {
@@ -88,6 +147,56 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 		}
 	}
 	return value, prev, nil
+}
+
+func trimSide(text, pattern string, left bool) string {
+	if pattern == "" {
+		if left {
+			return strings.TrimLeftFunc(text, unicode.IsSpace)
+		}
+		return strings.TrimRightFunc(text, unicode.IsSpace)
+	}
+	if left {
+		return strings.TrimLeft(text, pattern)
+	}
+	return strings.TrimRight(text, pattern)
+}
+
+func mustMatch(pattern, text string, want bool) error {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return err
+	}
+	matched := re.MatchString(text)
+	if want && !matched {
+		return fmt.Errorf("matches: value does not match")
+	}
+	if !want && matched {
+		return fmt.Errorf("not_match: value matches")
+	}
+	return nil
+}
+
+func parseBase(text, kind string) (float64, error) {
+	text = strings.TrimSpace(text)
+	base := 16
+	if strings.EqualFold(kind, "octal") {
+		base = 8
+		if text == "0" {
+			return 0, nil
+		}
+		text = strings.TrimPrefix(text, "0")
+	} else {
+		text = strings.TrimPrefix(strings.TrimPrefix(text, "0x"), "0X")
+	}
+	if text == "" {
+		return 0, fmt.Errorf("%s: empty value", kind)
+	}
+	n, err := strconv.ParseInt(text, base, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", kind, err)
+	}
+	return float64(n), nil
 }
 
 func applyRegex(st Step, text string) (string, error) {
