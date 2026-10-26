@@ -47,6 +47,9 @@ func (e *Engine) evaluate(a *Alarm, now time.Time) {
 		status = gateRaised(a, status, now)
 	}
 	if status != old {
+		a.Acknowledged = false
+		a.AckUser = ""
+		a.AckNote = ""
 		a.prevStatusChange = a.LastStatusChange
 		a.Status = status
 		a.LastStatusChange = now.Unix()
