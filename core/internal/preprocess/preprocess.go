@@ -2,7 +2,7 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// change (delta), Prometheus text to JSON, and XML to JSON. A step can set on_fail to
+// change (delta), Prometheus text to JSON, XML to JSON, and CSV to JSON. A step can set on_fail to
 // discard, value, or error.
 // JavaScript runs operator config in a time-limited interpreter that has no
 // host, network, or filesystem API.
@@ -34,6 +34,10 @@ type Step struct {
 	Script      string   `yaml:"script,omitempty" json:"script,omitempty"`
 	OnFail      string   `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
 	FailValue   string   `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
+	Delimiter   string   `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`
+	Qualifier   string   `yaml:"qualifier,omitempty" json:"qualifier,omitempty"`
+	Header      bool     `yaml:"header,omitempty" json:"header,omitempty"`
+	NoQuote     bool     `yaml:"no_quote,omitempty" json:"no_quote,omitempty"`
 }
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
@@ -147,6 +151,12 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			have = false
 		case "xml_to_json":
 			text, err = applyXMLToJSON(text)
+			if err != nil {
+				return failStep(st, prev, err)
+			}
+			have = false
+		case "csv_to_json":
+			text, err = applyCSVToJSON(st, text)
 			if err != nil {
 				return failStep(st, prev, err)
 			}

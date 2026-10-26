@@ -876,6 +876,7 @@ export:
 #         - { name: users, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: not_supported, pattern: "^down$" }, { type: regex, pattern: "ready_users ([0-9]+)", on_fail: value, fail_value: "0" }] }
 #         - { name: ok_requests, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: prometheus_to_json, pattern: 'http_requests_total{code="200"}' }, { type: jsonpath, path: "$[0].value" }] }
 #         - { name: host_status, url: http://127.0.0.1:8080/host.xml, preprocess: [{ type: xml_to_json }, { type: jsonpath, path: "$.host.status" }] }
+#         - { name: cpu, url: http://127.0.0.1:8080/rows.csv, preprocess: [{ type: csv_to_json, header: true }, { type: jsonpath, path: "$[0].value" }] }
 #     webscenario:
 #       jobs:
 #         - name: login
