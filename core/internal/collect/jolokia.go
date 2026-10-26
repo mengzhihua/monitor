@@ -3,7 +3,6 @@ package collect
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ type jolokiaJob struct {
 type jolokiaCollector struct {
 	cfg    jolokiaConfig
 	client *http.Client
-	prev   map[string]float64
+	prev   map[string]preprocess.Memory
 }
 
 func init() { Register("jolokia", func() Collector { return &jolokiaCollector{} }) }
@@ -61,7 +60,7 @@ func (j *jolokiaCollector) Init(reg *registry.Registry) error {
 		return fmt.Errorf("jolokia: no jobs")
 	}
 	j.client = &http.Client{Timeout: j.cfg.Timeout}
-	j.prev = map[string]float64{}
+	j.prev = map[string]preprocess.Memory{}
 	for _, job := range j.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "jolokia." + sanitizeID(job.Name), Context: "jolokia.value", Title: "Jolokia " + job.Name,
 			Units: "value", Family: "jmx", Plugin: "jolokia", Module: "jolokia", Priority: 56300,
@@ -82,15 +81,10 @@ func (j *jolokiaCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		if len(steps) == 0 {
 			steps = []preprocess.Step{{Type: "jsonpath", Path: "$.value"}}
 		}
-		prev := math.NaN()
-		if v, ok := j.prev[job.Name]; ok {
-			prev = v
-		}
-		value, next, perr := preprocess.Apply(steps, body, prev)
-		if err != nil || perr != nil {
+		value, ok := preprocessValue(j.prev, job.Name, body, steps, now)
+		if err != nil || !ok {
 			continue
 		}
-		j.prev[job.Name] = next
 		_ = reg.Collect("jolokia."+sanitizeID(job.Name), now, map[string]float64{"value": value})
 	}
 	return nil

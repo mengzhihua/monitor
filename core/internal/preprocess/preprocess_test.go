@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestApplyPipeline(t *testing.T) {
@@ -86,6 +87,22 @@ func TestZabbixPreprocessSteps(t *testing.T) {
 	}
 	if _, next, err := Apply([]Step{{Type: "discard_unchanged"}}, "4", prev); !errors.Is(err, ErrUnchanged) || next != prev {
 		t.Fatalf("repeat should discard, next=%v err=%v", next, err)
+	}
+	v, prev, err = Apply([]Step{{Type: "valuemap", Map: map[string]string{"up": "1", "down": "0"}}}, " up ", math.NaN())
+	if err != nil || v != 1 {
+		t.Fatalf("valuemap %v %v", v, err)
+	}
+	if _, _, err = Apply([]Step{{Type: "valuemap", Map: map[string]string{"up": "1"}}}, "left", math.NaN()); err == nil {
+		t.Fatal("valuemap accepted an unknown token")
+	}
+	start := time.Unix(1000, 0)
+	_, mem, err := ApplyAt([]Step{{Type: "change_per_second"}}, "10", Memory{Value: math.NaN()}, start)
+	if !errors.Is(err, ErrNoBaseline) || mem.Value != 10 || !mem.At.Equal(start) {
+		t.Fatalf("rate baseline %v %v", mem, err)
+	}
+	v, mem, err = ApplyAt([]Step{{Type: "change_per_second"}}, "40", mem, start.Add(10*time.Second))
+	if err != nil || v != 3 || mem.Value != 40 {
+		t.Fatalf("rate %v mem %v err %v", v, mem, err)
 	}
 	v, prev, err = Apply([]Step{{Type: "discard_unchanged"}}, "5", prev)
 	if err != nil || v != 5 || prev != 5 {

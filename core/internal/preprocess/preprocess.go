@@ -14,20 +14,32 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
 // Step is one preprocessing operation. Unused fields are ignored for that type.
 type Step struct {
-	Type        string   `yaml:"type" json:"type"`
-	Pattern     string   `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Group       int      `yaml:"group,omitempty" json:"group,omitempty"`
-	Path        string   `yaml:"path,omitempty" json:"path,omitempty"`
-	Factor      float64  `yaml:"factor,omitempty" json:"factor,omitempty"`
-	Replacement string   `yaml:"replacement,omitempty" json:"replacement,omitempty"`
-	Min         *float64 `yaml:"min,omitempty" json:"min,omitempty"`
-	Max         *float64 `yaml:"max,omitempty" json:"max,omitempty"`
+	Type        string            `yaml:"type" json:"type"`
+	Pattern     string            `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Group       int               `yaml:"group,omitempty" json:"group,omitempty"`
+	Path        string            `yaml:"path,omitempty" json:"path,omitempty"`
+	Factor      float64           `yaml:"factor,omitempty" json:"factor,omitempty"`
+	Replacement string            `yaml:"replacement,omitempty" json:"replacement,omitempty"`
+	Min         *float64          `yaml:"min,omitempty" json:"min,omitempty"`
+	Max         *float64          `yaml:"max,omitempty" json:"max,omitempty"`
+	Map         map[string]string `yaml:"map,omitempty" json:"map,omitempty"`
 }
+
+// Memory is the previous numeric sample and the time it was seen.
+type Memory struct {
+	Value float64
+	At    time.Time
+}
+
+// ErrNoBaseline means a delta step has nothing to compare with yet. Callers
+// should keep the returned memory and skip this sample.
+var ErrNoBaseline = errors.New("preprocess: no previous value")
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
 // Callers skip the sample and keep the previous stored value.
@@ -35,8 +47,16 @@ var ErrUnchanged = errors.New("preprocess: discard unchanged")
 
 // Apply runs steps against input. prev is the previous numeric sample for a
 // change step; pass math.NaN when there is none. The returned prev is the
-// value to store for the next change step.
+// value to store for the next change step. change_per_second needs ApplyAt.
 func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
+	value, mem, err := ApplyAt(steps, input, Memory{Value: prev}, time.Time{})
+	return value, mem.Value, err
+}
+
+// ApplyAt is Apply with the previous sample time. now is the collection time
+// used by change_per_second. The returned memory should be stored even when
+// the error is ErrNoBaseline or ErrUnchanged.
+func ApplyAt(steps []Step, input string, prev Memory, now time.Time) (float64, Memory, error) {
 	text := input
 	value := math.NaN()
 	have := false
@@ -111,27 +131,47 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			}
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
+		case "valuemap":
+			if len(st.Map) == 0 || len(st.Map) > 32 {
+				return 0, prev, fmt.Errorf("valuemap: 1 to 32 entries required")
+			}
+			to, ok := st.Map[strings.TrimSpace(text)]
+			if !ok {
+				return 0, prev, fmt.Errorf("valuemap: %q is not mapped", strings.TrimSpace(text))
+			}
+			if len(to) > 128 {
+				return 0, prev, fmt.Errorf("valuemap: replacement is too long")
+			}
+			text = to
 		case "discard_unchanged":
 			value, err = parseNum(text)
 			if err != nil {
 				return 0, prev, err
 			}
-			if !math.IsNaN(prev) && value == prev {
+			if !math.IsNaN(prev.Value) && value == prev.Value {
 				return 0, prev, ErrUnchanged
 			}
-			prev = value
+			prev.Value = value
+			prev.At = now
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
-		case "change":
+		case "change", "change_per_second":
 			value, err = parseNum(text)
 			if err != nil {
 				return 0, prev, err
 			}
-			if math.IsNaN(prev) {
-				return 0, value, fmt.Errorf("change: no previous value")
+			next := Memory{Value: value, At: now}
+			if math.IsNaN(prev.Value) {
+				return 0, next, fmt.Errorf("change: %w", ErrNoBaseline)
 			}
-			delta := value - prev
-			return delta, value, nil
+			delta := value - prev.Value
+			if strings.EqualFold(strings.TrimSpace(st.Type), "change") {
+				return delta, next, nil
+			}
+			if now.IsZero() || prev.At.IsZero() || !now.After(prev.At) {
+				return 0, next, fmt.Errorf("change_per_second: no elapsed time")
+			}
+			return delta / now.Sub(prev.At).Seconds(), next, nil
 		default:
 			return 0, prev, fmt.Errorf("unknown preprocess step %q", st.Type)
 		}

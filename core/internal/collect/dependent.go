@@ -25,7 +25,7 @@ type dependentItem struct {
 
 type dependentCollector struct {
 	cfg  dependentConfig
-	prev map[string]float64
+	prev map[string]preprocess.Memory
 }
 
 func init() { Register("dependent", func() Collector { return &dependentCollector{} }) }
@@ -51,7 +51,7 @@ func (d *dependentCollector) Init(reg *registry.Registry) error {
 	if len(d.cfg.Items) == 0 {
 		return fmt.Errorf("dependent: no items")
 	}
-	d.prev = map[string]float64{}
+	d.prev = map[string]preprocess.Memory{}
 	for _, it := range d.cfg.Items {
 		reg.AddChart(&registry.Chart{ID: "dependent." + sanitizeID(it.Name), Context: "dependent.value", Title: "Dependent " + it.Name,
 			Units: "value", Family: "calc", Plugin: "dependent", Module: "dependent", Priority: 56600,
@@ -72,15 +72,10 @@ func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, 
 		if !ok || math.IsNaN(raw) || math.IsInf(raw, 0) {
 			continue
 		}
-		prev := math.NaN()
-		if v, ok := d.prev[it.Name]; ok {
-			prev = v
-		}
-		value, next, err := preprocess.Apply(it.Steps, strconv.FormatFloat(raw, 'f', -1, 64), prev)
-		if err != nil {
+		value, ok := preprocessValue(d.prev, it.Name, strconv.FormatFloat(raw, 'f', -1, 64), it.Steps, now)
+		if !ok {
 			continue
 		}
-		d.prev[it.Name] = next
 		_ = reg.Collect("dependent."+sanitizeID(it.Name), now, map[string]float64{"value": value})
 	}
 	return nil

@@ -22,7 +22,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | Trapper / zabbix_sender 推送 | 已有：`ZBXD\x01` sender 监听，可选 psk 与来源网段 | `trapper/trapper.go` |
 | 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
 | 采集 | 低级发现 LLD + 原型 | 部分：SNMP 表 LLD 开图表；无通用原型继承 | `collect/snmp.go` |
-| 采集 | 值预处理（regex/JSONPath/XPath/JS） | 部分：trim/ltrim/rtrim/replace/regex/jsonpath/xpath/multiplier/bool/matches/not_match/hex/octal/in_range/discard_unchanged/change；无 JavaScript | `preprocess/preprocess.go` |
+| 采集 | 值预处理（regex/JSONPath/XPath/JS） | 部分：trim/ltrim/rtrim/replace/regex/jsonpath/xpath/multiplier/bool/matches/not_match/hex/octal/in_range/discard_unchanged/change/change_per_second/valuemap；无 JavaScript | `preprocess/preprocess.go` |
 | 模型 | 主机 / 主机组 | 已有：Space→Room；`web.groups` 可递归包含其他组的 Room，环被忽略 | `config/config.go` |
 | 模型 | 模板（可链接、继承） | 已有：Hub 模板可按节点、Room、标签链接，带宏、标签和采集覆盖 | `hub/templates.go` |
 | 模型 | 用户宏 `{$MACRO}` | 已有：全局与规则级 `{$NAME}` | `config/config.go`、`health/` |
@@ -56,7 +56,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配和丢弃重复值；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 原型仍用图表 context（`on: snmp.lld.<name>`）匹配，没有单独的原型语言。值预处理已补上 Zabbix 常用的替换、进制、范围、匹配、丢弃重复值、每秒变化和值映射；JavaScript 预处理仍不执行任意脚本。图表类型仍没有饼图。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，不是任意函数公式。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|

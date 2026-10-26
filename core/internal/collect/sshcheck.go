@@ -30,7 +30,7 @@ type sshJob struct {
 type sshcheckCollector struct {
 	cfg  sshcheckConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
-	prev map[string]float64
+	prev map[string]preprocess.Memory
 }
 
 func init() { Register("sshcheck", func() Collector { return &sshcheckCollector{} }) }
@@ -80,7 +80,7 @@ func (s *sshcheckCollector) Init(reg *registry.Registry) error {
 	if len(s.cfg.Jobs) == 0 {
 		return fmt.Errorf("sshcheck: no jobs")
 	}
-	s.prev = map[string]float64{}
+	s.prev = map[string]preprocess.Memory{}
 	for _, j := range s.cfg.Jobs {
 		ch := &registry.Chart{ID: "sshcheck." + sanitizeID(j.Name), Context: "sshcheck.value", Title: "SSH " + j.Name, Units: "value",
 			Family: "ssh", Plugin: "sshcheck", Module: "sshcheck", Priority: 56200,
@@ -103,15 +103,8 @@ func (s *sshcheckCollector) Collect(ctx context.Context, reg *registry.Registry,
 		args = append(args, j.User+"@"+j.Address, j.Command)
 		out, err := run(ctx, s.cfg.Command, args...)
 		raw := strings.TrimSpace(string(out))
-		prev := math.NaN()
-		if v, ok := s.prev[j.Name]; ok {
-			prev = v
-		}
-		value, next, perr := preprocess.Apply(j.Steps, raw, prev)
-		if perr == nil {
-			s.prev[j.Name] = next
-		}
-		if err != nil || perr != nil {
+		value, ok := preprocessValue(s.prev, j.Name, raw, j.Steps, now)
+		if err != nil || !ok {
 			value = math.NaN()
 		}
 		if !math.IsNaN(value) {
