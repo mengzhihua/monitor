@@ -86,8 +86,9 @@ func (j *jolokiaCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		if v, ok := j.prev[job.Name]; ok {
 			prev = v
 		}
+		id := "jolokia." + sanitizeID(job.Name)
 		value, next, perr := preprocess.Apply(steps, body, prev)
-		if err != nil || perr != nil {
+		if err != nil || noteUnsupported(reg, id, perr) {
 			continue
 		}
 		j.prev[job.Name] = next

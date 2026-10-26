@@ -76,8 +76,9 @@ func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, 
 		if v, ok := d.prev[it.Name]; ok {
 			prev = v
 		}
+		id := "dependent." + sanitizeID(it.Name)
 		value, next, err := preprocess.Apply(it.Steps, strconv.FormatFloat(raw, 'f', -1, 64), prev)
-		if err != nil {
+		if noteUnsupported(reg, id, err) {
 			continue
 		}
 		d.prev[it.Name] = next
