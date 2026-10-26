@@ -35,6 +35,8 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
 		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
 		{"percentile -5m p 100", want{kind: "percentile", pct: 100}, ""},
+		{"skewness -5m", want{kind: "skewness"}, ""},
+		{"KURTOSIS -1m of used", want{kind: "kurtosis", dims: 1}, ""},
 		{"count -5m", want{kind: "count"}, ""},
 		{"count -5m gt 3.5", want{kind: "count", op: "gt", val: 3.5}, ""},
 		{"count -5m ne 0 of used,free", want{kind: "count", op: "ne", dims: 2}, ""},
@@ -197,6 +199,62 @@ func TestLookupPercentile(t *testing.T) {
 	}
 	if v := lookupValue(t, "percentile -5m p 100", both, now); v != 14 {
 		t.Fatalf("two dimensions: got %v want 14", v)
+	}
+}
+
+func TestLookupSkewnessKurtosis(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	flat := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": float64(i + 1)})
+		}
+	}
+	// Values 1,2,3,4,5. m2 = 2, m3 = 0, m4 = 6.8, so kurtosis is 1.7.
+	if v := lookupValue(t, "skewness -5m of used", flat, now); math.Abs(v) > 1e-9 {
+		t.Fatalf("symmetric skewness: got %v want 0", v)
+	}
+	if v := lookupValue(t, "kurtosis -5m of used", flat, now); math.Abs(v-1.7) > 1e-9 {
+		t.Fatalf("kurtosis: got %v want 1.7", v)
+	}
+	right := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 1, 1, 10} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-3)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "skewness -5m of used", right, now); v <= 0 {
+		t.Fatalf("right skew: got %v", v)
+	}
+	left := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 10, 10, 10} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-3)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "skewness -5m of used", left, now); v >= 0 {
+		t.Fatalf("left skew: got %v", v)
+	}
+	same := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 4})
+		reg.Collect("system.ram", now, map[string]float64{"used": 4})
+	}
+	if v := lookupValue(t, "skewness -5m of used", same, now); !math.IsNaN(v) {
+		t.Fatalf("zero variance skewness: got %v want NaN", v)
+	}
+	if v := lookupValue(t, "kurtosis -5m of used", same, now); !math.IsNaN(v) {
+		t.Fatalf("zero variance kurtosis: got %v want NaN", v)
+	}
+	if v := lookupValue(t, "kurtosis -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty window: got %v want NaN", v)
+	}
+	both := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{
+				"used": float64(i + 1),
+				"free": 10,
+			})
+		}
+	}
+	if v := lookupValue(t, "kurtosis -5m", both, now); math.Abs(v-1.7) > 1e-9 {
+		t.Fatalf("two dimensions: got %v want 1.7", v)
 	}
 }
 
