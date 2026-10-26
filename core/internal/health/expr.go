@@ -117,6 +117,24 @@ func (n callNode) eval(vars func(string) (float64, bool)) float64 {
 	switch n.fn {
 	case "abs":
 		return math.Abs(a[0])
+	case "sin":
+		return finite(math.Sin(a[0]))
+	case "cos":
+		return finite(math.Cos(a[0]))
+	case "tan":
+		return finite(math.Tan(a[0]))
+	case "asin":
+		return finite(math.Asin(a[0]))
+	case "acos":
+		return finite(math.Acos(a[0]))
+	case "atan":
+		return finite(math.Atan(a[0]))
+	case "atan2":
+		return finite(math.Atan2(a[0], a[1]))
+	case "degrees":
+		return finite(a[0] * 180 / math.Pi)
+	case "radians":
+		return finite(a[0] * math.Pi / 180)
 	case "isnan":
 		return b2f(math.IsNaN(a[0]))
 	case "isinf":
@@ -144,6 +162,14 @@ func b2f(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// finite keeps a real result. NaN and infinity stay undefined.
+func finite(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return math.NaN()
+	}
+	return v
 }
 
 // Eval evaluates the expression; unknown variables evaluate to NaN.
@@ -410,9 +436,13 @@ func (p *parser) parsePrimary() (node, error) {
 			}
 		}
 		switch fn {
-		case "abs", "isnan", "isinf":
+		case "abs", "isnan", "isinf", "sin", "cos", "tan", "asin", "acos", "atan", "degrees", "radians":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("%s() takes one argument", fn)
+			}
+		case "atan2":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("atan2() takes y and x")
 			}
 		case "min", "max":
 			if len(args) < 1 {

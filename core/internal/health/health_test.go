@@ -46,6 +46,14 @@ func TestExpr(t *testing.T) {
 		"$missing":                                       math.NaN(),
 		"isnan($missing) ? 5 : 6":                        5,
 		"abs(-3) + min(4, 2, 9) + max(1, 7)":             12,
+		"sin(0) + cos(0)":                                1,
+		"tan(0) + asin(0) + atan(0)":                     0,
+		"acos(1)":                                        0,
+		"atan2(0, 1)":                                    0,
+		"degrees(0) + radians(0)":                        0,
+		"asin(2)":                                        math.NaN(),
+		"acos(-2)":                                       math.NaN(),
+		"sin($missing)":                                  math.NaN(),
 		"$this > 50 && $this < 100":                      1,
 		"$this > 50 AND NOT ($this < 100)":               0,
 		"10 % 3":                                         1,
@@ -64,7 +72,14 @@ func TestExpr(t *testing.T) {
 			t.Errorf("%q = %v, want %v", src, got, want)
 		}
 	}
-	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "3 4"} {
+	deg, err := ParseExpr("degrees(radians(180))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deg.Eval(vars); math.Abs(got-180) > 1e-9 {
+		t.Fatalf("degrees(radians(180)) = %v", got)
+	}
+	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "sin()", "atan2(1)", "3 4"} {
 		if _, err := ParseExpr(bad); err == nil {
 			t.Errorf("%q should not parse", bad)
 		}
