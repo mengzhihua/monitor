@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -75,8 +76,10 @@ func (i *ipmiCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	}
 	raw, err := i.readSensors(ctx)
 	if err != nil {
-		return err
+		_ = noteUnsupported(reg, "ipmi.sensor_state", fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	_ = noteUnsupported(reg, "ipmi.sensor_state", nil)
 	okc, warn, crit, ns := 0.0, 0.0, 0.0, 0.0
 	for _, s := range parseIPMISDR(string(raw)) {
 		switch s.State {
