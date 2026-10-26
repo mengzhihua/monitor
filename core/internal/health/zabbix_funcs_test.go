@@ -510,6 +510,34 @@ func TestLookupRate(t *testing.T) {
 
 
 
+func TestLookupSumOfSquares(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, -2, 3} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-2)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "sumofsquares -5m of used", seed, now); v != 14 {
+		t.Fatalf("squares: got %v want 14", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 4})
+	}
+	if v := lookupValue(t, "sumofsquares -5m of used", one, now); v != 16 {
+		t.Fatalf("one sample: got %v want 16", v)
+	}
+	if v := lookupValue(t, "sumofsquares -5m of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty window: got %v want NaN", v)
+	}
+	both := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 1, "free": 3})
+		reg.Collect("system.ram", now, map[string]float64{"used": 2, "free": 3})
+	}
+	if v := lookupValue(t, "sumofsquares -5m", both, now); v != 23 {
+		t.Fatalf("two dimensions: got %v want 23", v)
+	}
+}
+
 func TestLookupForecastTimeleft(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	// Perfectly linear ramp: value = seconds elapsed (slope 1/s over 60 s).

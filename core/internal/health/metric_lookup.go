@@ -182,6 +182,10 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += popStddev(vals)
 		case "percentile":
 			sum += percentileRank(vals, l.Percentile)
+		case "sumofsquares":
+			for _, p := range vals {
+				sum += p.Value * p.Value
+			}
 		case "mad":
 			sum += medianAbsDev(vals)
 		case "monoinc", "monodec":
