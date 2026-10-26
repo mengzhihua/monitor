@@ -57,9 +57,23 @@ func TestParseLogShow(t *testing.T) {
 	}
 }
 
+func TestFollowRingDropsRotatedRows(t *testing.T) {
+	var ring logRing
+	for i := 0; i < logFollowKeep+5; i++ {
+		ring.push(LogRow{Time: int64(i), Message: string(rune('a' + i%26))})
+	}
+	got := ring.snapshot()
+	if len(got) != logFollowKeep || cap(ring.rows) != logFollowKeep {
+		t.Fatalf("len=%d cap=%d", len(got), cap(ring.rows))
+	}
+	if got[0].Time != 5 || got[len(got)-1].Time != int64(logFollowKeep+4) {
+		t.Fatalf("window %d..%d", got[0].Time, got[len(got)-1].Time)
+	}
+}
+
 func TestJournalFollowBuffer(t *testing.T) {
 	l := &logsCollector{followOn: true, cfg: logsConfig{Top: 10}}
-	l.buf = []LogRow{{Time: 1, Priority: "info", Unit: "a", Message: "one", Cursor: "s:1"}}
+	l.buf.push(LogRow{Time: 1, Priority: "info", Unit: "a", Message: "one", Cursor: "s:1"})
 	rows := l.journalRows(LogQuery{Limit: 10})
 	if len(rows) != 1 || rows[0].Message != "one" {
 		t.Fatalf("%+v", rows)

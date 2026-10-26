@@ -40,6 +40,7 @@ func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request, api int) {
 		"alarms":        s.alarmSummary(),
 		"db": map[string]any{
 			"tiers": s.db.Tiers(), "dir": s.db.Dir(), "persistence": s.db.Persistence(),
+			"block_size": s.db.BlockSize(),
 		},
 		"user": userOf(r),
 	}

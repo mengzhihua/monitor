@@ -25,7 +25,7 @@ func (l *logsCollector) journalRows(q LogQuery) []LogRow {
 	filtered := q.Unit != "" || q.Priority != "" || q.Boot != "" || q.Cursor != ""
 	if l.followOn && !filtered {
 		l.mu.Lock()
-		rows := append([]LogRow(nil), l.buf...)
+		rows := l.buf.snapshot()
 		l.mu.Unlock()
 		out := make([]LogRow, 0, len(rows))
 		for _, r := range rows {
@@ -79,10 +79,7 @@ func (l *logsCollector) startFollow() {
 			for sc.Scan() {
 				for _, r := range parseJournalJSON(sc.Text(), LogQuery{Limit: 1}) {
 					l.mu.Lock()
-					l.buf = append(l.buf, r)
-					if len(l.buf) > 2000 {
-						l.buf = l.buf[len(l.buf)-2000:]
-					}
+					l.buf.push(r)
 					l.pending++
 					if l.pendingSev == nil {
 						l.pendingSev = map[string]float64{}

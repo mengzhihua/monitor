@@ -4,7 +4,7 @@ import { workspace } from './mobile-navigation'
 
 const platform = { api_version: 1, scope: 'local', capabilities: ['plugins.catalog.v1', 'plugins.control.v1'], plugin_protocols: ['plugins.d/v1'] }
 function fixture(): PluginCatalog {
-  return { schema_version: 1, revision: 4, running: true, diagnostics: [{ path: '/plugins/broken/plugin.json', error: '不支持的协议' }], plugins: [
+  return { schema_version: 1, revision: 4, running: true, budgets: { max_charts: 32, max_dimensions: 8, max_labels: 16, max_variables: 4, max_line: 65536 }, diagnostics: [{ path: '/plugins/broken/plugin.json', error: '不支持的协议' }], plugins: [
     { name: 'demo', command: '/plugins/demo/run.plugin', state: 'running', source: 'manifest', locked: false,
       enabled: true, pid: 120, update_every: 1, restarts: 2, started: 100,
       manifest: { api_version: 1, id: 'demo', name: '演示采集器', version: '1.2.0', description: '本机插件平台测试', protocol: 'plugins.d/v1', capabilities: ['metrics'] },
@@ -49,6 +49,7 @@ test('local plugin catalog shows metadata and locks while actions use revisions 
   await expect(plugin).toContainText('1.2.0')
   await expect(plugin).toContainText('清单插件包')
   await expect(panel.getByRole('region', { name: '插件目录诊断' })).toContainText('/plugins/broken/plugin.json')
+  await expect(panel).toContainText('清单包预算：32 张图表，每张 8 个维度、16 个标签、4 个变量，单行上限 64 KiB')
   await expect(panel.getByRole('article', { name: 'locked' }).getByRole('button', { name: '启用', exact: true })).toBeDisabled()
   await plugin.getByRole('button', { name: '停用', exact: true }).click()
   await expect(plugin.getByRole('button', { name: '启用', exact: true })).toBeEnabled()

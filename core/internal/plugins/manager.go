@@ -23,14 +23,56 @@ type Spec struct {
 	Manifest    *Manifest `yaml:"-"`
 }
 
+// PackageBudgets are the manifest-package resource limits reported by the
+// catalog. Zero fields mean the built-in defaults. Legacy plugins.d scripts
+// are not subject to the chart, dimension, label or variable caps.
+type PackageBudgets struct {
+	MaxCharts     int `json:"max_charts"`
+	MaxDimensions int `json:"max_dimensions"`
+	MaxLabels     int `json:"max_labels"`
+	MaxVariables  int `json:"max_variables"`
+	MaxLine       int `json:"max_line"`
+}
+
+func (b PackageBudgets) effective() PackageBudgets {
+	if b.MaxCharts <= 0 {
+		b.MaxCharts = 128
+	}
+	if b.MaxDimensions <= 0 {
+		b.MaxDimensions = 64
+	}
+	if b.MaxLabels <= 0 {
+		b.MaxLabels = 128
+	}
+	if b.MaxVariables <= 0 {
+		b.MaxVariables = 128
+	}
+	if b.MaxLine <= 0 {
+		b.MaxLine = 64 << 10
+	}
+	return b
+}
+
 // Options configures discovery, persisted controls and restart backoff.
 type Options struct {
-	Dir        string
-	Disabled   []string
-	StatePath  string
-	Logger     *slog.Logger
-	RestartMin time.Duration
-	RestartMax time.Duration
+	Dir           string
+	Disabled      []string
+	StatePath     string
+	Logger        *slog.Logger
+	RestartMin    time.Duration
+	RestartMax    time.Duration
+	MaxCharts     int
+	MaxDimensions int
+	MaxLabels     int
+	MaxVariables  int
+	MaxLine       int
+}
+
+func (o Options) packageBudgets() PackageBudgets {
+	return PackageBudgets{
+		MaxCharts: o.MaxCharts, MaxDimensions: o.MaxDimensions,
+		MaxLabels: o.MaxLabels, MaxVariables: o.MaxVariables, MaxLine: o.MaxLine,
+	}.effective()
 }
 
 type State string

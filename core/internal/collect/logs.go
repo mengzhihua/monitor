@@ -33,9 +33,50 @@ type logsCollector struct {
 	followOn   bool
 	cancel     context.CancelFunc
 	mu         sync.Mutex
-	buf        []LogRow
+	buf        logRing
 	pending    float64
 	pendingSev map[string]float64
+}
+
+// logFollowKeep is the number of followed rows held for the logs function.
+// The ring is allocated once, so a long-running follow does not retain every
+// line that has already rotated out.
+const logFollowKeep = 2000
+
+type logRing struct {
+	rows []LogRow
+	head int
+	n    int
+}
+
+func (r *logRing) push(row LogRow) {
+	if r.rows == nil {
+		r.rows = make([]LogRow, logFollowKeep)
+	}
+	if r.n < len(r.rows) {
+		r.rows[r.n] = row
+		r.n++
+		return
+	}
+	r.rows[r.head] = row
+	r.head++
+	if r.head == len(r.rows) {
+		r.head = 0
+	}
+}
+
+func (r *logRing) snapshot() []LogRow {
+	if r.n == 0 {
+		return nil
+	}
+	out := make([]LogRow, r.n)
+	if r.n < len(r.rows) {
+		copy(out, r.rows[:r.n])
+		return out
+	}
+	n := copy(out, r.rows[r.head:])
+	copy(out[n:], r.rows[:r.head])
+	return out
 }
 
 func init() {

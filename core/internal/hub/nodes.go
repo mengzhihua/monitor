@@ -19,6 +19,7 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/health"
 	"github.com/mengzhihua/monitor/core/internal/registry"
+	"github.com/mengzhihua/monitor/core/internal/sliceutil"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -568,10 +569,7 @@ func (nd *Node) recordAlarm(e health.LogEntry) {
 		current.Updated = max(e.Updated, e.When)
 	}
 	nd.alarms[key] = current
-	nd.alog = append(nd.alog, e)
-	if len(nd.alog) > alarmLogKeep {
-		nd.alog = nd.alog[len(nd.alog)-alarmLogKeep:]
-	}
+	nd.alog = sliceutil.KeepTail(append(nd.alog, e), alarmLogKeep)
 	nd.mu.Unlock()
 }
 
@@ -604,10 +602,7 @@ func (nd *Node) replaceAlarms(snapshot []health.LogEntry) []health.LogEntry {
 	}
 	nd.alarms = fresh
 	if len(changed) > 0 {
-		nd.alog = append(nd.alog, changed...)
-		if len(nd.alog) > alarmLogKeep {
-			nd.alog = nd.alog[len(nd.alog)-alarmLogKeep:]
-		}
+		nd.alog = sliceutil.KeepTail(append(nd.alog, changed...), alarmLogKeep)
 	}
 	return changed
 }

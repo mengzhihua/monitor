@@ -87,10 +87,7 @@ func startSDJournal(l *logsCollector) bool {
 					continue
 				}
 				l.mu.Lock()
-				l.buf = append(l.buf, row)
-				if len(l.buf) > 2000 {
-					l.buf = l.buf[len(l.buf)-2000:]
-				}
+				l.buf.push(row)
 				l.pending++
 				if l.pendingSev == nil {
 					l.pendingSev = map[string]float64{}

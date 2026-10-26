@@ -192,12 +192,15 @@ func packageCommand(dir, command string) (string, error) {
 	return path, nil
 }
 
-func newPluginParser(spec Spec, reg *registry.Registry) *Parser {
-	p := &Parser{Plugin: spec.Name, Reg: reg}
+func newPluginParser(spec Spec, reg *registry.Registry, budgets PackageBudgets) *Parser {
+	budgets = budgets.effective()
+	p := &Parser{Plugin: spec.Name, Reg: reg, MaxLine: budgets.MaxLine}
 	if spec.Manifest != nil {
 		p.Namespace = fmt.Sprintf("plugin.%s.", spec.Manifest.ID)
-		p.MaxCharts = 128
-		p.MaxDimensions = 64
+		p.MaxCharts = budgets.MaxCharts
+		p.MaxDimensions = budgets.MaxDimensions
+		p.MaxLabels = budgets.MaxLabels
+		p.MaxVariables = budgets.MaxVariables
 	}
 	return p
 }

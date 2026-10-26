@@ -18,7 +18,11 @@ export interface Info {
   collectors: { name: string; enabled: boolean; error?: string; runs: number; failures: number; last_run_ms: number }[]
   plugins?: PluginStatus[]
   platform?: PlatformInfo
-  db?: { persistence?: { last_checkpoint: number; finished: number; interval_seconds: number; error?: string } }
+  db?: {
+    block_size?: number
+    tiers?: { tier: number; update_every: number; block_size?: number; retention?: number }[]
+    persistence?: { last_checkpoint: number; finished: number; interval_seconds: number; error?: string }
+  }
   alarms: AlarmSummary | null
   user?: { name: string; role: 'admin' | 'troubleshooter' | 'viewer'; personal?: boolean }
   nodes_count?: number

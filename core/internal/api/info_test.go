@@ -49,6 +49,21 @@ func TestInfoExposesBuildIdentity(t *testing.T) {
 	if got["version"] != "3.0.16-test" || got["commit"] != "deadbeefcafebabe" || got["build_time"] != "2026-10-13T01:02:03Z" || got["dirty"] != true {
 		t.Fatalf("%v", got)
 	}
+	dbInfo, _ := got["db"].(map[string]any)
+	if dbInfo["block_size"] != float64(tsdb.DefaultBlockSize) {
+		t.Fatalf("block_size = %v", dbInfo["block_size"])
+	}
+	tiers, _ := dbInfo["tiers"].([]any)
+	if len(tiers) != 3 {
+		t.Fatalf("tiers = %v", dbInfo["tiers"])
+	}
+	want := []float64{float64(tsdb.DefaultBlockSize), 720, 360}
+	for i, tier := range tiers {
+		row, _ := tier.(map[string]any)
+		if row["block_size"] != want[i] {
+			t.Fatalf("tier %d block_size = %v", i, row["block_size"])
+		}
+	}
 }
 
 func newInfoHub(tb testing.TB, opt hub.Options) (*Server, *hub.Nodes) {

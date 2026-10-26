@@ -121,7 +121,7 @@ func TestPackageMetricsPolicyAndBudgetsSurviveRestart(t *testing.T) {
 	reg := newReg(&memSink{})
 	reg.AddChart(&registry.Chart{ID: "system.cpu", Plugin: "cpu", Dimensions: []*registry.Dimension{{ID: "user"}}})
 	spec := Spec{Name: "example", Manifest: &Manifest{ID: "example"}}
-	p := newPluginParser(spec, reg)
+	p := newPluginParser(spec, reg, PackageBudgets{})
 	p.MaxCharts, p.MaxDimensions = 1, 1
 	for _, line := range []string{"CHART system.cpu", "OVERWRITE system.cpu", "CHART plugin.other.load", "HOST_LABEL owner hacked", "FUNCTION run 10"} {
 		if err := p.Line(line); err == nil {
@@ -142,7 +142,7 @@ func TestPackageMetricsPolicyAndBudgetsSurviveRestart(t *testing.T) {
 	if err := p.Line("CHART plugin.example.extra"); err == nil {
 		t.Fatal("chart budget bypassed")
 	}
-	p = newPluginParser(spec, reg)
+	p = newPluginParser(spec, reg, PackageBudgets{})
 	p.MaxCharts, p.MaxDimensions = 1, 1
 	if err := p.Line("CHART plugin.example.extra"); err == nil {
 		t.Fatal("restart bypassed chart budget")
@@ -179,7 +179,7 @@ func TestPackageMetricsPolicyAndBudgetsSurviveRestart(t *testing.T) {
 func TestPackageCannotAdoptLegacyChartInsideItsNamespace(t *testing.T) {
 	reg := newReg(nil)
 	reg.AddChart(&registry.Chart{ID: "plugin.example.owned", Plugin: "legacy"})
-	p := newPluginParser(Spec{Name: "example", Manifest: &Manifest{ID: "example"}}, reg)
+	p := newPluginParser(Spec{Name: "example", Manifest: &Manifest{ID: "example"}}, reg, PackageBudgets{})
 	if err := p.Line("OVERWRITE plugin.example.owned"); err == nil {
 		t.Fatal("package adopted a legacy chart")
 	}

@@ -183,7 +183,7 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 				last, has := sr.lastPersistedLocked()
 				for _, b := range row.Done {
 					if !has || b.TS > last {
-						sr.done = append(sr.done, b)
+						sr.done = appendCapped(sr.done, b, t.spec.BlockSize)
 					}
 				}
 				last, has = sr.lastPersistedLocked()
@@ -206,8 +206,8 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 		visible := persistedLast
 		for i, ts := range row.TS {
 			if ts > persistedLast {
-				sr.ts = append(sr.ts, ts)
-				sr.vals = append(sr.vals, row.Values[i])
+				sr.ts = appendCapped(sr.ts, ts, s.opt.BlockSize)
+				sr.vals = appendCapped(sr.vals, row.Values[i], s.opt.BlockSize)
 				if ts > visible {
 					visible = ts
 				}

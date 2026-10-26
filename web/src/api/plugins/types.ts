@@ -19,8 +19,17 @@ export interface PluginStatus {
   variables?: Record<string, number>; functions?: string[]
 }
 
+export interface PluginBudgets {
+  max_charts: number
+  max_dimensions: number
+  max_labels: number
+  max_variables: number
+  max_line: number
+}
+
 export interface PluginCatalog {
   schema_version: 1; revision: number; running: boolean
+  budgets?: PluginBudgets
   plugins: PluginStatus[]
   diagnostics: { path: string; error: string }[]
 }

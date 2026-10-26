@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/mengzhihua/monitor/core/internal/sliceutil"
 )
 
 // Entry is one audited request or auth event.
@@ -69,9 +71,7 @@ func Open(dir string, max int) (*Log, error) {
 			}
 		}
 		f.Close()
-		if len(l.entries) > max {
-			l.entries = l.entries[len(l.entries)-max:]
-		}
+		l.entries = sliceutil.KeepTail(l.entries, max)
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (l *Log) Append(e Entry) {
 		}
 	}
 	if len(l.entries) > 2*l.max {
-		l.entries = append([]Entry(nil), l.entries[len(l.entries)-l.max:]...)
+		l.entries = sliceutil.KeepTail(l.entries, l.max)
 		l.rewriteLocked()
 	}
 }

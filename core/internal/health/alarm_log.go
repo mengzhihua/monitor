@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+
+	"github.com/mengzhihua/monitor/core/internal/sliceutil"
 )
 
 // logUpdate is appended to alarm-log.jsonl when a previously written entry
@@ -48,9 +50,7 @@ func (e *Engine) loadLog(path string) error {
 			e.nextID = le.AlarmID + 1
 		}
 	}
-	if len(e.entries) > e.opt.LogKeep {
-		e.entries = e.entries[len(e.entries)-e.opt.LogKeep:]
-	}
+	e.entries = sliceutil.KeepTail(e.entries, e.opt.LogKeep)
 	return sc.Err()
 }
 
@@ -60,9 +60,7 @@ func (e *Engine) record(entry LogEntry, notify bool) LogEntry {
 	entry.UniqueID = e.nextLog
 	e.nextLog++
 	e.entries = append(e.entries, entry)
-	if len(e.entries) > e.opt.LogKeep {
-		e.entries = e.entries[len(e.entries)-e.opt.LogKeep:]
-	}
+	e.entries = sliceutil.KeepTail(e.entries, e.opt.LogKeep)
 	if e.logFile != nil {
 		if b, err := json.Marshal(entry); err == nil {
 			_, _ = e.logFile.Write(append(b, '\n'))

@@ -2,6 +2,9 @@ package audit
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +54,28 @@ func TestBoundedRewriteAndReopen(t *testing.T) {
 	out := l2.Query(0, 0, "")
 	if len(out) != 10 || out[0].TS != 25 || out[9].TS != 16 {
 		t.Fatalf("bounded reopen: %d entries, %+v", len(out), out)
+	}
+}
+
+func TestOpenReleasesLoadedPrefix(t *testing.T) {
+	dir := t.TempDir()
+	var body strings.Builder
+	for i := 1; i <= 400; i++ {
+		fmt.Fprintf(&body, "{\"ts\":%d,\"action\":\"POST /x\",\"note\":\"%s\"}\n", i, strings.Repeat("n", 40))
+	}
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte(body.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Open(dir, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if len(l.entries) != 10 || cap(l.entries) != 10 {
+		t.Fatalf("len=%d cap=%d", len(l.entries), cap(l.entries))
+	}
+	if l.entries[0].TS != 391 || l.entries[9].TS != 400 {
+		t.Fatalf("window %d..%d", l.entries[0].TS, l.entries[9].TS)
 	}
 }
 

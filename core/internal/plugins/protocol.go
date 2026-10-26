@@ -59,6 +59,8 @@ type Parser struct {
 	Namespace     string
 	MaxCharts     int
 	MaxDimensions int
+	MaxLabels     int
+	MaxVariables  int
 
 	mu        sync.Mutex
 	stats     Stats
@@ -297,7 +299,11 @@ func (p *Parser) Line(line string) error {
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("VARIABLE %s: bad value %q", name, val)
 		}
-		if p.Namespace != "" && len(p.variables) >= 128 {
+		variableBudget := p.MaxVariables
+		if variableBudget <= 0 {
+			variableBudget = 128
+		}
+		if p.Namespace != "" && len(p.variables) >= variableBudget {
 			if _, exists := p.variables[name]; !exists {
 				return fmt.Errorf("VARIABLE: package variable budget exceeded")
 			}

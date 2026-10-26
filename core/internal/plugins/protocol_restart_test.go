@@ -21,7 +21,7 @@ func TestParserRestartPrimesIncrementalCounters(t *testing.T) {
 			clock := func() time.Time { now = now.Add(time.Second); return now }
 			definition := fmt.Sprintf("CHART plugin.counter.load\nDIMENSION a '' %s\nDIMENSION b '' %s\nDIMENSION gauge\n", algorithm, algorithm)
 			spec := Spec{Name: "counter", Manifest: &Manifest{ID: "counter"}}
-			first := newPluginParser(spec, reg)
+			first := newPluginParser(spec, reg, PackageBudgets{})
 			first.Now = clock
 			if err := first.Run(strings.NewReader(definition + "BEGIN plugin.counter.load\nSET a = 100\nSET b = 200\nSET gauge = 1\nEND\nBEGIN plugin.counter.load\nSET a = 110\nSET b = 220\nSET gauge = 2\nEND\n")); err != nil {
 				t.Fatal(err)
@@ -29,7 +29,7 @@ func TestParserRestartPrimesIncrementalCounters(t *testing.T) {
 			chart, _ := reg.Chart("plugin.counter.load")
 			// The new process has unrelated counters. A larger first value must
 			// prime its baseline, just as a smaller first value would.
-			second := newPluginParser(spec, reg)
+			second := newPluginParser(spec, reg, PackageBudgets{})
 			second.Now = clock
 			if err := second.Run(strings.NewReader(definition + "BEGIN plugin.counter.load\nSET a = 150\nSET b = 280\nSET gauge = 3\nEND\nBEGIN plugin.counter.load\nSET a = 160\nSET b = 300\nSET gauge = 4\nEND\n")); err != nil {
 				t.Fatal(err)

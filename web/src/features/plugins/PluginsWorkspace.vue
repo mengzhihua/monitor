@@ -16,6 +16,7 @@ const shown = computed(() => {
 })
 const readable = computed(() => pluginAccess(props.platform, props.role, props.authenticated).read)
 const when = (seconds?: number) => seconds ? new Date(seconds * 1000).toLocaleString() : '尚无记录'
+const lineBudget = (bytes: number) => bytes % 1024 === 0 ? `${bytes / 1024} KiB` : `${bytes} 字节`
 const title = (plugin: PluginStatus) => plugin.manifest?.name || plugin.name
 function close() { if (canLeave()) emit('close') }
 defineExpose({ canLeave })
@@ -33,6 +34,7 @@ defineExpose({ canLeave })
         <span v-if="catalog" class="dim">{{ catalog.plugins.length }} 个插件 · 目录版本 {{ catalog.revision }}</span>
       </div>
       <p class="dim">支持协议：{{ platform?.plugin_protocols.join('、') || '暂无' }}。清单插件包通过 plugin.json 描述身份和能力；重新扫描会读取服务器上已部署的插件。</p>
+      <p v-if="catalog?.budgets" class="dim">清单包预算：{{ catalog.budgets.max_charts }} 张图表，每张 {{ catalog.budgets.max_dimensions }} 个维度、{{ catalog.budgets.max_labels }} 个标签、{{ catalog.budgets.max_variables }} 个变量，单行上限 {{ lineBudget(catalog.budgets.max_line) }}。</p>
       <p v-if="loading" role="status">正在读取插件目录…</p>
       <p v-if="busy" role="status">正在提交操作，请等待结果后切换模块。</p>
       <p v-if="error" class="error" role="alert">{{ error }}</p>

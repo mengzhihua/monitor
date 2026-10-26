@@ -18,11 +18,12 @@ import (
 // Catalog is a versioned management snapshot. Revision changes only after a
 // successful management action, never because metrics or process status change.
 type Catalog struct {
-	SchemaVersion int          `json:"schema_version"`
-	Revision      uint64       `json:"revision"`
-	Running       bool         `json:"running"`
-	Plugins       []Status     `json:"plugins"`
-	Diagnostics   []Diagnostic `json:"diagnostics"`
+	SchemaVersion int            `json:"schema_version"`
+	Revision      uint64         `json:"revision"`
+	Running       bool           `json:"running"`
+	Budgets       PackageBudgets `json:"budgets"`
+	Plugins       []Status       `json:"plugins"`
+	Diagnostics   []Diagnostic   `json:"diagnostics"`
 }
 
 func cloneSpec(sp Spec) Spec {
@@ -71,7 +72,7 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 			sp.Command = path
 		}
 		locked := sp.Disabled || disabled[sp.Name]
-		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: newPluginParser(sp, m.reg), stderr: &stderrState{}}
+		p := &plugin{spec: sp, locked: locked, enabled: !locked && !m.disabled[sp.Name], state: StateStarting, parser: newPluginParser(sp, m.reg, m.opt.packageBudgets()), stderr: &stderrState{}}
 		if !p.enabled {
 			p.state = StateDisabled
 		}
@@ -216,6 +217,7 @@ func (m *Manager) Catalog() Catalog {
 	// Keep management fields and their revision in one short snapshot. Worker
 	// state/metrics may advance independently; no file IO or worker join holds mu.
 	return Catalog{SchemaVersion: 1, Revision: m.revision, Running: m.running,
+		Budgets:     m.opt.packageBudgets(),
 		Diagnostics: append([]Diagnostic{}, m.diagnostics...), Plugins: snapshotPlugins(m.list)}
 }
 

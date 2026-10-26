@@ -239,8 +239,8 @@ func (s *Store) accept(id string, ts int64, v float64) (sr *series, full bool, f
 		return nil, false, nil, false
 	}
 	sr.last = ts
-	sr.ts = append(sr.ts, ts)
-	sr.vals = append(sr.vals, v)
+	sr.ts = appendCapped(sr.ts, ts, s.opt.BlockSize)
+	sr.vals = appendCapped(sr.vals, v, s.opt.BlockSize)
 	sr.dirty = true
 	full = len(sr.ts) >= s.opt.BlockSize
 	for _, t := range s.tiers {
@@ -578,6 +578,35 @@ func suffixNewerThan(ts []int64, vals []float64, end int64) ([]int64, []float64)
 		i = len(vals)
 	}
 	return compactTail(ts, i), compactTail(vals, i)
+}
+
+// appendCapped grows like a slice until limit, then allocates exactly the
+// configured block. A plain append doubles 512 into 1024, so a 720-bucket or
+// 900-sample block kept a third more resident capacity than it can use.
+// Samples that arrive while a full block is flushing may pass limit; those
+// grow by one element instead of doubling again.
+func appendCapped[T any](s []T, v T, limit int) []T {
+	if len(s) < cap(s) {
+		return append(s, v)
+	}
+	next := cap(s) * 2
+	if next < 1 {
+		next = 1
+	}
+	need := len(s) + 1
+	if next < need {
+		next = need
+	}
+	if limit > 0 && next > limit {
+		if need <= limit {
+			next = limit
+		} else {
+			next = need
+		}
+	}
+	out := make([]T, len(s), next)
+	copy(out, s)
+	return append(out, v)
 }
 
 // compactTail drops a backing array that is mostly already on disk.
