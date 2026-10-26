@@ -82,8 +82,17 @@ func (t *telnetCollector) Collect(ctx context.Context, reg *registry.Registry, n
 			steps = []preprocess.Step{{Type: "bool", Pattern: j.Expect}}
 		}
 		id := "telnet." + sanitizeID(j.Name)
+		if err != nil {
+			msg := err.Error()
+			runes := []rune(msg)
+			if len(runes) > 128 {
+				msg = string(runes[:128])
+			}
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, msg))
+			continue
+		}
 		value, next, perr := preprocess.Apply(steps, raw, prev)
-		if err != nil || noteUnsupported(reg, id, perr) || math.IsNaN(value) {
+		if noteUnsupported(reg, id, perr) || math.IsNaN(value) {
 			continue
 		}
 		t.prev[j.Name] = next

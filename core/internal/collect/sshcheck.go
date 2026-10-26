@@ -2,7 +2,6 @@ package collect
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -109,23 +108,21 @@ func (s *sshcheckCollector) Collect(ctx context.Context, reg *registry.Registry,
 			prev = v
 		}
 		id := "sshcheck." + sanitizeID(j.Name)
+		if err != nil {
+			msg := err.Error()
+			runes := []rune(msg)
+			if len(runes) > 128 {
+				msg = string(runes[:128])
+			}
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, msg))
+			continue
+		}
 		value, next, perr := preprocess.Apply(j.Steps, raw, prev)
-		if perr == nil {
-			s.prev[j.Name] = next
-			if ch, ok := reg.Chart(id); ok {
-				ch.ClearUnsupported()
-			}
-		} else if errors.Is(perr, preprocess.ErrNotSupported) {
-			if ch, ok := reg.Chart(id); ok {
-				ch.SetUnsupported(perr.Error())
-			}
+		if noteUnsupported(reg, id, perr) {
+			continue
 		}
-		if err != nil || perr != nil {
-			value = math.NaN()
-		}
-		if !math.IsNaN(value) {
-			_ = reg.Collect("sshcheck."+sanitizeID(j.Name), now, map[string]float64{"value": value})
-		}
+		s.prev[j.Name] = next
+		_ = reg.Collect(id, now, map[string]float64{"value": value})
 	}
 	return nil
 }
