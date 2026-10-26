@@ -65,6 +65,9 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"count -5m gt", want{}, "missing value"},
 		{"count -5m gt x", want{}, "bad count operand"},
 		{"find -5m", want{}, "find requires"},
+		{"changecount -5m mode", want{}, "missing value"},
+		{"changecount -5m mode nope", want{}, "bad mode"},
+		{"stddev -5m mode all", want{}, "only applies to changecount"},
 		{"find -5m gt", want{}, "missing value"},
 	}
 	for _, c := range cases {
@@ -390,6 +393,63 @@ func TestLookupCountUnique(t *testing.T) {
 	}
 	if v := lookupValue(t, "countunique -5m", both, now); v != 3 {
 		t.Fatalf("two dimensions: got %v want 3", v)
+	}
+}
+
+func TestLookupChangeCount(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	parsed, err := ParseLookup("changecount -5m mode INC")
+	if err != nil || parsed.Kind != "changecount" || parsed.Mode != "inc" {
+		t.Fatalf("parse: %+v %v", parsed, err)
+	}
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 3, 2, 2, 4} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": value})
+		}
+	}
+	if v := lookupValue(t, "changecount -5m of used", seed, now); v != 3 {
+		t.Fatalf("all: got %v want 3", v)
+	}
+	if v := lookupValue(t, "changecount -5m mode inc of used", seed, now); v != 2 {
+		t.Fatalf("inc: got %v want 2", v)
+	}
+	if v := lookupValue(t, "changecount -5m mode dec of used", seed, now); v != 1 {
+		t.Fatalf("dec: got %v want 1", v)
+	}
+	flat := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 4; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-3)*time.Second), map[string]float64{"used": 5})
+		}
+	}
+	if v := lookupValue(t, "changecount -5m of used", flat, now); v != 0 {
+		t.Fatalf("flat: got %v want 0", v)
+	}
+	one := func(reg *registry.Registry, now time.Time) {
+		reg.Collect("system.ram", now.Add(-time.Second), map[string]float64{"used": 7})
+	}
+	if v := lookupValue(t, "changecount -5m of used", one, now); v != 0 {
+		t.Fatalf("one sample: got %v want 0", v)
+	}
+	if v := lookupValue(t, "changecount -5m of used", nil, now); v != 0 {
+		t.Fatalf("empty window: got %v want 0", v)
+	}
+	bothDims := func(reg *registry.Registry, now time.Time) {
+		for i, value := range []float64{1, 2, 2} {
+			reg.Collect("system.ram", now.Add(time.Duration(i-2)*time.Second), map[string]float64{
+				"used": value,
+				"free": 5,
+			})
+		}
+	}
+	if v := lookupValue(t, "changecount -5m", bothDims, now); v != 1 {
+		t.Fatalf("two dimensions: got %v want 1", v)
+	}
+	scrambled := []tsdb.Point{{TS: 30, Value: 1}, {TS: 10, Value: 4}, {TS: 20, Value: 2}}
+	if v := changeCount(scrambled, "all"); v != 2 {
+		t.Fatalf("time order: got %v want 2", v)
+	}
+	if v := changeCount(scrambled, "dec"); v != 2 {
+		t.Fatalf("time order dec: got %v want 2", v)
 	}
 }
 
