@@ -117,6 +117,26 @@ func (n callNode) eval(vars func(string) (float64, bool)) float64 {
 	switch n.fn {
 	case "abs":
 		return math.Abs(a[0])
+	case "sqrt":
+		return real(math.Sqrt(a[0]))
+	case "log":
+		return realLog(a[0], false)
+	case "log10":
+		return realLog(a[0], true)
+	case "exp":
+		return real(math.Exp(a[0]))
+	case "floor":
+		return real(math.Floor(a[0]))
+	case "ceil":
+		return real(math.Ceil(a[0]))
+	case "round":
+		return real(math.Round(a[0]))
+	case "truncate":
+		return real(math.Trunc(a[0]))
+	case "signum":
+		return signum(a[0])
+	case "power":
+		return real(math.Pow(a[0], a[1]))
 	case "isnan":
 		return b2f(math.IsNaN(a[0]))
 	case "isinf":
@@ -144,6 +164,37 @@ func b2f(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// real keeps a finite result. A NaN or infinite math result stays undefined.
+func real(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return math.NaN()
+	}
+	return v
+}
+
+func realLog(v float64, base10 bool) float64 {
+	if math.IsNaN(v) || v <= 0 {
+		return math.NaN()
+	}
+	if base10 {
+		return math.Log10(v)
+	}
+	return math.Log(v)
+}
+
+func signum(v float64) float64 {
+	switch {
+	case math.IsNaN(v) || math.IsInf(v, 0):
+		return math.NaN()
+	case v > 0:
+		return 1
+	case v < 0:
+		return -1
+	default:
+		return 0
+	}
 }
 
 // Eval evaluates the expression; unknown variables evaluate to NaN.
@@ -410,9 +461,13 @@ func (p *parser) parsePrimary() (node, error) {
 			}
 		}
 		switch fn {
-		case "abs", "isnan", "isinf":
+		case "abs", "isnan", "isinf", "sqrt", "log", "log10", "exp", "floor", "ceil", "round", "truncate", "signum":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("%s() takes one argument", fn)
+			}
+		case "power":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("power() takes base and exponent")
 			}
 		case "min", "max":
 			if len(args) < 1 {

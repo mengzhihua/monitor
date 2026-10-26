@@ -747,7 +747,7 @@ health:
   #   lookup: average -1m percentage of used  # or percentile -5m p 95 of used
   #   units: '%'
   #   every: 10s
-  #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+  #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'  # or log10($this) > 2
   #   crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
   #   recovery: '$this < 70'         # stay raised until warn/crit are false and this is true
   #   for: 1m                         # status stays put until warn/crit holds this long; empty = immediate

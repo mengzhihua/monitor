@@ -216,7 +216,7 @@ data/
 
 规则字段可引用 `{$NAME}` 用户宏：规则内 `macros:` 优先，`health.macros` 全局兜底，未定义宏编译即报错。
 
-- 表达式引擎：支持 `$this / $status / $WARNING / $CRITICAL / $now / 其它告警名引用 / 图表其它维度`，与 Netdata 兼容，便于直接移植其预置规则。
+- 表达式引擎：支持 `$this / $status / $WARNING / $CRITICAL / $now / 其它告警名引用 / 图表其它维度`，以及 `sqrt`、`log`（自然对数）、`log10`、`exp`、`power`、`floor`、`ceil`、`round`、`truncate`、`signum`。非有限结果为 NaN，`log` 与 `log10` 要求正数。与 Netdata 兼容，便于直接移植其预置规则。
 - 状态机：`UNINITIALIZED → CLEAR ↔ WARNING ↔ CRITICAL`，`REMOVED`；每次跃迁写 `alarm_log`。
 - 静默：按 host/chart/alert/label 维度、时间窗口；维护窗口。
 - 通知路由：`to: role` → 角色→渠道映射；Hub 模式下节点可 `notify.local = false` 交给 Hub 集中通知。

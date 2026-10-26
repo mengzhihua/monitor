@@ -46,6 +46,18 @@ func TestExpr(t *testing.T) {
 		"$missing":                                       math.NaN(),
 		"isnan($missing) ? 5 : 6":                        5,
 		"abs(-3) + min(4, 2, 9) + max(1, 7)":             12,
+		"sqrt(9) + log10(100) + floor(1.9) + ceil(1.1)":  8,
+		"round(1.5) + round(-1.5)":                       0,
+		"truncate(-1.9)":                                 -1,
+		"signum(-4) + signum(0) + signum(3)":             0,
+		"power(2, 3)":                                    8,
+		"exp(0)":                                         1,
+		"log(1)":                                         0,
+		"sqrt(-1)":                                       math.NaN(),
+		"log(0)":                                         math.NaN(),
+		"log10(-2)":                                      math.NaN(),
+		"power(0, -1)":                                   math.NaN(),
+		"signum($missing)":                               math.NaN(),
 		"$this > 50 && $this < 100":                      1,
 		"$this > 50 AND NOT ($this < 100)":               0,
 		"10 % 3":                                         1,
@@ -64,7 +76,7 @@ func TestExpr(t *testing.T) {
 			t.Errorf("%q = %v, want %v", src, got, want)
 		}
 	}
-	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "3 4"} {
+	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "sqrt(1, 2)", "power(2)", "3 4"} {
 		if _, err := ParseExpr(bad); err == nil {
 			t.Errorf("%q should not parse", bad)
 		}
