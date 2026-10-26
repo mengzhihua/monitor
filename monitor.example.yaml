@@ -15,6 +15,9 @@ db:
   tiers: 3                     # 1 = raw only, 2 = +1-minute rollups, 3 = +1-hour rollups
   tier1_retention: 2160h       # 90 days of per-minute min/max/avg/sum/count
   tier2_retention: 17520h      # 2 years of per-hour rollups
+  block_size: 900              # raw samples resident per series before archival (15 min at 1s). 0 keeps this default; allowed 60..86400
+  tier1_block_size: 720        # closed 1-minute buckets resident before archival (12h). 0 keeps 720; allowed 4..100000
+  tier2_block_size: 360        # closed 1-hour buckets resident before archival (15d). 0 keeps 360; allowed 4..100000
 
 web:
   listen: ":19999"
@@ -69,6 +72,7 @@ hub:
   storage: full            # full = hub keeps samples; proxy = live-query the agent (TypeQuery)
 
 collectors:
+  timeout: 0s          # bound one Collect call; 0 uses global.update_every. Allowed when set: 100ms..1h
   enabled: []          # empty = all available: cpu load mem disk diskspace net uptime apps systemd docker nginx redis apache phpfpm memcached mysql postgres elasticsearch rabbitmq proc sensors netstat statsd prometheus otlp httpcheck portcheck ping sslcheck dnsquery nvidia logs ml haproxy lighttpd consul whoisquery mongodb pgbouncer chrony ntpd smartctl nvme apcupsd lvm zookeeper nats varnish squid tomcat traefik bind unbound coredns hdfs postfix exim dovecot fail2ban weblog squidlog openldap wireguard samba freeradius tor cgroup k8s_kubelet k8s_kubeproxy k8s_apiserver k8s_state proxysql clickhouse cockroachdb pulsar envoy upsd zfspool dmcache filecheck supervisord monit snmp fluentd logstash cassandra ceph couchdb couchbase hddtemp openvpn beanstalk uwsgi powerdns dnsmasq megacli hpssa adaptecraid redfish activemq gearman geth ipfs pihole powerdns_recursor rspamd typesense storcli nginxvts tengine nsd dnsdist dnsmasq_dhcp isc_dhcpd puppet openvpn_status_log rethinkdb yugabytedb vernemq icecast phpdaemon pika maxscale nginxplus nginxunit docker_engine riakkv litespeed boinc spigotmc w1sensor ap dockerhub ethtool intelgpu logind dcgm panos powerstore powervault s3check scaleio smbios_memory vcsa mssql oracledb sql cloudwatch azure_monitor vsphere cato_networks snmp_traps snmp_topology freebsd windows libvirt proxmox ebpf cups xenstat ioping nftables podman ipmi idlejitter perf nfacct db2 as400 mq websphere pandas go_expvar am2320 lxc ecs containerd macos profile kafka android_usage bluetooth
   disabled: []         # e.g. ["diskspace", "statsd"]; service modules auto-disable when the target is unreachable
   modules:             # per-collector settings (collectors.modules.<name>)
@@ -699,6 +703,13 @@ plugins:
   enabled: true
   dir: plugins.d       # every executable *.plugin here is started as "<file> <update_every>"
   disabled: []         # plugin names not to start, e.g. ["example"]
+  max_charts: 128      # manifest packages only. 0 keeps 128. Legacy *.plugin scripts stay uncapped
+  max_dimensions: 64   # per chart, manifest packages. 0 keeps 64
+  max_labels: 128      # per chart, manifest packages. 0 keeps 128
+  max_variables: 128   # per manifest package. 0 keeps 128
+  max_line: 65536      # bytes per protocol line for every plugin. 0 keeps 64 KiB; allowed 1024..1048576
+  restart_min: 1s      # restart backoff floor. 0 keeps 1s; allowed 100ms..1h
+  restart_max: 1m      # restart backoff ceiling. 0 keeps 1m, and is raised to restart_min when that is longer; allowed 100ms..24h
   list:                # explicit plugins (any language); command relative to dir or on PATH
     # - name: python_example
     #   command: python3

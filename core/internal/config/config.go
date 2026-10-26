@@ -34,6 +34,11 @@ type Config struct {
 		Tiers              int           `yaml:"tiers"` // 1..3: tier0 only, +1m rollups, +1h rollups
 		Tier1Retention     time.Duration `yaml:"tier1_retention"`
 		Tier2Retention     time.Duration `yaml:"tier2_retention"`
+		// Block sizes are sample or bucket counts kept in the active buffer.
+		// Zero keeps the engine default (raw 900, minute 720, hour 360).
+		BlockSize      int `yaml:"block_size"`
+		Tier1BlockSize int `yaml:"tier1_block_size"`
+		Tier2BlockSize int `yaml:"tier2_block_size"`
 	} `yaml:"db"`
 	Web struct {
 		// Enabled turns off the embedded HTTP server entirely (agent-only
@@ -59,8 +64,9 @@ type Config struct {
 	Stream     Stream `yaml:"stream"`
 	Hub        Hub    `yaml:"hub"`
 	Collectors struct {
-		Enabled  []string `yaml:"enabled"`  // empty = all
-		Disabled []string `yaml:"disabled"` // names to turn off
+		Enabled  []string      `yaml:"enabled"`  // empty = all
+		Disabled []string      `yaml:"disabled"` // names to turn off
+		Timeout  time.Duration `yaml:"timeout"`  // one Collect call; 0 = one update interval
 		// Modules holds per-collector settings keyed by collector name; the
 		// schema of each section is owned by the collector (see
 		// monitor.example.yaml).
@@ -236,6 +242,16 @@ type Plugins struct {
 	Dir      string         `yaml:"dir"`      // scanned for executable *.plugin files, relative to the config file
 	Disabled []string       `yaml:"disabled"` // plugin names not to start
 	List     []plugins.Spec `yaml:"list"`     // explicit plugins (command may be relative to dir)
+	// Package budgets apply to manifest plugins. Zero keeps the built-in cap
+	// (128 charts, 64 dimensions, 128 labels, 128 variables, 64 KiB lines).
+	// Legacy *.plugin scripts are not chart-capped; max_line still applies.
+	MaxCharts     int           `yaml:"max_charts"`
+	MaxDimensions int           `yaml:"max_dimensions"`
+	MaxLabels     int           `yaml:"max_labels"`
+	MaxVariables  int           `yaml:"max_variables"`
+	MaxLine       int           `yaml:"max_line"`
+	RestartMin    time.Duration `yaml:"restart_min"`
+	RestartMax    time.Duration `yaml:"restart_max"`
 }
 
 // Health configures the alarm engine and notification channels.
@@ -445,6 +461,51 @@ func Load(path string) (*Config, error) {
 		c.Global.UpdateEvery = 3600
 	}
 	return c, nil
+}
+
+func validatePlatform(c *Config) error {
+	checks := []struct {
+		name    string
+		value   int
+		minimum int
+		maximum int
+	}{
+		{"db.block_size", c.DB.BlockSize, 60, 86400},
+		{"db.tier1_block_size", c.DB.Tier1BlockSize, 4, 100000},
+		{"db.tier2_block_size", c.DB.Tier2BlockSize, 4, 100000},
+		{"plugins.max_charts", c.Plugins.MaxCharts, 1, 10000},
+		{"plugins.max_dimensions", c.Plugins.MaxDimensions, 1, 10000},
+		{"plugins.max_labels", c.Plugins.MaxLabels, 1, 10000},
+		{"plugins.max_variables", c.Plugins.MaxVariables, 1, 10000},
+		{"plugins.max_line", c.Plugins.MaxLine, 1024, 1 << 20},
+	}
+	for _, check := range checks {
+		if check.value == 0 {
+			continue
+		}
+		if check.value < check.minimum || check.value > check.maximum {
+			return fmt.Errorf("config: %s must be 0 or %d..%d", check.name, check.minimum, check.maximum)
+		}
+	}
+	minRestart, maxRestart := c.Plugins.RestartMin, c.Plugins.RestartMax
+	if minRestart < 0 || (minRestart > 0 && (minRestart < 100*time.Millisecond || minRestart > time.Hour)) {
+		return fmt.Errorf("config: plugins.restart_min must be 0 or 100ms..1h")
+	}
+	if maxRestart < 0 || (maxRestart > 0 && (maxRestart < 100*time.Millisecond || maxRestart > 24*time.Hour)) {
+		return fmt.Errorf("config: plugins.restart_max must be 0 or 100ms..24h")
+	}
+	floor := minRestart
+	if floor == 0 {
+		floor = time.Second
+	}
+	if maxRestart > 0 && maxRestart < floor {
+		return fmt.Errorf("config: plugins.restart_max must be >= plugins.restart_min")
+	}
+	timeout := c.Collectors.Timeout
+	if timeout < 0 || (timeout > 0 && (timeout < 100*time.Millisecond || timeout > time.Hour)) {
+		return fmt.Errorf("config: collectors.timeout must be 0 or 100ms..1h")
+	}
+	return nil
 }
 
 // ParseSize parses "512MiB", "1GiB", "100MB", "1024" (bytes).

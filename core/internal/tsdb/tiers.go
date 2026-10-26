@@ -54,6 +54,7 @@ type TierInfo struct {
 	Tier      int   `json:"tier"`
 	Every     int64 `json:"update_every"`
 	Retention int64 `json:"retention"` // seconds, 0 = unlimited
+	BlockSize int   `json:"block_size"`
 	Series    int   `json:"series"`
 	Blocks    int   `json:"blocks"`
 	Bytes     int64 `json:"bytes"`
@@ -244,7 +245,7 @@ func (t *tier) append(sr *tierSeries, ts int64, v float64) bool {
 		if start < sr.open.TS {
 			return false // out of order; tier0 already rejected it
 		}
-		sr.done = append(sr.done, *sr.open)
+		sr.done = appendCapped(sr.done, *sr.open, t.spec.BlockSize)
 	} else if last, ok := sr.lastPersistedLocked(); ok && start <= last {
 		return false // restarted inside a bucket that was already closed
 	}
@@ -498,7 +499,7 @@ func (t *tier) first(id string) (int64, bool) {
 }
 
 func (t *tier) info() TierInfo {
-	inf := TierInfo{Tier: t.idx, Every: t.spec.Every, Retention: int64(t.spec.Retention / time.Second)}
+	inf := TierInfo{Tier: t.idx, Every: t.spec.Every, Retention: int64(t.spec.Retention / time.Second), BlockSize: t.spec.BlockSize}
 	for _, sr := range t.all() {
 		sr.mu.Lock()
 		if len(sr.blocks) > 0 || len(sr.done) > 0 || sr.open != nil {
@@ -627,6 +628,9 @@ func (s *Store) TierCount() int { return len(s.tiers) + 1 }
 // Retention reports the configured tier0 retention (0 = keep forever).
 func (s *Store) Retention() time.Duration { return s.opt.Retention }
 
+// BlockSize reports the raw samples kept in memory per series before archival.
+func (s *Store) BlockSize() int { return s.opt.BlockSize }
+
 // TierFirst reports the effective start timestamp of a series in a tier: the
 // oldest timestamp the tier can currently answer for. Tier 0's start is the
 // later of its first sample and the retention cutoff; tiers >= 1 report their
@@ -649,7 +653,7 @@ func (s *Store) TierFirst(id string, tier int) (int64, bool) {
 }
 
 func (s *Store) Tiers() []TierInfo {
-	t0 := TierInfo{Tier: 0, Every: 1, Retention: int64(s.opt.Retention / time.Second)}
+	t0 := TierInfo{Tier: 0, Every: 1, Retention: int64(s.opt.Retention / time.Second), BlockSize: s.opt.BlockSize}
 	s.mu.RLock()
 	all := make([]*series, 0, len(s.series))
 	for _, sr := range s.series {

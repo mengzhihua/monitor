@@ -22,7 +22,11 @@ func (p *Parser) checkLabel(key string) error {
 	for k, v := range p.pending {
 		labels[k] = v
 	}
-	if _, exists := labels[key]; !exists && len(labels) >= 128 {
+	budget := p.MaxLabels
+	if budget <= 0 {
+		budget = 128
+	}
+	if _, exists := labels[key]; !exists && len(labels) >= budget {
 		return fmt.Errorf("LABEL: package label budget exceeded")
 	}
 	return nil

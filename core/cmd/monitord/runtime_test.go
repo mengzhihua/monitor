@@ -21,6 +21,48 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/config"
 )
 
+func TestStorageOptionsApplyConfiguredBlockSizes(t *testing.T) {
+	cfg, err := config.Parse([]byte("db:\n  block_size: 120\n  tiers: 3\n  tier1_block_size: 24\n  tier2_block_size: 12\n  tier1_retention: 48h\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt, err := storageOptions(cfg, 4096, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opt.BlockSize != 120 || opt.RetentionSize != 4096 || len(opt.Tiers) != 2 || opt.Tiers[0].BlockSize != 24 || opt.Tiers[0].Retention != 48*time.Hour || opt.Tiers[1].BlockSize != 12 {
+		t.Fatalf("%+v", opt)
+	}
+	cfg, err = config.Parse([]byte("mode: agent\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt, err = storageOptions(cfg, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opt.BlockSize != 0 || len(opt.Tiers) != 2 || opt.Tiers[0].BlockSize != 720 || opt.Tiers[1].BlockSize != 360 {
+		t.Fatalf("defaults %+v", opt)
+	}
+	cfg.DB.Tiers = 2
+	cfg.DB.Tier2BlockSize = 12
+	opt, err = storageOptions(cfg, 0, nil)
+	if err != nil || len(opt.Tiers) != 1 || opt.Tiers[0].BlockSize != 720 {
+		t.Fatalf("disabled hour tier still changed: %+v %v", opt.Tiers, err)
+	}
+	cfg = config.Default()
+	cfg.Collectors.Timeout = 30 * time.Second
+	cfg.Plugins.MaxCharts = 32
+	cfg.Plugins.RestartMin = 2 * time.Second
+	if got := collectorOptions(cfg, map[string]bool{"disk": true}); got.Timeout != 30*time.Second || !got.Disabled["disk"] {
+		t.Fatalf("collector options %+v", got)
+	}
+	plugins := pluginRuntimeOptions(cfg, "/plugins", nil)
+	if plugins.MaxCharts != 32 || plugins.RestartMin != 2*time.Second || plugins.Dir != "/plugins" || !strings.HasSuffix(plugins.StatePath, "/plugins/state.json") {
+		t.Fatalf("plugin options %+v", plugins)
+	}
+}
+
 func TestEarlyDatabaseFailureReleasesHTTPListenerBeforeServeStarts(t *testing.T) {
 	// Keep the listener's Serve goroutine queued while database initialization
 	// fails. The daemon must own and close the socket even before Serve takes it.

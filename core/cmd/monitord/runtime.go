@@ -62,15 +62,9 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	if err != nil {
 		return err
 	}
-	tiers := tsdb.DefaultTiers()
-	if cfg.DB.Tiers < 1 || cfg.DB.Tiers > len(tiers)+1 {
-		return fmt.Errorf("db.tiers must be between 1 and %d", len(tiers)+1)
-	}
-	tiers = tiers[:cfg.DB.Tiers-1]
-	for i, ret := range []time.Duration{cfg.DB.Tier1Retention, cfg.DB.Tier2Retention} {
-		if i < len(tiers) {
-			tiers[i].Retention = ret
-		}
+	storage, err := storageOptions(cfg, retSize, log.With("component", "tsdb"))
+	if err != nil {
+		return err
 	}
 	// Bind before opening the database. A few hundred megabytes of blocks
 	// can take tens of seconds; the port should answer (503 loading) instead
@@ -115,14 +109,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	}()
 
 	openStarted := time.Now()
-	db, err := tsdb.Open(tsdb.Options{
-		Dir:           filepath.Join(cfg.Global.DataDir, "db"),
-		Retention:     cfg.DB.Tier0Retention,
-		RetentionSize: retSize,
-		Checkpoint:    cfg.DB.Checkpoint,
-		Tiers:         tiers,
-		Logger:        log.With("component", "tsdb"),
-	})
+	db, err := tsdb.Open(storage)
 	if err != nil {
 		return fmt.Errorf("open tsdb: %w", err)
 	}
@@ -134,7 +121,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	for _, n := range cfg.Collectors.Disabled {
 		localDisabled[n] = true
 	}
-	sched := collect.NewScheduler(reg, log.With("component", "collect"), collect.Options{Names: cfg.Collectors.Enabled, Disabled: localDisabled, Modules: cfg.ModuleDecoders()})
+	sched := collect.NewScheduler(reg, log.With("component", "collect"), collectorOptions(cfg, localDisabled))
 	defer sched.Close()
 
 	runner := &autoCommandRunner{commands: cfg.Commands, log: log.With("component", "auto-action")}
@@ -162,12 +149,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 		if pdir != "" && !filepath.IsAbs(pdir) {
 			pdir = filepath.Join(filepath.Dir(cfgPath), pdir)
 		}
-		pm = plugins.New(reg, cfg.Plugins.List, plugins.Options{
-			Dir:       pdir,
-			Disabled:  cfg.Plugins.Disabled,
-			Logger:    log.With("component", "plugins"),
-			StatePath: filepath.Join(cfg.Global.DataDir, "plugins", "state.json"),
-		})
+		pm = plugins.New(reg, cfg.Plugins.List, pluginRuntimeOptions(cfg, pdir, log.With("component", "plugins")))
 		if err := pm.Err(); err != nil {
 			return fmt.Errorf("plugins: %w", err)
 		}
@@ -322,4 +304,54 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 		return nil
 	}
 	return runErr
+}
+
+// storageOptions maps db.* onto the engine. A zero block size keeps the
+// tsdb default for that tier; rollup sizes apply only to tiers that are enabled.
+func storageOptions(cfg *config.Config, retSize int64, log *slog.Logger) (tsdb.Options, error) {
+	tiers := tsdb.DefaultTiers()
+	if cfg.DB.Tiers < 1 || cfg.DB.Tiers > len(tiers)+1 {
+		return tsdb.Options{}, fmt.Errorf("db.tiers must be between 1 and %d", len(tiers)+1)
+	}
+	tiers = tiers[:cfg.DB.Tiers-1]
+	retentions := []time.Duration{cfg.DB.Tier1Retention, cfg.DB.Tier2Retention}
+	blocks := []int{cfg.DB.Tier1BlockSize, cfg.DB.Tier2BlockSize}
+	for i := range tiers {
+		if i < len(retentions) {
+			tiers[i].Retention = retentions[i]
+		}
+		if i < len(blocks) && blocks[i] > 0 {
+			tiers[i].BlockSize = blocks[i]
+		}
+	}
+	return tsdb.Options{
+		Dir:           filepath.Join(cfg.Global.DataDir, "db"),
+		Retention:     cfg.DB.Tier0Retention,
+		RetentionSize: retSize,
+		BlockSize:     cfg.DB.BlockSize,
+		Checkpoint:    cfg.DB.Checkpoint,
+		Tiers:         tiers,
+		Logger:        log,
+	}, nil
+}
+
+func collectorOptions(cfg *config.Config, disabled map[string]bool) collect.Options {
+	return collect.Options{
+		Names: cfg.Collectors.Enabled, Disabled: disabled,
+		Modules: cfg.ModuleDecoders(), Timeout: cfg.Collectors.Timeout,
+	}
+}
+
+func pluginRuntimeOptions(cfg *config.Config, dir string, log *slog.Logger) plugins.Options {
+	return plugins.Options{
+		Dir: dir, Disabled: cfg.Plugins.Disabled, Logger: log,
+		StatePath:     filepath.Join(cfg.Global.DataDir, "plugins", "state.json"),
+		RestartMin:    cfg.Plugins.RestartMin,
+		RestartMax:    cfg.Plugins.RestartMax,
+		MaxCharts:     cfg.Plugins.MaxCharts,
+		MaxDimensions: cfg.Plugins.MaxDimensions,
+		MaxLabels:     cfg.Plugins.MaxLabels,
+		MaxVariables:  cfg.Plugins.MaxVariables,
+		MaxLine:       cfg.Plugins.MaxLine,
+	}
 }

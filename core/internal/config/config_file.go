@@ -41,6 +41,9 @@ func Parse(b []byte) (*Config, error) {
 			}
 		}
 	}
+	if err := validatePlatform(c); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 

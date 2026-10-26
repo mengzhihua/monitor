@@ -45,6 +45,8 @@ plugins.d/
 
 `HOST_LABEL` 和 `FUNCTION` 不属于 metrics 能力，清单包使用时记入协议错误。非有限数值不会进入采样/变量状态。其他文本协议见 [plugins.d 协议](03-plugins-d-protocol.md)。
 
+上述 128 / 64 / 128 / 128 和 64 KiB 是默认预算。`plugins.max_charts`、`max_dimensions`、`max_labels`、`max_variables`、`max_line` 可以覆盖，0 保持默认；`max_line` 也限制旧脚本的单行长度，其余预算仍只约束清单包。`plugins.restart_min` / `restart_max` 覆盖重启退避，默认 1 秒 / 1 分钟。目录接口的 `budgets` 返回实际生效值。采集器启用仍由 `collectors.enabled` / `disabled` 决定，`collectors.timeout` 限制单次采集，0 表示一个采集周期。已有配置不写这些键时行为不变。
+
 ## 发现、更新与兼容
 
 同名优先级为：`plugins.list` 显式配置 → 清单包 → 顶层旧 `*.plugin`。包目录预留自己的名称；坏清单不会退回执行同名旧脚本。旧协议的 ID 和主机标签行为保持兼容，新清单约束不会冒充对旧脚本的隔离。

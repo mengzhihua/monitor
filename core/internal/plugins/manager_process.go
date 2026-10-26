@@ -74,7 +74,7 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 		return err
 	}
 	// Parser state is process-local; collected Registry history survives restarts.
-	parser := newPluginParser(p.spec, m.reg)
+	parser := newPluginParser(p.spec, m.reg, m.opt.packageBudgets())
 	p.mu.Lock()
 	p.parser = parser
 	p.mu.Unlock()
