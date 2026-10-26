@@ -68,6 +68,7 @@ type Chart struct {
 	Module      string            `json:"module"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Dimensions  []*Dimension      `json:"dimensions"`
+	Unsupported string            `json:"unsupported,omitempty"`
 
 	mu    sync.Mutex
 	dimIx map[string]*Dimension
@@ -88,6 +89,26 @@ func (c *Chart) MergeLabels(labels map[string]string) {
 	for k, v := range labels {
 		c.Labels[k] = v
 	}
+}
+
+// SetUnsupported records why an item cannot produce a value. Empty clears it.
+func (c *Chart) SetUnsupported(msg string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Unsupported = msg
+}
+
+// ClearUnsupported forgets an unsupported error after a later sample succeeds.
+func (c *Chart) ClearUnsupported() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.Unsupported = ""
+	c.mu.Unlock()
 }
 
 // LabelsSnapshot returns a detached copy, safe to read while labels are merged.

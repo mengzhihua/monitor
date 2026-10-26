@@ -322,15 +322,24 @@ func (s *snmpCollector) collectItems(ctx context.Context, reg *registry.Registry
 		if _, ok := s.prev[item.Name]; !ok {
 			prev = math.NaN()
 		}
+		id := s.chartID("snmp.item." + sanitizeID(item.Name))
 		value, next, err := preprocess.Apply(item.Steps, raw, prev)
+		if errors.Is(err, preprocess.ErrNotSupported) {
+			if ch, ok := reg.Chart(id); ok {
+				ch.SetUnsupported(err.Error())
+			}
+			continue
+		}
 		s.prev[item.Name] = next
 		if err != nil {
 			continue
 		}
+		if ch, ok := reg.Chart(id); ok {
+			ch.ClearUnsupported()
+		}
 		if ctx.Err() != nil {
 			return
 		}
-		id := s.chartID("snmp.item." + sanitizeID(item.Name))
 		if !s.seen[id] {
 			s.seen[id] = true
 			ch := &registry.Chart{ID: id, Context: "snmp.item", Title: "SNMP " + item.Name, Units: "value", Priority: 56130,

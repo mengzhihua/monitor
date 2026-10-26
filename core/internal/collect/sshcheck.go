@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -107,9 +108,17 @@ func (s *sshcheckCollector) Collect(ctx context.Context, reg *registry.Registry,
 		if v, ok := s.prev[j.Name]; ok {
 			prev = v
 		}
+		id := "sshcheck." + sanitizeID(j.Name)
 		value, next, perr := preprocess.Apply(j.Steps, raw, prev)
 		if perr == nil {
 			s.prev[j.Name] = next
+			if ch, ok := reg.Chart(id); ok {
+				ch.ClearUnsupported()
+			}
+		} else if errors.Is(perr, preprocess.ErrNotSupported) {
+			if ch, ok := reg.Chart(id); ok {
+				ch.SetUnsupported(perr.Error())
+			}
 		}
 		if err != nil || perr != nil {
 			value = math.NaN()

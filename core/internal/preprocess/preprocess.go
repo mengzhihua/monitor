@@ -2,8 +2,10 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// change (delta), and a Prometheus text pattern. JavaScript runs operator
-// config in a time-limited interpreter that has no host, network, or filesystem API.
+// change (delta), a Prometheus text pattern, and Prometheus text to JSON.
+// A step can set on_fail to discard, value, or error.
+// JavaScript runs operator config in a time-limited interpreter that has no
+// host, network, or filesystem API.
 package preprocess
 
 import (
@@ -13,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"regexp/syntax"
 	"strconv"
 	"strings"
 	"unicode"
@@ -30,11 +33,19 @@ type Step struct {
 	Max         *float64 `yaml:"max,omitempty" json:"max,omitempty"`
 	Script      string   `yaml:"script,omitempty" json:"script,omitempty"`
 	Output      string   `yaml:"output,omitempty" json:"output,omitempty"`
+	OnFail      string   `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
+	FailValue   string   `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
 }
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
 // Callers skip the sample and keep the previous stored value.
 var ErrUnchanged = errors.New("preprocess: discard unchanged")
+
+// ErrDiscard means on_fail discard dropped the sample.
+var ErrDiscard = errors.New("preprocess: discard value")
+
+// ErrNotSupported means not_supported matched and the item should show that error.
+var ErrNotSupported = errors.New("preprocess: not supported")
 
 // Apply runs steps against input. prev is the previous numeric sample for a
 // change step; pass math.NaN when there is none. The returned prev is the
@@ -59,6 +70,10 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			text = strings.ReplaceAll(text, st.Pattern, st.Replacement)
 		case "regex":
 			text, err = applyRegex(st, text)
+			var syn *syntax.Error
+			if errors.As(err, &syn) {
+				return 0, prev, err
+			}
 		case "jsonpath":
 			text, err = applyJSON(st.Path, text)
 		case "xpath":
@@ -88,11 +103,11 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			have = true
 		case "matches":
 			if err = mustMatch(st.Pattern, text, true); err != nil {
-				return 0, prev, err
+				return failStep(st, prev, err)
 			}
 		case "not_match":
 			if err = mustMatch(st.Pattern, text, false); err != nil {
-				return 0, prev, err
+				return failStep(st, prev, err)
 			}
 		case "hex", "octal":
 			value, err = parseBase(text, st.Type)
@@ -110,7 +125,7 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 				return 0, prev, fmt.Errorf("in_range: min or max required")
 			}
 			if st.Min != nil && value < *st.Min || st.Max != nil && value > *st.Max {
-				return 0, prev, fmt.Errorf("in_range: %v outside bounds", value)
+				return failStep(st, prev, fmt.Errorf("in_range: %v outside bounds", value))
 			}
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
@@ -128,9 +143,34 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 		case "prometheus":
 			text, err = applyPrometheus(st, text)
 			if err != nil {
-				return 0, prev, err
+				return failStep(st, prev, err)
 			}
 			have = false
+		case "prometheus_to_json":
+			text, err = applyPromJSON(st, text)
+			if err != nil {
+				return failStep(st, prev, err)
+			}
+			have = false
+		case "not_supported":
+			if strings.TrimSpace(st.Pattern) == "" || len(st.Pattern) > 256 {
+				return 0, prev, fmt.Errorf("not_supported: pattern must be 1 to 256 bytes")
+			}
+			re, e := regexp.Compile(st.Pattern)
+			if e != nil {
+				return 0, prev, e
+			}
+			if re.MatchString(text) {
+				msg := re.FindString(text)
+				if msg == "" {
+					msg = strings.TrimSpace(text)
+				}
+				runes := []rune(msg)
+				if len(runes) > 128 {
+					msg = string(runes[:128])
+				}
+				return failStep(st, prev, fmt.Errorf("%w: %s", ErrNotSupported, msg))
+			}
 		case "javascript", "js":
 			text, err = applyJS(st.Script, text)
 			if err != nil {
@@ -143,7 +183,7 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 				return 0, prev, err
 			}
 			if math.IsNaN(prev) {
-				return 0, value, fmt.Errorf("change: no previous value")
+				return failStep(st, value, fmt.Errorf("change: no previous value"))
 			}
 			delta := value - prev
 			return delta, value, nil
@@ -151,17 +191,47 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			return 0, prev, fmt.Errorf("unknown preprocess step %q", st.Type)
 		}
 		if err != nil {
-			return 0, prev, err
+			return failStep(st, prev, err)
 		}
 	}
 	if !have {
 		var err error
 		value, err = parseNum(text)
 		if err != nil {
-			return 0, prev, err
+			return failStep(Step{}, prev, err)
 		}
 	}
 	return value, prev, nil
+}
+
+func failStep(st Step, prev float64, err error) (float64, float64, error) {
+	if err == nil || errors.Is(err, ErrUnchanged) || errors.Is(err, ErrDiscard) {
+		return 0, prev, err
+	}
+	switch strings.ToLower(strings.TrimSpace(st.OnFail)) {
+	case "":
+		return 0, prev, err
+	case "discard":
+		return 0, prev, ErrDiscard
+	case "value":
+		value, perr := parseNum(st.FailValue)
+		if perr != nil {
+			return 0, prev, fmt.Errorf("on_fail value: %w", perr)
+		}
+		return value, value, nil
+	case "error":
+		msg := strings.TrimSpace(st.FailValue)
+		if msg == "" {
+			return 0, prev, fmt.Errorf("on_fail error needs fail_value")
+		}
+		runes := []rune(msg)
+		if len(runes) > 256 {
+			msg = string(runes[:256])
+		}
+		return 0, prev, fmt.Errorf("%s", msg)
+	default:
+		return 0, prev, fmt.Errorf("on_fail must be discard, value, or error")
+	}
 }
 
 func trimSide(text, pattern string, left bool) string {
