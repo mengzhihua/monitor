@@ -140,9 +140,9 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		if err != nil {
 			continue
 		}
-		if l.Kind == "count" {
-			// count answers 0 for a selected dimension that simply has no
-			// matching samples; only query failures keep it out.
+		if l.Kind == "count" || l.Kind == "changecount" {
+			// These answer 0 for a selected dimension that simply has no
+			// matching samples; only query failures keep them out.
 			matched = true
 		}
 		vals := make([]tsdb.Point, 0, len(pts))
@@ -177,6 +177,8 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += percentileRank(vals, l.Percentile)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
+		case "changecount":
+			sum += float64(changeCount(vals, l.Mode))
 		case "forecast":
 			a, b, ok := linearFit(vals)
 			if !ok {
@@ -236,6 +238,36 @@ func percentileRank(pts []tsdb.Point, p float64) float64 {
 		index = n - 1
 	}
 	return sorted[index]
+}
+
+// changeCount is Zabbix changecount: adjacent samples in time order.
+// mode inc counts rises, dec counts falls, and all (the default) counts either.
+// One sample has no adjacent pair, so it contributes 0.
+func changeCount(pts []tsdb.Point, mode string) int {
+	if len(pts) < 2 {
+		return 0
+	}
+	ordered := append([]tsdb.Point(nil), pts...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].TS < ordered[j].TS })
+	n := 0
+	for i := 1; i < len(ordered); i++ {
+		prev, next := ordered[i-1].Value, ordered[i].Value
+		switch mode {
+		case "inc":
+			if next > prev {
+				n++
+			}
+		case "dec":
+			if next < prev {
+				n++
+			}
+		default:
+			if next != prev {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func countMatching(pts []tsdb.Point, op string, v float64) int {

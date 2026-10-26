@@ -31,7 +31,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 模型 | 用户宏 `{$MACRO}` | 已有：全局与规则级 `{$NAME}` | `config/config.go`、`health/` |
 | 模型 | 主机清单（自动 + 手工） | 已有：自动标签，以及 `GET/PUT /api/v1/hub/inventory` 手工字段 | `api/templates.go` |
 | 模型 | 代理 Proxy | 部分：`hub.peers` 环 + proxy 存储模式 | `hub/cluster.go` |
-| 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev、`percentile`、`diff` 和 `abschange`。`percentile` 按 `ceil(n*p/100)-1` 取名次。`change` 是窗口末值减首值。`diff` 在最近两个样本不同时为 1，否则为 0。`abschange` 是这两个样本的绝对差。只有一个样本时 `diff` 和 `abschange` 为 0，空窗口为 NaN。多个维度分别计算后相加 | `health/metric_lookup.go` |
+| 触发器 | 表达式函数 `nodata/change/count/trendavg/forecast/timeleft` | 已有，并含 stddev、`percentile`、`diff`、`abschange` 和 `changecount`。`percentile` 按 `ceil(n*p/100)-1` 取名次。`change` 是窗口末值减首值。`diff` 在最近两个样本不同时为 1，否则为 0；`abschange` 是这两个样本的绝对差；只有一个样本时 `diff` 和 `abschange` 为 0。`changecount -5m` 统计相邻样本的变化次数，`mode inc` 只计上升，`mode dec` 只计下降，默认 `all`，空窗口为 0。空窗口为 NaN（`diff`/`abschange` 除外）。多个维度分别计算后相加 | `health/metric_lookup.go` |
 | 触发器 | 依赖 | 已有 `inhibit` | `health/inhibit.go` |
 | 触发器 | 事件关联 | 已有：cause 升高时抑制 symptom 通知，告警带 `correlated_cause`。`equal` 可要求同一图表、上下文或 `label:<key>`；留空则任一 cause 都生效 | `health/correlation.go` |
 | 问题 | 确认 / 指派 / 进度 / 抑制 | 已有：确认会暂停同一状态的重复通知，取消确认或状态变化后恢复。指派和进度仍记在操作记录里 | `operations/`、`health/engine_transition.go` |
