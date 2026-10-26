@@ -30,6 +30,7 @@ type snmpConfig struct {
 	Version   string        `yaml:"version"`
 	Command   string        `yaml:"command"`
 	Timeout   time.Duration `yaml:"timeout"`
+	Retries   int           `yaml:"retries"`
 	User      string        `yaml:"user"`
 	AuthProto string        `yaml:"auth_protocol"`
 	AuthPass  string        `yaml:"auth_passphrase"`
@@ -86,6 +87,9 @@ func (s *snmpCollector) Configure(decode func(v any) error) error {
 			if child.cfg.Timeout == 0 {
 				child.cfg.Timeout = s.cfg.Timeout
 			}
+			if child.cfg.Retries == 0 {
+				child.cfg.Retries = s.cfg.Retries
+			}
 			if err := child.Configure(func(any) error { return nil }); err != nil {
 				return err
 			}
@@ -116,6 +120,9 @@ func (s *snmpCollector) Configure(decode func(v any) error) error {
 	}
 	if s.cfg.Name != "" && s.cfg.Timeout > time.Minute {
 		return fmt.Errorf("snmp: target timeout must not exceed 1m")
+	}
+	if s.cfg.Retries < 0 || s.cfg.Retries > 5 {
+		return fmt.Errorf("snmp: retries must be from 0 to 5")
 	}
 	if s.cfg.Profile == "" {
 		s.cfg.Profile = "network"
@@ -648,6 +655,7 @@ func (s *snmpCollector) snmpArgs(oid string) ([]string, error) {
 			level = "authNoPriv"
 		}
 		args := []string{"-v", "3", "-l", level, "-u", s.cfg.User}
+		args = appendRetries(args, s.cfg.Retries)
 		if s.cfg.AuthPass != "" {
 			proto := s.cfg.AuthProto
 			if proto == "" {
@@ -670,7 +678,18 @@ func (s *snmpCollector) snmpArgs(oid string) ([]string, error) {
 		}
 		return append(args, "-On", "-Oe", s.cfg.Address, oid), nil
 	}
-	return []string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, oid}, nil
+	return appendRetries([]string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, oid}, s.cfg.Retries), nil
+}
+
+func appendRetries(args []string, retries int) []string {
+	if retries <= 0 {
+		return args
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, args[:2]...)
+	out = append(out, "-r", strconv.Itoa(retries))
+	out = append(out, args[2:]...)
+	return out
 }
 
 func validOID(s string) bool {
