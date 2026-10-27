@@ -195,6 +195,24 @@ func ApplyAt(steps []Step, input string, mem Memory, now time.Time) (float64, Me
 				return failStep(st, mem, err)
 			}
 			have = false
+		case "xml_to_json":
+			text, err = applyXMLToJSON(text)
+			if err != nil {
+				return failStep(st, mem, err)
+			}
+			have = false
+		case "csv_to_json":
+			text, err = applyCSVToJSON(st, text)
+			if err != nil {
+				return failStep(st, mem, err)
+			}
+			have = false
+		case "snmp_walk_to_json":
+			text, err = applySNMPWalkJSON(st, text)
+			if err != nil {
+				return failStep(st, mem, err)
+			}
+			have = false
 		case "not_supported":
 			if strings.TrimSpace(st.Pattern) == "" || len(st.Pattern) > 256 {
 				return 0, mem, fmt.Errorf("not_supported: pattern must be 1 to 256 bytes")

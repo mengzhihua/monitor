@@ -305,6 +305,7 @@ func (e *Engine) bind() {
 			key := r.Spec.Name + "|" + c.ID
 			if a, ok := e.alarms[key]; ok {
 				a.Active = true
+				a.Tags = cloneTags(r.Spec.Tags)
 				continue
 			}
 			a := &Alarm{
@@ -312,7 +313,7 @@ func (e *Engine) bind() {
 				Class: r.Spec.Class, Type: r.Spec.Type, Component: r.Spec.Compon,
 				Units: r.Units, Info: r.Info, Lookup: r.Spec.Lookup, Calc: r.Spec.Calc,
 				Warn: r.Spec.Warn, Crit: r.Spec.Crit, Every: int64(r.Every / time.Second),
-				Recipient: r.Spec.To, Source: r.Source, Labels: c.LabelsSnapshot(),
+				Recipient: r.Spec.To, Source: r.Source, Labels: c.LabelsSnapshot(), Tags: cloneTags(r.Spec.Tags),
 				Status: StatusUninitialized, Value: math.NaN(), Active: true,
 				rule: r, chart: c, delayMult: 1, notifiedSt: StatusUninitialized,
 			}

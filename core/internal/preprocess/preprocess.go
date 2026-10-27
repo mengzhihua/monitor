@@ -38,6 +38,17 @@ type Step struct {
 	Script      string            `yaml:"script,omitempty" json:"script,omitempty"`
 	OnFail      string            `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
 	FailValue   string            `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
+	Delimiter   string            `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`
+	Qualifier   string            `yaml:"qualifier,omitempty" json:"qualifier,omitempty"`
+	Header      bool              `yaml:"header,omitempty" json:"header,omitempty"`
+	NoQuote     bool              `yaml:"no_quote,omitempty" json:"no_quote,omitempty"`
+	Fields      []WalkField       `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// WalkField is one column of an snmp_walk_to_json step. Name is a {#MACRO}.
+type WalkField struct {
+	Name string `yaml:"name" json:"name"`
+	OID  string `yaml:"oid" json:"oid"`
 }
 
 // ErrUnchanged means discard_unchanged dropped a repeat of the stored value.
