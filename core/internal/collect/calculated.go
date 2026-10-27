@@ -30,13 +30,15 @@ type calculatedConfig struct {
 }
 
 type calculatedItem struct {
-	Name    string `yaml:"name"`
-	Formula string `yaml:"formula"`
+	Name    string        `yaml:"name"`
+	Formula string        `yaml:"formula"`
+	Every   time.Duration `yaml:"every,omitempty"`
 }
 
 type calculatedCollector struct {
 	cfg     calculatedConfig
 	history SeriesHistory
+	last    map[string]time.Time
 }
 
 // SetHistory supplies stored samples for avg, min, max, and sum.
@@ -62,6 +64,9 @@ func (c *calculatedCollector) Configure(decode func(v any) error) error {
 		}); err != nil && !strings.Contains(err.Error(), "missing") {
 			return fmt.Errorf("calculated: item %q: %w", it.Name, err)
 		}
+		if err := itemEvery("calculated "+it.Name, it.Every); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -70,6 +75,7 @@ func (c *calculatedCollector) Init(reg *registry.Registry) error {
 	if len(c.cfg.Items) == 0 {
 		return fmt.Errorf("calculated: no items")
 	}
+	c.last = map[string]time.Time{}
 	for _, it := range c.cfg.Items {
 		reg.AddChart(&registry.Chart{ID: "calculated." + sanitizeID(it.Name), Context: "calculated.value", Title: "Calculated " + it.Name,
 			Units: "value", Family: "calculated", Plugin: "calculated", Module: "calculated", Priority: 56500,
@@ -80,6 +86,9 @@ func (c *calculatedCollector) Init(reg *registry.Registry) error {
 
 func (c *calculatedCollector) Collect(_ context.Context, reg *registry.Registry, now time.Time) error {
 	for _, it := range c.cfg.Items {
+		if !markItemDue(c.last, it.Name, it.Every, now) {
+			continue
+		}
 		id := "calculated." + sanitizeID(it.Name)
 		var masterMsg string
 		value, err := evalFormula(it.Formula, func(chart, dim string) (float64, bool) {
