@@ -28,6 +28,7 @@ type httpagentJob struct {
 	StatusCodes     []string          `yaml:"status_codes,omitempty"`
 	Retrieve        string            `yaml:"retrieve,omitempty"`
 	FollowRedirects *bool             `yaml:"follow_redirects,omitempty"`
+	Every           time.Duration     `yaml:"every,omitempty"`
 	spans           []statusSpan
 }
 
@@ -35,6 +36,7 @@ type httpagentCollector struct {
 	cfg    httpagentConfig
 	client *http.Client
 	prev   map[string]preprocess.Memory
+	last   map[string]time.Time
 }
 
 func init() { Register("httpagent", func() Collector { return &httpagentCollector{} }) }
@@ -66,6 +68,9 @@ func (h *httpagentCollector) Configure(decode func(v any) error) error {
 		default:
 			return fmt.Errorf("httpagent: job %q retrieve %q must be body, headers, or status", j.Name, j.Retrieve)
 		}
+		if err := itemEvery("httpagent "+j.Name, j.Every); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -76,6 +81,7 @@ func (h *httpagentCollector) Init(reg *registry.Registry) error {
 	}
 	h.client = &http.Client{Timeout: h.cfg.Timeout}
 	h.prev = map[string]preprocess.Memory{}
+	h.last = map[string]time.Time{}
 	for _, j := range h.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "httpagent." + sanitizeID(j.Name), Context: "httpagent.value", Title: "HTTP agent " + j.Name,
 			Units: "value", Family: "http", Plugin: "httpagent", Module: "httpagent", Priority: 56400,
@@ -86,6 +92,9 @@ func (h *httpagentCollector) Init(reg *registry.Registry) error {
 
 func (h *httpagentCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	for _, j := range h.cfg.Jobs {
+		if !markItemDue(h.last, j.Name, j.Every, now) {
+			continue
+		}
 		client := h.client
 		if j.FollowRedirects != nil && !*j.FollowRedirects {
 			clone := *h.client
