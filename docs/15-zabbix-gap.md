@@ -18,7 +18,27 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | SSH / Telnet 检查 | 已有：SSH BatchMode；Telnet 为 TCP 发送一行并读到 expect | `collect/sshcheck.go`、`telnet.go` |
 | 采集 | ICMP / TCP / 简单检查 | 已有 | `collect/ping.go`、`portcheck.go` |
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
-| 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
+| 采集 | ODBC / 数据库 | 已有：`odbc` 驱动查询；`sql` 模块用 CLI 执行查询。`sql` 查询失败时 `sql.*_query` 与 `sql.*_query_time` 记为 `unsupported`，下一次成功采集会清除 | `collect/odbc.go`、`sql.go` |
+| 采集 | MySQL | 已有：`SHOW GLOBAL STATUS`。连接或状态读取失败时，各 mysql 图表记为 `unsupported`，下一次成功采集会清除 | `collect/mysql.go` |
+| 采集 | PostgreSQL | 已有：内置协议读 `pg_stat_*`。连接或查询失败时，各 postgres 图表记为 `unsupported`，下一次成功采集会清除 | `collect/postgres.go` |
+| 采集 | Redis | 已有：`INFO`。读取失败时，各 redis 图表记为 `unsupported`，下一次成功采集会清除 | `collect/redis.go` |
+| 采集 | Nginx | 已有：`stub_status`。状态页失败或无法解析时，各 nginx 图表记为 `unsupported`，下一次成功采集会清除 | `collect/nginx.go` |
+| 采集 | Memcached | 已有：`stats`。统计读取失败时，各 memcached 图表记为 `unsupported`，下一次成功采集会清除 | `collect/memcached.go` |
+| 采集 | MongoDB | 已有：`serverStatus`。连接或命令失败时，各 mongodb 图表记为 `unsupported`，下一次成功采集会清除 | `collect/mongodb.go` |
+| 采集 | Elasticsearch | 已有：集群/节点 REST。请求失败或 JSON 无法解析时，各 elasticsearch 图表记为 `unsupported`，下一次成功采集会清除 | `collect/elasticsearch.go` |
+| 采集 | RabbitMQ | 已有：管理 API。请求失败时，各 rabbitmq 图表记为 `unsupported`，下一次成功采集会清除 | `collect/rabbitmq.go` |
+| 采集 | Consul | 已有：agent/metrics API。请求失败时，各 consul 图表记为 `unsupported`，下一次成功采集会清除 | `collect/consul.go` |
+| 采集 | HAProxy | 已有：统计套接字/CSV。读取失败时，各 haproxy 图表记为 `unsupported`，下一次成功采集会清除 | `collect/haproxy.go` |
+| 采集 | Apache | 已有：`server-status`。状态页失败时，各 apache 图表记为 `unsupported`，下一次成功采集会清除 | `collect/apache.go` |
+| 采集 | lighttpd | 已有：状态页。读取失败时，各 lighttpd 图表记为 `unsupported`，下一次成功采集会清除 | `collect/lighttpd.go` |
+| 采集 | PHP-FPM | 已有：status 页。读取失败时，各 phpfpm 图表记为 `unsupported`，下一次成功采集会清除 | `collect/phpfpm.go` |
+| 采集 | Traefik | 已有：Prometheus 指标端点。抓取失败时，各 traefik 图表记为 `unsupported`，下一次成功采集会清除 | `collect/traefik.go` |
+| 采集 | BIND | 已有：`rndc stats`。统计失败时，各 bind 图表记为 `unsupported`，下一次成功采集会清除 | `collect/bind.go` |
+| 采集 | Unbound | 已有：控制套接字统计。读取失败时，各 unbound 图表记为 `unsupported`，下一次成功采集会清除 | `collect/unbound.go` |
+| 采集 | CoreDNS | 已有：Prometheus 指标。抓取失败时，各 coredns 图表记为 `unsupported`，下一次成功采集会清除 | `collect/coredns.go` |
+| 采集 | HDFS | 已有：NameNode JMX。读取失败时，各 hdfs 图表记为 `unsupported`，下一次成功采集会清除 | `collect/hdfs.go` |
+| 采集 | ZooKeeper | 已有：`mntr`/`srvr`。四字命令失败时，各 zookeeper 图表记为 `unsupported`，下一次成功采集会清除 | `collect/zookeeper.go` |
+| 采集 | NATS | 已有：监控 HTTP。请求失败时，各 nats 图表记为 `unsupported`，下一次成功采集会清除 | `collect/nats.go` |
 | 采集 | Squid | 已有。计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
 | 采集 | Tomcat | 已有。管理状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除 | `collect/tomcat.go` |
 | 采集 | Varnish | 已有。`varnishstat -j` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除 | `collect/varnish.go` |
@@ -59,7 +79,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`xml_to_json` 把一个 XML 文档转成 JSON：属性以 `@` 开头，混合文本放在 `#text`，同名子节点收成数组；不解析 DOCTYPE。`csv_to_json` 把 CSV 转成 JSON，默认逗号分隔、双引号转义；`header: true` 时首行成为字段名。`snmp_walk_to_json` 把 snmpwalk 文本按字段 OID 收成 JSON，每行带 `{#SNMPINDEX}`。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。`mad -5m` 计算窗口的绝对偏差中位数。`diff -5m` 看最近两个样本是否不同，`abschange -5m` 取它们的绝对差；只有一个样本时为 0，空窗口为 NaN。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。Squid 计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。Tomcat 状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除。Varnish `varnishstat` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`xml_to_json` 把一个 XML 文档转成 JSON：属性以 `@` 开头，混合文本放在 `#text`，同名子节点收成数组；不解析 DOCTYPE。`csv_to_json` 把 CSV 转成 JSON，默认逗号分隔、双引号转义；`header: true` 时首行成为字段名。`snmp_walk_to_json` 把 snmpwalk 文本按字段 OID 收成 JSON，每行带 `{#SNMPINDEX}`。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。`mad -5m` 计算窗口的绝对偏差中位数。`diff -5m` 看最近两个样本是否不同，`abschange -5m` 取它们的绝对差；只有一个样本时为 0，空窗口为 NaN。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。Squid 计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。Tomcat 状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除。Varnish `varnishstat` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除。`sql`/MySQL/PostgreSQL/Redis/Nginx 及 Memcached、MongoDB、Elasticsearch、RabbitMQ、Consul、HAProxy、Apache、lighttpd、PHP-FPM、Traefik、BIND、Unbound、CoreDNS、HDFS、ZooKeeper、NATS 等应用采集在连接或解析失败时，会把该插件下全部图表标为 `unsupported`，下一次成功采集会清除。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|
