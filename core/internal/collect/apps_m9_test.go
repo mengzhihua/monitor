@@ -584,6 +584,61 @@ coredns_panics_total 0
 	}
 }
 
+func TestCoreDNSFailureMarksUnsupported(t *testing.T) {
+	body := "coredns_panics_total 1\ncoredns_dns_requests_total{proto=\"udp\",type=\"A\"} 10\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not metrics"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := &corednsCollector{cfg: corednsConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := c.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	panics := mustChart(t, reg, "coredns.dns_panic_count_total")
+	reqs := mustChart(t, reg, "coredns.dns_request_count_total")
+	if panics.Unsupported != "" || panics.LastCollectionTime() != now.Unix() {
+		t.Fatalf("panics %q at %d", panics.Unsupported, panics.LastCollectionTime())
+	}
+	mode = "down"
+	if err := c.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if panics.Unsupported == "" || reqs.Unsupported == "" || panics.LastCollectionTime() != now.Unix() {
+		t.Fatalf("panics %q at %d requests %q", panics.Unsupported, panics.LastCollectionTime(), reqs.Unsupported)
+	}
+	mode = "bad"
+	if err := c.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if panics.Unsupported == "" {
+		t.Fatal("non-coredns body stayed supported")
+	}
+	mode = "ok"
+	if err := c.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if panics.Unsupported != "" || reqs.Unsupported != "" {
+		t.Fatalf("stuck panics %q requests %q", panics.Unsupported, reqs.Unsupported)
+	}
+	if panics.LastCollectionTime() != now.Add(3*time.Second).Unix() {
+		t.Fatalf("recovered at %d", panics.LastCollectionTime())
+	}
+}
+
 func TestParseHDFSJMX(t *testing.T) {
 	raw := `{"beans":[{"name":"Hadoop:service=NameNode,name=FSNamesystemState","CapacityUsed":100,"CapacityRemaining":900,"FilesTotal":12,"BlocksTotal":30,"MissingBlocks":1,"CorruptBlocks":0,"UnderReplicatedBlocks":2,"NumLiveDataNodes":3,"NumDeadDataNodes":1,"TotalLoad":4}]}`
 	st, err := parseHDFSJMX([]byte(raw))
