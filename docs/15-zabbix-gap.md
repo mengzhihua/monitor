@@ -19,7 +19,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | ICMP / TCP / 简单检查 | 已有 | `collect/ping.go`、`portcheck.go` |
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
-| 采集 | Elasticsearch | 已有。集群健康或节点统计读取失败时，各 elasticsearch 图表记为 `unsupported`，下一次成功采集会清除 | `collect/elasticsearch.go` |
+| 采集 | Squid | 已有。| 采集 | Elasticsearch | 已有。集群健康或节点统计读取失败时，各 elasticsearch 图表记为 `unsupported`，下一次成功采集会清除 | `collect/elasticsearch.go` |计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
 | 采集 | Trapper / zabbix_sender 推送 | 已有：`ZBXD\x01` sender 监听，可选 psk 与来源网段 | `trapper/trapper.go` |
 | 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算，并用 `avg`/`min`/`max`/`sum` 读取最多 1 小时的已存储样本。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
 | 采集 | 低级发现 LLD + 原型 | 已有：SNMP 表 LLD；通用 `{#MACRO}` 原型可按实体开图表，或合成一张图 | `collect/snmp.go`、`collect/lld.go` |
@@ -57,7 +57,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 
 ## 3. 分阶段开发计划
 
-按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。Elasticsearch 集群读取失败时，各 elasticsearch 图表记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
+按「对运维价值 / 实现成本」排序。Z1–Z2 已在主干。Z3–Z6 按下面的范围落地：预处理与无代理采集、动作链与白名单命令、服务树/拓扑/可用性报表、Room 权限与 SAML/TOTP/PSK/trapper/自监控。通用 LLD 使用 `{#MACRO}` 替换标题、键、值和单位。`layout: item` 为每个实体一张图，`layout: graph` 把实体收成一张图，类型可以是 `pie`。健康规则按 context `lld.<规则名>` 或 `snmp.lld.<name>` 匹配。JavaScript 预处理只运行配置里的函数体，限时且没有主机、网络和文件接口。预处理步骤的 `on_fail` 可以在失败时丢掉样本、改用 `fail_value`，或换成自定义错误。`prometheus_to_json` 把文本暴露格式转成 JSON 数组，可用指标名和标签选择器过滤。`not_supported` 的模式命中后，该项图表记上 `unsupported`，下一次成功采集会清除它。计算项可以用 `{图表:维度}` 做加、减、乘、除和括号，也可以用 `avg`、`min`、`max`、`sum` 读取 1 秒到 1 小时的历史。每个公式最多 8 个引用。触发器查询 `percentile -5m p 95` 取窗口百分位。确认一个未恢复的问题会暂停它的重复通知，直到取消确认或状态变化。动作 `ack: yes` 在确认时另发一步通知，`ack: no` 只处理尚未确认的问题。Jolokia 请求失败或返回的 `status` 不是 200 时，该项记为 `unsupported`，下一次成功采集会清除。Squid 计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除。被动 Agent 协议和 Zabbix JSON-RPC 保持非目标。Elasticsearch 集群读取失败时，各 elasticsearch 图表记为 `unsupported`，下一次成功采集会清除。代理、共识 HA、全实体 CRUD 和独立主机组树仍是部分能力。
 
 | 阶段 | 内容 | 主要改动 |
 |---|---|---|
