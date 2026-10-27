@@ -78,6 +78,8 @@ test-scripts:
 	python3 scripts/benchmark_runtime_test.py
 	python3 scripts/soak_config_test.py
 	python3 scripts/sample_resources_test.py
+	python3 scripts/verify-zabbix-gap.py
+	python3 scripts/verify_zabbix_gap_test.py
 
 lint:
 	cd core && test -z "$$(gofmt -l .)" && go vet ./...
