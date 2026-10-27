@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"math"
 	"net"
 	"regexp"
 	"strings"
@@ -31,7 +30,7 @@ type telnetJob struct {
 
 type telnetCollector struct {
 	cfg  telnetConfig
-	prev map[string]float64
+	prev map[string]preprocess.Memory
 	dial func(ctx context.Context, address string) (net.Conn, error)
 }
 
@@ -61,7 +60,7 @@ func (t *telnetCollector) Init(reg *registry.Registry) error {
 	if len(t.cfg.Jobs) == 0 {
 		return fmt.Errorf("telnet: no jobs")
 	}
-	t.prev = map[string]float64{}
+	t.prev = map[string]preprocess.Memory{}
 	for _, j := range t.cfg.Jobs {
 		reg.AddChart(&registry.Chart{ID: "telnet." + sanitizeID(j.Name), Context: "telnet.value", Title: "Telnet " + j.Name,
 			Units: "value", Family: "telnet", Plugin: "telnet", Module: "telnet", Priority: 56250,
@@ -73,21 +72,19 @@ func (t *telnetCollector) Init(reg *registry.Registry) error {
 func (t *telnetCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	for _, j := range t.cfg.Jobs {
 		raw, err := t.session(ctx, j)
-		prev := math.NaN()
-		if v, ok := t.prev[j.Name]; ok {
-			prev = v
-		}
 		steps := j.Steps
 		if len(steps) == 0 && j.Expect != "" {
 			steps = []preprocess.Step{{Type: "bool", Pattern: j.Expect}}
 		}
 		id := "telnet." + sanitizeID(j.Name)
-		value, next, perr := preprocess.Apply(steps, raw, prev)
-		if err != nil || noteUnsupported(reg, id, perr) || math.IsNaN(value) {
+		if err != nil {
 			continue
 		}
-		t.prev[j.Name] = next
-		_ = reg.Collect("telnet."+sanitizeID(j.Name), now, map[string]float64{"value": value})
+		value, ok := preprocessValue(t.prev, j.Name, raw, steps, now, reg, id)
+		if !ok {
+			continue
+		}
+		_ = reg.Collect(id, now, map[string]float64{"value": value})
 	}
 	return nil
 }
