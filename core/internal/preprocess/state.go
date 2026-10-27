@@ -177,6 +177,18 @@ func ApplyAt(steps []Step, input string, mem Memory, now time.Time) (float64, Me
 			mem.LastKept = nowUnix
 			text = strconv.FormatFloat(value, 'f', -1, 64)
 			have = true
+		case "error_json", "error_xml", "error_regex":
+			msg, absent, err := payloadError(st, text)
+			if err != nil {
+				var syn *syntax.Error
+				if errors.As(err, &syn) || strings.HasSuffix(err.Error(), "required") {
+					return 0, mem, err
+				}
+				return failStep(st, mem, err)
+			}
+			if !absent {
+				return failStep(st, mem, fmt.Errorf("%s: %s", strings.ToLower(strings.TrimSpace(st.Type)), clipStepError(msg)))
+			}
 		case "prometheus_to_json":
 			text, err = applyPromJSON(st, text)
 			if err != nil {

@@ -2,8 +2,10 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// change (delta), and Prometheus text to JSON. A step can set on_fail to
-// discard, value, or error.
+// change (delta), payload error checks, and Prometheus text to JSON.
+// error_json, error_xml, and error_regex fail the sample when a payload
+// reports an error and otherwise leave the text unchanged.
+// A step can set on_fail to discard, value, or error.
 // JavaScript runs operator config in a time-limited interpreter that has no
 // host, network, or filesystem API.
 package preprocess
@@ -317,4 +319,71 @@ func parseNum(text string) (float64, error) {
 		return 0, fmt.Errorf("not a number %q", text)
 	}
 	return v, nil
+}
+
+func payloadError(st Step, text string) (string, bool, error) {
+	switch strings.ToLower(strings.TrimSpace(st.Type)) {
+	case "error_json":
+		if strings.TrimSpace(st.Path) == "" {
+			return "", false, fmt.Errorf("error_json: path required")
+		}
+		value, err := applyJSON(st.Path, text)
+		if err != nil {
+			if jsonPathAbsent(err) {
+				return "", true, nil
+			}
+			return "", false, err
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", true, nil
+		}
+		return value, false, nil
+	case "error_xml":
+		if strings.TrimSpace(st.Path) == "" {
+			return "", false, fmt.Errorf("error_xml: path required")
+		}
+		value, err := applyXML(st.Path, text)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return "", true, nil
+			}
+			return "", false, err
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", true, nil
+		}
+		return value, false, nil
+	case "error_regex":
+		if st.Pattern == "" {
+			return "", false, fmt.Errorf("error_regex: pattern required")
+		}
+		re, err := regexp.Compile(st.Pattern)
+		if err != nil {
+			return "", false, err
+		}
+		match := re.FindStringSubmatch(text)
+		if match == nil {
+			return "", true, nil
+		}
+		if len(match) > 1 && strings.TrimSpace(match[1]) != "" {
+			return match[1], false, nil
+		}
+		return match[0], false, nil
+	default:
+		return "", false, fmt.Errorf("unknown preprocess step %q", st.Type)
+	}
+}
+
+func jsonPathAbsent(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "missing") || strings.Contains(msg, "index")
+}
+
+func clipStepError(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) > 256 {
+		return string(runes[:256])
+	}
+	return s
 }
