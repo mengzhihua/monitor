@@ -44,6 +44,7 @@ type snmpItem struct {
 	Name  string            `yaml:"name"`
 	OID   string            `yaml:"oid"`
 	Steps []preprocess.Step `yaml:"preprocess"`
+	Every time.Duration     `yaml:"every,omitempty"`
 }
 
 type snmpLLD struct {
@@ -58,6 +59,7 @@ type snmpCollector struct {
 	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen      map[string]bool
 	prev      map[string]preprocess.Memory
+	last      map[string]time.Time
 	targets   []*snmpCollector
 	counter64 map[string]bool
 }
@@ -144,6 +146,11 @@ func (s *snmpCollector) Configure(decode func(v any) error) error {
 	if _, err := s.snmpArgs("1.3.6.1.2.1.1.3.0"); err != nil {
 		return err
 	}
+	for _, item := range s.cfg.Items {
+		if err := itemEvery("snmp "+item.Name, item.Every); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -182,6 +189,7 @@ func (s *snmpCollector) chartID(id string) string {
 func (s *snmpCollector) initCharts(reg *registry.Registry) {
 	s.seen = map[string]bool{}
 	s.prev = map[string]preprocess.Memory{}
+	s.last = map[string]time.Time{}
 	s.counter64 = map[string]bool{}
 	c := &registry.Chart{ID: s.chartID("snmp.device_sysuptime"), Context: "snmp.device_sysuptime", Title: "SNMP sysUpTime", Units: "seconds", Priority: 56100,
 		Dimensions: []*registry.Dimension{{ID: "uptime"}}}
@@ -318,6 +326,9 @@ func (s *snmpCollector) collectItems(ctx context.Context, reg *registry.Registry
 			return
 		}
 		if !validOID(item.OID) || !validItemName(item.Name) {
+			continue
+		}
+		if !markItemDue(s.last, item.Name, item.Every, now) {
 			continue
 		}
 		b, err := s.walk(ctx, item.OID)
