@@ -19,7 +19,9 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | ICMP / TCP / 简单检查 | 已有 | `collect/ping.go`、`portcheck.go` |
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
-| 采集 | Squid | 已有。| 采集 | Tomcat | 已有。| 采集 | Varnish | 已有。`varnishstat -j` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除 | `collect/varnish.go` |计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |管理状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除 | `collect/tomcat.go` |计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
+| 采集 | Squid | 已有。计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |
+| 采集 | Tomcat | 已有。管理状态页失败或 XML 无法解析时，各 tomcat 图表记为 `unsupported`，下一次成功采集会清除 | `collect/tomcat.go` |
+| 采集 | Varnish | 已有。`varnishstat -j` 失败或没有计数器时，各 varnish 图表记为 `unsupported`，下一次成功采集会清除 | `collect/varnish.go` |
 | 采集 | Trapper / zabbix_sender 推送 | 已有：`ZBXD\x01` sender 监听，可选 psk 与来源网段 | `trapper/trapper.go` |
 | 采集 | 计算项 / 聚合项 / 依赖项 | 已有：依赖项读一个主维度再预处理；计算项用 `{图表:维度}` 做四则运算，并用 `avg`/`min`/`max`/`sum` 读取最多 1 小时的已存储样本。查询期聚合仍在 | `collect/dependent.go`、`collect/calculated.go` |
 | 采集 | 低级发现 LLD + 原型 | 已有：SNMP 表 LLD；通用 `{#MACRO}` 原型可按实体开图表，或合成一张图 | `collect/snmp.go`、`collect/lld.go` |
