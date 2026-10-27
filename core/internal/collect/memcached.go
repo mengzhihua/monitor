@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -77,8 +78,10 @@ func (m *memcachedCollector) Init(reg *registry.Registry) error {
 func (m *memcachedCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	s, err := m.stats(ctx)
 	if err != nil {
-		return err
+		m.markMemcached(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	m.markMemcached(reg, nil)
 	limit := num(s, "limit_maxbytes")
 	used := num(s, "bytes")
 	free := limit - used
@@ -94,6 +97,14 @@ func (m *memcachedCollector) Collect(ctx context.Context, reg *registry.Registry
 		"get": num(s, "cmd_get"), "set": num(s, "cmd_set"),
 		"delete": num(s, "delete_hits") + num(s, "delete_misses"), "cas": num(s, "cas_hits") + num(s, "cas_misses")})
 	return nil
+}
+
+func (m *memcachedCollector) markMemcached(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "memcached" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (m *memcachedCollector) stats(ctx context.Context) (map[string]string, error) {

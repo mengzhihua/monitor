@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -69,29 +70,44 @@ func (s *sqlCollector) Init(reg *registry.Registry) error {
 	if _, _, err := s.execQuery(context.Background()); err != nil {
 		return err
 	}
+	s.ensureCharts(reg)
 	return nil
+}
+
+func (s *sqlCollector) chartIDs() (qid, tid string) {
+	drv := sanitizeID(s.cfg.Driver)
+	return "sql." + drv + "_query", "sql." + drv + "_query_time"
+}
+
+func (s *sqlCollector) ensureCharts(reg *registry.Registry) {
+	qid, tid := s.chartIDs()
+	if s.seen[qid] {
+		return
+	}
+	s.seen[qid] = true
+	ch := &registry.Chart{ID: qid, Context: "sql." + sanitizeID(s.cfg.Driver) + "_query", Title: "SQL query metrics", Units: "value",
+		Family: "Query", Priority: 62300, Labels: map[string]string{"driver": s.cfg.Driver}}
+	ch.Plugin, ch.Module = "sql", "sql"
+	reg.AddChart(ch)
+	t := &registry.Chart{ID: tid, Context: "sql." + sanitizeID(s.cfg.Driver) + "_query_time", Title: "SQL query execution time", Units: "ms",
+		Family: "Query/Timings", Priority: 62310, Labels: map[string]string{"driver": s.cfg.Driver},
+		Dimensions: []*registry.Dimension{{ID: "duration"}}}
+	t.Plugin, t.Module = "sql", "sql"
+	reg.AddChart(t)
 }
 
 func (s *sqlCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	vals, dur, err := s.execQuery(ctx)
+	s.ensureCharts(reg)
+	qid, tid := s.chartIDs()
 	if err != nil {
-		return err
+		msg := fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128))
+		_ = noteUnsupported(reg, qid, msg)
+		_ = noteUnsupported(reg, tid, msg)
+		return nil
 	}
-	drv := sanitizeID(s.cfg.Driver)
-	qid := "sql." + drv + "_query"
-	tid := "sql." + drv + "_query_time"
-	if !s.seen[qid] {
-		s.seen[qid] = true
-		ch := &registry.Chart{ID: qid, Context: "sql." + drv + "_query", Title: "SQL query metrics", Units: "value",
-			Family: "Query", Priority: 62300, Labels: map[string]string{"driver": s.cfg.Driver}}
-		ch.Plugin, ch.Module = "sql", "sql"
-		reg.AddChart(ch)
-		t := &registry.Chart{ID: tid, Context: "sql." + drv + "_query_time", Title: "SQL query execution time", Units: "ms",
-			Family: "Query/Timings", Priority: 62310, Labels: map[string]string{"driver": s.cfg.Driver},
-			Dimensions: []*registry.Dimension{{ID: "duration"}}}
-		t.Plugin, t.Module = "sql", "sql"
-		reg.AddChart(t)
-	}
+	_ = noteUnsupported(reg, qid, nil)
+	_ = noteUnsupported(reg, tid, nil)
 	if ch, ok := reg.Chart(qid); ok {
 		for k := range vals {
 			did := sanitizeID(k)

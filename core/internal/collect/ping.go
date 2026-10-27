@@ -22,6 +22,7 @@ type pingJob struct {
 	Protocol string        `yaml:"protocol"` // icmp (default) or tcp
 	Port     int           `yaml:"port"`     // for tcp, default 80
 	Timeout  time.Duration `yaml:"timeout"`
+	Count    int           `yaml:"count"` // probes per collection, 1..5; empty means 1
 }
 
 type pingCollector struct {
@@ -41,6 +42,19 @@ func (p *pingCollector) Configure(decode func(v any) error) error {
 	}
 	if p.cfg.Timeout <= 0 {
 		p.cfg.Timeout = 2 * time.Second
+	}
+	for i := range p.cfg.Jobs {
+		j := &p.cfg.Jobs[i]
+		if j.Count == 0 {
+			j.Count = 1
+		}
+		if j.Count < 1 || j.Count > 5 {
+			name := j.Name
+			if name == "" {
+				name = j.Host
+			}
+			return fmt.Errorf("ping job %q: count must be from 1 to 5", name)
+		}
 	}
 	return nil
 }
@@ -71,6 +85,12 @@ func (p *pingCollector) Init(reg *registry.Registry) error {
 		if j.Timeout <= 0 {
 			j.Timeout = p.cfg.Timeout
 		}
+		if j.Count == 0 {
+			j.Count = 1
+		}
+		if j.Count < 1 || j.Count > 5 {
+			return fmt.Errorf("ping job %q: count must be from 1 to 5", j.Name)
+		}
 		id := sanitizeID(j.Name)
 		lbl := map[string]string{"job": j.Name, "host": j.Host}
 		reg.AddChart(&registry.Chart{ID: "ping.latency." + id, Context: "ping.latency", Family: j.Name,
@@ -86,13 +106,29 @@ func (p *pingCollector) Init(reg *registry.Registry) error {
 func (p *pingCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	for i, j := range p.cfg.Jobs {
 		id := sanitizeID(j.Name)
-		rtt, err := p.probe(ctx, j, uint16(i+1))
-		recv, drop := 1.0, 0.0
-		if err != nil {
-			recv, drop, rtt = 0, 1, 0
+		n := j.Count
+		if n < 1 {
+			n = 1
 		}
-		_ = reg.Collect("ping.latency."+id, now, map[string]float64{"rtt": rtt})
-		_ = reg.Collect("ping.loss."+id, now, map[string]float64{"received": recv, "dropped": drop})
+		var sum float64
+		ok := 0
+		for k := 0; k < n; k++ {
+			if ctx.Err() != nil {
+				break
+			}
+			rtt, err := p.probe(ctx, j, uint16(i*5+k+1))
+			if err != nil {
+				continue
+			}
+			ok++
+			sum += rtt
+		}
+		avg := 0.0
+		if ok > 0 {
+			avg = sum / float64(ok)
+		}
+		_ = reg.Collect("ping.latency."+id, now, map[string]float64{"rtt": avg})
+		_ = reg.Collect("ping.loss."+id, now, map[string]float64{"received": float64(ok), "dropped": float64(n - ok)})
 	}
 	return nil
 }

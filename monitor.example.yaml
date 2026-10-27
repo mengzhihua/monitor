@@ -117,7 +117,7 @@ collectors:
       jobs: []           # e.g. [{ name: ssh, host: 127.0.0.1, port: 22 }]
     ping:
       timeout: 2s
-      jobs: []           # e.g. [{ name: gw, host: 1.1.1.1, protocol: icmp }]
+      jobs: []           # e.g. [{ name: gw, host: 1.1.1.1, protocol: icmp, count: 3 }]
     ml:                  # edge anomaly detection (k-means + k-sigma fallback)
       enabled: true
       window: 120
@@ -744,11 +744,11 @@ health:
   alarms: []           # inline rules, e.g.
   # - name: ram_in_use
   #   on: system.ram                      # chart id, or a context (e.g. disk.space) to bind every matching chart
-  #   lookup: average -1m percentage of used  # or percentile -5m p 95 of used, or mad -5m of used
+  #   lookup: average -1m percentage of used  # or diff -5m, abschange -5m, percentile -5m p 95, countunique -5m, changecount -5m mode inc, rate -5m, find -5m gt 90, mad -5m, or fuzzytime -5m within 60s, monoinc -5m strict of used
   #   units: '%'
   #   every: 10s
   #   tags: { scope: storage }
-  #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'
+  #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'  # or between($this, 80, 95)
   #   crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
   #   recovery: '$this < 70'         # stay raised until warn/crit are false and this is true
   #   for: 1m                         # status stays put until warn/crit holds this long; empty = immediate

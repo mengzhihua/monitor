@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -103,8 +104,10 @@ func (m *mysqlCollector) Init(reg *registry.Registry) error {
 func (m *mysqlCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	s, err := m.status(ctx)
 	if err != nil {
-		return err
+		m.markMySQL(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	m.markMySQL(reg, nil)
 	n := func(k string) float64 { return mysqlNum(s, k) }
 	_ = reg.Collect("mysql.queries", now, map[string]float64{"queries": n("Queries"), "questions": n("Questions"), "slow_queries": n("Slow_queries")})
 	_ = reg.Collect("mysql.handlers", now, map[string]float64{
@@ -134,6 +137,14 @@ func (m *mysqlCollector) Collect(ctx context.Context, reg *registry.Registry, no
 		"rows": n("Sort_rows"), "range": n("Sort_range"), "merge_passes": n("Sort_merge_passes"), "scan": n("Sort_scan"),
 	})
 	return nil
+}
+
+func (m *mysqlCollector) markMySQL(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "mysql" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func mysqlNum(m map[string]string, k string) float64 {

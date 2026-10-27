@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -86,8 +87,10 @@ type apacheStatus struct {
 func (a *apacheCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	st, err := a.fetch(ctx)
 	if err != nil {
-		return err
+		a.markApache(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	a.markApache(reg, nil)
 	m := st.num
 	_ = reg.Collect("apache.connections", now, map[string]float64{"connections": m["ConnsTotal"]})
 	_ = reg.Collect("apache.conns_async", now, map[string]float64{
@@ -105,6 +108,14 @@ func (a *apacheCollector) Collect(ctx context.Context, reg *registry.Registry, n
 		_ = reg.Collect("apache.scoreboard", now, sb)
 	}
 	return nil
+}
+
+func (a *apacheCollector) markApache(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "apache" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (a *apacheCollector) fetch(ctx context.Context) (apacheStatus, error) {

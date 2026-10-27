@@ -87,6 +87,7 @@ func (t *telnetCollector) Collect(ctx context.Context, reg *registry.Registry, n
 		}
 		id := "telnet." + sanitizeID(j.Name)
 		if err != nil {
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
 			continue
 		}
 		value, ok := preprocessValue(t.prev, j.Name, raw, steps, now, reg, id)

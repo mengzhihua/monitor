@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -82,18 +83,29 @@ func (b *bindCollector) Init(reg *registry.Registry) error {
 func (b *bindCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	body, err := httpGet(ctx, b.client, b.url)
 	if err != nil {
-		return err
+		b.markBind(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
 	st, err := parseBindJSON(body)
 	if err != nil {
-		return err
+		b.markBind(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	b.markBind(reg, nil)
 	_ = reg.Collect("bind.in_opcodes", now, map[string]float64{"QUERY": st.query, "UPDATE": st.update})
 	_ = reg.Collect("bind.nsstats", now, map[string]float64{
 		"success": st.success, "nxdomain": st.nxdomain, "servfail": st.servfail, "nxrrset": st.nxrrset, "recursion": st.recursion})
 	_ = reg.Collect("bind.in_qtypes", now, map[string]float64{
 		"A": st.a, "AAAA": st.aaaa, "PTR": st.ptr, "MX": st.mx, "SOA": st.soa, "other": st.other})
 	return nil
+}
+
+func (b *bindCollector) markBind(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "bind" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 type bindStats struct {
