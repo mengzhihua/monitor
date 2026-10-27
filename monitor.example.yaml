@@ -744,7 +744,7 @@ health:
   alarms: []           # inline rules, e.g.
   # - name: ram_in_use
   #   on: system.ram                      # chart id, or a context (e.g. disk.space) to bind every matching chart
-  #   lookup: average -1m percentage of used
+  #   lookup: average -1m percentage of used  # or percentile -5m p 95 of used
   #   units: '%'
   #   every: 10s
   #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'
@@ -910,6 +910,7 @@ export:
 #     - name: page
 #       severities: [CRITICAL]
 #       alarms: ["disk_*"]
+#       ack: no            # yes runs when the problem is acknowledged; no waits until it is not
 #       steps:
 #         - { role: sysadmin, command: echo-ok }
 #         - { delay: 5m, role: pager }
