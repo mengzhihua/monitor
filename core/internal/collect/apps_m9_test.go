@@ -193,6 +193,61 @@ func TestParseSquidCounters(t *testing.T) {
 	}
 }
 
+func TestSquidFailureMarksUnsupported(t *testing.T) {
+	body := "client_http.requests = 50\nserver.all.requests = 40\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("uptime = 1\n"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	s := &squidCollector{cfg: squidConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := s.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := s.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	clients := mustChart(t, reg, "squid.clients_requests")
+	servers := mustChart(t, reg, "squid.servers_requests")
+	if clients.Unsupported != "" || clients.LastCollectionTime() != now.Unix() {
+		t.Fatalf("clients %q at %d", clients.Unsupported, clients.LastCollectionTime())
+	}
+	mode = "down"
+	if err := s.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if clients.Unsupported == "" || servers.Unsupported == "" || clients.LastCollectionTime() != now.Unix() {
+		t.Fatalf("clients %q at %d servers %q", clients.Unsupported, clients.LastCollectionTime(), servers.Unsupported)
+	}
+	mode = "bad"
+	if err := s.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if clients.Unsupported == "" {
+		t.Fatal("missing requests stayed supported")
+	}
+	mode = "ok"
+	if err := s.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if clients.Unsupported != "" || servers.Unsupported != "" {
+		t.Fatalf("stuck clients %q servers %q", clients.Unsupported, servers.Unsupported)
+	}
+	if clients.LastCollectionTime() != now.Add(3*time.Second).Unix() {
+		t.Fatalf("recovered at %d", clients.LastCollectionTime())
+	}
+}
+
 func TestParseTomcatStatus(t *testing.T) {
 	xml := `<status><jvm><memory free="100" total="400" max="800"/></jvm>` +
 		`<connector name='"http-nio-8080"'><threadInfo maxThreads="200" currentThreadCount="10" currentThreadsBusy="2"/>` +
