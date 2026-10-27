@@ -111,6 +111,17 @@ func (c *Chart) ClearUnsupported() {
 	c.mu.Unlock()
 }
 
+// UnsupportedMessage returns the current unsupported reason. Empty means the item is supported.
+func (c *Chart) UnsupportedMessage() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	msg := c.Unsupported
+	c.mu.Unlock()
+	return msg
+}
+
 // LabelsSnapshot returns a detached copy, safe to read while labels are merged.
 func (c *Chart) LabelsSnapshot() map[string]string {
 	if c == nil {

@@ -157,3 +157,42 @@ func TestCalculatedWindowWithoutHistorySkips(t *testing.T) {
 		t.Fatalf("wrote %v without stored samples", vals["value"])
 	}
 }
+
+func TestCalculatedFollowsMasterUnsupported(t *testing.T) {
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "system.ram", Dimensions: []*registry.Dimension{{ID: "used"}, {ID: "free"}}})
+	if err := reg.Collect("system.ram", time.Unix(100, 0), map[string]float64{"used": 10, "free": 90}); err != nil {
+		t.Fatal(err)
+	}
+	master, _ := reg.Chart("system.ram")
+	master.SetUnsupported("snmp: down")
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte("items:\n  - name: sum\n    formula: \"{system.ram:used} + {system.ram:free}\"\n"), &node); err != nil {
+		t.Fatal(err)
+	}
+	c := &calculatedCollector{}
+	if err := c.Configure(node.Decode); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Collect(context.Background(), reg, time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	ch, ok := reg.Chart("calculated.sum")
+	if !ok || ch.UnsupportedMessage() == "" || ch.LastCollectionTime() != 0 {
+		t.Fatalf("unsupported %q at %d", ch.UnsupportedMessage(), ch.LastCollectionTime())
+	}
+	master.ClearUnsupported()
+	if err := c.Collect(context.Background(), reg, time.Unix(110, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if msg := ch.UnsupportedMessage(); msg != "" {
+		t.Fatalf("error stuck: %q", msg)
+	}
+	_, vals := ch.LastValues()
+	if ch.LastCollectionTime() != 110 || vals["value"] != 100 {
+		t.Fatalf("recovered at=%d value=%v", ch.LastCollectionTime(), vals["value"])
+	}
+}

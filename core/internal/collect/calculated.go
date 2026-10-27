@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
@@ -88,17 +89,54 @@ func (c *calculatedCollector) Collect(_ context.Context, reg *registry.Registry,
 		if !markItemDue(c.last, it.Name, it.Every, now) {
 			continue
 		}
+		id := "calculated." + sanitizeID(it.Name)
+		var masterMsg string
 		value, err := evalFormula(it.Formula, func(chart, dim string) (float64, bool) {
+			if msg := chartUnsupported(reg, chart); msg != "" {
+				if masterMsg == "" {
+					masterMsg = msg
+				}
+				return 0, false
+			}
 			return latestDimension(reg, chart, dim)
 		}, func(fn, chart, dim string, seconds int) (float64, bool) {
+			if msg := chartUnsupported(reg, chart); msg != "" {
+				if masterMsg == "" {
+					masterMsg = msg
+				}
+				return 0, false
+			}
 			return c.windowValue(fn, chart, dim, seconds, now)
 		})
+		if masterMsg != "" {
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, masterMsg))
+			continue
+		}
 		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 			continue
 		}
-		_ = reg.Collect("calculated."+sanitizeID(it.Name), now, map[string]float64{"value": value})
+		if noteUnsupported(reg, id, nil) {
+			continue
+		}
+		_ = reg.Collect(id, now, map[string]float64{"value": value})
 	}
 	return nil
+}
+
+func chartUnsupported(reg *registry.Registry, chart string) string {
+	ch, ok := reg.Chart(chart)
+	if !ok {
+		return ""
+	}
+	msg := ch.UnsupportedMessage()
+	if msg == "" {
+		return ""
+	}
+	runes := []rune(msg)
+	if len(runes) > 128 {
+		msg = string(runes[:128])
+	}
+	return msg
 }
 
 type formulaParser struct {
