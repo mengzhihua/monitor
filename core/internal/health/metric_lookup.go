@@ -2,6 +2,7 @@ package health
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/mengzhihua/monitor/core/internal/registry"
@@ -161,6 +162,8 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += vals[len(vals)-1].Value - vals[0].Value
 		case "stddev":
 			sum += popStddev(vals)
+		case "percentile":
+			sum += percentileRank(vals, l.Percentile)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
 		case "forecast":
@@ -197,6 +200,32 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 // timeLeftSentinel replaces the unbounded Zabbix "never" answer; evaluate()
 // treats +Inf as undefined, so timeleft reports a very large finite value.
 const timeLeftSentinel = 1e15
+
+// percentileRank is Zabbix's nearest-rank percentile. Values are sorted
+// ascending and the index is ceil(n*p/100)-1, clamped to the sample list.
+// p is 0 to 100. An empty list returns NaN.
+func percentileRank(pts []tsdb.Point, p float64) float64 {
+	n := len(pts)
+	if n == 0 {
+		return math.NaN()
+	}
+	sorted := make([]float64, n)
+	for i, pt := range pts {
+		sorted[i] = pt.Value
+	}
+	sort.Float64s(sorted)
+	if p <= 0 {
+		return sorted[0]
+	}
+	index := int(math.Ceil(float64(n)*p/100)) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= n {
+		index = n - 1
+	}
+	return sorted[index]
+}
 
 func countMatching(pts []tsdb.Point, op string, v float64) int {
 	var n int

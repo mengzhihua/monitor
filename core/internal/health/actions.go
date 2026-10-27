@@ -21,8 +21,11 @@ type Action struct {
 	Alarms     []string          `yaml:"alarms,omitempty" json:"alarms,omitempty"`
 	Charts     []string          `yaml:"charts,omitempty" json:"charts,omitempty"`
 	Tags       map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
-	Steps      []ActionStep      `yaml:"steps" json:"steps"`
-	Recovery   *ActionStep       `yaml:"recovery,omitempty" json:"recovery,omitempty"`
+	// Ack limits the action to acknowledged (yes) or unacknowledged (no) problems.
+	// Empty matches either state and does not run when acknowledgement is set.
+	Ack      string       `yaml:"ack,omitempty" json:"ack,omitempty"`
+	Steps    []ActionStep `yaml:"steps" json:"steps"`
+	Recovery *ActionStep  `yaml:"recovery,omitempty" json:"recovery,omitempty"`
 }
 
 // ActionStep notifies a role and optionally runs one whitelisted command once.
@@ -38,9 +41,19 @@ type compiledAction struct {
 	alarms     []string
 	charts     []string
 	tags       map[string]string
+	ack        ackMatch
 	steps      []compiledStep
 	recovery   *compiledStep
 }
+
+// ackMatch is how an action treats problem acknowledgement.
+type ackMatch int
+
+const (
+	ackAny ackMatch = iota
+	ackYes
+	ackNo
+)
 
 type compiledStep struct {
 	delay   time.Duration
@@ -64,7 +77,11 @@ func compileActions(actions []Action) ([]compiledAction, error) {
 		if err != nil {
 			return nil, fmt.Errorf("action %s: %w", name, err)
 		}
-		compiled := compiledAction{name: name, alarms: raw.Alarms, charts: raw.Charts, tags: tags}
+		ack, err := parseAckMatch(raw.Ack)
+		if err != nil {
+			return nil, fmt.Errorf("action %s: %w", name, err)
+		}
+		compiled := compiledAction{name: name, alarms: raw.Alarms, charts: raw.Charts, tags: tags, ack: ack}
 		if len(raw.Severities) > 0 {
 			compiled.severities = map[Status]bool{}
 			for _, s := range raw.Severities {
@@ -128,6 +145,30 @@ func parseActionDelay(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("delay %q", raw)
 	}
 	return d, nil
+}
+
+func parseAckMatch(raw string) (ackMatch, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return ackAny, nil
+	case "yes":
+		return ackYes, nil
+	case "no":
+		return ackNo, nil
+	default:
+		return 0, fmt.Errorf("ack %q must be yes or no", raw)
+	}
+}
+
+func (a compiledAction) ackAllows(acknowledged bool) bool {
+	switch a.ack {
+	case ackYes:
+		return acknowledged
+	case ackNo:
+		return !acknowledged
+	default:
+		return true
+	}
 }
 
 func parseActionStatus(raw string) (Status, error) {
@@ -241,8 +282,9 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 			break
 		}
 	}
+	acked := alarm != nil && alarm.Acknowledged
 	for _, action := range e.actions {
-		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) {
+		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) || !action.ackAllows(acked) {
 			continue
 		}
 		if entry.Status == StatusClear {
@@ -275,6 +317,42 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 	}
 }
 
+// dispatchAckActions runs actions that require acknowledgement. Other actions
+// stay on the normal notification path, so acknowledging a problem does not
+// page them again.
+func (e *Engine) dispatchAckActions(entry LogEntry) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed || len(e.actions) == 0 {
+		return
+	}
+	if e.suppressionReasonLocked(entry.Chart, entry.Name) != "" {
+		return
+	}
+	var alarm *Alarm
+	for _, a := range e.alarms {
+		if a.Name == entry.Name && a.Chart == entry.Chart {
+			alarm = a
+			break
+		}
+	}
+	if alarm == nil || !alarm.Acknowledged {
+		return
+	}
+	for _, action := range e.actions {
+		if action.ack != ackYes || !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) {
+			continue
+		}
+		step := action.steps[0]
+		if step.role != "" && step.role != "silent" {
+			entry.Recipient = step.role
+			e.enqueueNotifyLocked(entry)
+		}
+		e.fireCommandLocked(alarm, &entry, step.command, 1)
+		return
+	}
+}
+
 func (e *Engine) fireCommandLocked(alarm *Alarm, entry *LogEntry, command string, idx int) {
 	if command == "" || e.opt.RunCommand == nil || alarm == nil || alarm.actionFired == idx {
 		return
@@ -302,8 +380,9 @@ func (e *Engine) noteInhibitedActionLocked(entry *LogEntry, at int64, reason str
 	if alarm == nil {
 		return
 	}
+	acked := alarm.Acknowledged
 	for _, action := range e.actions {
-		if !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) {
+		if !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) || !action.ackAllows(acked) {
 			continue
 		}
 		since := entry.When
