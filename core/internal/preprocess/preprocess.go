@@ -2,7 +2,7 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// change (delta), and Prometheus text to JSON. A step can set on_fail to
+// change (delta), Prometheus text to JSON, and XML to JSON. A step can set on_fail to
 // discard, value, or error.
 // JavaScript runs operator config in a time-limited interpreter that has no
 // host, network, or filesystem API.
@@ -141,6 +141,12 @@ func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
 			have = true
 		case "prometheus_to_json":
 			text, err = applyPromJSON(st, text)
+			if err != nil {
+				return failStep(st, prev, err)
+			}
+			have = false
+		case "xml_to_json":
+			text, err = applyXMLToJSON(text)
 			if err != nil {
 				return failStep(st, prev, err)
 			}
