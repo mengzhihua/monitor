@@ -355,6 +355,61 @@ traefik_entrypoint_open_connections{method="GET"} 3
 	}
 }
 
+func TestTraefikFailureMarksUnsupported(t *testing.T) {
+	body := "traefik_entrypoint_open_connections{method=\"GET\"} 3\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not metrics"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	tr := &traefikCollector{cfg: traefikConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := tr.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := tr.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	open := mustChart(t, reg, "traefik.entrypoint_open_connections")
+	reqs := mustChart(t, reg, "traefik.entrypoint_requests")
+	if _, vals := open.LastValues(); vals["open"] != 3 || open.Unsupported != "" {
+		t.Fatalf("open %+v %q", vals, open.Unsupported)
+	}
+	mode = "down"
+	if err := tr.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if open.Unsupported == "" || reqs.Unsupported == "" || open.LastCollectionTime() != now.Unix() {
+		t.Fatalf("open %q at %d requests %q", open.Unsupported, open.LastCollectionTime(), reqs.Unsupported)
+	}
+	mode = "bad"
+	if err := tr.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if open.Unsupported == "" {
+		t.Fatal("non-traefik body stayed supported")
+	}
+	mode = "ok"
+	if err := tr.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if open.Unsupported != "" || reqs.Unsupported != "" {
+		t.Fatalf("stuck open %q requests %q", open.Unsupported, reqs.Unsupported)
+	}
+	if _, vals := open.LastValues(); vals["open"] != 3 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestParseBindJSON(t *testing.T) {
 	raw := `{"opcodes":{"QUERY":20,"UPDATE":1},"nsstats":{"QrySuccess":15,"QryNXDOMAIN":3,"QrySERVFAIL":1,"QryNxrrset":1,"QryRecursion":8},"qtypes":{"A":10,"AAAA":5,"TXT":2}}`
 	st, err := parseBindJSON([]byte(raw))
