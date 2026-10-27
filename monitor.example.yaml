@@ -111,7 +111,7 @@ collectors:
       listen: 127.0.0.1:8125
     httpcheck:           # synthetic HTTP checks
       timeout: 5s
-      jobs: []           # e.g. [{ name: local, url: http://127.0.0.1:19999/healthz }]
+      jobs: []           # e.g. [{ name: local, url: http://127.0.0.1:19999/healthz, status_codes: ["200-299"], follow_redirects: true, contains: ok }]
     portcheck:
       timeout: 2s
       jobs: []           # e.g. [{ name: ssh, host: 127.0.0.1, port: 22 }]
@@ -884,6 +884,7 @@ export:
 #         - { name: ok_requests, url: http://127.0.0.1:8080/metrics, preprocess: [{ type: prometheus_to_json, pattern: 'http_requests_total{code="200"}' }, { type: jsonpath, path: "$[0].value" }] }
 #         - { name: host_status, url: http://127.0.0.1:8080/host.xml, preprocess: [{ type: xml_to_json }, { type: jsonpath, path: "$.host.status" }] }
 #         - { name: cpu, url: http://127.0.0.1:8080/rows.csv, preprocess: [{ type: csv_to_json, header: true }, { type: jsonpath, path: "$[0].value" }] }
+#         - { name: code, url: http://127.0.0.1:8080/health, retrieve: status, status_codes: ["200-299"], follow_redirects: false }
 #     webscenario:
 #       jobs:
 #         - name: login
