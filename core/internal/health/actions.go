@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -15,10 +16,11 @@ const (
 // Steps run while the alarm stays raised; Delay is measured from the last
 // status change. Recovery replaces the notify role when the alarm clears.
 type Action struct {
-	Name       string   `yaml:"name" json:"name"`
-	Severities []string `yaml:"severities,omitempty" json:"severities,omitempty"`
-	Alarms     []string `yaml:"alarms,omitempty" json:"alarms,omitempty"`
-	Charts     []string `yaml:"charts,omitempty" json:"charts,omitempty"`
+	Name       string            `yaml:"name" json:"name"`
+	Severities []string          `yaml:"severities,omitempty" json:"severities,omitempty"`
+	Alarms     []string          `yaml:"alarms,omitempty" json:"alarms,omitempty"`
+	Charts     []string          `yaml:"charts,omitempty" json:"charts,omitempty"`
+	Tags       map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// Ack limits the action to acknowledged (yes) or unacknowledged (no) problems.
 	// Empty matches either state and does not run when acknowledgement is set.
 	Ack      string       `yaml:"ack,omitempty" json:"ack,omitempty"`
@@ -38,6 +40,7 @@ type compiledAction struct {
 	severities map[Status]bool
 	alarms     []string
 	charts     []string
+	tags       map[string]string
 	ack        ackMatch
 	steps      []compiledStep
 	recovery   *compiledStep
@@ -70,11 +73,15 @@ func compileActions(actions []Action) ([]compiledAction, error) {
 			return nil, fmt.Errorf("action name %q", raw.Name)
 		}
 		seen[name] = true
+		tags, err := cleanTags(raw.Tags)
+		if err != nil {
+			return nil, fmt.Errorf("action %s: %w", name, err)
+		}
 		ack, err := parseAckMatch(raw.Ack)
 		if err != nil {
 			return nil, fmt.Errorf("action %s: %w", name, err)
 		}
-		compiled := compiledAction{name: name, alarms: raw.Alarms, charts: raw.Charts, ack: ack}
+		compiled := compiledAction{name: name, alarms: raw.Alarms, charts: raw.Charts, tags: tags, ack: ack}
 		if len(raw.Severities) > 0 {
 			compiled.severities = map[Status]bool{}
 			for _, s := range raw.Severities {
@@ -177,7 +184,7 @@ func parseActionStatus(raw string) (Status, error) {
 	}
 }
 
-func (a compiledAction) matches(name, chart string, status Status) bool {
+func (a compiledAction) matches(name, chart string, status Status, tags map[string]string) bool {
 	if status == StatusClear {
 		if a.recovery == nil {
 			return false
@@ -185,10 +192,56 @@ func (a compiledAction) matches(name, chart string, status Status) bool {
 	} else if len(a.severities) > 0 && !a.severities[status] {
 		return false
 	}
-	if !matchGlob(a.alarms, name) || !matchGlob(a.charts, chart) {
+	if !matchGlob(a.alarms, name) || !matchGlob(a.charts, chart) || !matchTags(a.tags, tags) {
 		return false
 	}
 	return true
+}
+
+func cleanTags(tags map[string]string) (map[string]string, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	if len(tags) > 8 {
+		return nil, fmt.Errorf("at most 8 tags")
+	}
+	out := make(map[string]string, len(tags))
+	for key, value := range tags {
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if key == "" || len(key) > 64 || value == "" || len(value) > 128 || strings.IndexFunc(key, unicode.IsControl) >= 0 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			return nil, fmt.Errorf("tag %q", key)
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+func cloneTags(tags map[string]string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(tags))
+	for key, value := range tags {
+		out[key] = value
+	}
+	return out
+}
+
+func matchTags(need, have map[string]string) bool {
+	for key, pattern := range need {
+		value, ok := have[key]
+		if !ok || !matchGlob([]string{pattern}, value) {
+			return false
+		}
+	}
+	return true
+}
+
+func alarmTags(alarm *Alarm) map[string]string {
+	if alarm == nil {
+		return nil
+	}
+	return alarm.Tags
 }
 
 func matchGlob(pats []string, value string) bool {
@@ -231,7 +284,7 @@ func (e *Engine) applyActionLocked(entry *LogEntry, at int64) {
 	}
 	acked := alarm != nil && alarm.Acknowledged
 	for _, action := range e.actions {
-		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status) || !action.ackAllows(acked) {
+		if entry == nil || !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) || !action.ackAllows(acked) {
 			continue
 		}
 		if entry.Status == StatusClear {
@@ -287,7 +340,7 @@ func (e *Engine) dispatchAckActions(entry LogEntry) {
 		return
 	}
 	for _, action := range e.actions {
-		if action.ack != ackYes || !action.matches(entry.Name, entry.Chart, entry.Status) {
+		if action.ack != ackYes || !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) {
 			continue
 		}
 		step := action.steps[0]
@@ -329,7 +382,7 @@ func (e *Engine) noteInhibitedActionLocked(entry *LogEntry, at int64, reason str
 	}
 	acked := alarm.Acknowledged
 	for _, action := range e.actions {
-		if !action.matches(entry.Name, entry.Chart, entry.Status) || !action.ackAllows(acked) {
+		if !action.matches(entry.Name, entry.Chart, entry.Status, alarmTags(alarm)) || !action.ackAllows(acked) {
 			continue
 		}
 		since := entry.When

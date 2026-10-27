@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
 func TestActionEscalatesAndRunsCommandOnce(t *testing.T) {
@@ -49,6 +51,47 @@ func TestActionEscalatesAndRunsCommandOnce(t *testing.T) {
 	}
 	if cmd := <-cmds; cmd.Name != "clear" || !cmd.Recovery || cmd.EpisodeStatus != StatusCritical || cmd.EpisodeSince != 100 {
 		t.Fatalf("recovery cmd %+v", cmd)
+	}
+}
+
+func TestTriggerTagsSelectActions(t *testing.T) {
+	rule, err := Compile(RuleSpec{
+		Name: "disk_full", On: "disk.space", Calc: "$used", Warn: "$this > 1", Every: "1s",
+		Tags: map[string]string{"scope": "storage", "class": "disk*"},
+	}, "test")
+	if err != nil || rule.Spec.Tags["scope"] != "storage" {
+		t.Fatalf("compile %+v %v", rule, err)
+	}
+	if _, err := Compile(RuleSpec{Name: "bad", On: "disk.space", Calc: "$used", Warn: "$this > 1", Tags: map[string]string{"": "x"}}, "test"); err == nil {
+		t.Fatal("accepted an empty tag key")
+	}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	reg.AddChart(&registry.Chart{ID: "disk.space", Context: "disk.space", Dimensions: []*registry.Dimension{{ID: "used"}}})
+	e := diagnosticsEngine(t, Options{
+		Rules:     []*Rule{rule},
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Roles:     map[string][]string{"pager": {"slack"}},
+		Actions: []Action{{
+			Name: "storage", Tags: map[string]string{"scope": "storage", "class": "disk*"},
+			Steps: []ActionStep{{Role: "pager"}},
+		}},
+	})
+	e.reg = reg
+	e.bind()
+	alarm := e.alarms["disk_full|disk.space"]
+	if alarm == nil || alarm.Tags["scope"] != "storage" {
+		t.Fatalf("bound tags %+v", alarm)
+	}
+	alarm.Status = StatusCritical
+	alarm.LastStatusChange = 1
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "disk.space", Status: StatusCritical, When: 1, Recipient: "sysadmin"}, 1)
+	if got := <-e.notifyCh; got.Recipient != "pager" {
+		t.Fatalf("tagged action %s", got.Recipient)
+	}
+	alarm.Tags = map[string]string{"scope": "network"}
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "disk.space", Status: StatusCritical, When: 2, Recipient: "sysadmin"}, 2)
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("untagged alarm was paged: %s", got.Recipient)
 	}
 }
 

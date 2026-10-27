@@ -30,6 +30,7 @@ type snmpConfig struct {
 	Version   string        `yaml:"version"`
 	Command   string        `yaml:"command"`
 	Timeout   time.Duration `yaml:"timeout"`
+	Retries   int           `yaml:"retries"`
 	User      string        `yaml:"user"`
 	AuthProto string        `yaml:"auth_protocol"`
 	AuthPass  string        `yaml:"auth_passphrase"`
@@ -56,7 +57,7 @@ type snmpCollector struct {
 	cfg       snmpConfig
 	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen      map[string]bool
-	prev      map[string]float64
+	prev      map[string]preprocess.Memory
 	targets   []*snmpCollector
 	counter64 map[string]bool
 }
@@ -85,6 +86,9 @@ func (s *snmpCollector) Configure(decode func(v any) error) error {
 			child := &snmpCollector{cfg: *t}
 			if child.cfg.Timeout == 0 {
 				child.cfg.Timeout = s.cfg.Timeout
+			}
+			if child.cfg.Retries == 0 {
+				child.cfg.Retries = s.cfg.Retries
 			}
 			if err := child.Configure(func(any) error { return nil }); err != nil {
 				return err
@@ -116,6 +120,9 @@ func (s *snmpCollector) Configure(decode func(v any) error) error {
 	}
 	if s.cfg.Name != "" && s.cfg.Timeout > time.Minute {
 		return fmt.Errorf("snmp: target timeout must not exceed 1m")
+	}
+	if s.cfg.Retries < 0 || s.cfg.Retries > 5 {
+		return fmt.Errorf("snmp: retries must be from 0 to 5")
 	}
 	if s.cfg.Profile == "" {
 		s.cfg.Profile = "network"
@@ -174,7 +181,7 @@ func (s *snmpCollector) chartID(id string) string {
 
 func (s *snmpCollector) initCharts(reg *registry.Registry) {
 	s.seen = map[string]bool{}
-	s.prev = map[string]float64{}
+	s.prev = map[string]preprocess.Memory{}
 	s.counter64 = map[string]bool{}
 	c := &registry.Chart{ID: s.chartID("snmp.device_sysuptime"), Context: "snmp.device_sysuptime", Title: "SNMP sysUpTime", Units: "seconds", Priority: 56100,
 		Dimensions: []*registry.Dimension{{ID: "uptime"}}}
@@ -318,24 +325,10 @@ func (s *snmpCollector) collectItems(ctx context.Context, reg *registry.Registry
 			continue
 		}
 		raw := firstSNMPString(b)
-		prev := s.prev[item.Name]
-		if _, ok := s.prev[item.Name]; !ok {
-			prev = math.NaN()
-		}
 		id := s.chartID("snmp.item." + sanitizeID(item.Name))
-		value, next, err := preprocess.Apply(item.Steps, raw, prev)
-		if errors.Is(err, preprocess.ErrNotSupported) {
-			if ch, ok := reg.Chart(id); ok {
-				ch.SetUnsupported(err.Error())
-			}
+		value, ok := preprocessValue(s.prev, item.Name, raw, item.Steps, now, reg, id)
+		if !ok {
 			continue
-		}
-		s.prev[item.Name] = next
-		if err != nil {
-			continue
-		}
-		if ch, ok := reg.Chart(id); ok {
-			ch.ClearUnsupported()
 		}
 		if ctx.Err() != nil {
 			return
@@ -648,6 +641,7 @@ func (s *snmpCollector) snmpArgs(oid string) ([]string, error) {
 			level = "authNoPriv"
 		}
 		args := []string{"-v", "3", "-l", level, "-u", s.cfg.User}
+		args = appendSnmpWalkOptions(args, s.cfg.Retries, s.cfg.Timeout)
 		if s.cfg.AuthPass != "" {
 			proto := s.cfg.AuthProto
 			if proto == "" {
@@ -670,7 +664,32 @@ func (s *snmpCollector) snmpArgs(oid string) ([]string, error) {
 		}
 		return append(args, "-On", "-Oe", s.cfg.Address, oid), nil
 	}
-	return []string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, oid}, nil
+	return appendSnmpWalkOptions([]string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, oid}, s.cfg.Retries, s.cfg.Timeout), nil
+}
+
+func snmpTimeoutSeconds(d time.Duration) int {
+	if d <= 0 {
+		d = 3 * time.Second
+	}
+	sec := int((d + time.Second - 1) / time.Second)
+	if sec < 1 {
+		return 1
+	}
+	if sec > 60 {
+		return 60
+	}
+	return sec
+}
+
+// appendSnmpWalkOptions adds net-snmp -t (seconds) and optional -r after the -v flag group.
+func appendSnmpWalkOptions(args []string, retries int, timeout time.Duration) []string {
+	out := make([]string, 0, len(args)+6)
+	out = append(out, args[0], args[1], "-t", strconv.Itoa(snmpTimeoutSeconds(timeout)))
+	if retries > 0 {
+		out = append(out, "-r", strconv.Itoa(retries))
+	}
+	out = append(out, args[2:]...)
+	return out
 }
 
 func validOID(s string) bool {
