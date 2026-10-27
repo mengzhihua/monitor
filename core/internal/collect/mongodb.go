@@ -9,6 +9,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -84,8 +85,10 @@ func (m *mongodbCollector) Init(reg *registry.Registry) error {
 func (m *mongodbCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	s, err := m.serverStatus(ctx)
 	if err != nil {
-		return err
+		m.markMongo(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	m.markMongo(reg, nil)
 	_ = reg.Collect("mongodb.operations_by_type_rate", now, map[string]float64{
 		"insert": s["opcounters.insert"], "query": s["opcounters.query"], "update": s["opcounters.update"],
 		"delete": s["opcounters.delete"], "getmore": s["opcounters.getmore"], "command": s["opcounters.command"]})
@@ -100,6 +103,14 @@ func (m *mongodbCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		"in": s["network.bytesIn"], "out": s["network.bytesOut"]})
 	_ = reg.Collect("mongodb.uptime", now, map[string]float64{"uptime": s["uptime"]})
 	return nil
+}
+
+func (m *mongodbCollector) markMongo(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "mongodb" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (m *mongodbCollector) serverStatus(ctx context.Context) (map[string]float64, error) {
@@ -122,7 +133,7 @@ func (m *mongodbCollector) serverStatus(ctx context.Context) (map[string]float64
 	if err != nil {
 		return nil, err
 	}
-	out := bsonNumbers(doc, "")
+	out := bsonNumbers(bsonDecode(doc), "")
 	if ok := out["ok"]; ok == 0 && bsonLookup(doc, "ok") == nil {
 		return nil, fmt.Errorf("mongodb: empty serverStatus")
 	}
