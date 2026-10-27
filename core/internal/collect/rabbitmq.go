@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -102,8 +103,10 @@ type rmqOverview struct {
 func (r *rabbitmqCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	o, err := r.overview(ctx)
 	if err != nil {
-		return err
+		r.markRabbitMQ(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	r.markRabbitMQ(reg, nil)
 	_ = reg.Collect("rabbitmq.messages", now, map[string]float64{
 		"ready": o.QueueTotals.MessagesReady, "unacked": o.QueueTotals.MessagesUnacknowledged, "total": o.QueueTotals.Messages,
 	})
@@ -119,6 +122,14 @@ func (r *rabbitmqCollector) Collect(ctx context.Context, reg *registry.Registry,
 		"queues": o.ObjectTotals.Queues, "consumers": o.ObjectTotals.Consumers, "exchanges": o.ObjectTotals.Exchanges,
 	})
 	return nil
+}
+
+func (r *rabbitmqCollector) markRabbitMQ(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "rabbitmq" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (r *rabbitmqCollector) overview(ctx context.Context) (rmqOverview, error) {

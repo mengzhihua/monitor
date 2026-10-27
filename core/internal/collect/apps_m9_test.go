@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,74 @@ func TestZooKeeperMNTR(t *testing.T) {
 	}
 }
 
+func TestZooKeeperFailureMarksUnsupported(t *testing.T) {
+	mntr := "zk_avg_latency\t1\nzk_server_state\tleader\nzk_uptime\t99\n"
+	phase := "ok"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 16)
+				_, _ = c.Read(buf)
+				body := mntr
+				if phase == "bad" {
+					body = "mntr is not in the whitelist\n"
+				}
+				_, _ = io.WriteString(c, body)
+			}(c)
+		}
+	}()
+	z := &zookeeperCollector{cfg: zookeeperConfig{Address: ln.Addr().String(), Timeout: 200 * time.Millisecond}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := z.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := z.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	uptime := mustChart(t, reg, "zookeeper.uptime")
+	state := mustChart(t, reg, "zookeeper.server_state")
+	if _, vals := uptime.LastValues(); vals["uptime"] != 99 || uptime.Unsupported != "" {
+		t.Fatalf("uptime %+v %q", vals, uptime.Unsupported)
+	}
+	saved := z.cfg.Address
+	z.cfg.Address = "127.0.0.1:1"
+	if err := z.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || state.Unsupported == "" || uptime.LastCollectionTime() != now.Unix() {
+		t.Fatalf("uptime %q at %d state %q", uptime.Unsupported, uptime.LastCollectionTime(), state.Unsupported)
+	}
+	z.cfg.Address = saved
+	phase = "bad"
+	if err := z.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || !strings.Contains(uptime.Unsupported, "mntr disabled") {
+		t.Fatalf("whitelist %q", uptime.Unsupported)
+	}
+	phase = "ok"
+	if err := z.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported != "" || state.Unsupported != "" {
+		t.Fatalf("stuck uptime %q state %q", uptime.Unsupported, state.Unsupported)
+	}
+	if _, vals := uptime.LastValues(); vals["uptime"] != 99 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestZooKeeperAutoDisable(t *testing.T) {
 	z := &zookeeperCollector{cfg: zookeeperConfig{Address: "127.0.0.1:1", Timeout: 50 * time.Millisecond}}
 	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
@@ -96,6 +165,60 @@ func TestNATSVarz(t *testing.T) {
 	}
 	if err := n.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNATSFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "down" || r.URL.Path != "/varz" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"connections": 4, "cpu": 2.5})
+	}))
+	defer srv.Close()
+	n := &natsCollector{cfg: natsConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := n.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := n.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	conns := mustChart(t, reg, "nats.server_connections")
+	cpu := mustChart(t, reg, "nats.server_cpu_usage")
+	if _, vals := conns.LastValues(); vals["active"] != 4 || conns.Unsupported != "" {
+		t.Fatalf("connections %+v %q", vals, conns.Unsupported)
+	}
+	mode = "down"
+	if err := n.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conns.Unsupported == "" || cpu.Unsupported == "" || conns.LastCollectionTime() != now.Unix() {
+		t.Fatalf("connections %q at %d cpu %q", conns.Unsupported, conns.LastCollectionTime(), cpu.Unsupported)
+	}
+	mode = "bad"
+	if err := n.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conns.Unsupported == "" {
+		t.Fatal("bad JSON stayed supported")
+	}
+	mode = "ok"
+	if err := n.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if conns.Unsupported != "" || cpu.Unsupported != "" {
+		t.Fatalf("stuck connections %q cpu %q", conns.Unsupported, cpu.Unsupported)
+	}
+	if _, vals := conns.LastValues(); vals["active"] != 4 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 
@@ -355,6 +478,61 @@ traefik_entrypoint_open_connections{method="GET"} 3
 	}
 }
 
+func TestTraefikFailureMarksUnsupported(t *testing.T) {
+	body := "traefik_entrypoint_open_connections{method=\"GET\"} 3\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not metrics"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	tr := &traefikCollector{cfg: traefikConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := tr.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := tr.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	open := mustChart(t, reg, "traefik.entrypoint_open_connections")
+	reqs := mustChart(t, reg, "traefik.entrypoint_requests")
+	if _, vals := open.LastValues(); vals["open"] != 3 || open.Unsupported != "" {
+		t.Fatalf("open %+v %q", vals, open.Unsupported)
+	}
+	mode = "down"
+	if err := tr.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if open.Unsupported == "" || reqs.Unsupported == "" || open.LastCollectionTime() != now.Unix() {
+		t.Fatalf("open %q at %d requests %q", open.Unsupported, open.LastCollectionTime(), reqs.Unsupported)
+	}
+	mode = "bad"
+	if err := tr.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if open.Unsupported == "" {
+		t.Fatal("non-traefik body stayed supported")
+	}
+	mode = "ok"
+	if err := tr.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if open.Unsupported != "" || reqs.Unsupported != "" {
+		t.Fatalf("stuck open %q requests %q", open.Unsupported, reqs.Unsupported)
+	}
+	if _, vals := open.LastValues(); vals["open"] != 3 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestParseBindJSON(t *testing.T) {
 	raw := `{"opcodes":{"QUERY":20,"UPDATE":1},"nsstats":{"QrySuccess":15,"QryNXDOMAIN":3,"QrySERVFAIL":1,"QryNxrrset":1,"QryRecursion":8},"qtypes":{"A":10,"AAAA":5,"TXT":2}}`
 	st, err := parseBindJSON([]byte(raw))
@@ -375,6 +553,61 @@ func TestParseBindJSON(t *testing.T) {
 	}
 }
 
+func TestBindFailureMarksUnsupported(t *testing.T) {
+	raw := `{"opcodes":{"QUERY":20,"UPDATE":1},"nsstats":{"QrySuccess":15},"qtypes":{"A":10}}`
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		_, _ = w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+	b := &bindCollector{cfg: bindConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := b.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := b.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	opcodes := mustChart(t, reg, "bind.in_opcodes")
+	qtypes := mustChart(t, reg, "bind.in_qtypes")
+	if opcodes.Unsupported != "" || opcodes.LastCollectionTime() != now.Unix() {
+		t.Fatalf("opcodes %q at %d", opcodes.Unsupported, opcodes.LastCollectionTime())
+	}
+	mode = "down"
+	if err := b.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if opcodes.Unsupported == "" || qtypes.Unsupported == "" || opcodes.LastCollectionTime() != now.Unix() {
+		t.Fatalf("opcodes %q at %d qtypes %q", opcodes.Unsupported, opcodes.LastCollectionTime(), qtypes.Unsupported)
+	}
+	mode = "bad"
+	if err := b.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if opcodes.Unsupported == "" {
+		t.Fatal("bad JSON stayed supported")
+	}
+	mode = "ok"
+	if err := b.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if opcodes.Unsupported != "" || qtypes.Unsupported != "" {
+		t.Fatalf("stuck opcodes %q qtypes %q", opcodes.Unsupported, qtypes.Unsupported)
+	}
+	if opcodes.LastCollectionTime() != now.Add(3*time.Second).Unix() {
+		t.Fatalf("recovered at %d", opcodes.LastCollectionTime())
+	}
+}
+
 func TestParseUnboundStats(t *testing.T) {
 	s := "total.num.queries=100\ntotal.num.cachehits=80\ntotal.num.cachemiss=20\ntotal.num.prefetch=2\ntotal.num.recursivereplies=20\ntotal.requestlist.avg=0.5\ntotal.requestlist.max=3\n"
 	m := parseUnboundStats(s)
@@ -391,6 +624,61 @@ func TestParseUnboundStats(t *testing.T) {
 	}
 	if err := u.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUnboundFailureMarksUnsupported(t *testing.T) {
+	stats := "total.num.queries=100\ntotal.num.cachehits=80\ntotal.requestlist.avg=0.5\ntotal.requestlist.max=3\n"
+	phase := "ok"
+	u := &unboundCollector{
+		cfg: unboundConfig{Command: "unbound-control", Timeout: time.Second},
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			switch phase {
+			case "fail":
+				return nil, errors.New("unbound-control: connection refused")
+			case "empty":
+				return []byte("other=1\n"), nil
+			default:
+				return []byte(stats), nil
+			}
+		},
+	}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := u.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := u.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	usage := mustChart(t, reg, "unbound.request_list_usage")
+	queries := mustChart(t, reg, "unbound.queries")
+	if _, vals := usage.LastValues(); vals["avg"] != 0.5 || usage.Unsupported != "" {
+		t.Fatalf("usage %+v %q", vals, usage.Unsupported)
+	}
+	phase = "fail"
+	if err := u.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Unsupported == "" || queries.Unsupported == "" || usage.LastCollectionTime() != now.Unix() {
+		t.Fatalf("usage %q at %d queries %q", usage.Unsupported, usage.LastCollectionTime(), queries.Unsupported)
+	}
+	phase = "empty"
+	if err := u.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Unsupported == "" {
+		t.Fatal("missing queries stayed supported")
+	}
+	phase = "ok"
+	if err := u.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if usage.Unsupported != "" || queries.Unsupported != "" {
+		t.Fatalf("stuck usage %q queries %q", usage.Unsupported, queries.Unsupported)
+	}
+	if _, vals := usage.LastValues(); vals["avg"] != 0.5 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 
@@ -419,6 +707,61 @@ coredns_panics_total 0
 	}
 }
 
+func TestCoreDNSFailureMarksUnsupported(t *testing.T) {
+	body := "coredns_panics_total 1\ncoredns_dns_requests_total{proto=\"udp\",type=\"A\"} 10\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not metrics"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := &corednsCollector{cfg: corednsConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := c.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	panics := mustChart(t, reg, "coredns.dns_panic_count_total")
+	reqs := mustChart(t, reg, "coredns.dns_request_count_total")
+	if panics.Unsupported != "" || panics.LastCollectionTime() != now.Unix() {
+		t.Fatalf("panics %q at %d", panics.Unsupported, panics.LastCollectionTime())
+	}
+	mode = "down"
+	if err := c.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if panics.Unsupported == "" || reqs.Unsupported == "" || panics.LastCollectionTime() != now.Unix() {
+		t.Fatalf("panics %q at %d requests %q", panics.Unsupported, panics.LastCollectionTime(), reqs.Unsupported)
+	}
+	mode = "bad"
+	if err := c.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if panics.Unsupported == "" {
+		t.Fatal("non-coredns body stayed supported")
+	}
+	mode = "ok"
+	if err := c.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if panics.Unsupported != "" || reqs.Unsupported != "" {
+		t.Fatalf("stuck panics %q requests %q", panics.Unsupported, reqs.Unsupported)
+	}
+	if panics.LastCollectionTime() != now.Add(3*time.Second).Unix() {
+		t.Fatalf("recovered at %d", panics.LastCollectionTime())
+	}
+}
+
 func TestParseHDFSJMX(t *testing.T) {
 	raw := `{"beans":[{"name":"Hadoop:service=NameNode,name=FSNamesystemState","CapacityUsed":100,"CapacityRemaining":900,"FilesTotal":12,"BlocksTotal":30,"MissingBlocks":1,"CorruptBlocks":0,"UnderReplicatedBlocks":2,"NumLiveDataNodes":3,"NumDeadDataNodes":1,"TotalLoad":4}]}`
 	st, err := parseHDFSJMX([]byte(raw))
@@ -436,6 +779,61 @@ func TestParseHDFSJMX(t *testing.T) {
 	}
 	if err := h.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHDFSFailureMarksUnsupported(t *testing.T) {
+	raw := `{"beans":[{"name":"Hadoop:service=NameNode,name=FSNamesystemState","CapacityUsed":100,"CapacityRemaining":900,"FilesTotal":12,"BlocksTotal":30,"NumLiveDataNodes":3,"TotalLoad":4}]}`
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		_, _ = w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+	h := &hdfsCollector{cfg: hdfsConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := h.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := h.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	files := mustChart(t, reg, "hdfs.files_total")
+	nodes := mustChart(t, reg, "hdfs.data_nodes")
+	if _, vals := files.LastValues(); vals["files"] != 12 || files.Unsupported != "" {
+		t.Fatalf("files %+v %q", vals, files.Unsupported)
+	}
+	mode = "down"
+	if err := h.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if files.Unsupported == "" || nodes.Unsupported == "" || files.LastCollectionTime() != now.Unix() {
+		t.Fatalf("files %q at %d nodes %q", files.Unsupported, files.LastCollectionTime(), nodes.Unsupported)
+	}
+	mode = "bad"
+	if err := h.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if files.Unsupported == "" {
+		t.Fatal("bad JSON stayed supported")
+	}
+	mode = "ok"
+	if err := h.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if files.Unsupported != "" || nodes.Unsupported != "" {
+		t.Fatalf("stuck files %q nodes %q", files.Unsupported, nodes.Unsupported)
+	}
+	if _, vals := files.LastValues(); vals["files"] != 12 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 

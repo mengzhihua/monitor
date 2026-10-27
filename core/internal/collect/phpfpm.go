@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -71,13 +72,23 @@ func (p *phpfpmCollector) Init(reg *registry.Registry) error {
 func (p *phpfpmCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	m, err := p.fetch(ctx)
 	if err != nil {
-		return err
+		p.markPHPFPM(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	p.markPHPFPM(reg, nil)
 	_ = reg.Collect("phpfpm.performance", now, map[string]float64{"active": m["active processes"], "idle": m["idle processes"]})
 	_ = reg.Collect("phpfpm.requests", now, map[string]float64{"requests": m["accepted conn"]})
 	_ = reg.Collect("phpfpm.queue", now, map[string]float64{"queue": m["listen queue"], "max": m["max listen queue"]})
 	_ = reg.Collect("phpfpm.slow", now, map[string]float64{"slow": m["slow requests"]})
 	return nil
+}
+
+func (p *phpfpmCollector) markPHPFPM(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "phpfpm" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (p *phpfpmCollector) fetch(ctx context.Context) (map[string]float64, error) {

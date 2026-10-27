@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -79,8 +80,10 @@ var lighttpdScore = []struct{ key, letter string }{
 func (l *lighttpdCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	st, err := l.fetch(ctx)
 	if err != nil {
-		return err
+		l.markLighttpd(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	l.markLighttpd(reg, nil)
 	_ = reg.Collect("lighttpd.requests", now, map[string]float64{"requests": st.num["Total Accesses"]})
 	_ = reg.Collect("lighttpd.net", now, map[string]float64{"sent": st.num["Total kBytes"] * 1024})
 	_ = reg.Collect("lighttpd.workers", now, map[string]float64{"busy": st.num["BusyServers"], "idle": st.num["IdleServers"]})
@@ -95,6 +98,14 @@ func (l *lighttpdCollector) Collect(ctx context.Context, reg *registry.Registry,
 		_ = reg.Collect("lighttpd.scoreboard", now, sb)
 	}
 	return nil
+}
+
+func (l *lighttpdCollector) markLighttpd(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "lighttpd" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 type lighttpdStatus struct {

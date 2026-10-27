@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -96,8 +97,10 @@ func (h *haproxyCollector) Init(reg *registry.Registry) error {
 func (h *haproxyCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	rows, err := h.fetch(ctx)
 	if err != nil {
-		return err
+		h.markHAProxy(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	h.markHAProxy(reg, nil)
 	var fcur, fmax, fbin, fbout, r1, r2, r3, r4, r5, roth float64
 	var bq, bact, bbck, bup, bdown float64
 	for _, r := range rows {
@@ -131,6 +134,14 @@ func (h *haproxyCollector) Collect(ctx context.Context, reg *registry.Registry, 
 	_ = reg.Collect("haproxy.backend_servers", now, map[string]float64{"active": bact, "backup": bbck})
 	_ = reg.Collect("haproxy.backend_status", now, map[string]float64{"up": bup, "down": bdown})
 	return nil
+}
+
+func (h *haproxyCollector) markHAProxy(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "haproxy" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 type haproxyRow map[string]string

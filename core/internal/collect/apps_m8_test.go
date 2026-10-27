@@ -82,6 +82,70 @@ func TestMongoCollector(t *testing.T) {
 	}
 }
 
+func TestMongoStatusFailureMarksUnsupported(t *testing.T) {
+	ln := serveOneMongo(t)
+	defer ln.Close()
+	m := &mongodbCollector{cfg: mongodbConfig{Address: ln.Addr().String(), Timeout: 300 * time.Millisecond, Database: "admin"}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := m.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	m.cfg.Address = "127.0.0.1:1"
+	if err := m.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	uptime := mustChart(t, reg, "mongodb.uptime")
+	conns := mustChart(t, reg, "mongodb.connections")
+	if uptime.Unsupported == "" || conns.Unsupported == "" || uptime.LastCollectionTime() != 0 {
+		t.Fatalf("uptime %q at %d connections %q", uptime.Unsupported, uptime.LastCollectionTime(), conns.Unsupported)
+	}
+	again := serveOneMongo(t)
+	defer again.Close()
+	m.cfg.Address = again.Addr().String()
+	if err := m.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported != "" || conns.Unsupported != "" {
+		t.Fatalf("stuck uptime %q connections %q", uptime.Unsupported, conns.Unsupported)
+	}
+	if _, vals := uptime.LastValues(); vals["uptime"] != 9 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
+func serveOneMongo(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		if _, err := mongoReadOPMSG(c); err != nil {
+			return
+		}
+		body := bsonDoc(
+			bsonDouble("ok", 1),
+			bsonInt32("uptime", 9),
+			bsonEmbed(0x03, "opcounters", bsonDoc(
+				bsonInt32("insert", 1), bsonInt32("query", 2), bsonInt32("update", 3),
+				bsonInt32("delete", 4), bsonInt32("getmore", 5), bsonInt32("command", 6))),
+			bsonEmbed(0x03, "connections", bsonDoc(bsonInt32("current", 8), bsonInt32("available", 100))),
+			bsonEmbed(0x03, "mem", bsonDoc(bsonInt32("resident", 50), bsonInt32("virtual", 200))),
+			bsonEmbed(0x03, "network", bsonDoc(bsonInt32("bytesIn", 10), bsonInt32("bytesOut", 20))),
+			bsonEmbed(0x03, "metrics", bsonDoc(bsonEmbed(0x03, "document", bsonDoc(
+				bsonInt32("inserted", 1), bsonInt32("deleted", 2), bsonInt32("returned", 3), bsonInt32("updated", 4))))),
+		)
+		_ = mongoWriteOPMSG(c, 2, body)
+	}()
+	return ln
+}
+
 func TestParseChrony(t *testing.T) {
 	tr := `Reference ID    : 1.2.3.4 (ntp)
 Stratum         : 3

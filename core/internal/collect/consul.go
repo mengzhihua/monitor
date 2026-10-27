@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -85,8 +86,10 @@ type consulMetrics struct {
 func (c *consulCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	checks, metrics, err := c.fetch(ctx)
 	if err != nil {
-		return err
+		c.markConsul(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	c.markConsul(reg, nil)
 	var pass, warn, crit float64
 	for _, ch := range checks {
 		switch strings.ToLower(ch.Status) {
@@ -109,6 +112,14 @@ func (c *consulCollector) Collect(ctx context.Context, reg *registry.Registry, n
 	_ = reg.Collect("consul.runtime_alloc", now, map[string]float64{"alloc": gauge["consul.runtime.alloc_bytes"]})
 	_ = reg.Collect("consul.serf_lan_members", now, map[string]float64{"members": gauge["consul.serf.lan.members"]})
 	return nil
+}
+
+func (c *consulCollector) markConsul(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "consul" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (c *consulCollector) fetch(ctx context.Context) ([]consulCheck, consulMetrics, error) {

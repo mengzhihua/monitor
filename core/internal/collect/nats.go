@@ -3,9 +3,11 @@ package collect
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -88,8 +90,10 @@ type natsVarz struct {
 func (n *natsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	v, err := n.varz(ctx)
 	if err != nil {
-		return err
+		n.markNATS(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	n.markNATS(reg, nil)
 	_ = reg.Collect("nats.server_traffic", now, map[string]float64{"received": v.InBytes, "sent": v.OutBytes})
 	_ = reg.Collect("nats.server_messages", now, map[string]float64{"received": v.InMsgs, "sent": v.OutMsgs})
 	_ = reg.Collect("nats.server_connections", now, map[string]float64{"active": v.Connections})
@@ -98,6 +102,14 @@ func (n *natsCollector) Collect(ctx context.Context, reg *registry.Registry, now
 	_ = reg.Collect("nats.server_cpu_usage", now, map[string]float64{"used": v.CPU})
 	_ = reg.Collect("nats.server_mem_usage", now, map[string]float64{"used": v.Mem})
 	return nil
+}
+
+func (n *natsCollector) markNATS(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "nats" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (n *natsCollector) varz(ctx context.Context) (natsVarz, error) {

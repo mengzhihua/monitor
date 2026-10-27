@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -80,8 +81,10 @@ func (z *zookeeperCollector) Init(reg *registry.Registry) error {
 func (z *zookeeperCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	m, err := z.mntr(ctx)
 	if err != nil {
-		return err
+		z.markZooKeeper(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	z.markZooKeeper(reg, nil)
 	_ = reg.Collect("zookeeper.requests", now, map[string]float64{"outstanding": firstFloat(m["zk_outstanding_requests"])})
 	_ = reg.Collect("zookeeper.requests_latency", now, map[string]float64{
 		"min": firstFloat(m["zk_min_latency"]), "avg": firstFloat(m["zk_avg_latency"]), "max": firstFloat(m["zk_max_latency"])})
@@ -96,6 +99,14 @@ func (z *zookeeperCollector) Collect(ctx context.Context, reg *registry.Registry
 	_ = reg.Collect("zookeeper.server_state", now, zkState(m["zk_server_state"]))
 	_ = reg.Collect("zookeeper.uptime", now, map[string]float64{"uptime": firstFloat(m["zk_uptime"])})
 	return nil
+}
+
+func (z *zookeeperCollector) markZooKeeper(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "zookeeper" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (z *zookeeperCollector) mntr(ctx context.Context) (map[string]string, error) {
