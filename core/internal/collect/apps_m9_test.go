@@ -274,6 +274,63 @@ func TestParseTomcatStatus(t *testing.T) {
 	}
 }
 
+func TestTomcatFailureMarksUnsupported(t *testing.T) {
+	xml := `<status><jvm><memory free="100" total="400" max="800"/></jvm>` +
+		`<connector name="http"><threadInfo maxThreads="200" currentThreadCount="10" currentThreadsBusy="2"/>` +
+		`<requestInfo requestCount="30" errorCount="1"/></connector></status>`
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("<html>no status</html>"))
+			return
+		}
+		_, _ = w.Write([]byte(xml))
+	}))
+	defer srv.Close()
+	tc := &tomcatCollector{cfg: tomcatConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := tc.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := tc.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	threads := mustChart(t, reg, "tomcat.connector_request_threads")
+	mem := mustChart(t, reg, "tomcat.jvm_memory_usage")
+	if _, vals := threads.LastValues(); vals["busy"] != 2 || threads.Unsupported != "" {
+		t.Fatalf("threads %+v %q", vals, threads.Unsupported)
+	}
+	mode = "down"
+	if err := tc.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if threads.Unsupported == "" || mem.Unsupported == "" || threads.LastCollectionTime() != now.Unix() {
+		t.Fatalf("threads %q at %d memory %q", threads.Unsupported, threads.LastCollectionTime(), mem.Unsupported)
+	}
+	mode = "bad"
+	if err := tc.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if threads.Unsupported == "" {
+		t.Fatal("bad XML stayed supported")
+	}
+	mode = "ok"
+	if err := tc.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if threads.Unsupported != "" || mem.Unsupported != "" {
+		t.Fatalf("stuck threads %q memory %q", threads.Unsupported, mem.Unsupported)
+	}
+	if _, vals := threads.LastValues(); vals["busy"] != 2 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestTraefikMetrics(t *testing.T) {
 	body := `
 # TYPE traefik_entrypoint_requests_total counter
