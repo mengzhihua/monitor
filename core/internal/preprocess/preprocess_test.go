@@ -92,6 +92,47 @@ func TestZabbixPreprocessSteps(t *testing.T) {
 	if err != nil || v != 5 || prev != 5 {
 		t.Fatalf("changed value %v %v %v", v, prev, err)
 	}
+	v, _, err = Apply([]Step{{Type: "valuemap", Map: map[string]string{"up": "1", "down": "0"}}}, " up ", math.NaN())
+	if err != nil || v != 1 {
+		t.Fatalf("valuemap %v %v", v, err)
+	}
+	start := time.Unix(1000, 0)
+	_, mem, err := ApplyAt([]Step{{Type: "change_per_second"}}, "10", Memory{Value: math.NaN()}, start)
+	if !errors.Is(err, ErrNoBaseline) || mem.Value != 10 {
+		t.Fatalf("rate baseline %v %v", mem, err)
+	}
+	v, mem, err = ApplyAt([]Step{{Type: "change_per_second"}}, "40", mem, start.Add(10*time.Second))
+	if err != nil || v != 3 || mem.Value != 40 {
+		t.Fatalf("rate %v mem %v err %v", v, mem, err)
+	}
+	steps := []Step{{Type: "discard_unchanged_heartbeat", Seconds: 10}}
+	v, _, emit, err := applyHeartbeatSteps(steps, "1", math.NaN(), 0, 1000)
+	if err != nil || v != 1 || emit != 1000 {
+		t.Fatalf("heartbeat first %v %v %v", v, emit, err)
+	}
+	if _, _, _, err = applyHeartbeatSteps(steps, "1", 1, 1000, 1005); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("heartbeat unchanged %v", err)
+	}
+	v, _, emit, err = applyHeartbeatSteps(steps, "1", 1, 1000, 1010)
+	if err != nil || v != 1 || emit != 1010 {
+		t.Fatalf("heartbeat due %v %v %v", v, emit, err)
+	}
+	if err := Validate([]Step{{Type: "throttle", Seconds: 0}}); err == nil {
+		t.Fatal("accepted zero throttle")
+	}
+	v, mem, err = ApplyAt([]Step{{Type: "throttle", Seconds: 10}}, "4", Memory{}, time.Unix(100, 0))
+	if err != nil || v != 4 || mem.LastKept != 100 {
+		t.Fatalf("throttle %v %v %v", v, mem, err)
+	}
+	if _, _, err = ApplyAt([]Step{{Type: "throttle", Seconds: 10}}, "9", mem, time.Unix(109, 0)); !errors.Is(err, ErrThrottled) {
+		t.Fatalf("throttle early %v", err)
+	}
+}
+
+func applyHeartbeatSteps(steps []Step, input string, prev float64, lastEmit, now int64) (float64, float64, int64, error) {
+	mem := Memory{Value: prev, LastEmit: lastEmit}
+	v, next, err := ApplyAt(steps, input, mem, time.Unix(now, 0))
+	return v, next.Value, next.LastEmit, err
 }
 
 func TestJavaScriptPreprocessIsBounded(t *testing.T) {

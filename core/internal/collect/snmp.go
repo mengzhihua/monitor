@@ -56,7 +56,7 @@ type snmpCollector struct {
 	cfg       snmpConfig
 	run       func(ctx context.Context, name string, args ...string) ([]byte, error)
 	seen      map[string]bool
-	prev      map[string]float64
+	prev      map[string]preprocess.Memory
 	targets   []*snmpCollector
 	counter64 map[string]bool
 }
@@ -174,7 +174,7 @@ func (s *snmpCollector) chartID(id string) string {
 
 func (s *snmpCollector) initCharts(reg *registry.Registry) {
 	s.seen = map[string]bool{}
-	s.prev = map[string]float64{}
+	s.prev = map[string]preprocess.Memory{}
 	s.counter64 = map[string]bool{}
 	c := &registry.Chart{ID: s.chartID("snmp.device_sysuptime"), Context: "snmp.device_sysuptime", Title: "SNMP sysUpTime", Units: "seconds", Priority: 56100,
 		Dimensions: []*registry.Dimension{{ID: "uptime"}}}
@@ -318,24 +318,10 @@ func (s *snmpCollector) collectItems(ctx context.Context, reg *registry.Registry
 			continue
 		}
 		raw := firstSNMPString(b)
-		prev := s.prev[item.Name]
-		if _, ok := s.prev[item.Name]; !ok {
-			prev = math.NaN()
-		}
 		id := s.chartID("snmp.item." + sanitizeID(item.Name))
-		value, next, err := preprocess.Apply(item.Steps, raw, prev)
-		if errors.Is(err, preprocess.ErrNotSupported) {
-			if ch, ok := reg.Chart(id); ok {
-				ch.SetUnsupported(err.Error())
-			}
+		value, ok := preprocessValue(s.prev, item.Name, raw, item.Steps, now, reg, id)
+		if !ok {
 			continue
-		}
-		s.prev[item.Name] = next
-		if err != nil {
-			continue
-		}
-		if ch, ok := reg.Chart(id); ok {
-			ch.ClearUnsupported()
 		}
 		if ctx.Err() != nil {
 			return
