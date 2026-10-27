@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -103,12 +104,15 @@ func (t *tomcatCollector) Init(reg *registry.Registry) error {
 func (t *tomcatCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	b, err := httpGetAuth(ctx, t.client, t.url, t.cfg.User, t.cfg.Password)
 	if err != nil {
-		return err
+		t.markTomcat(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
 	st, err := parseTomcatStatus(b)
 	if err != nil {
-		return err
+		t.markTomcat(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	t.markTomcat(reg, nil)
 	used := st.memTotal - st.memFree
 	if used < 0 {
 		used = 0
@@ -124,6 +128,14 @@ func (t *tomcatCollector) Collect(ctx context.Context, reg *registry.Registry, n
 	_ = reg.Collect("tomcat.connector_requests_processing_time", now, map[string]float64{"processing_time": st.procTime})
 	_ = reg.Collect("tomcat.connector_bandwidth", now, map[string]float64{"received": st.bytesIn, "sent": st.bytesOut})
 	return nil
+}
+
+func (t *tomcatCollector) markTomcat(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "tomcat" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 type tomcatStatus struct {
