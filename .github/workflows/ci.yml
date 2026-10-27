@@ -79,6 +79,11 @@ jobs:
       - name: cloud host guide links
         if: runner.os == 'Linux'
         run: python3 scripts/verify-cloud-host-doc.py
+      - name: zabbix gap matrix evidence
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/verify-zabbix-gap.py
+          python3 scripts/verify_zabbix_gap_test.py
 
       - name: crash recovery and backup
         if: runner.os != 'Windows'

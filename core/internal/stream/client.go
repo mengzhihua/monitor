@@ -34,6 +34,8 @@ type ClientOptions struct {
 	APIKey             string
 	PSK                string
 	InsecureSkipVerify bool
+	// TLS is the optional certificate config. Nil keeps system roots and PSK-only auth.
+	TLS *tls.Config
 	// ConfigPath is this agent's monitor.yaml; when set the client reports
 	// the file content to the hub after every (re)connect.
 	ConfigPath string
@@ -238,8 +240,20 @@ func destURLPath(d, path string) (string, error) {
 	return u.String(), nil
 }
 
+func (c *Client) httpClient() *http.Client {
+	tlsCfg := c.opt.TLS
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: c.opt.InsecureSkipVerify} //nolint:gosec // operator opt-in
+	}
+	return &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+}
+
 func (c *Client) dial(ctx context.Context) (*websocket.Conn, string, error) {
-	dialer := websocket.Dialer{HandshakeTimeout: c.opt.Timeout, TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}} //nolint:gosec // operator opt-in
+	tlsCfg := c.opt.TLS
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: c.opt.InsecureSkipVerify} //nolint:gosec // operator opt-in
+	}
+	dialer := websocket.Dialer{HandshakeTimeout: c.opt.Timeout, TLSClientConfig: tlsCfg}
 	var lastErr error
 	for _, d := range c.opt.Destinations {
 		if c.opt.ClaimToken != "" && c.opt.APIKey == "" {
@@ -311,7 +325,7 @@ func (c *Client) redeemClaim(ctx context.Context, dest string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	cli := &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}}} //nolint:gosec
+	cli := c.httpClient()
 	defer cli.CloseIdleConnections()
 	resp, err := cli.Do(req)
 	if err != nil {
@@ -351,7 +365,7 @@ func (c *Client) fetchConfig(ctx context.Context, dest string, sess *clientSessi
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+c.opt.APIKey)
-	cli := &http.Client{Timeout: c.opt.Timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: c.opt.InsecureSkipVerify}}} //nolint:gosec
+	cli := c.httpClient()
 	defer cli.CloseIdleConnections()
 	resp, err := cli.Do(req)
 	if err != nil {

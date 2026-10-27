@@ -117,6 +117,70 @@ func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleTemplateExport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if s.opt.Templates == nil {
+		http.Error(w, "hub templates not enabled", http.StatusNotFound)
+		return
+	}
+	var ids []string
+	if id := r.URL.Query().Get("id"); id != "" {
+		ids = []string{id}
+	}
+	bundle, err := s.opt.Templates.Export(ids)
+	if errors.Is(err, hub.ErrTemplateNotFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	format := r.URL.Query().Get("format")
+	body, err := hub.EncodeBundle(bundle, format)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if format == "yaml" || format == "yml" {
+		w.Header().Set("Content-Type", "application/yaml")
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="templates.`+map[bool]string{true: "yaml", false: "json"}[format == "yaml" || format == "yml"]+`"`)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleTemplateImport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if s.opt.Templates == nil {
+		http.Error(w, "hub templates not enabled", http.StatusNotFound)
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "invalid template bundle", http.StatusBadRequest)
+		return
+	}
+	bundle, err := hub.DecodeBundle(raw)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	stored, err := s.opt.Templates.Import(bundle, r.URL.Query().Get("mode"))
+	switch {
+	case errors.Is(err, hub.ErrTemplateExists):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, hub.ErrTemplateInvalid):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	default:
+		s.pushTemplates()
+		writeJSON(w, map[string]any{"templates": stored})
+	}
+}
+
 // handleTemplateEffective is GET /api/v1/hub/templates/effective?node=<id>.
 func (s *Server) handleTemplateEffective(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -183,6 +247,18 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, s.inventoryView(nodeID))
 			_ = inv
 		}
+	case http.MethodDelete:
+		if nodeID == "" {
+			http.Error(w, "node parameter required", http.StatusBadRequest)
+			return
+		}
+		if _, err := s.opt.Templates.SetInventory(nodeID, map[string]string{}, nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, s.inventoryView(nodeID))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 

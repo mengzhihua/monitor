@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -59,8 +60,10 @@ type Options struct {
 	Org *hub.Org
 	// Templates is the hub template + node-inventory store (hub mode).
 	Templates *hub.Templates
-	// PeerToken authenticates POST /api/v1/hub/ring from sibling hubs.
+	// PeerToken authenticates POST /api/v1/hub/ring and /api/v1/hub/vote from sibling hubs.
 	PeerToken string
+	// Elector chooses the active hub when peers are configured. Nil means this process notifies.
+	Elector *hub.Elector
 	// OIDC enables browser login against an identity provider.
 	OIDC *OIDCConfig
 	// LDAP enables POST /api/v1/auth/ldap.
@@ -109,6 +112,7 @@ type Server struct {
 	shares             *shareStore
 	audit              *audit.Log
 	saml               *samlState
+	catalog            *sla.Catalog
 }
 
 func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt Options) (*Server, error) {
@@ -176,6 +180,14 @@ func New(reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, opt O
 	}
 	if err := opt.Shell.Validate(); err != nil {
 		return nil, err
+	}
+	catalogPath := ""
+	if opt.OperationsDir != "" {
+		catalogPath = filepath.Join(opt.OperationsDir, "service-catalog.json")
+	}
+	s.catalog, err = sla.OpenCatalog(catalogPath, opt.Services, opt.Links)
+	if err != nil {
+		return nil, fmt.Errorf("open service catalog: %w", err)
 	}
 	s.shell = newShellState()
 	s.live = newLiveHub(reg, s.log)

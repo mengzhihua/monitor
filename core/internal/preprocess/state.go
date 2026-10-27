@@ -189,6 +189,12 @@ func ApplyAt(steps []Step, input string, mem Memory, now time.Time) (float64, Me
 			if !absent {
 				return failStep(st, mem, fmt.Errorf("%s: %s", strings.ToLower(strings.TrimSpace(st.Type)), clipStepError(msg)))
 			}
+		case "prometheus":
+			text, err = applyPrometheus(st, text)
+			if err != nil {
+				return failStep(st, mem, err)
+			}
+			have = false
 		case "prometheus_to_json":
 			text, err = applyPromJSON(st, text)
 			if err != nil {

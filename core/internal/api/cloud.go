@@ -59,6 +59,24 @@ func (s *Server) handleSpaces(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, sp)
+	case http.MethodPut:
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		sp, err := org.RenameSpace(r.URL.Query().Get("id"), body.Name)
+		if err != nil {
+			status := http.StatusBadRequest
+			if err.Error() == "unknown space" {
+				status = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		writeJSON(w, sp)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		if err := org.DeleteSpace(id); err != nil {

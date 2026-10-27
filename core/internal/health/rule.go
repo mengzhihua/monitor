@@ -62,11 +62,18 @@ type RuleSpec struct {
 	Delay        string            `yaml:"delay" json:"delay,omitempty"`
 	Repeat       string            `yaml:"repeat" json:"repeat,omitempty"`
 	Info         string            `yaml:"info" json:"info,omitempty"`
+	URL          string            `yaml:"url,omitempty" json:"url,omitempty"`
+	OpData       string            `yaml:"opdata,omitempty" json:"opdata,omitempty"`
+	Events       string            `yaml:"events,omitempty" json:"events,omitempty"` // single (default) or multiple
 	To           string            `yaml:"to" json:"to,omitempty"`
 	Labels       map[string]string `yaml:"chart_labels" json:"chart_labels,omitempty"`
 	Tags         map[string]string `yaml:"tags" json:"tags,omitempty"`
 	Disabled     bool              `yaml:"disabled" json:"disabled,omitempty"`
 	Macros       map[string]string `yaml:"macros" json:"macros,omitempty"` // rule-level {$NAME} overrides
+	// ManualClose reports whether an operator may close the problem. Nil and
+	// true allow it, which matches alarms that omit the field. False rejects
+	// POST /api/v1/alarms/close.
+	ManualClose *bool `yaml:"manual_close,omitempty" json:"manual_close,omitempty"`
 }
 
 type ruleFile struct {
@@ -128,11 +135,26 @@ type Rule struct {
 	KeepFiring   time.Duration // hold a raised status after the condition clears; 0 = immediate
 	NoDataState  EvalStatePolicy
 	ExecErrState EvalStatePolicy
+	AllowClose   bool   // operator close; false only when manual_close is explicitly false
 	Info         string // Spec.Info with macros expanded
 	Units        string // Spec.Units with macros expanded
+	URL          string // Spec.URL with macros expanded; event tokens render per transition
+	OpData       string // Spec.OpData with macros expanded; event tokens render per transition
+	Multiple     bool   // true: each evaluation while raised records a new problem event
 	Source       string
 
 	expandedHash string // hash of the macro-resolved spec (set by CompileWith)
+}
+
+func parseEventMode(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "single":
+		return false, nil
+	case "multiple":
+		return true, nil
+	default:
+		return false, fmt.Errorf("events must be single or multiple")
+	}
 }
 
 var macroRef = regexp.MustCompile(`\{\$[A-Za-z_][A-Za-z0-9_]*\}`)
@@ -146,7 +168,7 @@ var ErrUnknownMacro = errors.New("unknown macro")
 func applyMacros(spec RuleSpec, global map[string]string) (RuleSpec, error) {
 	fields := []*string{&spec.Lookup, &spec.Calc, &spec.Warn, &spec.Crit,
 		&spec.Recovery, &spec.Every, &spec.For, &spec.KeepFiring, &spec.NoDataState,
-		&spec.ExecErrState, &spec.Delay, &spec.Repeat, &spec.Info, &spec.Units}
+		&spec.ExecErrState, &spec.Delay, &spec.Repeat, &spec.Info, &spec.Units, &spec.URL, &spec.OpData}
 	// Expand iteratively so a macro value may itself contain {$OTHER}. An
 	// acyclic chain resolves within #macros rounds; the +1 leaves room for
 	// the no-change pass that terminates expansion.
@@ -215,7 +237,17 @@ func CompileWith(spec RuleSpec, source string, globalMacros map[string]string) (
 	if spec.On == "" {
 		return nil, fmt.Errorf("%s: alarm %q has no `on:` chart", source, spec.Name)
 	}
-	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units}
+	if err := validateTriggerURL(spec.URL); err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	if err := validateEventTemplate("opdata", spec.OpData); err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	multiple, err := parseEventMode(spec.Events)
+	if err != nil {
+		return nil, fmt.Errorf("%s: alarm %q: %w", source, spec.Name, err)
+	}
+	r := &Rule{Spec: orig, Source: source, Every: 10 * time.Second, Info: spec.Info, Units: spec.Units, URL: spec.URL, OpData: spec.OpData, Multiple: multiple, AllowClose: orig.ManualClose == nil || *orig.ManualClose}
 	if spec.Lookup != "" {
 		if r.Lookup, err = ParseLookup(spec.Lookup); err != nil {
 			return nil, fmt.Errorf("%s: alarm %q lookup: %w", source, spec.Name, err)

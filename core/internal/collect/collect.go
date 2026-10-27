@@ -169,6 +169,8 @@ type Scheduler struct {
 	initWG  sync.WaitGroup
 
 	scheduleMu    sync.Mutex // guards starting work against Close's wait
+	pauseMu       sync.Mutex
+	pause         func() bool
 	history       SeriesHistory
 	lifecycleOnce sync.Once
 	stopCtx       context.Context
@@ -430,7 +432,28 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
+// SetCollectionPause supplies a check consulted at the start of each tick.
+// A true result skips collectors for that tick. Nil keeps collecting.
+func (s *Scheduler) SetCollectionPause(fn func() bool) {
+	if s == nil {
+		return
+	}
+	s.pauseMu.Lock()
+	s.pause = fn
+	s.pauseMu.Unlock()
+}
+
+func (s *Scheduler) collectionPaused() bool {
+	s.pauseMu.Lock()
+	fn := s.pause
+	s.pauseMu.Unlock()
+	return fn != nil && fn()
+}
+
 func (s *Scheduler) tick(ctx context.Context, now time.Time) {
+	if s.collectionPaused() {
+		return
+	}
 	s.scheduleMu.Lock()
 	if s.lifecycle().Err() != nil {
 		s.scheduleMu.Unlock()

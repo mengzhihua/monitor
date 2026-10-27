@@ -43,6 +43,39 @@ func planSpec() MaintenanceSpec {
 	return MaintenanceSpec{Title: "RAM upgrade", Reason: "replace memory", Scope: "alarm", Chart: "system.ram", Alarm: "ram_test", DurationSeconds: 60}
 }
 
+func TestMaintenanceCanPauseCollection(t *testing.T) {
+	s, err := openMaintenancePlans("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	spec := MaintenanceSpec{Title: "freeze", Reason: "patch", Scope: "all", DurationSeconds: 60, Collect: &off}
+	if _, err := s.Create(0, spec, "admin", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if !s.PausesCollection(1000) || !s.Matches("system.cpu", "hot", 1000) {
+		t.Fatal("active whole-host plan should silence alarms and pause collection")
+	}
+	if s.PausesCollection(1060) {
+		t.Fatal("ended plan still pauses collection")
+	}
+	narrow := spec
+	narrow.Scope = "alarm"
+	narrow.Chart = "system.ram"
+	narrow.Alarm = "ram_test"
+	if _, err := s.Create(1, narrow, "admin", 2000); err == nil {
+		t.Fatal("accepted collect false for one alarm")
+	}
+	on := true
+	keep := MaintenanceSpec{Title: "watch", Reason: "deploy", Scope: "all", DurationSeconds: 60, Collect: &on}
+	if _, err := s.Create(1, keep, "admin", 2000); err != nil {
+		t.Fatal(err)
+	}
+	if s.PausesCollection(2000) || !s.Matches("system.cpu", "hot", 2000) {
+		t.Fatal("collect true should keep collectors running and still silence")
+	}
+}
+
 func TestMaintenancePlanBoundariesOverlapPersistenceAndCancel(t *testing.T) {
 	dir := t.TempDir()
 	s, err := openMaintenancePlans(dir)

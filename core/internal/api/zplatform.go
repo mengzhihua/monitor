@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,8 +30,40 @@ type Command struct {
 }
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		s.replaceServices(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	from, to := sla.Window(time.Now(), r.URL.Query().Get("window"))
-	writeJSON(w, sla.Build(s.opt.Services, s.alarmSnapshot(), s.alarmLog(), from, to))
+	writeJSON(w, sla.Build(s.services(), s.alarmSnapshot(), s.alarmLog(), from, to))
+}
+
+func (s *Server) replaceServices(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Services []sla.Service `json:"services"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&body); err != nil || dec.Decode(new(any)) != io.EOF {
+		http.Error(w, "invalid service tree", http.StatusBadRequest)
+		return
+	}
+	services, err := s.catalog.ReplaceServices(body.Services)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"services": services})
+}
+
+func (s *Server) services() []sla.Service {
+	if s.catalog != nil {
+		return s.catalog.Services()
+	}
+	return s.opt.Services
 }
 
 func (s *Server) handleAvailability(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +86,14 @@ func (s *Server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		s.replaceLinks(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	type edge struct {
 		Source string `json:"source"`
 		Target string `json:"target"`
@@ -70,7 +111,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		}
 		edges = append(edges, edge{Source: host, Target: target, Kind: "lldp"})
 	}
-	for _, link := range s.opt.Links {
+	for _, link := range s.links() {
 		if link.Source == "" || link.Target == "" {
 			continue
 		}
@@ -80,6 +121,30 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		edges = []edge{}
 	}
 	writeJSON(w, map[string]any{"edges": edges})
+}
+
+func (s *Server) replaceLinks(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Links []sla.Link `json:"links"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&body); err != nil || dec.Decode(new(any)) != io.EOF {
+		http.Error(w, "invalid topology", http.StatusBadRequest)
+		return
+	}
+	links, err := s.catalog.ReplaceLinks(body.Links)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"links": links})
+}
+
+func (s *Server) links() []sla.Link {
+	if s.catalog != nil {
+		return s.catalog.Links()
+	}
+	return s.opt.Links
 }
 
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +298,7 @@ func (s *Server) roomAllowed(u User, nodeID string) bool {
 				}
 				room = peer.RoomID
 			}
-			return roomVisible(u, room)
+			return s.scopedNode(u, nodeID, room)
 		}
 	}
 	if s.isLocal(nodeID) {
@@ -254,11 +319,20 @@ func (s *Server) roomAllowed(u User, nodeID string) bool {
 					room = localRoom
 				}
 			}
-			return roomVisible(u, room)
+			return s.scopedNode(u, nodeID, room)
 		}
 	}
-	// A scoped identity cannot authorize an unknown or removed remote node.
-	return false
+	// A scoped identity cannot authorize an unknown or removed remote node
+	// unless a granted host group contains it.
+	return s.nodeInHostGroups(u, nodeID)
+}
+
+func (s *Server) scopedNode(u User, nodeID, room string) bool {
+	return roomVisible(u, room) || s.nodeInHostGroups(u, nodeID)
+}
+
+func (s *Server) nodeInHostGroups(u User, nodeID string) bool {
+	return s.opt.Org != nil && s.opt.Org.NodeInHostGroups(nodeID, u.HostGroups)
 }
 
 func unrestrictedRooms(u User) bool {

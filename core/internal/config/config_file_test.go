@@ -28,6 +28,15 @@ func TestParseValidAndInvalid(t *testing.T) {
 	if _, err = Parse([]byte("mode: satellite")); err == nil || !strings.Contains(err.Error(), "mode") {
 		t.Fatalf("unknown mode should fail with a mode error, got %v", err)
 	}
+	if _, err = Parse([]byte("web:\n  users:\n    - {name: ops, token: secret, role: viewer, expires_at: -1}\n")); err == nil || !strings.Contains(err.Error(), "expires_at") {
+		t.Fatalf("negative token expiry: %v", err)
+	}
+	if _, err = Parse([]byte("services:\n  - {name: edge, children: [site], status_rules: [{type: children_at_least, n: 1, at_least: CRITICAL, status: CRITICAL}, {type: ok}]}\n  - {name: site}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Parse([]byte("services:\n  - {name: edge, status_rules: [{type: children_at_least, n: 0, status: CRITICAL}]}\n")); err == nil || !strings.Contains(err.Error(), "rule") {
+		t.Fatalf("bad service rule: %v", err)
+	}
 }
 
 func TestSaveWritesContentAndBackup(t *testing.T) {

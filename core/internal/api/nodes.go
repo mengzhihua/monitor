@@ -36,9 +36,16 @@ type User struct {
 	Personal bool `json:"personal,omitempty"`
 	// Rooms limits remote node reads, lists and live subscriptions. Empty means every room.
 	Rooms []string `json:"rooms,omitempty"`
+	// HostGroups adds nodes from those hub groups and their descendants.
+	HostGroups []string `json:"host_groups,omitempty"`
 	// TOTP is a base32 secret. Empty means this credential has no second factor.
 	TOTP string `json:"-"`
+	// ExpiresAt is a unix second. Zero means the token does not expire.
+	ExpiresAt int64 `json:"-"`
 }
+
+// maxTokenExpiry is 2100-01-01T00:00:00Z. Later values are rejected.
+const maxTokenExpiry int64 = 4102444800
 
 type userKey struct{}
 
@@ -57,6 +64,9 @@ func validateUsers(us []User) error {
 		}
 		if seen[u.Token] {
 			return fmt.Errorf("web.users %q: token reused", u.Name)
+		}
+		if u.ExpiresAt < 0 || u.ExpiresAt > maxTokenExpiry {
+			return fmt.Errorf("web.users %q: expires_at must be 0 or a unix time through 2100-01-01", u.Name)
 		}
 		seen[u.Token] = true
 	}
@@ -82,6 +92,9 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 	}
 	for _, u := range s.opt.Users {
 		if subtle.ConstantTimeCompare([]byte(tok), []byte(u.Token)) == 1 {
+			if u.ExpiresAt > 0 && !time.Now().Before(time.Unix(u.ExpiresAt, 0)) {
+				return User{}, false
+			}
 			if !s.otpOK(u.TOTP, r.Header.Get("X-Monitor-OTP"), time.Now()) {
 				return User{}, false
 			}
@@ -110,7 +123,7 @@ func (s *Server) authenticate(r *http.Request) (User, bool) {
 
 func publicAPI(path string) bool {
 	switch path {
-	case "/api/v1/auth/oidc/status", stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring",
+	case "/api/v1/auth/oidc/status", stream.Path, stream.PathACLK, "/api/v1/claim", "/api/v1/agent/config", "/api/v1/hub/ring", "/api/v1/hub/vote", "/api/v1/hub/proxies/heartbeat",
 		"/api/v1/auth/oidc/login", "/api/v1/auth/oidc/callback", "/api/v1/auth/ldap",
 		"/api/v1/auth/saml/login", "/api/v1/auth/saml/acs":
 		return true
@@ -219,6 +232,11 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) (*view, bool) {
 	}
 	if s.opt.Cluster != nil && s.opt.Cluster.Proxy(w, r, id) {
 		return nil, false
+	}
+	if id != "" && s.opt.Org != nil {
+		if base, ok := s.opt.Org.ProxyRoute(id, time.Now()); ok && s.relayProxy(w, r, base) {
+			return nil, false
+		}
 	}
 	if s.opt.Nodes == nil {
 		http.Error(w, "not a hub: node= is unsupported", http.StatusNotFound)

@@ -68,6 +68,8 @@ type Alarm struct {
 	Component string            `json:"component,omitempty"`
 	Units     string            `json:"units"`
 	Info      string            `json:"info"`
+	URL       string            `json:"url,omitempty"`
+	OpData    string            `json:"opdata,omitempty"`
 	Lookup    string            `json:"lookup,omitempty"`
 	Calc      string            `json:"calc,omitempty"`
 	Warn      string            `json:"warn,omitempty"`
@@ -134,9 +136,12 @@ type LogEntry struct {
 	OldValue     float64 `json:"old_value"`
 	Units        string  `json:"units"`
 	Info         string  `json:"info"`
+	URL          string  `json:"url,omitempty"`
+	OpData       string  `json:"opdata,omitempty"`
 	Recipient    string  `json:"recipient"`
 	Delay        int64   `json:"delay"`
 	Repeat       bool    `json:"repeat,omitempty"`
+	Multiple     bool    `json:"multiple,omitempty"` // a new problem event while the trigger stayed raised
 	Notified     bool    `json:"notified"`
 	NotifiedAt   int64   `json:"notified_at,omitempty"`
 	Manual       bool    `json:"manual,omitempty"` // operator-closed problem (Zabbix "close problem")

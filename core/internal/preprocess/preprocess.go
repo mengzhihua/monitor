@@ -36,6 +36,7 @@ type Step struct {
 	Map         map[string]string `yaml:"map,omitempty" json:"map,omitempty"`
 	Seconds     int               `yaml:"seconds,omitempty" json:"seconds,omitempty"`
 	Script      string            `yaml:"script,omitempty" json:"script,omitempty"`
+	Output      string            `yaml:"output,omitempty" json:"output,omitempty"`
 	OnFail      string            `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
 	FailValue   string            `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
 	Delimiter   string            `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`

@@ -2,6 +2,7 @@
 package sla
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -11,10 +12,24 @@ import (
 
 // Service is one node of the service tree. Children are other service names.
 // Alarms are health alarm names that feed this service directly.
+// StatusRules, when set, decide how child services change this service.
+// The first matching rule wins. With no rules, status is the worst of the
+// service's own alarms and its children.
 type Service struct {
-	Name     string   `yaml:"name" json:"name"`
-	Alarms   []string `yaml:"alarms,omitempty" json:"alarms,omitempty"`
-	Children []string `yaml:"children,omitempty" json:"children,omitempty"`
+	Name        string       `yaml:"name" json:"name"`
+	Alarms      []string     `yaml:"alarms,omitempty" json:"alarms,omitempty"`
+	Children    []string     `yaml:"children,omitempty" json:"children,omitempty"`
+	StatusRules []StatusRule `yaml:"status_rules,omitempty" json:"status_rules,omitempty"`
+}
+
+// StatusRule is one Zabbix-style service status calculation rule.
+// Type is ok, problem, children_at_least, children_percent, or child.
+type StatusRule struct {
+	Type    string `yaml:"type" json:"type"`
+	N       int    `yaml:"n,omitempty" json:"n,omitempty"`
+	AtLeast string `yaml:"at_least,omitempty" json:"at_least,omitempty"`
+	Status  string `yaml:"status,omitempty" json:"status,omitempty"`
+	Child   string `yaml:"child,omitempty" json:"child,omitempty"`
 }
 
 // Link is a manual topology edge. LLDP neighbors are added by the API.
@@ -48,8 +63,10 @@ type Availability struct {
 	Window int64   `json:"window_seconds"`
 }
 
-// Build walks services in definition order. Status is the worst of the
-// service's own alarms and its children. SLA is the minimum of those inputs.
+// Build walks services in definition order. Without status rules, status is
+// the worst of the service's own alarms and its children. With rules, the
+// first match sets the child contribution and the service's own alarms can
+// still raise it. SLA stays the minimum of those inputs.
 func Build(services []Service, alarms []health.Alarm, log []health.LogEntry, from, to int64) Report {
 	if to < from {
 		from, to = to, from
@@ -75,26 +92,25 @@ func Build(services []Service, alarms []health.Alarm, log []health.LogEntry, fro
 		}
 		seen[name] = true
 		svc := byName[name]
-		st := "CLEAR"
+		own := "CLEAR"
 		sla := 100.0
 		for _, alarm := range svc.Alarms {
-			if rank(status[alarm]) > rank(st) {
-				st = status[alarm]
+			if rank(status[alarm]) > rank(own) {
+				own = status[alarm]
 			}
 			if v, ok := avail[alarm]; ok && v < sla {
 				sla = v
 			}
 		}
+		childStatus := make(map[string]string, len(svc.Children))
 		for _, child := range svc.Children {
 			cs, cv := visit(child, seen)
-			if rank(cs) > rank(st) {
-				st = cs
-			}
+			childStatus[child] = cs
 			if cv < sla {
 				sla = cv
 			}
 		}
-		return st, sla
+		return combineStatus(own, svc, childStatus), sla
 	}
 	out := Report{From: from, To: to, Services: []Node{}}
 	for _, s := range services {
@@ -192,6 +208,154 @@ func raisedSeconds(log []health.LogEntry, from, to int64) map[string]int64 {
 		}
 	}
 	return out
+}
+
+func combineStatus(own string, svc Service, childStatus map[string]string) string {
+	if len(svc.StatusRules) == 0 {
+		st := own
+		for _, cs := range childStatus {
+			if rank(cs) > rank(st) {
+				st = cs
+			}
+		}
+		if st == "" {
+			return "CLEAR"
+		}
+		return st
+	}
+	st := own
+	for _, rule := range svc.StatusRules {
+		got, ok := matchStatusRule(rule, childStatus)
+		if !ok {
+			continue
+		}
+		if rank(got) > rank(st) {
+			st = got
+		}
+		break
+	}
+	if st == "" {
+		return "CLEAR"
+	}
+	return st
+}
+
+func matchStatusRule(rule StatusRule, childStatus map[string]string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(rule.Type)) {
+	case "ok":
+		return "CLEAR", true
+	case "problem":
+		status, ok := problemStatus(rule.Status)
+		return status, ok
+	case "children_at_least":
+		if countAtLeast(childStatus, rule.AtLeast) >= rule.N {
+			return problemStatus(rule.Status)
+		}
+	case "children_percent":
+		total := len(childStatus)
+		if total > 0 && countAtLeast(childStatus, rule.AtLeast)*100 >= rule.N*total {
+			return problemStatus(rule.Status)
+		}
+	case "child":
+		if rank(childStatus[rule.Child]) >= rank(ruleFloor(rule.AtLeast)) {
+			return problemStatus(rule.Status)
+		}
+	}
+	return "", false
+}
+
+func countAtLeast(childStatus map[string]string, floor string) int {
+	n := 0
+	need := rank(ruleFloor(floor))
+	for _, st := range childStatus {
+		if rank(st) >= need {
+			n++
+		}
+	}
+	return n
+}
+
+func ruleFloor(status string) string {
+	if strings.EqualFold(strings.TrimSpace(status), "CRITICAL") {
+		return "CRITICAL"
+	}
+	return "WARNING"
+}
+
+func problemStatus(status string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "WARNING":
+		return "WARNING", true
+	case "CRITICAL":
+		return "CRITICAL", true
+	default:
+		return "", false
+	}
+}
+
+// Validate rejects status rules that cannot be evaluated.
+func Validate(services []Service) error {
+	for _, svc := range services {
+		if len(svc.StatusRules) > 8 {
+			return fmt.Errorf("service %s: at most 8 status rules", svc.Name)
+		}
+		children := map[string]bool{}
+		for _, child := range svc.Children {
+			children[child] = true
+		}
+		for i, rule := range svc.StatusRules {
+			if err := validStatusRule(rule, children); err != nil {
+				return fmt.Errorf("service %s rule %d: %w", svc.Name, i+1, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validStatusRule(rule StatusRule, children map[string]bool) error {
+	switch strings.ToLower(strings.TrimSpace(rule.Type)) {
+	case "ok":
+		return nil
+	case "problem":
+		if _, ok := problemStatus(rule.Status); !ok {
+			return fmt.Errorf("problem status must be WARNING or CRITICAL")
+		}
+	case "children_at_least":
+		if rule.N < 1 || rule.N > 1000 {
+			return fmt.Errorf("n must be from 1 to 1000")
+		}
+		if err := validFloorAndStatus(rule); err != nil {
+			return err
+		}
+	case "children_percent":
+		if rule.N < 1 || rule.N > 100 {
+			return fmt.Errorf("percent must be from 1 to 100")
+		}
+		if err := validFloorAndStatus(rule); err != nil {
+			return err
+		}
+	case "child":
+		if rule.Child == "" || !children[rule.Child] {
+			return fmt.Errorf("child must be one of this service's children")
+		}
+		if err := validFloorAndStatus(rule); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown type %q", rule.Type)
+	}
+	return nil
+}
+
+func validFloorAndStatus(rule StatusRule) error {
+	floor := strings.ToUpper(strings.TrimSpace(rule.AtLeast))
+	if floor != "" && floor != "WARNING" && floor != "CRITICAL" {
+		return fmt.Errorf("at_least must be WARNING or CRITICAL")
+	}
+	if _, ok := problemStatus(rule.Status); !ok {
+		return fmt.Errorf("status must be WARNING or CRITICAL")
+	}
+	return nil
 }
 
 func rank(status string) int {
