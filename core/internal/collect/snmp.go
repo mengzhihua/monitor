@@ -655,7 +655,7 @@ func (s *snmpCollector) snmpArgs(oid string) ([]string, error) {
 			level = "authNoPriv"
 		}
 		args := []string{"-v", "3", "-l", level, "-u", s.cfg.User}
-		args = appendRetries(args, s.cfg.Retries)
+		args = appendSnmpWalkOptions(args, s.cfg.Retries, s.cfg.Timeout)
 		if s.cfg.AuthPass != "" {
 			proto := s.cfg.AuthProto
 			if proto == "" {
@@ -678,16 +678,30 @@ func (s *snmpCollector) snmpArgs(oid string) ([]string, error) {
 		}
 		return append(args, "-On", "-Oe", s.cfg.Address, oid), nil
 	}
-	return appendRetries([]string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, oid}, s.cfg.Retries), nil
+	return appendSnmpWalkOptions([]string{"-v", s.cfg.Version, "-c", s.cfg.Community, "-On", "-Oe", s.cfg.Address, oid}, s.cfg.Retries, s.cfg.Timeout), nil
 }
 
-func appendRetries(args []string, retries int) []string {
-	if retries <= 0 {
-		return args
+func snmpTimeoutSeconds(d time.Duration) int {
+	if d <= 0 {
+		d = 3 * time.Second
 	}
-	out := make([]string, 0, len(args)+2)
-	out = append(out, args[:2]...)
-	out = append(out, "-r", strconv.Itoa(retries))
+	sec := int((d + time.Second - 1) / time.Second)
+	if sec < 1 {
+		return 1
+	}
+	if sec > 60 {
+		return 60
+	}
+	return sec
+}
+
+// appendSnmpWalkOptions adds net-snmp -t (seconds) and optional -r after the -v flag group.
+func appendSnmpWalkOptions(args []string, retries int, timeout time.Duration) []string {
+	out := make([]string, 0, len(args)+6)
+	out = append(out, args[0], args[1], "-t", strconv.Itoa(snmpTimeoutSeconds(timeout)))
+	if retries > 0 {
+		out = append(out, "-r", strconv.Itoa(retries))
+	}
 	out = append(out, args[2:]...)
 	return out
 }
