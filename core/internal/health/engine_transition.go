@@ -164,6 +164,9 @@ func (e *Engine) SetAcknowledged(chart, name string, on bool, user, note string)
 	entry.Comment = note
 	e.mu.Unlock()
 	e.record(entry, false)
+	if on {
+		e.dispatchAckActions(entry)
+	}
 	return nil
 }
 
