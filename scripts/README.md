@@ -47,6 +47,7 @@
 | `verify-operations.py` | 2.0 真实采样、处置/个人视图持久化、服务重启、单条/批量版本冲突及历史查询导出 | `python3 scripts/verify-operations.py` |
 | `verify-notifications.py` | 本机真实内存触发通知、HTTP 成功/503、静默/路由、凭据隐藏、只读权限及重启计数边界 | `python3 scripts/verify-notifications.py` |
 | `verify-alert-rules.py` | 规则预览无写入、RBAC、原子批次、并发版本、两次重启、覆盖/删除/恢复与损坏文件拒绝启动 | `python3 scripts/verify-alert-rules.py` |
+| `verify-zabbix-gap.py` | `docs/15-zabbix-gap.md` 差距矩阵「证据」列中的源码路径在仓库内存在 | `python3 scripts/verify-zabbix-gap.py`（`verify_zabbix_gap_test.py` 为 fixture 测试） |
 | `verify-maintenance.py` | 预约开始、精确告警范围、活动计划重启、到期恢复新提醒、重叠取消、并发与只读权限、第二次重启保留取消记录 | `python3 scripts/verify-maintenance.py` |
 | `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
 | `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
