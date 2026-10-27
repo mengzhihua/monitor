@@ -51,6 +51,24 @@ func TestExpr(t *testing.T) {
 		"between(5, 5, 5)":                               1,
 		"between(5, 10, 1)":                              0,
 		"between($missing, 0, 1)":                        math.NaN(),
+		"bitand(6, 3)":                                   2,
+		"bitor(1, 2)":                                    3,
+		"bitxor(6, 3)":                                   5,
+		"bitand(-1, 255)":                                255,
+		"bitlshift(1, 4)":                                16,
+		"bitlshift(1, 3.9)":                              8,
+		"bitrshift(16, 2)":                               4,
+		"bitlshift(1, 64)":                               0,
+		"bitlshift(1, -1)":                               math.NaN(),
+		"bitand($missing, 1)":                            math.NaN(),
+		"sin(0) + cos(0)":                                1,
+		"tan(0) + asin(0) + atan(0)":                     0,
+		"acos(1)":                                        0,
+		"atan2(0, 1)":                                    0,
+		"degrees(0) + radians(0)":                        0,
+		"asin(2)":                                        math.NaN(),
+		"acos(-2)":                                       math.NaN(),
+		"sin($missing)":                                  math.NaN(),
 		"$this > 50 && $this < 100":                      1,
 		"$this > 50 AND NOT ($this < 100)":               0,
 		"10 % 3":                                         1,
@@ -69,13 +87,62 @@ func TestExpr(t *testing.T) {
 			t.Errorf("%q = %v, want %v", src, got, want)
 		}
 	}
-	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "between(1, 2)", "3 4"} {
+	not, err := ParseExpr("bitnot(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := not.Eval(vars); got != float64(^uint64(0)) {
+		t.Fatalf("bitnot(0) = %v", got)
+	}
+	deg, err := ParseExpr("degrees(radians(180))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deg.Eval(vars); math.Abs(got-180) > 1e-9 {
+		t.Fatalf("degrees(radians(180)) = %v", got)
+	}
+	for _, bad := range []string{"1 +", "$", "foo(1)", "(1", "1 ? 2", "abs()", "between(1, 2)", "bitnot(1, 2)", "bitand(1)", "dayofweek(1)", "sin()", "atan2(1)", "3 4"} {
 		if _, err := ParseExpr(bad); err == nil {
 			t.Errorf("%q should not parse", bad)
 		}
 	}
 	if e, err := ParseExpr("  "); err != nil || e != nil {
 		t.Fatalf("empty expr = %v %v", e, err)
+	}
+}
+
+func TestExprClock(t *testing.T) {
+	when := time.Date(2023, 11, 12, 15, 4, 5, 0, time.Local)
+	if when.Weekday() != time.Sunday {
+		t.Fatalf("fixture weekday %s", when.Weekday())
+	}
+	vars := func(n string) (float64, bool) {
+		if n == "now" {
+			return float64(when.Unix()), true
+		}
+		return 0, false
+	}
+	cases := map[string]float64{
+		"dayofweek()":  7,
+		"dayofmonth()": 12,
+		"time()":       150405,
+		"date()":       20231112,
+	}
+	for src, want := range cases {
+		e, err := ParseExpr(src)
+		if err != nil {
+			t.Fatalf("%q: %v", src, err)
+		}
+		if got := e.Eval(vars); got != want {
+			t.Fatalf("%q = %v, want %v", src, got, want)
+		}
+	}
+	e, err := ParseExpr("dayofweek()")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Eval(func(string) (float64, bool) { return 0, false }); !math.IsNaN(got) {
+		t.Fatalf("missing now = %v", got)
 	}
 }
 
