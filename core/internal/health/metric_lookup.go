@@ -175,6 +175,8 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += popStddev(vals)
 		case "percentile":
 			sum += percentileRank(vals, l.Percentile)
+		case "mad":
+			sum += medianAbsDev(vals)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
 		case "forecast":
@@ -236,6 +238,28 @@ func percentileRank(pts []tsdb.Point, p float64) float64 {
 		index = n - 1
 	}
 	return sorted[index]
+}
+
+// medianAbsDev is Zabbix mad: the median of absolute deviations from the median.
+// Both medians use the ascending index n/2, so an even count takes the higher
+// of the two middle values. One sample is 0.
+func medianAbsDev(pts []tsdb.Point) float64 {
+	n := len(pts)
+	if n == 0 {
+		return math.NaN()
+	}
+	sorted := make([]float64, n)
+	for i, p := range pts {
+		sorted[i] = p.Value
+	}
+	sort.Float64s(sorted)
+	mid := sorted[n/2]
+	devs := make([]float64, n)
+	for i, v := range sorted {
+		devs[i] = math.Abs(v - mid)
+	}
+	sort.Float64s(devs)
+	return devs[n/2]
 }
 
 func countMatching(pts []tsdb.Point, op string, v float64) int {
