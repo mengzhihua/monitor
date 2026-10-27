@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -43,5 +44,59 @@ func TestIPMICollectorFixture(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing temp")
+	}
+}
+
+func TestIPMIReadFailureMarksUnsupported(t *testing.T) {
+	phase := "init"
+	i := &ipmiCollector{}
+	i.run = func(context.Context, string, ...string) ([]byte, error) {
+		switch phase {
+		case "fail":
+			return nil, errors.New("ipmitool: no response from 192.0.2.10")
+		case "ok":
+			return []byte("CPU Temp | 55 degrees C | ok\n"), nil
+		default:
+			return []byte("CPU Temp | 40 degrees C | ok\n"), nil
+		}
+	}
+	reg := registry.New(&registry.Host{Hostname: "t", UpdateEvery: 1}, nil)
+	if err := i.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	phase = "fail"
+	if err := i.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	state := mustChart(t, reg, "ipmi.sensor_state")
+	if state.Unsupported == "" || state.LastCollectionTime() != 0 {
+		t.Fatalf("unsupported %q at %d", state.Unsupported, state.LastCollectionTime())
+	}
+	if err := i.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if state.Unsupported == "" {
+		t.Fatal("skipped tick cleared the failure")
+	}
+	phase = "ok"
+	if err := i.Collect(context.Background(), reg, now.Add(20*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if state.Unsupported != "" {
+		t.Fatalf("failure stuck: %q", state.Unsupported)
+	}
+	found := false
+	for _, ch := range reg.Charts() {
+		if strings.HasPrefix(ch.ID, "ipmi.temperatures.") {
+			found = true
+			_, vals := ch.LastValues()
+			if vals["value"] != 55 {
+				t.Fatalf("%s %v", ch.ID, vals)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing recovered temperature")
 	}
 }
