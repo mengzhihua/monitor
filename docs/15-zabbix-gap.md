@@ -4,14 +4,14 @@
 
 ## 1. 对标结论
 
-Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、模板、宏、清单、动作、SLA 和审计已经落地；触发器表达式以矩阵「表达式函数」行为准（含 stddev、`percentile` 及 `find`/`mad`/`rate`/`between` 等扩展查找与表达式函数）。通用 LLD 原型、图表饼图，以及带时间上限且不能访问主机的 JavaScript 预处理已经落地。Hub 另有独立主机组树、代理实体与多数派选主，以及 Space/Room/主机组/代理/模板/清单的 REST CRUD。Hub 模板可经 `GET/POST /api/v1/hub/templates/export|import` 整包导出再导入；Agent 与 Hub 除 PSK 外可用客户端证书（`stream.ca_file` / `cert_file` / `key_file`，Hub 侧 `web.client_ca` 与 `hub.require_client_cert`）。仍开放的是非目标里的被动 Agent 协议和 Zabbix JSON-RPC，以及矩阵里标成部分的能力（如被动拉取协议、进程级整文件配置）。计算项已支持 `{图表:维度}` 的四则运算，以及最多 1 小时的 `avg` / `min` / `max` / `sum` / `count` / `last`。
+Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则、Agent→Hub 流式上报），与 Zabbix 的差异集中在「**配置驱动的数据模型**」（模板 / 宏 / LLD / 原型）、「**动作与自动化**」（多步升级、远程命令）、「**服务与报表**」（SLA / 拓扑图 / 报表）和「**企业级管理**」（审计、用户组、细粒度权限）。采集广度与 Zabbix 内置项相当。无代理采集、模板、宏、清单、动作、SLA 和审计已经落地；触发器表达式以矩阵「表达式函数」行为准（含 stddev、`percentile` 及 `find`/`mad`/`rate`/`between` 等扩展查找与表达式函数）。通用 LLD 原型、图表饼图，以及带时间上限且不能访问主机的 JavaScript 预处理已经落地。Hub 另有独立主机组树、代理实体与多数派选主，以及 Space/Room/主机组/代理/模板/清单的 REST CRUD。Hub 模板可经 `GET /api/v1/hub/templates/export` 与 `POST /api/v1/hub/templates/import` 整包导出再导入；Agent 与 Hub 除 PSK 外可用客户端证书（`stream.ca_file` / `cert_file` / `key_file`，Hub 侧 `web.client_ca` 与 `hub.require_client_cert`）。仍开放的是非目标里的被动 Agent 协议和 Zabbix JSON-RPC，以及矩阵里标成部分的能力（如被动拉取协议、进程级整文件配置）。计算项已支持 `{图表:维度}` 的四则运算，以及最多 1 小时的 `avg` / `min` / `max` / `sum` / `count` / `last`。
 
 ## 2. 差距矩阵
 
 | 领域 | Zabbix 能力 | Monitor 现状 | 证据 |
 |---|---|---|---|
 | 采集 | 主动 Agent | 已有 | `core/internal/stream/` |
-| 采集 | 被动 Agent（服务端拉取） | 部分：`hub.storage: proxy` 实时回查；无独立被动协议 | `core/internal/hub/cluster.go` |
+| 采集 | 被动 Agent（服务端拉取） | 部分：`hub.storage: proxy` 实时回查；Hub 代理实体可把节点查询转到 active（需心跳）或 passive 代理 URL。无 Zabbix 10050 被动协议 | `hub/cluster.go`、`hub/catalog.go`、`api/data.go` |
 | 采集 | SNMP v1/v2c/v3、Trap | 已有：v2c IF-MIB、v3 USM、自定义 OID、表 LLD、Trap。`timeout` 会按秒取整后传给 snmpwalk 的 `-t`（至少 1 秒，至多 60 秒，默认 3 秒）。`retries` 为 0 时沿用 snmpwalk 的默认重试；1 到 5 会传给 `-r`。多目标里留空则继承上一级 | `collect/snmp.go` |
 | 采集 | IPMI | 已有。`ipmitool` 或 `ipmi-sensors` 读取失败时，`ipmi.sensor_state` 记为 `unsupported`，下一次成功采集会清除 | `collect/ipmi.go` |
 | 采集 | JMX 通用客户端 | 已有：Jolokia HTTP 读取 + 预处理。请求失败或 JSON `status` 不是 200 时该项记为 `unsupported`，下一次成功采集会清除 | `collect/jolokia.go` |
