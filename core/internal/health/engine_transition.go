@@ -20,13 +20,16 @@ func (e *Engine) repeatAfter(a *Alarm) time.Duration {
 }
 
 func (e *Engine) newEntry(a *Alarm, old Status, oldValue float64, now time.Time) LogEntry {
-	return LogEntry{
+	entry := LogEntry{
 		AlarmID: a.ID, When: now.Unix(), Hostname: e.opt.Hostname,
 		Name: a.Name, Chart: a.Chart, Context: a.Context, Family: a.Family,
 		Class: a.Class, Type: a.Type, Component: a.Component,
 		Status: a.Status, OldStatus: old, Value: a.Value, OldValue: oldValue,
 		Units: a.Units, Info: a.Info, Recipient: a.Recipient,
 	}
+	entry.URL = renderEventField(a.URL, entry)
+	entry.OpData = renderEventField(a.OpData, entry)
+	return entry
 }
 
 // transition applies the notification delay: the log entry is written now,
@@ -181,6 +184,7 @@ func clipAckNote(note string) string {
 
 var ErrAlarmNotFound = errors.New("alarm not found")
 var ErrAlarmNotRaised = errors.New("alarm not raised")
+var ErrManualCloseDisabled = errors.New("manual close is disabled for this alarm")
 
 // CloseAlarm is Zabbix's "close problem": an operator forces a raised alarm back
 // to CLEAR. The CLEAR transition goes through the normal path so notifiers
@@ -210,6 +214,10 @@ func (e *Engine) CloseAlarm(alarmID uint64, user, comment string) error {
 	if a.Status <= StatusClear {
 		e.mu.Unlock()
 		return ErrAlarmNotRaised
+	}
+	if a.rule != nil && !a.rule.AllowClose {
+		e.mu.Unlock()
+		return ErrManualCloseDisabled
 	}
 	old, oldValue := a.Status, a.Value
 	a.Status = StatusClear

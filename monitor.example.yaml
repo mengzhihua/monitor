@@ -751,6 +751,7 @@ health:
   #   warn: '$this > (($status >= $WARNING) ? (80) : (90))'  # or between($this, 80, 95)
   #   crit: '$this > (($status == $CRITICAL) ? (90) : (98))'
   #   recovery: '$this < 70'         # stay raised until warn/crit are false and this is true
+  #   manual_close: true             # false rejects POST /api/v1/alarms/close; omit allows it
   #   for: 1m                         # status stays put until warn/crit holds this long; empty = immediate
   #   keep_firing_for: 5m            # stay raised this long after the condition clears
   #   no_data_state: undefined       # undefined|ok|alerting|keep_last when lookup has no samples
@@ -758,6 +759,8 @@ health:
   #   delay: down 15m multiplier 1.5 max 1h
   #   repeat: warning 1h critical 15m
   #   info: system memory utilization
+  #   url: https://runbook.example/{HOST.NAME}
+  #   opdata: "used {EVENT.VALUE}{EVENT.UNITS}"
   #   to: sysadmin
   notify:
     roles: {}          # alarm `to:` → channels, e.g. sysadmin: [slack, email]; unknown/empty role = all channels
@@ -900,6 +903,8 @@ export:
 #       items:
 #         - { name: used_pct, formula: "100 * {system.ram:used} / ({system.ram:used} + {system.ram:free})" }
 #         - { name: used_avg, formula: "avg({system.ram:used}, 5m)" }
+#         - { name: used_count, formula: "count({system.ram:used}, 5m)" }
+#         - { name: used_last, formula: "last({system.ram:used}, 5m)" }
 #     netscan:
 #       networks:
 #         - { name: lab, cidr: 192.168.1.0/28, ports: [22, 443] }
@@ -927,6 +932,17 @@ export:
 #         - { role: sysadmin, command: echo-ok }
 #         - { delay: 5m, role: pager }
 #       recovery: { role: sysadmin }
+#     - name: api-page
+#       labels: { service: api, region: "prod*" }
+#       steps:
+#         - { role: pager }
+#     - name: night
+#       severities: [CRITICAL]
+#       start: "22:00"          # local clock; 22:00-07:00 wraps midnight
+#       end: "07:00"
+#       weekdays: [mon, tue, wed, thu, fri, sat, sun]
+#       steps:
+#         - { role: pager }
 #   correlation:
 #     - { cause: host_down, symptoms: [disk_full] }
 #     - { cause: host_down, symptoms: [disk_full], equal: [chart, "label:service"] }

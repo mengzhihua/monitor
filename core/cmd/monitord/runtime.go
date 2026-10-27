@@ -138,6 +138,9 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 				eng.Close()
 			}
 		}()
+		sched.SetCollectionPause(func() bool {
+			return eng.MaintenancePlans().PausesCollection(time.Now().Unix())
+		})
 		if ml := sched.Collector("ml"); ml != nil {
 			if src, ok := ml.(health.AnomalySource); ok {
 				eng.SetAnomaly(src)

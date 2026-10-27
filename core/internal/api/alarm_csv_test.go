@@ -13,13 +13,17 @@ func TestAlarmLogCSVNeutralizesFormulas(t *testing.T) {
 	writeAlarmCSV(rec, []health.LogEntry{{
 		UniqueID: 7, When: 20, Hostname: "web", Name: "=SUM(1,1)", Chart: "disk.space",
 		Status: health.StatusCritical, Value: 4, Units: "%", Info: "full",
+		URL: "=HYPERLINK(\"http://evil\")", OpData: "used 4%",
 	}})
 	body := rec.Body.String()
 	if rec.Header().Get("Content-Type") != "text/csv" || !strings.Contains(body, "unique_id,when,hostname,name,chart,status,value,units,info") {
 		t.Fatalf("header %q body %s", rec.Header().Get("Content-Type"), body)
 	}
-	if !strings.Contains(body, "'=SUM(1,1)") || strings.Contains(body, "\n=SUM") {
+	if !strings.Contains(body, "'=SUM(1,1)") || strings.Contains(body, "\n=SUM") || strings.Contains(body, "\n=HYPERLINK") {
 		t.Fatalf("formula was not neutralized: %s", body)
+	}
+	if !strings.Contains(body, "used 4%") {
+		t.Fatalf("opdata missing: %s", body)
 	}
 	if !strings.Contains(body, "CRITICAL") || !strings.Contains(body, "disk.space") {
 		t.Fatalf("%s", body)

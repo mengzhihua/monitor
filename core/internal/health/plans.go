@@ -37,6 +37,9 @@ type MaintenanceSpec struct {
 	Value           string `json:"value,omitempty"`
 	StartsAt        int64  `json:"starts_at"` // create: zero means server time now
 	DurationSeconds int64  `json:"duration_seconds"`
+	// Collect reports whether collectors keep running. Nil and true keep
+	// collecting. False pauses every collector, and is valid only for scope all.
+	Collect *bool `json:"collect,omitempty"`
 }
 
 type MaintenancePlan struct {
@@ -92,6 +95,9 @@ func validPlanText(s string, max int) bool {
 }
 
 func validPlanSpec(p MaintenanceSpec) bool {
+	if p.Collect != nil && !*p.Collect && p.Scope != "all" {
+		return false
+	}
 	if !validPlanText(p.Title, 160) || !validPlanText(p.Reason, 2048) || p.DurationSeconds < 1 || p.DurationSeconds > maxPlanDuration {
 		return false
 	}
@@ -204,6 +210,22 @@ func (s *MaintenancePlanStore) MatchesLabels(chart, alarm string, labels map[str
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// PausesCollection reports an active whole-host plan that asked collectors to stop.
+func (s *MaintenancePlanStore) PausesCollection(now int64) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.state.Plans {
+		if p.Status(now) != "active" || p.Scope != "all" || p.Collect == nil || *p.Collect {
+			continue
+		}
+		return true
 	}
 	return false
 }
