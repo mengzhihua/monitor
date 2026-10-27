@@ -16,7 +16,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 采集 | IPMI | 已有 | `collect/ipmi.go` |
 | 采集 | JMX 通用客户端 | 已有：Jolokia HTTP 读取 + 预处理。请求失败或 JSON `status` 不是 200 时该项记为 `unsupported`，下一次成功采集会清除 | `collect/jolokia.go` |
 | 采集 | SSH / Telnet 检查 | 已有：SSH BatchMode；Telnet 为 TCP 发送一行并读到 expect | `collect/sshcheck.go`、`telnet.go` |
-| 采集 | ICMP / TCP / 简单检查 | 已有 | `collect/ping.go`、`portcheck.go` |
+| 采集 | ICMP / TCP / 简单检查 | 已有：`httpcheck` 可用 Zabbix 风格 `status_codes`（如 `200` 或 `200-299`），也可用旧字段 `status_accepted` 列举整数码。`follow_redirects: true` 时跟随跳转，默认只看首跳响应 | `collect/ping.go`、`portcheck.go`、`httpcheck.go` |
 | 采集 | HTTP Agent + JSONPath 提取、多步 Web 场景 | 已有：httpagent 预处理、webscenario 多步提取 | `collect/httpagent.go`、`webscenario.go` |
 | 采集 | ODBC / 数据库 | 已有 | `collect/odbc.go`、`sql.go` |
 | 采集 | Squid | 已有。计数器页失败或没有 `client_http.requests` 时，各 squid 图表记为 `unsupported`，下一次成功采集会清除 | `collect/squid.go` |

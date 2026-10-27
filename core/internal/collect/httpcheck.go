@@ -19,13 +19,16 @@ type httpcheckConfig struct {
 }
 
 type httpJob struct {
-	Name     string            `yaml:"name"`
-	URL      string            `yaml:"url"`
-	Timeout  time.Duration     `yaml:"timeout"`
-	Method   string            `yaml:"method"`
-	Headers  map[string]string `yaml:"headers"`
-	StatusOK []int             `yaml:"status_accepted"` // default [200..399]
-	TLS      struct {
+	Name            string            `yaml:"name"`
+	URL             string            `yaml:"url"`
+	Timeout         time.Duration     `yaml:"timeout"`
+	Method          string            `yaml:"method"`
+	Headers         map[string]string `yaml:"headers"`
+	StatusOK        []int             `yaml:"status_accepted"` // legacy explicit codes
+	StatusCodes     []string          `yaml:"status_codes,omitempty"`
+	FollowRedirects *bool             `yaml:"follow_redirects,omitempty"`
+	spans           []statusSpan
+	TLS             struct {
 		Insecure bool `yaml:"insecure_skip_verify"`
 	} `yaml:"tls"`
 }
@@ -75,9 +78,11 @@ func (h *httpcheckCollector) Init(reg *registry.Registry) error {
 		if j.Timeout <= 0 {
 			j.Timeout = h.cfg.Timeout
 		}
-		if len(j.StatusOK) == 0 {
-			j.StatusOK = []int{200, 201, 202, 203, 204, 301, 302, 303, 307, 308}
+		spans, err := httpcheckStatusSpans(j)
+		if err != nil {
+			return fmt.Errorf("httpcheck job %q: %w", j.Name, err)
 		}
+		j.spans = spans
 		h.addCharts(reg, j.Name, strings.HasPrefix(j.URL, "https://"))
 	}
 	h.Stop()
@@ -182,11 +187,7 @@ func (h *httpcheckCollector) do(ctx context.Context, j httpJob) (ok bool, length
 	for k, v := range j.Headers {
 		req.Header.Set(k, v)
 	}
-	client := h.client
-	if j.TLS.Insecure {
-		client = h.insecureClient
-	}
-	resp, err := client.Do(req)
+	resp, err := h.clientFor(j).Do(req)
 	if err != nil {
 		return false, 0, 0, 0, err
 	}
@@ -203,10 +204,39 @@ func (h *httpcheckCollector) do(ctx context.Context, j httpJob) (ok bool, length
 	if readErr != nil {
 		return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: read response: %w", j.Name, readErr)
 	}
-	for _, s := range j.StatusOK {
-		if code == s {
-			return true, length, code, expiryDays, nil
-		}
+	if statusAllowed(j.spans, code) {
+		return true, length, code, expiryDays, nil
 	}
 	return false, length, code, expiryDays, fmt.Errorf("httpcheck %s: status %d", j.Name, code)
+}
+
+func httpcheckStatusSpans(j *httpJob) ([]statusSpan, error) {
+	if len(j.StatusCodes) > 0 {
+		return parseStatusCodes(j.StatusCodes)
+	}
+	codes := j.StatusOK
+	if len(codes) == 0 {
+		codes = []int{200, 201, 202, 203, 204, 301, 302, 303, 307, 308}
+	}
+	spans := make([]statusSpan, 0, len(codes))
+	for _, c := range codes {
+		if c < 100 || c > 599 {
+			return nil, fmt.Errorf("status_accepted code %d out of range", c)
+		}
+		spans = append(spans, statusSpan{lo: c, hi: c})
+	}
+	return spans, nil
+}
+
+func (h *httpcheckCollector) clientFor(j httpJob) *http.Client {
+	base := h.client
+	if j.TLS.Insecure {
+		base = h.insecureClient
+	}
+	if j.FollowRedirects == nil || !*j.FollowRedirects {
+		return base
+	}
+	clone := *base
+	clone.CheckRedirect = nil
+	return &clone
 }
