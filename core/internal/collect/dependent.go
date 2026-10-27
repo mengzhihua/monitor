@@ -70,12 +70,20 @@ func (d *dependentCollector) Collect(_ context.Context, reg *registry.Registry, 
 		if !ok {
 			continue
 		}
+		id := "dependent." + sanitizeID(it.Name)
+		if msg := ch.UnsupportedMessage(); msg != "" {
+			runes := []rune(msg)
+			if len(runes) > 128 {
+				msg = string(runes[:128])
+			}
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: master: %s", preprocess.ErrNotSupported, msg))
+			continue
+		}
 		_, vals := ch.LastValues()
 		raw, ok := vals[it.Dimension]
 		if !ok || math.IsNaN(raw) || math.IsInf(raw, 0) {
 			continue
 		}
-		id := "dependent." + sanitizeID(it.Name)
 		value, ok := preprocessValue(d.prev, it.Name, strconv.FormatFloat(raw, 'f', -1, 64), it.Steps, now, reg, id)
 		if !ok {
 			continue
