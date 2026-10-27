@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -81,8 +82,10 @@ func (v *varnishCollector) Init(reg *registry.Registry) error {
 func (v *varnishCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	s, err := v.stats(ctx)
 	if err != nil {
-		return err
+		v.markVarnish(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	v.markVarnish(reg, nil)
 	g := func(k string) float64 { return s[k] }
 	_ = reg.Collect("varnish.client_requests", now, map[string]float64{"received": g("MAIN.client_req")})
 	_ = reg.Collect("varnish.cache_hit_ratio_total", now, map[string]float64{
@@ -96,6 +99,14 @@ func (v *varnishCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		"successful": g("MAIN.backend_conn"), "unhealthy": g("MAIN.backend_unhealthy"),
 		"failed": g("MAIN.backend_fail"), "reused": g("MAIN.backend_reuse")})
 	return nil
+}
+
+func (v *varnishCollector) markVarnish(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "varnish" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (v *varnishCollector) stats(ctx context.Context) (map[string]float64, error) {
