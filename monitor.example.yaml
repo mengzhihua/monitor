@@ -111,7 +111,7 @@ collectors:
       listen: 127.0.0.1:8125
     httpcheck:           # synthetic HTTP checks
       timeout: 5s
-      jobs: []           # e.g. [{ name: local, url: http://127.0.0.1:19999/healthz }]
+      jobs: []           # e.g. [{ name: local, url: http://127.0.0.1:19999/healthz, status_codes: ["200-299"], follow_redirects: true }]
     portcheck:
       timeout: 2s
       jobs: []           # e.g. [{ name: ssh, host: 127.0.0.1, port: 22 }]
