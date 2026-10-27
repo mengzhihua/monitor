@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -78,6 +79,15 @@ func (j *jolokiaCollector) Collect(ctx context.Context, reg *registry.Registry, 
 			u += "/" + job.Path
 		}
 		_, body, _, err := httpText(ctx, j.client, http.MethodGet, u, nil, "", 1<<20)
+		id := "jolokia." + sanitizeID(job.Name)
+		if err != nil {
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+			continue
+		}
+		if msg, bad := jolokiaError(body); bad {
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, msg))
+			continue
+		}
 		steps := job.Steps
 		if len(steps) == 0 {
 			steps = []preprocess.Step{{Type: "jsonpath", Path: "$.value"}}
@@ -86,15 +96,40 @@ func (j *jolokiaCollector) Collect(ctx context.Context, reg *registry.Registry, 
 		if v, ok := j.prev[job.Name]; ok {
 			prev = v
 		}
-		id := "jolokia." + sanitizeID(job.Name)
 		value, next, perr := preprocess.Apply(steps, body, prev)
-		if err != nil || noteUnsupported(reg, id, perr) {
+		if noteUnsupported(reg, id, perr) {
 			continue
 		}
 		j.prev[job.Name] = next
-		_ = reg.Collect("jolokia."+sanitizeID(job.Name), now, map[string]float64{"value": value})
+		_ = reg.Collect(id, now, map[string]float64{"value": value})
 	}
 	return nil
+}
+
+func jolokiaError(body string) (string, bool) {
+	var payload struct {
+		Status int    `json:"status"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return "", false
+	}
+	if payload.Status == 0 || payload.Status == http.StatusOK {
+		return "", false
+	}
+	msg := strings.TrimSpace(payload.Error)
+	if msg == "" {
+		msg = fmt.Sprintf("status %d", payload.Status)
+	}
+	return clipRunes(msg, 128), true
+}
+
+func clipRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) > n {
+		return string(runes[:n])
+	}
+	return s
 }
 
 func stringsTrimRightSlash(s string) string {
