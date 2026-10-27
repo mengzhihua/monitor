@@ -123,6 +123,47 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		}
 		return 1
 	}
+	if l.Kind == "fuzzytime" {
+		// 1 only when every selected dimension has a non-NaN sample whose
+		// timestamp is within Within of the window end. Missing or stale
+		// data is 0, never NaN.
+		limit := int64(l.Within / time.Second)
+		saw := false
+		for _, d := range c.Dims() {
+			if !isSel(d) {
+				continue
+			}
+			saw = true
+			pts, err := q.db.Query(registry.SeriesID(c.ID, d.ID), after, before)
+			var newest int64
+			var ok bool
+			if err == nil {
+				for _, p := range pts {
+					if math.IsNaN(p.Value) {
+						continue
+					}
+					if !ok || p.TS > newest {
+						newest = p.TS
+						ok = true
+					}
+				}
+			}
+			if !ok {
+				return 0
+			}
+			age := before - newest
+			if age < 0 {
+				age = -age
+			}
+			if age > limit {
+				return 0
+			}
+		}
+		if !saw {
+			return 0
+		}
+		return 1
+	}
 	if l.Kind == "trendavg" || l.Kind == "trendmin" || l.Kind == "trendmax" ||
 		l.Kind == "trendsum" || l.Kind == "trendcount" {
 		return q.trend(c, l, selected, after, before)
@@ -140,9 +181,9 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 		if err != nil {
 			continue
 		}
-		if l.Kind == "count" {
-			// count answers 0 for a selected dimension that simply has no
-			// matching samples; only query failures keep it out.
+		if l.Kind == "count" || l.Kind == "find" || l.Kind == "countunique" || l.Kind == "changecount" {
+			// These answer 0 for a selected dimension that simply has no
+			// matching samples; only query failures keep them out.
 			matched = true
 		}
 		vals := make([]tsdb.Point, 0, len(pts))
@@ -152,6 +193,46 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			}
 		}
 		if len(vals) == 0 {
+			continue
+		}
+		if l.Kind == "rate" {
+			r, ok := counterRate(vals)
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += r
+			continue
+		}
+		if l.Kind == "stddevsamp" {
+			s, ok := sampleStddev(vals)
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += s
+			continue
+		}
+		if l.Kind == "varpop" || l.Kind == "varsamp" {
+			v, ok := variance(vals, l.Kind == "varsamp")
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += v
+			continue
+		}
+		if l.Kind == "skewness" || l.Kind == "kurtosis" {
+			order := 4
+			if l.Kind == "skewness" {
+				order = 3
+			}
+			v, ok := standardizedMoment(vals, order)
+			if !ok {
+				continue
+			}
+			matched = true
+			sum += v
 			continue
 		}
 		matched = true
@@ -171,14 +252,28 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 					sum += math.Abs(delta)
 				}
 			}
-		case "stddev":
+		case "stddev", "stddevpop":
 			sum += popStddev(vals)
 		case "percentile":
 			sum += percentileRank(vals, l.Percentile)
+		case "sumofsquares":
+			for _, p := range vals {
+				sum += p.Value * p.Value
+			}
 		case "mad":
 			sum += medianAbsDev(vals)
+		case "monoinc", "monodec":
+			sum += monotonicBit(vals, l.Kind == "monoinc", l.Strict)
 		case "count":
 			sum += float64(countMatching(vals, l.CountOp, l.CountVal))
+		case "countunique":
+			sum += float64(countUnique(vals, l.CountOp, l.CountVal))
+		case "changecount":
+			sum += float64(changeCount(vals, l.Mode))
+		case "find":
+			if countMatching(vals, l.CountOp, l.CountVal) > 0 {
+				sum++
+			}
 		case "forecast":
 			a, b, ok := linearFit(vals)
 			if !ok {
@@ -214,6 +309,63 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 // treats +Inf as undefined, so timeleft reports a very large finite value.
 const timeLeftSentinel = 1e15
 
+// counterRate is the per-second increase of a counter, in the same sense as
+// Zabbix rate() and PromQL rate. The elapsed time is the gap between the
+// oldest and newest samples. A drop is a reset to zero: the value before the
+// drop is added back so the new count still contributes. Fewer than two
+// samples, or a zero time span, cannot produce a rate.
+func counterRate(pts []tsdb.Point) (float64, bool) {
+	if len(pts) < 2 {
+		return 0, false
+	}
+	ordered := append([]tsdb.Point(nil), pts...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].TS < ordered[j].TS })
+	first, last := ordered[0], ordered[len(ordered)-1]
+	dt := float64(last.TS - first.TS)
+	if dt <= 0 {
+		return 0, false
+	}
+	inc := last.Value - first.Value
+	for i := 1; i < len(ordered); i++ {
+		if ordered[i].Value < ordered[i-1].Value {
+			inc += ordered[i-1].Value
+		}
+	}
+	return inc / dt, true
+}
+
+// monotonicBit reports whether samples are monotonic in time. One sample is
+// monotonic (1). inc selects monoinc; otherwise the series must not rise.
+// strict rejects equal neighbors. Zabbix's default mode is weak.
+func monotonicBit(pts []tsdb.Point, inc, strict bool) float64 {
+	if len(pts) <= 1 {
+		if len(pts) == 1 {
+			return 1
+		}
+		return math.NaN()
+	}
+	ordered := append([]tsdb.Point(nil), pts...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].TS < ordered[j].TS })
+	for i := 1; i < len(ordered); i++ {
+		prev, next := ordered[i-1].Value, ordered[i].Value
+		var ok bool
+		switch {
+		case inc && strict:
+			ok = next > prev
+		case inc:
+			ok = next >= prev
+		case strict:
+			ok = next < prev
+		default:
+			ok = next <= prev
+		}
+		if !ok {
+			return 0
+		}
+	}
+	return 1
+}
+
 // percentileRank is Zabbix's nearest-rank percentile. Values are sorted
 // ascending and the index is ceil(n*p/100)-1, clamped to the sample list.
 // p is 0 to 100. An empty list returns NaN.
@@ -238,6 +390,36 @@ func percentileRank(pts []tsdb.Point, p float64) float64 {
 		index = n - 1
 	}
 	return sorted[index]
+}
+
+// changeCount is Zabbix changecount: adjacent samples in time order.
+// mode inc counts rises, dec counts falls, and all (the default) counts either.
+// One sample has no adjacent pair, so it contributes 0.
+func changeCount(pts []tsdb.Point, mode string) int {
+	if len(pts) < 2 {
+		return 0
+	}
+	ordered := append([]tsdb.Point(nil), pts...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].TS < ordered[j].TS })
+	n := 0
+	for i := 1; i < len(ordered); i++ {
+		prev, next := ordered[i-1].Value, ordered[i].Value
+		switch mode {
+		case "inc":
+			if next > prev {
+				n++
+			}
+		case "dec":
+			if next < prev {
+				n++
+			}
+		default:
+			if next != prev {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // medianAbsDev is Zabbix mad: the median of absolute deviations from the median.
@@ -265,26 +447,78 @@ func medianAbsDev(pts []tsdb.Point) float64 {
 func countMatching(pts []tsdb.Point, op string, v float64) int {
 	var n int
 	for _, p := range pts {
-		ok := true
-		switch op {
-		case "gt":
-			ok = p.Value > v
-		case "ge":
-			ok = p.Value >= v
-		case "lt":
-			ok = p.Value < v
-		case "le":
-			ok = p.Value <= v
-		case "eq":
-			ok = p.Value == v
-		case "ne":
-			ok = p.Value != v
-		}
-		if ok {
+		if valueMatches(p.Value, op, v) {
 			n++
 		}
 	}
 	return n
+}
+
+// standardizedMoment is the Pearson moment coefficient. order 3 is skewness
+// (m3 / m2^1.5) and order 4 is raw kurtosis (m4 / m2^2), not the excess
+// kurtosis that subtracts 3. Moments divide by the sample count. Zero
+// variance, or fewer than two samples, is undefined.
+func standardizedMoment(pts []tsdb.Point, order int) (float64, bool) {
+	n := len(pts)
+	if n < 2 {
+		return 0, false
+	}
+	var mean float64
+	for _, p := range pts {
+		mean += p.Value
+	}
+	mean /= float64(n)
+	var m2, mk float64
+	for _, p := range pts {
+		d := p.Value - mean
+		m2 += d * d
+		pow := d
+		for i := 1; i < order; i++ {
+			pow *= d
+		}
+		mk += pow
+	}
+	m2 /= float64(n)
+	mk /= float64(n)
+	if m2 == 0 {
+		return 0, false
+	}
+	if order == 3 {
+		return mk / (m2 * math.Sqrt(m2)), true
+	}
+	return mk / (m2 * m2), true
+}
+
+// countUnique is the number of distinct finite values. An operator keeps only
+// the values that pass it, matching Zabbix countunique.
+func countUnique(pts []tsdb.Point, op string, v float64) int {
+	seen := make(map[float64]struct{}, len(pts))
+	for _, p := range pts {
+		if !valueMatches(p.Value, op, v) {
+			continue
+		}
+		seen[p.Value] = struct{}{}
+	}
+	return len(seen)
+}
+
+func valueMatches(value float64, op string, v float64) bool {
+	switch op {
+	case "gt":
+		return value > v
+	case "ge":
+		return value >= v
+	case "lt":
+		return value < v
+	case "le":
+		return value <= v
+	case "eq":
+		return value == v
+	case "ne":
+		return value != v
+	default:
+		return true
+	}
 }
 
 func popStddev(pts []tsdb.Point) float64 {
@@ -299,6 +533,41 @@ func popStddev(pts []tsdb.Point) float64 {
 		v += d * d
 	}
 	return math.Sqrt(v / float64(len(pts)))
+}
+
+// variance is the mean squared deviation. sample selects Zabbix varsamp,
+// which divides by n-1 and needs at least two samples. varpop divides by n,
+// so one sample is 0.
+func variance(pts []tsdb.Point, sample bool) (float64, bool) {
+	n := len(pts)
+	if n == 0 || (sample && n < 2) {
+		return 0, false
+	}
+	var m float64
+	for _, p := range pts {
+		m += p.Value
+	}
+	m /= float64(n)
+	var v float64
+	for _, p := range pts {
+		d := p.Value - m
+		v += d * d
+	}
+	denom := float64(n)
+	if sample {
+		denom = float64(n - 1)
+	}
+	return v / denom, true
+}
+
+// sampleStddev is Zabbix stddevsamp: the square root of the unbiased variance.
+// Fewer than two samples cannot produce it.
+func sampleStddev(pts []tsdb.Point) (float64, bool) {
+	v, ok := variance(pts, true)
+	if !ok {
+		return 0, false
+	}
+	return math.Sqrt(v), true
 }
 
 // linearFit is ordinary least squares of (seconds since window start, value).

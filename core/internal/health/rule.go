@@ -84,15 +84,17 @@ type Lookup struct {
 	AnomalyBit bool   // query 0–100 anomaly rates instead of raw values
 	MinMax     string // "min2max": max-min of the window
 	// Zabbix-style functions. Kind is empty for the classic grouped reduce
-	// above, or one of: nodata, first, change, diff, abschange, stddev, count,
-	// percentile, mad, trendavg, trendmin, trendmax, trendsum, trendcount,
-	// forecast, timeleft.
+	// above, or one of: nodata, first, change, diff, abschange, stddev, count, countunique, changecount, rate, stddevpop, stddevsamp, sumofsquares, varpop, varsamp, skewness, kurtosis, fuzzytime, find, percentile, mad,
+	// monoinc, monodec, trendavg, trendmin, trendmax, trendsum, trendcount, forecast, timeleft.
 	Kind          string
 	Horizon       time.Duration // forecast: evaluate the linear fit at now+Horizon
 	Target        float64       // timeleft: seconds until the fit reaches Target
-	CountOp       string        // count: gt|ge|lt|le|eq|ne, empty = all points
+	CountOp       string        // count/countunique/find: gt|ge|lt|le|eq|ne, empty = all points for count
 	CountVal      float64
 	Percentile    float64 // percentile: rank in [0, 100]
+	Mode          string  // changecount: all (default), inc, or dec
+	Within        time.Duration // fuzzytime: newest sample must be this close to the window end
+	Strict        bool    // monoinc/monodec: require a strict step, not equals
 	hasTarget     bool
 	hasPercentile bool
 }
@@ -297,9 +299,19 @@ func (r *Rule) Hash() string {
 //	diff -5m                       1 if the two newest values differ, else 0
 //	abschange -5m                  absolute difference of the two newest values
 //	stddev -5m                     population stddev of the window
+//	fuzzytime -5m within 60s       1 when every selected dimension's newest sample
+//	                               is within 60s of the window end; otherwise 0
 //	count  -5m [gt|ge|lt|le|eq|ne <n>]   non-NaN points matching the operator
+//	countunique -5m [gt|ge|lt|le|eq|ne <n>]
+//	                               distinct values matching the operator; empty is 0
+//	changecount -5m [mode all|inc|dec]
+//	                               adjacent changes; inc/dec count only rises or falls
+//	rate -5m                       per-second counter increase; reset on drop; <2 samples is NaN
+//	find   -5m <op> <n>          1 if any sample matches, else 0 (empty is 0)
 //	percentile -5m p 95            P-th percentile, 0–100, Zabbix nearest rank
 //	mad -5m                        median absolute deviation; index n/2 after sorting
+//	monoinc|monodec -5m [strict]  1 if the window is monotonic (one sample is 1);
+//	                               strict rejects equal neighbors; empty is NaN
 //	trendavg|trendmin|trendmax|trendsum|trendcount -1d
 //	                               rollup-tier equivalents of average/min/max/sum/count
 //	forecast -1h horizon 30m       least-squares linear fit evaluated at now+horizon
@@ -326,7 +338,7 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
-	case "nodata", "first", "change", "diff", "abschange", "stddev", "count", "percentile", "mad", "forecast", "timeleft":
+	case "nodata", "first", "change", "diff", "abschange", "stddev", "stddevpop", "stddevsamp", "sumofsquares", "varpop", "varsamp", "skewness", "kurtosis", "fuzzytime", "count", "countunique", "changecount", "rate", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
 		l.Kind = strings.ToLower(f[0])
 	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
 		l.Kind = strings.ToLower(f[0])
@@ -351,7 +363,12 @@ func ParseLookup(s string) (*Lookup, error) {
 			l.Percentage = true
 		case "anomaly-bit", "anomaly_bit", "anomalybit":
 			l.AnomalyBit = true
-		case "at", "horizon", "target", "p", "gt", "ge", "lt", "le", "eq", "ne":
+		case "strict":
+			if l.Kind != "monoinc" && l.Kind != "monodec" {
+				return nil, fmt.Errorf("option %q only applies to monoinc and monodec", opt)
+			}
+			l.Strict = true
+		case "at", "horizon", "target", "p", "within", "mode", "gt", "ge", "lt", "le", "eq", "ne":
 			if i+1 >= len(f) {
 				return nil, fmt.Errorf("missing value after %q", f[i])
 			}
@@ -386,6 +403,36 @@ func ParseLookup(s string) (*Lookup, error) {
 					return nil, fmt.Errorf("bad target %q", v)
 				}
 				l.Target, l.hasTarget = t, true
+			case "within":
+				if l.Kind != "fuzzytime" {
+					return nil, fmt.Errorf("option %q only applies to fuzzytime", opt)
+				}
+				w, err := parseDuration(v)
+				if err != nil || w <= 0 {
+					return nil, fmt.Errorf("bad within %q", v)
+				}
+				l.Within = w
+			case "mode":
+				switch l.Kind {
+				case "changecount":
+					switch strings.ToLower(v) {
+					case "all", "inc", "dec":
+						l.Mode = strings.ToLower(v)
+					default:
+						return nil, fmt.Errorf("bad mode %q", v)
+					}
+				case "monoinc", "monodec":
+					switch strings.ToLower(v) {
+					case "weak":
+						l.Strict = false
+					case "strict":
+						l.Strict = true
+					default:
+						return nil, fmt.Errorf("bad mode %q", v)
+					}
+				default:
+					return nil, fmt.Errorf("option %q only applies to changecount, monoinc, and monodec", opt)
+				}
 			case "p":
 				if l.Kind != "percentile" {
 					return nil, fmt.Errorf("option %q only applies to percentile", opt)
@@ -395,8 +442,8 @@ func ParseLookup(s string) (*Lookup, error) {
 					return nil, fmt.Errorf("bad percentile %q", v)
 				}
 				l.Percentile, l.hasPercentile = n, true
-			default: // count comparison operator
-				if l.Kind != "count" {
+			default: // count / countunique / find comparison operator
+				if l.Kind != "count" && l.Kind != "countunique" && l.Kind != "find" {
 					return nil, fmt.Errorf("option %q only applies to count", opt)
 				}
 				n, err := strconv.ParseFloat(v, 64)
@@ -416,8 +463,11 @@ func ParseLookup(s string) (*Lookup, error) {
 			}
 			i = len(f)
 		default:
-			return nil, fmt.Errorf("unsupported lookup option %q (supported: unaligned, absolute, percentage, anomaly-bit, at <offset>, horizon, target, count ops, of dims)", f[i])
+			return nil, fmt.Errorf("unsupported lookup option %q (supported: unaligned, absolute, percentage, anomaly-bit, at <offset>, horizon, target, count ops, strict, mode, of dims)", f[i])
 		}
+	}
+	if l.Kind == "fuzzytime" && l.Within <= 0 {
+		return nil, fmt.Errorf("fuzzytime requires `within <duration>`")
 	}
 	if l.Kind == "forecast" && l.Horizon <= 0 {
 		return nil, fmt.Errorf("forecast requires `horizon <duration>`")
@@ -427,6 +477,9 @@ func ParseLookup(s string) (*Lookup, error) {
 	}
 	if l.Kind == "percentile" && !l.hasPercentile {
 		return nil, fmt.Errorf("percentile requires `p <0-100>`")
+	}
+	if l.Kind == "find" && l.CountOp == "" {
+		return nil, fmt.Errorf("find requires an operator and value")
 	}
 	return l, nil
 }
