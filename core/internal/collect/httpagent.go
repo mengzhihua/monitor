@@ -32,10 +32,6 @@ type httpagentJob struct {
 	spans           []statusSpan
 }
 
-type statusSpan struct {
-	lo, hi int
-}
-
 type httpagentCollector struct {
 	cfg    httpagentConfig
 	client *http.Client
