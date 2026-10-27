@@ -108,6 +108,61 @@ func TestLighttpdStatus(t *testing.T) {
 	}
 }
 
+func TestLighttpdFailureMarksUnsupported(t *testing.T) {
+	body := "Total Accesses: 9\nTotal kBytes: 4\nUptime: 100\nBusyServers: 2\nIdleServers: 6\nScoreboard: .WrC\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("BusyWorkers: 1\n"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	l := &lighttpdCollector{cfg: lighttpdConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := l.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := l.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	uptime := mustChart(t, reg, "lighttpd.uptime")
+	workers := mustChart(t, reg, "lighttpd.workers")
+	if _, vals := uptime.LastValues(); vals["uptime"] != 100 || uptime.Unsupported != "" {
+		t.Fatalf("uptime %+v %q", vals, uptime.Unsupported)
+	}
+	mode = "down"
+	if err := l.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || workers.Unsupported == "" || uptime.LastCollectionTime() != now.Unix() {
+		t.Fatalf("uptime %q at %d workers %q", uptime.Unsupported, uptime.LastCollectionTime(), workers.Unsupported)
+	}
+	mode = "bad"
+	if err := l.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" {
+		t.Fatal("apache body stayed supported")
+	}
+	mode = "ok"
+	if err := l.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported != "" || workers.Unsupported != "" {
+		t.Fatalf("stuck uptime %q workers %q", uptime.Unsupported, workers.Unsupported)
+	}
+	if _, vals := uptime.LastValues(); vals["uptime"] != 100 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestConsulCollector(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health/state/any", func(w http.ResponseWriter, _ *http.Request) {
