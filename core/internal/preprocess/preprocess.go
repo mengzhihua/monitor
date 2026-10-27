@@ -2,8 +2,10 @@
 // and match the Zabbix preprocessing steps this agent implements: trim, left
 // and right trim, replace, regex, JSONPath, a small XPath, multiplier, boolean
 // match, must-match, must-not-match, hex, octal, in-range, discard-unchanged,
-// change (delta), Prometheus text to JSON, XML to JSON, CSV to JSON, and SNMP walk to JSON. A step can set on_fail to
-// discard, value, or error.
+// change (delta), payload error checks, and Prometheus text to JSON.
+// error_json, error_xml, and error_regex fail the sample when a payload
+// reports an error and otherwise leave the text unchanged.
+// A step can set on_fail to discard, value, or error.
 // JavaScript runs operator config in a time-limited interpreter that has no
 // host, network, or filesystem API.
 package preprocess
@@ -15,30 +17,32 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"regexp/syntax"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
 // Step is one preprocessing operation. Unused fields are ignored for that type.
 type Step struct {
-	Type        string      `yaml:"type" json:"type"`
-	Pattern     string      `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Group       int         `yaml:"group,omitempty" json:"group,omitempty"`
-	Path        string      `yaml:"path,omitempty" json:"path,omitempty"`
-	Factor      float64     `yaml:"factor,omitempty" json:"factor,omitempty"`
-	Replacement string      `yaml:"replacement,omitempty" json:"replacement,omitempty"`
-	Min         *float64    `yaml:"min,omitempty" json:"min,omitempty"`
-	Max         *float64    `yaml:"max,omitempty" json:"max,omitempty"`
-	Script      string      `yaml:"script,omitempty" json:"script,omitempty"`
-	OnFail      string      `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
-	FailValue   string      `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
-	Delimiter   string      `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`
-	Qualifier   string      `yaml:"qualifier,omitempty" json:"qualifier,omitempty"`
-	Header      bool        `yaml:"header,omitempty" json:"header,omitempty"`
-	NoQuote     bool        `yaml:"no_quote,omitempty" json:"no_quote,omitempty"`
-	Fields      []WalkField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Type        string            `yaml:"type" json:"type"`
+	Pattern     string            `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Group       int               `yaml:"group,omitempty" json:"group,omitempty"`
+	Path        string            `yaml:"path,omitempty" json:"path,omitempty"`
+	Factor      float64           `yaml:"factor,omitempty" json:"factor,omitempty"`
+	Replacement string            `yaml:"replacement,omitempty" json:"replacement,omitempty"`
+	Min         *float64          `yaml:"min,omitempty" json:"min,omitempty"`
+	Max         *float64          `yaml:"max,omitempty" json:"max,omitempty"`
+	Map         map[string]string `yaml:"map,omitempty" json:"map,omitempty"`
+	Seconds     int               `yaml:"seconds,omitempty" json:"seconds,omitempty"`
+	Script      string            `yaml:"script,omitempty" json:"script,omitempty"`
+	OnFail      string            `yaml:"on_fail,omitempty" json:"on_fail,omitempty"`
+	FailValue   string            `yaml:"fail_value,omitempty" json:"fail_value,omitempty"`
+	Delimiter   string            `yaml:"delimiter,omitempty" json:"delimiter,omitempty"`
+	Qualifier   string            `yaml:"qualifier,omitempty" json:"qualifier,omitempty"`
+	Header      bool              `yaml:"header,omitempty" json:"header,omitempty"`
+	NoQuote     bool              `yaml:"no_quote,omitempty" json:"no_quote,omitempty"`
+	Fields      []WalkField       `yaml:"fields,omitempty" json:"fields,omitempty"`
 }
 
 // WalkField is one column of an snmp_walk_to_json step. Name is a {#MACRO}.
@@ -59,200 +63,40 @@ var ErrNotSupported = errors.New("preprocess: not supported")
 
 // Apply runs steps against input. prev is the previous numeric sample for a
 // change step; pass math.NaN when there is none. The returned prev is the
-// value to store for the next change step.
+// value to store for the next change step. Timed steps need ApplyAt from collectors.
 func Apply(steps []Step, input string, prev float64) (float64, float64, error) {
-	text := input
-	value := math.NaN()
-	have := false
-	for _, st := range steps {
-		var err error
-		switch strings.ToLower(strings.TrimSpace(st.Type)) {
-		case "trim":
-			text = strings.TrimSpace(text)
-		case "ltrim":
-			text = trimSide(text, st.Pattern, true)
-		case "rtrim":
-			text = trimSide(text, st.Pattern, false)
-		case "replace":
-			if st.Pattern == "" {
-				return 0, prev, fmt.Errorf("replace: pattern required")
-			}
-			text = strings.ReplaceAll(text, st.Pattern, st.Replacement)
-		case "regex":
-			text, err = applyRegex(st, text)
-			var syn *syntax.Error
-			if errors.As(err, &syn) {
-				return 0, prev, err
-			}
-		case "jsonpath":
-			text, err = applyJSON(st.Path, text)
-		case "xpath":
-			text, err = applyXML(st.Path, text)
-		case "multiplier":
-			value, err = parseNum(text)
-			if err == nil {
-				factor := st.Factor
-				if factor == 0 {
-					factor = 1
-				}
-				value *= factor
-				text = strconv.FormatFloat(value, 'f', -1, 64)
-				have = true
-			}
-		case "bool":
-			re, e := regexp.Compile(st.Pattern)
-			if e != nil {
-				return 0, prev, e
-			}
-			if re.MatchString(text) {
-				value = 1
-			} else {
-				value = 0
-			}
-			text = strconv.FormatFloat(value, 'f', -1, 64)
-			have = true
-		case "matches":
-			if err = mustMatch(st.Pattern, text, true); err != nil {
-				return failStep(st, prev, err)
-			}
-		case "not_match":
-			if err = mustMatch(st.Pattern, text, false); err != nil {
-				return failStep(st, prev, err)
-			}
-		case "hex", "octal":
-			value, err = parseBase(text, st.Type)
-			if err != nil {
-				return 0, prev, err
-			}
-			text = strconv.FormatInt(int64(value), 10)
-			have = true
-		case "in_range":
-			value, err = parseNum(text)
-			if err != nil {
-				return 0, prev, err
-			}
-			if st.Min == nil && st.Max == nil {
-				return 0, prev, fmt.Errorf("in_range: min or max required")
-			}
-			if st.Min != nil && value < *st.Min || st.Max != nil && value > *st.Max {
-				return failStep(st, prev, fmt.Errorf("in_range: %v outside bounds", value))
-			}
-			text = strconv.FormatFloat(value, 'f', -1, 64)
-			have = true
-		case "discard_unchanged":
-			value, err = parseNum(text)
-			if err != nil {
-				return 0, prev, err
-			}
-			if !math.IsNaN(prev) && value == prev {
-				return 0, prev, ErrUnchanged
-			}
-			prev = value
-			text = strconv.FormatFloat(value, 'f', -1, 64)
-			have = true
-		case "prometheus_to_json":
-			text, err = applyPromJSON(st, text)
-			if err != nil {
-				return failStep(st, prev, err)
-			}
-			have = false
-		case "xml_to_json":
-			text, err = applyXMLToJSON(text)
-			if err != nil {
-				return failStep(st, prev, err)
-			}
-			have = false
-		case "csv_to_json":
-			text, err = applyCSVToJSON(st, text)
-			if err != nil {
-				return failStep(st, prev, err)
-			}
-			have = false
-		case "snmp_walk_to_json":
-			text, err = applySNMPWalkJSON(st, text)
-			if err != nil {
-				return failStep(st, prev, err)
-			}
-			have = false
-		case "not_supported":
-			if strings.TrimSpace(st.Pattern) == "" || len(st.Pattern) > 256 {
-				return 0, prev, fmt.Errorf("not_supported: pattern must be 1 to 256 bytes")
-			}
-			re, e := regexp.Compile(st.Pattern)
-			if e != nil {
-				return 0, prev, e
-			}
-			if re.MatchString(text) {
-				msg := re.FindString(text)
-				if msg == "" {
-					msg = strings.TrimSpace(text)
-				}
-				runes := []rune(msg)
-				if len(runes) > 128 {
-					msg = string(runes[:128])
-				}
-				return failStep(st, prev, fmt.Errorf("%w: %s", ErrNotSupported, msg))
-			}
-		case "javascript", "js":
-			text, err = applyJS(st.Script, text)
-			if err != nil {
-				return 0, prev, err
-			}
-			have = false
-		case "change":
-			value, err = parseNum(text)
-			if err != nil {
-				return 0, prev, err
-			}
-			if math.IsNaN(prev) {
-				return failStep(st, value, fmt.Errorf("change: no previous value"))
-			}
-			delta := value - prev
-			return delta, value, nil
-		default:
-			return 0, prev, fmt.Errorf("unknown preprocess step %q", st.Type)
-		}
-		if err != nil {
-			return failStep(st, prev, err)
-		}
-	}
-	if !have {
-		var err error
-		value, err = parseNum(text)
-		if err != nil {
-			return failStep(Step{}, prev, err)
-		}
-	}
-	return value, prev, nil
+	value, mem, err := ApplyAt(steps, input, Memory{Value: prev}, time.Time{})
+	return value, mem.Value, err
 }
 
-func failStep(st Step, prev float64, err error) (float64, float64, error) {
-	if err == nil || errors.Is(err, ErrUnchanged) || errors.Is(err, ErrDiscard) {
-		return 0, prev, err
+func failStep(st Step, mem Memory, err error) (float64, Memory, error) {
+	if err == nil || errors.Is(err, ErrUnchanged) || errors.Is(err, ErrDiscard) || errors.Is(err, ErrThrottled) || errors.Is(err, ErrNoBaseline) {
+		return 0, mem, err
 	}
 	switch strings.ToLower(strings.TrimSpace(st.OnFail)) {
 	case "":
-		return 0, prev, err
+		return 0, mem, err
 	case "discard":
-		return 0, prev, ErrDiscard
+		return 0, mem, ErrDiscard
 	case "value":
 		value, perr := parseNum(st.FailValue)
 		if perr != nil {
-			return 0, prev, fmt.Errorf("on_fail value: %w", perr)
+			return 0, mem, fmt.Errorf("on_fail value: %w", perr)
 		}
-		return value, value, nil
+		mem.Value = value
+		return value, mem, nil
 	case "error":
 		msg := strings.TrimSpace(st.FailValue)
 		if msg == "" {
-			return 0, prev, fmt.Errorf("on_fail error needs fail_value")
+			return 0, mem, fmt.Errorf("on_fail error needs fail_value")
 		}
 		runes := []rune(msg)
 		if len(runes) > 256 {
 			msg = string(runes[:256])
 		}
-		return 0, prev, fmt.Errorf("%s", msg)
+		return 0, mem, fmt.Errorf("%s", msg)
 	default:
-		return 0, prev, fmt.Errorf("on_fail must be discard, value, or error")
+		return 0, mem, fmt.Errorf("on_fail must be discard, value, or error")
 	}
 }
 
@@ -486,4 +330,71 @@ func parseNum(text string) (float64, error) {
 		return 0, fmt.Errorf("not a number %q", text)
 	}
 	return v, nil
+}
+
+func payloadError(st Step, text string) (string, bool, error) {
+	switch strings.ToLower(strings.TrimSpace(st.Type)) {
+	case "error_json":
+		if strings.TrimSpace(st.Path) == "" {
+			return "", false, fmt.Errorf("error_json: path required")
+		}
+		value, err := applyJSON(st.Path, text)
+		if err != nil {
+			if jsonPathAbsent(err) {
+				return "", true, nil
+			}
+			return "", false, err
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", true, nil
+		}
+		return value, false, nil
+	case "error_xml":
+		if strings.TrimSpace(st.Path) == "" {
+			return "", false, fmt.Errorf("error_xml: path required")
+		}
+		value, err := applyXML(st.Path, text)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return "", true, nil
+			}
+			return "", false, err
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", true, nil
+		}
+		return value, false, nil
+	case "error_regex":
+		if st.Pattern == "" {
+			return "", false, fmt.Errorf("error_regex: pattern required")
+		}
+		re, err := regexp.Compile(st.Pattern)
+		if err != nil {
+			return "", false, err
+		}
+		match := re.FindStringSubmatch(text)
+		if match == nil {
+			return "", true, nil
+		}
+		if len(match) > 1 && strings.TrimSpace(match[1]) != "" {
+			return match[1], false, nil
+		}
+		return match[0], false, nil
+	default:
+		return "", false, fmt.Errorf("unknown preprocess step %q", st.Type)
+	}
+}
+
+func jsonPathAbsent(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "missing") || strings.Contains(msg, "index")
+}
+
+func clipStepError(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) > 256 {
+		return string(runes[:256])
+	}
+	return s
 }
