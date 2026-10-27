@@ -3,7 +3,6 @@ package collect
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -30,7 +29,7 @@ type sshJob struct {
 type sshcheckCollector struct {
 	cfg  sshcheckConfig
 	run  func(ctx context.Context, name string, args ...string) ([]byte, error)
-	prev map[string]float64
+	prev map[string]preprocess.Memory
 }
 
 func init() { Register("sshcheck", func() Collector { return &sshcheckCollector{} }) }
@@ -80,7 +79,7 @@ func (s *sshcheckCollector) Init(reg *registry.Registry) error {
 	if len(s.cfg.Jobs) == 0 {
 		return fmt.Errorf("sshcheck: no jobs")
 	}
-	s.prev = map[string]float64{}
+	s.prev = map[string]preprocess.Memory{}
 	for _, j := range s.cfg.Jobs {
 		ch := &registry.Chart{ID: "sshcheck." + sanitizeID(j.Name), Context: "sshcheck.value", Title: "SSH " + j.Name, Units: "value",
 			Family: "ssh", Plugin: "sshcheck", Module: "sshcheck", Priority: 56200,
@@ -102,26 +101,16 @@ func (s *sshcheckCollector) Collect(ctx context.Context, reg *registry.Registry,
 		}
 		args = append(args, j.User+"@"+j.Address, j.Command)
 		out, err := run(ctx, s.cfg.Command, args...)
-		raw := strings.TrimSpace(string(out))
-		prev := math.NaN()
-		if v, ok := s.prev[j.Name]; ok {
-			prev = v
-		}
 		id := "sshcheck." + sanitizeID(j.Name)
 		if err != nil {
-			msg := err.Error()
-			runes := []rune(msg)
-			if len(runes) > 128 {
-				msg = string(runes[:128])
-			}
-			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, msg))
+			_ = noteUnsupported(reg, id, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
 			continue
 		}
-		value, next, perr := preprocess.Apply(j.Steps, raw, prev)
-		if noteUnsupported(reg, id, perr) {
+		raw := strings.TrimSpace(string(out))
+		value, ok := preprocessValue(s.prev, j.Name, raw, j.Steps, now, reg, id)
+		if !ok {
 			continue
 		}
-		s.prev[j.Name] = next
 		_ = reg.Collect(id, now, map[string]float64{"value": value})
 	}
 	return nil
