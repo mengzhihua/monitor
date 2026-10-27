@@ -208,10 +208,10 @@ data/
 |---|---|
 | `nodata -5m` | 窗口内无任何非 NaN 点返回 1，否则 0（绝不返回 NaN） |
 | `first -5m` / `change -5m` / `stddev -5m` | 首值 / 末值−首值 / 总体标准差 |
+| `diff -5m` / `abschange -5m` | 最近两个样本：不同为 1，否则 0；或它们的绝对差。只有一个样本时为 0 |
 | `count -5m [gt\|ge\|lt\|le\|eq\|ne <n>]` | 满足比较条件的样本数 |
 | `find -5m gt 10` | 每个选中维度有匹配样本则为 1，否则 0。比较符与 `count` 相同。空窗口为 0；多维度分别计算后相加 |
 | `percentile -5m p 95` | 窗口百分位，p 为 0 到 100。升序后取 `ceil(n*p/100)-1`；多维度分别计算后相加 |
-<<<<<<< HEAD
 | `countunique -5m` | 窗口内不同数值的个数。比较符与 `count` 相同；空窗口为 0；多维度分别计算后相加 |
 | `changecount -5m` | 相邻样本发生变化的次数。`mode inc` 只计上升，`mode dec` 只计下降，默认全部。空窗口为 0；多维度分别计算后相加 |
 | `rate -5m` | 计数器每秒增量；回绕按重置累加；少于两个样本或零时间跨度为 NaN；多维度分别计算后相加 |
@@ -219,18 +219,16 @@ data/
 | `sumofsquares -5m` | 窗口内各样本平方之和；空窗口为 NaN；多维度分别相加 |
 | `varpop -5m` / `varsamp -5m` | 总体 / 样本方差；`varsamp` 少于两个样本为 NaN；多维度分别相加 |
 | `skewness -5m` / `kurtosis -5m` | 偏度 / 原始峰度；方差为 0 或少于两个样本为 NaN；多维度分别相加 |
+| `fuzzytime -5m within 60s` | 每个选中维度的最新样本距窗口结束都不超过该时长时为 1，否则为 0 |
 | `mad -5m` | 绝对偏差的中位数。升序后取下标 `n/2`。一个样本为 0，空窗口为 NaN；多维度分别计算后相加 |
 | `monoinc -5m` / `monodec -5m` | 窗口按时间是否单调上升或下降。默认允许相等；`strict` 或 `mode strict` 要求严格增减。一个样本为 1，空窗口为 NaN；多维度分别计算后相加 |
-=======
-| `fuzzytime -5m within 60s` | 每个选中维度的最新样本距窗口结束都不超过该时长时为 1，否则为 0 |
->>>>>>> 9b883f6 (feat: add a fuzzytime lookup for stale samples)
 | `trendavg\|trendmin\|trendmax\|trendsum\|trendcount -1d` | 读取 rollup 层的对应归约；无桶时回退原始采样 |
 | `forecast -1h horizon 30m` | 最小二乘线性拟合在 now+horizon 的取值 |
 | `timeleft -1h target 0` | 拟合到达 target 的剩余秒数（跨维度取最小；永不收敛返回 1e15） |
 
 规则字段可引用 `{$NAME}` 用户宏：规则内 `macros:` 优先，`health.macros` 全局兜底，未定义宏编译即报错。
 
-- 表达式引擎：支持 `$this / $status / $WARNING / $CRITICAL / $now / 其它告警名引用 / 图表其它维度`，与 Netdata 兼容，便于直接移植其预置规则。
+- 表达式引擎：支持 `$this / $status / $WARNING / $CRITICAL / $now / 其它告警名引用 / 图表其它维度`，以及 `between(value, min, max)`（闭区间内为 1，区间外为 0，任一参数为 NaN 时结果为 NaN）。与 Netdata 兼容，便于直接移植其预置规则。
 - 状态机：`UNINITIALIZED → CLEAR ↔ WARNING ↔ CRITICAL`，`REMOVED`；每次跃迁写 `alarm_log`。
 - 静默：按 host/chart/alert/label 维度、时间窗口；维护窗口。
 - 通知路由：`to: role` → 角色→渠道映射；Hub 模式下节点可 `notify.local = false` 交给 Hub 集中通知。

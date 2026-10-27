@@ -83,7 +83,7 @@ type Lookup struct {
 	AnomalyBit bool   // query 0–100 anomaly rates instead of raw values
 	MinMax     string // "min2max": max-min of the window
 	// Zabbix-style functions. Kind is empty for the classic grouped reduce
-	// above, or one of: nodata, first, change, stddev, count, countunique, changecount, rate, stddevpop, stddevsamp, sumofsquares, varpop, varsamp, skewness, kurtosis, fuzzytime, find, percentile, mad,
+	// above, or one of: nodata, first, change, diff, abschange, stddev, count, countunique, changecount, rate, stddevpop, stddevsamp, sumofsquares, varpop, varsamp, skewness, kurtosis, fuzzytime, find, percentile, mad,
 	// monoinc, monodec, trendavg, trendmin, trendmax, trendsum, trendcount, forecast, timeleft.
 	Kind          string
 	Horizon       time.Duration // forecast: evaluate the linear fit at now+Horizon
@@ -290,6 +290,8 @@ func (r *Rule) Hash() string {
 //	nodata -5m                     1 if no non-NaN point exists in the window, else 0 (never NaN)
 //	first  -5m                     oldest value in the window
 //	change -5m                     last - first value in the window
+//	diff -5m                       1 if the two newest values differ, else 0
+//	abschange -5m                  absolute difference of the two newest values
 //	stddev -5m                     population stddev of the window
 //	fuzzytime -5m within 60s       1 when every selected dimension's newest sample
 //	                               is within 60s of the window end; otherwise 0
@@ -330,7 +332,7 @@ func ParseLookup(s string) (*Lookup, error) {
 		l.Method = tsdb.GroupLast
 	case "min2max":
 		l.Method, l.MinMax = tsdb.GroupMax, "min2max"
-	case "nodata", "first", "change", "stddev", "stddevpop", "stddevsamp", "sumofsquares", "varpop", "varsamp", "skewness", "kurtosis", "fuzzytime", "count", "countunique", "changecount", "rate", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
+	case "nodata", "first", "change", "diff", "abschange", "stddev", "stddevpop", "stddevsamp", "sumofsquares", "varpop", "varsamp", "skewness", "kurtosis", "fuzzytime", "count", "countunique", "changecount", "rate", "find", "percentile", "mad", "monoinc", "monodec", "forecast", "timeleft":
 		l.Kind = strings.ToLower(f[0])
 	case "trendavg", "trendmin", "trendmax", "trendsum", "trendcount":
 		l.Kind = strings.ToLower(f[0])

@@ -241,6 +241,17 @@ func (q metricLookup) kind(c *registry.Chart, l *Lookup, selected map[string]boo
 			sum += vals[0].Value
 		case "change":
 			sum += vals[len(vals)-1].Value - vals[0].Value
+		case "diff", "abschange":
+			if len(vals) >= 2 {
+				delta := vals[len(vals)-1].Value - vals[len(vals)-2].Value
+				if l.Kind == "diff" {
+					if delta != 0 {
+						sum++
+					}
+				} else {
+					sum += math.Abs(delta)
+				}
+			}
 		case "stddev", "stddevpop":
 			sum += popStddev(vals)
 		case "percentile":

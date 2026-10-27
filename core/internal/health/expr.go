@@ -117,6 +117,14 @@ func (n callNode) eval(vars func(string) (float64, bool)) float64 {
 	switch n.fn {
 	case "abs":
 		return math.Abs(a[0])
+	case "between":
+		if math.IsNaN(a[0]) || math.IsNaN(a[1]) || math.IsNaN(a[2]) {
+			return math.NaN()
+		}
+		if a[0] >= a[1] && a[0] <= a[2] {
+			return 1
+		}
+		return 0
 	case "isnan":
 		return b2f(math.IsNaN(a[0]))
 	case "isinf":
@@ -413,6 +421,10 @@ func (p *parser) parsePrimary() (node, error) {
 		case "abs", "isnan", "isinf":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("%s() takes one argument", fn)
+			}
+		case "between":
+			if len(args) != 3 {
+				return nil, fmt.Errorf("between() takes value, min, max")
 			}
 		case "min", "max":
 			if len(args) < 1 {
