@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -82,12 +83,15 @@ func (s *squidCollector) Init(reg *registry.Registry) error {
 func (s *squidCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	b, err := httpGet(ctx, s.client, s.url)
 	if err != nil {
-		return err
+		s.markSquid(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
 	m, err := parseSquidCounters(string(b))
 	if err != nil {
-		return err
+		s.markSquid(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	s.markSquid(reg, nil)
 	_ = reg.Collect("squid.clients_net", now, map[string]float64{
 		"in": m["client_http.kbytes_in"], "out": m["client_http.kbytes_out"], "hits": m["client_http.hit_kbytes_out"]})
 	_ = reg.Collect("squid.clients_requests", now, map[string]float64{
@@ -95,6 +99,14 @@ func (s *squidCollector) Collect(ctx context.Context, reg *registry.Registry, no
 	_ = reg.Collect("squid.servers_net", now, map[string]float64{"in": m["server.all.kbytes_in"], "out": m["server.all.kbytes_out"]})
 	_ = reg.Collect("squid.servers_requests", now, map[string]float64{"requests": m["server.all.requests"], "errors": m["server.all.errors"]})
 	return nil
+}
+
+func (s *squidCollector) markSquid(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "squid" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func parseSquidCounters(s string) (map[string]float64, error) {
