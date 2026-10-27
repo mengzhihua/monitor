@@ -659,6 +659,61 @@ func TestParseHDFSJMX(t *testing.T) {
 	}
 }
 
+func TestHDFSFailureMarksUnsupported(t *testing.T) {
+	raw := `{"beans":[{"name":"Hadoop:service=NameNode,name=FSNamesystemState","CapacityUsed":100,"CapacityRemaining":900,"FilesTotal":12,"BlocksTotal":30,"NumLiveDataNodes":3,"TotalLoad":4}]}`
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		_, _ = w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+	h := &hdfsCollector{cfg: hdfsConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := h.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := h.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	files := mustChart(t, reg, "hdfs.files_total")
+	nodes := mustChart(t, reg, "hdfs.data_nodes")
+	if _, vals := files.LastValues(); vals["files"] != 12 || files.Unsupported != "" {
+		t.Fatalf("files %+v %q", vals, files.Unsupported)
+	}
+	mode = "down"
+	if err := h.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if files.Unsupported == "" || nodes.Unsupported == "" || files.LastCollectionTime() != now.Unix() {
+		t.Fatalf("files %q at %d nodes %q", files.Unsupported, files.LastCollectionTime(), nodes.Unsupported)
+	}
+	mode = "bad"
+	if err := h.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if files.Unsupported == "" {
+		t.Fatal("bad JSON stayed supported")
+	}
+	mode = "ok"
+	if err := h.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if files.Unsupported != "" || nodes.Unsupported != "" {
+		t.Fatalf("stuck files %q nodes %q", files.Unsupported, nodes.Unsupported)
+	}
+	if _, vals := files.LastValues(); vals["files"] != 12 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestHTTPStatusClass(t *testing.T) {
 	if httpStatusClass("404") != "4xx" || httpStatusClass("200") != "2xx" || httpStatusClass("x") != "other" {
 		t.Fatal(httpStatusClass("404"))
