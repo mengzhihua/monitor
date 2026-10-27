@@ -914,6 +914,10 @@ export:
 #         - { role: sysadmin, command: echo-ok }
 #         - { delay: 5m, role: pager }
 #       recovery: { role: sysadmin }
+#     - name: api-page
+#       labels: { service: api, region: "prod*" }
+#       steps:
+#         - { role: pager }
 #     - name: night
 #       severities: [CRITICAL]
 #       start: "22:00"          # local clock; 22:00-07:00 wraps midnight

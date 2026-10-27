@@ -40,7 +40,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 动作 | 多步升级、恢复操作 | 已有：`health.actions` 步骤延迟、角色和恢复操作 | `health/actions.go` |
 | 动作 | 远程命令 / 全局脚本 | 已有：配置 argv 白名单，`POST /api/v1/commands` | `api/zplatform.go` |
 | 动作 | 媒介类型 | 已有：含短信网关与脚本渠道。邮件主题和正文可用 `{HOST.NAME}`、`{EVENT.NAME}`、`{EVENT.STATUS}`、`{EVENT.VALUE}`、`{EVENT.UNITS}`、`{EVENT.CHART}`、`{EVENT.INFO}` | `health/message.go`、`health/notify.go` |
-| 动作 | 动作条件 | 已有：严重级别、告警名和图表通配，以及 `ack: yes` / `ack: no` 与本地时钟时段和星期。确认后只运行 `ack: yes` 的动作；未确认时 `ack: no` 才运行。留空则两种状态都匹配，确认本身不触发它。条件按 AND 组合 | `health/actions.go` |
+| 动作 | 动作条件 | 已有：严重级别、告警名和图表通配，以及图表标签与 `ack: yes` / `ack: no` 和本地时钟时段与星期。标签必须都存在，值可用末尾 `*`。确认后只运行 `ack: yes` 的动作；未确认时 `ack: no` 才运行。留空则两种状态都匹配，确认本身不触发它。条件按 AND 组合 | `health/actions.go` |
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
 | 可视化 | 图类型（饼 / 堆叠） | 已有：uPlot 线 / 面 / 堆叠；图表类型 `pie` 按末行正值画占比；服务 SLA 另有饼图 | `web/src/features/metrics/chartRenderer.ts`、`ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + `topology:` 手工边，服务页展示 | `api/zplatform.go`、`ServicesPanel.vue` |
