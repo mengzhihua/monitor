@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -168,6 +169,61 @@ func TestParseVarnishJSON(t *testing.T) {
 	}
 	if err := v.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVarnishFailureMarksUnsupported(t *testing.T) {
+	raw := `{"counters":{"MAIN.threads":{"value":8},"MAIN.client_req":{"value":10}}}`
+	phase := "ok"
+	v := &varnishCollector{
+		cfg: varnishConfig{Command: "varnishstat", Timeout: time.Second},
+		run: func(context.Context, string, ...string) ([]byte, error) {
+			switch phase {
+			case "fail":
+				return nil, errors.New("varnishstat: no such file")
+			case "empty":
+				return []byte(`{"counters":{}}`), nil
+			default:
+				return []byte(raw), nil
+			}
+		},
+	}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := v.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := v.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	threads := mustChart(t, reg, "varnish.threads")
+	hits := mustChart(t, reg, "varnish.cache_hit_ratio_total")
+	if _, vals := threads.LastValues(); vals["threads"] != 8 || threads.Unsupported != "" {
+		t.Fatalf("threads %+v %q", vals, threads.Unsupported)
+	}
+	phase = "fail"
+	if err := v.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if threads.Unsupported == "" || hits.Unsupported == "" || threads.LastCollectionTime() != now.Unix() {
+		t.Fatalf("threads %q at %d hits %q", threads.Unsupported, threads.LastCollectionTime(), hits.Unsupported)
+	}
+	phase = "empty"
+	if err := v.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if threads.Unsupported == "" {
+		t.Fatal("empty counters stayed supported")
+	}
+	phase = "ok"
+	if err := v.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if threads.Unsupported != "" || hits.Unsupported != "" {
+		t.Fatalf("stuck threads %q hits %q", threads.Unsupported, hits.Unsupported)
+	}
+	if _, vals := threads.LastValues(); vals["threads"] != 8 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 
