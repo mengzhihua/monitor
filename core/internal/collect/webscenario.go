@@ -27,14 +27,15 @@ type webscenarioJob struct {
 }
 
 type webscenarioStep struct {
-	Name    string            `yaml:"name"`
-	URL     string            `yaml:"url"`
-	Method  string            `yaml:"method"`
-	Body    string            `yaml:"body"`
-	Headers map[string]string `yaml:"headers"`
-	Expect  int               `yaml:"expect"`
-	Extract string            `yaml:"extract"`
-	Var     string            `yaml:"var"`
+	Name     string            `yaml:"name"`
+	URL      string            `yaml:"url"`
+	Method   string            `yaml:"method"`
+	Body     string            `yaml:"body"`
+	Headers  map[string]string `yaml:"headers"`
+	Expect   int               `yaml:"expect"`
+	Required string            `yaml:"required,omitempty"`
+	Extract  string            `yaml:"extract"`
+	Var      string            `yaml:"var"`
 }
 
 type webscenarioCollector struct {
@@ -60,6 +61,9 @@ func (w *webscenarioCollector) Configure(decode func(v any) error) error {
 		for _, st := range job.Steps {
 			if st.URL == "" {
 				return fmt.Errorf("webscenario %s: step url required", job.Name)
+			}
+			if len(st.Required) > 256 {
+				return fmt.Errorf("webscenario %s: required string must be at most 256 bytes", job.Name)
 			}
 		}
 	}
@@ -115,6 +119,10 @@ func (w *webscenarioCollector) run(ctx context.Context, job webscenarioJob) (ok 
 			expect = 200
 		}
 		if err != nil || code != expect {
+			return false, i + 1, elapsed
+		}
+		need := expandVars(st.Required, vars)
+		if need != "" && !strings.Contains(text, need) {
 			return false, i + 1, elapsed
 		}
 		if st.Extract != "" && st.Var != "" {
