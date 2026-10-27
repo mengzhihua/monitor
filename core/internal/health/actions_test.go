@@ -1,6 +1,7 @@
 package health
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -178,6 +179,64 @@ func TestCorrelationCanRequireTheSameChartOrLabel(t *testing.T) {
 	}
 	if _, err := compileCorrelation([]CorrelationRule{{Cause: "host_down", Symptoms: []string{"disk_full"}, Equal: []string{"host"}}}); err == nil {
 		t.Fatal("accepted an unknown equal field")
+	}
+}
+
+func TestActionAckYesRunsOnAcknowledge(t *testing.T) {
+	cmds := make(chan ActionCommand, 2)
+	e := diagnosticsEngine(t, Options{
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Roles:     map[string][]string{"sysadmin": {"slack"}, "tickets": {"slack"}},
+		Actions: []Action{
+			{Name: "page", Steps: []ActionStep{{Role: "sysadmin"}}},
+			{Name: "ticket", Ack: "yes", Steps: []ActionStep{{Role: "tickets", Command: "file"}}},
+		},
+		RunCommand: func(c ActionCommand) { cmds <- c },
+		Now:        func() time.Time { return time.Unix(1_700_000_100, 0) },
+	})
+	e.alarms["disk_full|disk.space"] = &Alarm{
+		ID: 7, Name: "disk_full", Chart: "disk.space", Status: StatusCritical, Active: true, LastStatusChange: 100,
+	}
+	e.notifyAt(LogEntry{Name: "disk_full", Chart: "disk.space", Status: StatusCritical, When: 100, Recipient: "sysadmin"}, 100)
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("unacknowledged recipient %s", got.Recipient)
+	}
+	select {
+	case cmd := <-cmds:
+		t.Fatalf("ticket command ran before acknowledgement: %+v", cmd)
+	default:
+	}
+	if err := e.SetAcknowledged("disk.space", "disk_full", true, "ops", "ticket"); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-e.notifyCh; got.Recipient != "tickets" || !got.Acknowledged {
+		t.Fatalf("ack notify %+v", got)
+	}
+	if cmd := <-cmds; cmd.Name != "file" || cmd.AlarmID != 7 {
+		t.Fatalf("cmd %+v", cmd)
+	}
+	if _, err := compileActions([]Action{{Name: "bad", Ack: "maybe", Steps: []ActionStep{{Role: "sysadmin"}}}}); err == nil || !strings.Contains(err.Error(), "ack") {
+		t.Fatalf("bad ack: %v", err)
+	}
+}
+
+func TestActionAckNoSkipsAcknowledgedProblems(t *testing.T) {
+	e := diagnosticsEngine(t, Options{
+		Notifiers: []Notifier{diagnosticNotifier{"slack", func() error { return nil }}},
+		Roles:     map[string][]string{"pager": {"slack"}},
+		Actions: []Action{{
+			Name: "page", Ack: "no", Steps: []ActionStep{{Role: "pager"}},
+		}},
+	})
+	e.alarms["hot|system.cpu"] = &Alarm{Name: "hot", Chart: "system.cpu", Status: StatusCritical, Active: true, LastStatusChange: 1}
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: 1, Recipient: "sysadmin"}, 1)
+	if got := <-e.notifyCh; got.Recipient != "pager" {
+		t.Fatalf("unacknowledged %s", got.Recipient)
+	}
+	e.alarms["hot|system.cpu"].Acknowledged = true
+	e.notifyAt(LogEntry{Name: "hot", Chart: "system.cpu", Status: StatusCritical, When: 2, Recipient: "sysadmin"}, 2)
+	if got := <-e.notifyCh; got.Recipient != "sysadmin" {
+		t.Fatalf("acknowledged %s", got.Recipient)
 	}
 }
 
