@@ -850,6 +850,7 @@ export:
 #       auth_passphrase: example-auth
 #       priv_protocol: AES
 #       priv_passphrase: example-priv
+#       retries: 2
 #       items:
 #         - { name: load, oid: "1.3.6.1.4.1.2021.10.1.3.1", preprocess: [{ type: regex, pattern: "([0-9.]+)" }] }
 #         - name: ifaces
@@ -891,7 +892,7 @@ export:
 #         - name: login
 #           steps:
 #             - { url: http://127.0.0.1:8080/login, extract: "sid=([a-z]+)", var: sid }
-#             - { url: http://127.0.0.1:8080/home, headers: { Cookie: "sid={{sid}}" } }
+#             - { url: http://127.0.0.1:8080/home, headers: { Cookie: "sid={{sid}}" }, required: "welcome" }
 #     dependent:
 #       items:
 #         - { name: used_x2, chart: system.ram, dimension: used, preprocess: [{ type: multiplier, factor: 2 }, { type: discard_unchanged }] }
