@@ -895,7 +895,7 @@ export:
 #             - { url: http://127.0.0.1:8080/home, headers: { Cookie: "sid={{sid}}" }, required: "welcome" }
 #     dependent:
 #       items:
-#         - { name: used_x2, chart: system.ram, dimension: used, preprocess: [{ type: multiplier, factor: 2 }, { type: discard_unchanged }] }
+#         - { name: used_x2, chart: system.ram, dimension: used, every: 30s, preprocess: [{ type: multiplier, factor: 2 }, { type: discard_unchanged }] }
 #     calculated:
 #       items:
 #         - { name: used_pct, formula: "100 * {system.ram:used} / ({system.ram:used} + {system.ram:free})" }
