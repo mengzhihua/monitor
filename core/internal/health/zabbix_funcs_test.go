@@ -20,6 +20,7 @@ func TestParseLookupZabbix(t *testing.T) {
 		target  float64
 		op      string
 		val     float64
+		pct     float64
 		dims    int
 	}
 	cases := []struct {
@@ -31,6 +32,9 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"FIRST -5m of used", want{kind: "first", dims: 1}, ""},
 		{"change -5m absolute", want{kind: "change"}, ""},
 		{"stddev -5m", want{kind: "stddev"}, ""},
+		{"percentile -5m p 95", want{kind: "percentile", pct: 95}, ""},
+		{"percentile -5m p 0", want{kind: "percentile", pct: 0}, ""},
+		{"percentile -5m p 100", want{kind: "percentile", pct: 100}, ""},
 		{"count -5m", want{kind: "count"}, ""},
 		{"count -5m gt 3.5", want{kind: "count", op: "gt", val: 3.5}, ""},
 		{"count -5m ne 0 of used,free", want{kind: "count", op: "ne", dims: 2}, ""},
@@ -46,6 +50,12 @@ func TestParseLookupZabbix(t *testing.T) {
 		{"forecast -1h horizon nope", want{}, "bad horizon"},
 		{"timeleft -1h", want{}, "target"},
 		{"timeleft -1h target x", want{}, "bad target"},
+		{"percentile -5m", want{}, "percentile requires"},
+		{"percentile -5m p", want{}, "missing value"},
+		{"percentile -5m p x", want{}, "bad percentile"},
+		{"percentile -5m p 100.1", want{}, "bad percentile"},
+		{"percentile -5m p -0.1", want{}, "bad percentile"},
+		{"average -5m p 95", want{}, "only applies to percentile"},
 		{"average -5m gt 1", want{}, "only applies to count"},
 		{"count -5m gt", want{}, "missing value"},
 		{"count -5m gt x", want{}, "bad count operand"},
@@ -62,8 +72,12 @@ func TestParseLookupZabbix(t *testing.T) {
 			t.Fatalf("%q: %v", c.in, err)
 		}
 		if l.Kind != c.want.kind || l.Horizon != c.want.horizon || l.Target != c.want.target ||
-			l.CountOp != c.want.op || l.CountVal != c.want.val || len(l.Dimensions) != c.want.dims {
+			l.CountOp != c.want.op || l.CountVal != c.want.val || l.Percentile != c.want.pct ||
+			len(l.Dimensions) != c.want.dims {
 			t.Fatalf("%q: %+v", c.in, l)
+		}
+		if c.want.kind == "percentile" && !l.hasPercentile {
+			t.Fatalf("%q: percentile flag not set", c.in)
 		}
 	}
 }
@@ -143,6 +157,46 @@ func TestLookupFirstChangeStddevCount(t *testing.T) {
 	}
 	if v := lookupValue(t, "count -5m gt 2 of used", seed, now); v != 2 {
 		t.Fatalf("count gt 2: got %v want 2", v)
+	}
+}
+
+func TestLookupPercentile(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	seed := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{"used": float64(i)})
+		}
+	}
+	// Sorted [0,1,2,3,4]. Index is ceil(n*p/100)-1.
+	if v := lookupValue(t, "percentile -5m p 0 of used", seed, now); v != 0 {
+		t.Fatalf("p0: got %v want 0", v)
+	}
+	if v := lookupValue(t, "percentile -5m p 20 of used", seed, now); v != 0 {
+		t.Fatalf("p20: got %v want 0", v)
+	}
+	if v := lookupValue(t, "percentile -5m p 50 of used", seed, now); v != 2 {
+		t.Fatalf("p50: got %v want 2", v)
+	}
+	if v := lookupValue(t, "percentile -5m p 95 of used", seed, now); v != 4 {
+		t.Fatalf("p95: got %v want 4", v)
+	}
+	if v := lookupValue(t, "percentile -5m p 100 of used", seed, now); v != 4 {
+		t.Fatalf("p100: got %v want 4", v)
+	}
+	if v := lookupValue(t, "percentile -5m p 95 of used", nil, now); !math.IsNaN(v) {
+		t.Fatalf("empty window: got %v want NaN", v)
+	}
+	// Each dimension is ranked on its own, then the ranks are added.
+	both := func(reg *registry.Registry, now time.Time) {
+		for i := 0; i < 5; i++ {
+			reg.Collect("system.ram", now.Add(time.Duration(i-4)*time.Second), map[string]float64{
+				"used": float64(i),
+				"free": 10,
+			})
+		}
+	}
+	if v := lookupValue(t, "percentile -5m p 100", both, now); v != 14 {
+		t.Fatalf("two dimensions: got %v want 14", v)
 	}
 }
 
