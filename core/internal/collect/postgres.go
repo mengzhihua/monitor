@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -102,8 +103,10 @@ type pgStats struct {
 func (p *postgresCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	s, err := p.stats(ctx)
 	if err != nil {
-		return err
+		p.markPostgres(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	p.markPostgres(reg, nil)
 	_ = reg.Collect("postgres.connections", now, map[string]float64{"used": s.used, "idle": s.idle})
 	_ = reg.Collect("postgres.db_transactions", now, map[string]float64{"committed": s.committed, "rolled_back": s.rolled})
 	_ = reg.Collect("postgres.db_tuples", now, map[string]float64{
@@ -116,6 +119,14 @@ func (p *postgresCollector) Collect(ctx context.Context, reg *registry.Registry,
 	_ = reg.Collect("postgres.bgwriter_checkpoint_time", now, map[string]float64{"write": s.ckptWrite, "sync": s.ckptSync})
 	_ = reg.Collect("postgres.locks", now, map[string]float64{"held": s.locks})
 	return nil
+}
+
+func (p *postgresCollector) markPostgres(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "postgres" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (p *postgresCollector) stats(ctx context.Context) (pgStats, error) {

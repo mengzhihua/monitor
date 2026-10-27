@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -79,8 +80,14 @@ func (c *corednsCollector) Init(reg *registry.Registry) error {
 func (c *corednsCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	b, err := httpGet(ctx, c.client, c.url)
 	if err != nil {
-		return err
+		c.markCoreDNS(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	if !strings.Contains(string(b), "coredns_") {
+		c.markCoreDNS(reg, fmt.Errorf("%w: coredns: no coredns_ metrics", preprocess.ErrNotSupported))
+		return nil
+	}
+	c.markCoreDNS(reg, nil)
 	samples := promSamples(string(b))
 	reqNames := []string{"coredns_dns_requests_total", "coredns_dns_request_count_total"}
 	rcodeNames := []string{"coredns_dns_responses_total", "coredns_dns_response_rcode_count_total"}
@@ -111,6 +118,14 @@ func (c *corednsCollector) Collect(ctx context.Context, reg *registry.Registry, 
 	_ = reg.Collect("coredns.dns_responses_count_total_per_rcode", now, rcode)
 	_ = reg.Collect("coredns.dns_panic_count_total", now, map[string]float64{"panics": panics})
 	return nil
+}
+
+func (c *corednsCollector) markCoreDNS(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "coredns" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func inNames(name string, names []string) bool {

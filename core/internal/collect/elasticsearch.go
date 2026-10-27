@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -133,8 +134,10 @@ type esNode struct {
 func (e *elasticsearchCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	h, n, err := e.fetch(ctx)
 	if err != nil {
-		return err
+		e.markElasticsearch(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	e.markElasticsearch(reg, nil)
 	green, yellow, red := 0.0, 0.0, 0.0
 	switch strings.ToLower(h.Status) {
 	case "green":
@@ -171,6 +174,14 @@ func (e *elasticsearchCollector) Collect(ctx context.Context, reg *registry.Regi
 	_ = reg.Collect("elasticsearch.node_jvm_gc", now, map[string]float64{"young": young, "old": old})
 	_ = reg.Collect("elasticsearch.node_http", now, map[string]float64{"current": node.HTTP.CurrentOpen})
 	return nil
+}
+
+func (e *elasticsearchCollector) markElasticsearch(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "elasticsearch" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (e *elasticsearchCollector) fetch(ctx context.Context) (esHealth, esNodes, error) {

@@ -35,6 +35,52 @@ http,BACKEND,3,1,2,100,40,200,300,0,0,0,UP,1,2,1,1,0,10,0,2,1,0
 	}
 }
 
+func TestHAProxyFailureMarksUnsupported(t *testing.T) {
+	csv := "# pxname,svname,qcur,scur,smax,slim,stot,bin,bout,ereq,econ,eresp,status,weight,act,bck,type,hrsp_1xx,hrsp_2xx,hrsp_3xx,hrsp_4xx,hrsp_5xx,hrsp_other\n" +
+		"http,FRONTEND,,2,10,100,50,200,300,1,0,0,OPEN,,,0,0,0,10,0,2,0,0\n" +
+		"http,BACKEND,3,1,2,100,40,200,300,0,0,0,UP,1,2,1,1,0,10,0,2,1,0\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode != "ok" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(csv))
+	}))
+	defer srv.Close()
+	h := &haproxyCollector{cfg: haproxyConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := h.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := h.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	sessions := mustChart(t, reg, "haproxy.frontend_current_sessions")
+	status := mustChart(t, reg, "haproxy.backend_status")
+	if _, vals := sessions.LastValues(); vals["current"] != 2 || sessions.Unsupported != "" {
+		t.Fatalf("sessions %+v %q", vals, sessions.Unsupported)
+	}
+	mode = "down"
+	if err := h.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.Unsupported == "" || status.Unsupported == "" || sessions.LastCollectionTime() != now.Unix() {
+		t.Fatalf("sessions %q at %d status %q", sessions.Unsupported, sessions.LastCollectionTime(), status.Unsupported)
+	}
+	mode = "ok"
+	if err := h.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.Unsupported != "" || status.Unsupported != "" {
+		t.Fatalf("stuck sessions %q status %q", sessions.Unsupported, status.Unsupported)
+	}
+	if _, vals := sessions.LastValues(); vals["current"] != 2 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestLighttpdStatus(t *testing.T) {
 	body := "Total Accesses: 9\nTotal kBytes: 4\nUptime: 100\nBusyServers: 2\nIdleServers: 6\nScoreboard: .WrC\n"
 	st, err := parseLighttpdStatus(body)
@@ -62,6 +108,61 @@ func TestLighttpdStatus(t *testing.T) {
 	}
 }
 
+func TestLighttpdFailureMarksUnsupported(t *testing.T) {
+	body := "Total Accesses: 9\nTotal kBytes: 4\nUptime: 100\nBusyServers: 2\nIdleServers: 6\nScoreboard: .WrC\n"
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "down" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if mode == "bad" {
+			_, _ = w.Write([]byte("BusyWorkers: 1\n"))
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	l := &lighttpdCollector{cfg: lighttpdConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := l.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := l.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	uptime := mustChart(t, reg, "lighttpd.uptime")
+	workers := mustChart(t, reg, "lighttpd.workers")
+	if _, vals := uptime.LastValues(); vals["uptime"] != 100 || uptime.Unsupported != "" {
+		t.Fatalf("uptime %+v %q", vals, uptime.Unsupported)
+	}
+	mode = "down"
+	if err := l.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" || workers.Unsupported == "" || uptime.LastCollectionTime() != now.Unix() {
+		t.Fatalf("uptime %q at %d workers %q", uptime.Unsupported, uptime.LastCollectionTime(), workers.Unsupported)
+	}
+	mode = "bad"
+	if err := l.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported == "" {
+		t.Fatal("apache body stayed supported")
+	}
+	mode = "ok"
+	if err := l.Collect(context.Background(), reg, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if uptime.Unsupported != "" || workers.Unsupported != "" {
+		t.Fatalf("stuck uptime %q workers %q", uptime.Unsupported, workers.Unsupported)
+	}
+	if _, vals := uptime.LastValues(); vals["uptime"] != 100 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestConsulCollector(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health/state/any", func(w http.ResponseWriter, _ *http.Request) {
@@ -84,6 +185,56 @@ func TestConsulCollector(t *testing.T) {
 	}
 	if err := c.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConsulFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/health/state/any", func(w http.ResponseWriter, _ *http.Request) {
+		if mode != "ok" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]string{{"Status": "passing"}})
+	})
+	mux.HandleFunc("/v1/agent/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"Gauges": []map[string]any{
+			{"Name": "consul.raft.peers", "Value": 3},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := &consulCollector{cfg: consulConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := c.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := c.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	peers := mustChart(t, reg, "consul.raft_peers")
+	health := mustChart(t, reg, "consul.health_checks")
+	if _, vals := peers.LastValues(); vals["peers"] != 3 || peers.Unsupported != "" {
+		t.Fatalf("peers %+v %q", vals, peers.Unsupported)
+	}
+	mode = "down"
+	if err := c.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if peers.Unsupported == "" || health.Unsupported == "" || peers.LastCollectionTime() != now.Unix() {
+		t.Fatalf("peers %q at %d health %q", peers.Unsupported, peers.LastCollectionTime(), health.Unsupported)
+	}
+	mode = "ok"
+	if err := c.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if peers.Unsupported != "" || health.Unsupported != "" {
+		t.Fatalf("stuck peers %q health %q", peers.Unsupported, health.Unsupported)
+	}
+	if _, vals := peers.LastValues(); vals["peers"] != 3 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 

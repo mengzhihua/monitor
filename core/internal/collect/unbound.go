@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -73,8 +74,10 @@ func (u *unboundCollector) Init(reg *registry.Registry) error {
 func (u *unboundCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	m, err := u.stats(ctx)
 	if err != nil {
-		return err
+		u.markUnbound(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	u.markUnbound(reg, nil)
 	_ = reg.Collect("unbound.queries", now, map[string]float64{"queries": m["total.num.queries"]})
 	_ = reg.Collect("unbound.cache", now, map[string]float64{
 		"hits": m["total.num.cachehits"], "miss": m["total.num.cachemiss"]})
@@ -85,6 +88,14 @@ func (u *unboundCollector) Collect(ctx context.Context, reg *registry.Registry, 
 	_ = reg.Collect("unbound.request_list_jostle_list", now, map[string]float64{
 		"overwritten": m["total.requestlist.overwritten"], "dropped": m["total.requestlist.exceeded"]})
 	return nil
+}
+
+func (u *unboundCollector) markUnbound(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "unbound" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }
 
 func (u *unboundCollector) stats(ctx context.Context) (map[string]float64, error) {

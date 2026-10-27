@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mengzhihua/monitor/core/internal/preprocess"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 )
 
@@ -75,8 +76,14 @@ func (t *traefikCollector) Init(reg *registry.Registry) error {
 func (t *traefikCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
 	b, err := httpGet(ctx, t.client, t.url)
 	if err != nil {
-		return err
+		t.markTraefik(reg, fmt.Errorf("%w: %s", preprocess.ErrNotSupported, clipRunes(err.Error(), 128)))
+		return nil
 	}
+	if !strings.Contains(string(b), "traefik_") {
+		t.markTraefik(reg, fmt.Errorf("%w: traefik: no traefik_ metrics", preprocess.ErrNotSupported))
+		return nil
+	}
+	t.markTraefik(reg, nil)
 	samples := promSamples(string(b))
 	cls := map[string]float64{"1xx": 0, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0}
 	open := 0.0
@@ -91,4 +98,12 @@ func (t *traefikCollector) Collect(ctx context.Context, reg *registry.Registry, 
 	_ = reg.Collect("traefik.entrypoint_requests", now, cls)
 	_ = reg.Collect("traefik.entrypoint_open_connections", now, map[string]float64{"open": open})
 	return nil
+}
+
+func (t *traefikCollector) markTraefik(reg *registry.Registry, err error) {
+	for _, ch := range reg.Charts() {
+		if ch != nil && ch.Plugin == "traefik" {
+			_ = noteUnsupported(reg, ch.ID, err)
+		}
+	}
 }

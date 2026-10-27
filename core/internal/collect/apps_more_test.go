@@ -49,6 +49,60 @@ func TestElasticsearchCollector(t *testing.T) {
 	}
 }
 
+func TestElasticsearchFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode != "ok" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		switch r.URL.Path {
+		case "/_cluster/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "green", "number_of_nodes": 2, "number_of_data_nodes": 1,
+			})
+		case "/_nodes/_local/stats":
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": map[string]any{"n1": map[string]any{
+				"indices": map[string]any{"docs": map[string]any{"count": 4}},
+			}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	e := &elasticsearchCollector{cfg: elasticsearchConfig{URL: srv.URL, Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := e.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := e.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	nodes := mustChart(t, reg, "elasticsearch.cluster_nodes")
+	health := mustChart(t, reg, "elasticsearch.cluster_health_status")
+	if _, vals := nodes.LastValues(); vals["nodes"] != 2 || nodes.Unsupported != "" {
+		t.Fatalf("nodes %+v %q", vals, nodes.Unsupported)
+	}
+	mode = "down"
+	if err := e.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if nodes.Unsupported == "" || health.Unsupported == "" || nodes.LastCollectionTime() != now.Unix() {
+		t.Fatalf("nodes %q at %d health %q", nodes.Unsupported, nodes.LastCollectionTime(), health.Unsupported)
+	}
+	mode = "ok"
+	if err := e.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if nodes.Unsupported != "" || health.Unsupported != "" {
+		t.Fatalf("stuck nodes %q health %q", nodes.Unsupported, health.Unsupported)
+	}
+	if _, vals := nodes.LastValues(); vals["nodes"] != 2 {
+		t.Fatalf("recovered %+v", vals)
+	}
+}
+
 func TestRabbitMQCollector(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/overview" {
@@ -69,6 +123,52 @@ func TestRabbitMQCollector(t *testing.T) {
 	}
 	if err := r.Collect(context.Background(), reg, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRabbitMQFailureMarksUnsupported(t *testing.T) {
+	mode := "ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode != "ok" || r.URL.Path != "/api/overview" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object_totals": map[string]any{"connections": 2, "queues": 4},
+			"queue_totals":  map[string]any{"messages": 9, "messages_ready": 6, "messages_unacknowledged": 3},
+		})
+	}))
+	defer srv.Close()
+	r := &rabbitmqCollector{cfg: rabbitmqConfig{URL: srv.URL, User: "guest", Password: "guest", Timeout: time.Second}}
+	reg := registry.New(&registry.Host{Hostname: "h", UpdateEvery: 1}, nil)
+	if err := r.Init(reg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := r.Collect(context.Background(), reg, now); err != nil {
+		t.Fatal(err)
+	}
+	objects := mustChart(t, reg, "rabbitmq.objects")
+	messages := mustChart(t, reg, "rabbitmq.messages")
+	if _, vals := objects.LastValues(); vals["queues"] != 4 || objects.Unsupported != "" {
+		t.Fatalf("objects %+v %q", vals, objects.Unsupported)
+	}
+	mode = "down"
+	if err := r.Collect(context.Background(), reg, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if objects.Unsupported == "" || messages.Unsupported == "" || objects.LastCollectionTime() != now.Unix() {
+		t.Fatalf("objects %q at %d messages %q", objects.Unsupported, objects.LastCollectionTime(), messages.Unsupported)
+	}
+	mode = "ok"
+	if err := r.Collect(context.Background(), reg, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if objects.Unsupported != "" || messages.Unsupported != "" {
+		t.Fatalf("stuck objects %q messages %q", objects.Unsupported, messages.Unsupported)
+	}
+	if _, vals := objects.LastValues(); vals["queues"] != 4 {
+		t.Fatalf("recovered %+v", vals)
 	}
 }
 
