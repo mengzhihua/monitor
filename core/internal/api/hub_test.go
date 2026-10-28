@@ -192,8 +192,21 @@ func TestHubStreamEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ws.Close()
-	_ = reg.Collect("system.ram", now.Add(2*time.Second), map[string]float64{"used": 201, "free": 50})
+	// Dial sees the 101 response before handle necessarily registers the live
+	// connection. A matching Pong proves its reader (and registration) is ready.
+	const readyPing = "hub-live-ready"
+	collected := false
+	ws.SetPongHandler(func(payload string) error {
+		if payload != readyPing || collected {
+			return nil
+		}
+		collected = true
+		return reg.Collect("system.ram", now.Add(2*time.Second), map[string]float64{"used": 201, "free": 50})
+	})
 	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := ws.WriteControl(websocket.PingMessage, []byte(readyPing), time.Now().Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	var msg struct {
 		Node  string
 		Chart string
@@ -202,7 +215,7 @@ func TestHubStreamEndToEnd(t *testing.T) {
 	if err := ws.ReadJSON(&msg); err != nil {
 		t.Fatal(err)
 	}
-	if msg.Node != "agent-1" || msg.Chart != "system.ram" || msg.V["used"] != 201 {
+	if !collected || msg.Node != "agent-1" || msg.Chart != "system.ram" || msg.V["used"] != 201 {
 		t.Fatalf("live msg = %+v", msg)
 	}
 
