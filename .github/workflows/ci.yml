@@ -51,7 +51,12 @@ jobs:
           path: core/internal/api/ui/dist
       - name: gofmt
         if: runner.os == 'Linux'
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            printf 'Go files require formatting:\n%s\n' "$unformatted"
+            exit 1
+          fi
         working-directory: core
       - run: go vet ./...
         working-directory: core

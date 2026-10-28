@@ -17,9 +17,9 @@ const (
 // Steps run while the alarm stays raised; Delay is measured from the last
 // status change. Recovery replaces the notify role when the alarm clears.
 type Action struct {
-	Name       string   `yaml:"name" json:"name"`
-	Severities []string `yaml:"severities,omitempty" json:"severities,omitempty"`
-	Alarms     []string `yaml:"alarms,omitempty" json:"alarms,omitempty"`
+	Name       string            `yaml:"name" json:"name"`
+	Severities []string          `yaml:"severities,omitempty" json:"severities,omitempty"`
+	Alarms     []string          `yaml:"alarms,omitempty" json:"alarms,omitempty"`
 	Charts     []string          `yaml:"charts,omitempty" json:"charts,omitempty"`
 	Tags       map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	Labels     map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`

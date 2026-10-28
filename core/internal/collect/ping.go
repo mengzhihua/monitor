@@ -26,8 +26,9 @@ type pingJob struct {
 }
 
 type pingCollector struct {
-	cfg pingConfig
-	id  uint16
+	cfg     pingConfig
+	id      uint16
+	probeFn func(context.Context, pingJob, uint16) (float64, error) // nil uses the real network probe
 }
 
 func init() {
@@ -104,6 +105,10 @@ func (p *pingCollector) Init(reg *registry.Registry) error {
 }
 
 func (p *pingCollector) Collect(ctx context.Context, reg *registry.Registry, now time.Time) error {
+	probe := p.probe
+	if p.probeFn != nil {
+		probe = p.probeFn
+	}
 	for i, j := range p.cfg.Jobs {
 		id := sanitizeID(j.Name)
 		n := j.Count
@@ -116,7 +121,7 @@ func (p *pingCollector) Collect(ctx context.Context, reg *registry.Registry, now
 			if ctx.Err() != nil {
 				break
 			}
-			rtt, err := p.probe(ctx, j, uint16(i*5+k+1))
+			rtt, err := probe(ctx, j, uint16(i*5+k+1))
 			if err != nil {
 				continue
 			}

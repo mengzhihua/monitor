@@ -98,10 +98,10 @@ type Lookup struct {
 	Target        float64       // timeleft: seconds until the fit reaches Target
 	CountOp       string        // count/countunique/find: gt|ge|lt|le|eq|ne, empty = all points for count
 	CountVal      float64
-	Percentile    float64 // percentile: rank in [0, 100]
-	Mode          string  // changecount: all (default), inc, or dec
+	Percentile    float64       // percentile: rank in [0, 100]
+	Mode          string        // changecount: all (default), inc, or dec
 	Within        time.Duration // fuzzytime: newest sample must be this close to the window end
-	Strict        bool    // monoinc/monodec: require a strict step, not equals
+	Strict        bool          // monoinc/monodec: require a strict step, not equals
 	hasTarget     bool
 	hasPercentile bool
 }

@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,14 +54,17 @@ func TestStorageOptionsApplyConfiguredBlockSizes(t *testing.T) {
 		t.Fatalf("disabled hour tier still changed: %+v %v", opt.Tiers, err)
 	}
 	cfg = config.Default()
+	cfg.Global.DataDir = t.TempDir()
 	cfg.Collectors.Timeout = 30 * time.Second
 	cfg.Plugins.MaxCharts = 32
 	cfg.Plugins.RestartMin = 2 * time.Second
 	if got := collectorOptions(cfg, map[string]bool{"disk": true}); got.Timeout != 30*time.Second || !got.Disabled["disk"] {
 		t.Fatalf("collector options %+v", got)
 	}
-	plugins := pluginRuntimeOptions(cfg, "/plugins", nil)
-	if plugins.MaxCharts != 32 || plugins.RestartMin != 2*time.Second || plugins.Dir != "/plugins" || !strings.HasSuffix(plugins.StatePath, "/plugins/state.json") {
+	pluginDir := filepath.Join(t.TempDir(), "plugin-binaries")
+	plugins := pluginRuntimeOptions(cfg, pluginDir, nil)
+	wantStatePath := filepath.Join(cfg.Global.DataDir, "plugins", "state.json")
+	if plugins.MaxCharts != 32 || plugins.RestartMin != 2*time.Second || plugins.Dir != pluginDir || plugins.StatePath != wantStatePath {
 		t.Fatalf("plugin options %+v", plugins)
 	}
 }
@@ -86,6 +92,60 @@ func TestEarlyDatabaseFailureReleasesHTTPListenerBeforeServeStarts(t *testing.T)
 			t.Fatalf("early startup failure retained HTTP listener: %v", err)
 		}
 		listener.Close()
+	}
+}
+
+func TestInvalidWebTLSReleasesHTTPListenerBeforeServeStarts(t *testing.T) {
+	fixture := httptest.NewTLSServer(http.NotFoundHandler())
+	certificate := fixture.TLS.Certificates[0]
+	fixture.Close()
+	key, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	write := func(name string, data []byte) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	certPath := write("cert.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]}))
+	keyPath := write("key.pem", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}))
+	invalidPath := write("invalid.pem", []byte("not a certificate"))
+	for _, tc := range []struct {
+		name      string
+		configure func(*config.Config)
+		wantError string
+	}{
+		{"missing-key", func(cfg *config.Config) { cfg.Web.TLSKey = "" }, "web.tls_cert and web.tls_key"},
+		{"invalid-certificate", func(cfg *config.Config) { cfg.Web.TLSCert = invalidPath }, "server certificate:"},
+		{"missing-client-ca", func(cfg *config.Config) { cfg.Web.ClientCA = filepath.Join(dir, "missing.pem") }, "read "},
+		{"invalid-client-ca", func(cfg *config.Config) { cfg.Web.ClientCA = invalidPath }, "no certificates"},
+		{"required-client-ca", func(cfg *config.Config) { cfg.Hub.RequireClientCert = true }, "hub.require_client_cert requires web.client_ca"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Global.DataDir = t.TempDir()
+			cfg.Web.Listen = unusedListenAddress(t)
+			cfg.Web.Token = "test-startup-admin"
+			cfg.Web.TLSCert, cfg.Web.TLSKey = certPath, keyPath
+			tc.configure(cfg)
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			for range 2 {
+				err := runDaemon(context.Background(), cfg, filepath.Join(cfg.Global.DataDir, "monitor.yaml"), false, logger)
+				if err == nil || !strings.Contains(err.Error(), "web tls:") || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("expected TLS setup failure %q, got %v", tc.wantError, err)
+				}
+				listener, err := net.Listen("tcp", cfg.Web.Listen)
+				if err != nil {
+					t.Fatalf("TLS setup failure retained HTTP listener: %v", err)
+				}
+				listener.Close()
+			}
+		})
 	}
 }
 

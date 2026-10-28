@@ -76,12 +76,27 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	gate := &loadingGate{}
 	errc := make(chan error, 1)
 	serverHandoff := false
+	defer func() {
+		if httpSrv != nil && !serverHandoff {
+			stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_ = stopHTTPServer(stopCtx, httpSrv)
+			cancel()
+		}
+		if httpListener != nil {
+			// Own the socket as soon as it is bound, including TLS setup errors
+			// and startup failures before Serve registers its listener.
+			_ = httpListener.Close()
+		}
+		if httpDone != nil {
+			<-httpDone
+		}
+	}()
 	if cfg.WebEnabled() || forceWeb {
 		ln, err := net.Listen("tcp", cfg.Web.Listen)
 		if err != nil {
 			return fmt.Errorf("listen %s: %w", cfg.Web.Listen, err)
 		}
-		httpListener, httpDone = ln, make(chan struct{})
+		httpListener = ln
 		tlsCfg, err := stream.ServerTLS(stream.CertFiles{
 			CertFile: cfg.Web.TLSCert, KeyFile: cfg.Web.TLSKey, CAFile: cfg.Web.ClientCA,
 			RequireClientCert: cfg.Hub.RequireClientCert,
@@ -96,6 +111,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 			TLSConfig:         tlsCfg,
 		}
 		log.Info("web server listening", "addr", cfg.Web.Listen, "ready", false, "tls", tlsCfg != nil)
+		httpDone = make(chan struct{})
 		go func() {
 			defer close(httpDone)
 			serveLn := ln
@@ -107,19 +123,6 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 			}
 		}()
 	}
-	defer func() {
-		if httpSrv != nil && !serverHandoff {
-			stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_ = stopHTTPServer(stopCtx, httpSrv)
-			cancel()
-		}
-		if httpListener != nil {
-			// Shutdown only knows listeners already registered by Serve. A fast
-			// startup failure can reach here before that goroutine has started.
-			_ = httpListener.Close()
-			<-httpDone
-		}
-	}()
 
 	openStarted := time.Now()
 	db, err := tsdb.Open(storage)

@@ -511,8 +511,6 @@ func TestLookupRate(t *testing.T) {
 	}
 }
 
-
-
 func TestLookupSumOfSquares(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	seed := func(reg *registry.Registry, now time.Time) {
