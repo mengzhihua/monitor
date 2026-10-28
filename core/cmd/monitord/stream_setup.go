@@ -7,13 +7,14 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
 // newAgentStream adapts remote config to collector and health state.
-func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, eng *health.Engine, localDisabled map[string]bool, log *slog.Logger, requestExit func()) (*stream.Client, error) {
+func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, eng *health.Engine, pm *plugins.Manager, localDisabled map[string]bool, log *slog.Logger, requestExit func()) (*stream.Client, error) {
 	if !cfg.Stream.Enabled {
 		return nil, nil
 	}
@@ -44,9 +45,15 @@ func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, 
 		Replicate:          cfg.Stream.Replicate,
 		Protocol:           cfg.Stream.Protocol,
 		Version:            version,
-		Functions:          sched.Functions,
-		Logger:             log.With("component", "stream"),
-		ConfigPath:         cfgPath,
+		Functions: func() []collect.Function {
+			functions := sched.Functions()
+			for _, fn := range pm.Functions() {
+				functions = append(functions, collect.Function{Name: fn.Name, Help: fn.Help, Timeout: fn.Timeout, Run: fn.Run})
+			}
+			return functions
+		},
+		Logger:     log.With("component", "stream"),
+		ConfigPath: cfgPath,
 		OnConfig: func(disabled []string, ov *stream.HealthOverlay) {
 			next := map[string]bool{}
 			for _, n := range disabled {

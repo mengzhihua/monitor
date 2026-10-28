@@ -68,7 +68,7 @@ test-platform: all
 	cd core && go test -race -p 1 ./internal/plugins ./internal/api ./internal/collect ./internal/config ./cmd/monitord
 	python3 scripts/verify-plugin-platform.py
 	python3 scripts/auth-fixtures/verify_saml_e2e.py --bin core/bin/monitord
-	cd web && npm run test:e2e -- e2e/plugins.spec.ts e2e/plugin-runtime.spec.ts e2e/api-contract.spec.ts
+	cd web && npm run test:e2e -- e2e/plugins.spec.ts e2e/plugin-runtime.spec.ts e2e/api-contract.spec.ts e2e/functions.spec.ts
 
 ## test-scripts: all local build/acceptance-script fixtures, no live services
 test-scripts:

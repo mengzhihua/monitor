@@ -144,7 +144,7 @@ func (s *session) sendWelcome(node *Node, now time.Time) {
 			last[c.ID] = wm
 		}
 	}
-	_ = s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())})
+	_ = s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds()), Capabilities: []string{stream.FunctionCatalogCapability}})
 	if c := s.n.opt.configFor(node.ID); c != nil && (len(c.Disabled) > 0 || c.YAML != "") {
 		_ = s.send(stream.Frame{Type: stream.TypeConfig, Disabled: c.Disabled, ConfigYAML: c.YAML, ConfigRev: c.Updated})
 	}

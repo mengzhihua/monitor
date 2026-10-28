@@ -45,6 +45,14 @@ plugins.d/
 
 `HOST_LABEL` 不属于 metrics 或 functions 能力，清单包使用时记入协议错误。只声明 metrics 的包发送 `FUNCTION` 也记入协议错误。声明了 `functions` 的包可以发送 `FUNCTION <name> <timeout> [help]`，名称是小写标识，超时是 0～60 秒，最多 32 个函数。调用走现有 `GET /api/v1/function?function=plugin.<id>.<name>`，agent 向插件 stdin 写一行 `CALL <id> <name> <json>`，插件在 stdout 回一行 `FUNCTION_RESULT <id> <json>`。参数最多 16 个，结果必须是一行 JSON，并且不能超过协议行预算。`plugins.functions: false` 关闭注册和调用。未运行或已有调用未完成时，新的调用会失败。非有限数值不会进入采样/变量状态。其他文本协议见 [plugins.d 协议](03-plugins-d-protocol.md)。
 
+函数目录只包含当前运行实例已注册的函数。停用、退出和替换会撤回旧实例的可调用能力，持有旧目录快照的调用不能转交给同名新进程。输入写入也受调用期限约束：插件不读取 stdin 时，取消或超时会解除阻塞并终止受影响的进程实例，由监督器按现有退避策略恢复。
+
+Agent 的插件函数也可通过 Hub 的 `GET /api/v1/function?node=<id>&function=plugin.<id>.<name>` 调用，沿用函数角色与节点房间权限。JSON stream 与 MQTT/ACLK 的 welcome 协商 `functions.catalog.v1` 后，Agent 每秒检查目录变化并发送完整替换；在线安装、停用、重启和移除无需重连，空目录会清除远端旧函数。旧 Hub 未声明该能力时仍只接收 hello 中的初始目录。
+
+远程调用属于当前连接，会话断开时取消 Agent 侧请求上下文并结束 Hub 的等待，避免占用重连后的调用槽。plugins.d 没有新增取消命令；请求结束不代表已经执行的外部业务动作被回滚，界面不会自动重试未确认的调用。
+
+插件函数可能产生业务副作用，界面只在用户明确点击执行时调用；排序、选择函数和恢复页面可见性不会自动重发。切换函数或目录撤回函数时取消旧请求并清除旧结果，执行失败也不会把旧结果显示成新结果。内置只读函数保留原有自动刷新行为。
+
 上述 128 / 64 / 128 / 128 和 64 KiB 是进程级默认预算。`plugins.max_charts`、`max_dimensions`、`max_labels`、`max_variables`、`max_line` 可以覆盖，0 保持默认；`max_line` 也限制旧脚本的单行长度，其余预算仍只约束清单包。`plugins.restart_min` / `restart_max` 覆盖重启退避，默认 1 秒 / 1 分钟。目录接口的 `budgets` 返回进程级上限。采集器启用仍由 `collectors.enabled` / `disabled` 决定，`collectors.timeout` 限制单次采集，0 表示一个采集周期。已有配置不写这些键时行为不变。
 
 单个插件可以再收紧，不能放宽进程级上限。清单里的可选 `resources` 对象使用相同字段名，例如 `"resources": {"max_charts": 4}`；省略的字段继承进程预算，超出进程预算的声明会在运行时按进程预算截断，超出允许范围的值使该包进入目录诊断且不执行。`plugins.list[]` 的同名字段是操作员给这一条配置的上限，超过进程预算会在配置校验时失败。旧脚本默认仍不限制图表数量；给它写上 `max_charts` 后只统计该插件自己发布的图表。目录里每个因此受到单独上限的插件带有自己的 `budgets`，表示实际生效值。
@@ -54,6 +62,8 @@ plugins.d/
 同名优先级为：`plugins.list` 显式配置 → 清单包 → 顶层旧 `*.plugin`。包目录预留自己的名称；坏清单不会退回执行同名旧脚本。旧协议的 ID 和主机标签行为保持兼容，新清单约束不会冒充对旧脚本的隔离。
 
 重新扫描会比较执行设置、元数据和入口文件内容：未变化的实例继续运行；新增实例启动；改变或删除的实例先停止，再交接新实例。更新入口依赖的其他文件时，请显式“重启”插件或修改清单版本。无效包显示诊断，其他合法包继续采集。禁用或卸载不会删除历史数据。
+
+清单包和旧脚本共享同一次根目录枚举。根目录存在但无法读取时，重扫返回失败，保留此前目录、控制版本、持久状态与运行进程，避免把 I/O 错误误判为全部卸载；修复目录后可直接重扫。首次启动仍展示读取诊断并保留显式配置插件。未配置或不存在的可选目录仍按空目录处理，单个坏包继续按既有规则隔离。
 
 新插件进程首次声明自身图表的增量维度时重新建立计数基线，首条累计值不作为增量样本写入，避免跨进程重启产生尖峰；历史与绝对值样本保留，同一进程重复声明仍连续计算。
 
@@ -117,7 +127,7 @@ make test-fast
 make test
 make test-platform # 一次串联当前构建、平台竞态、真实插件/SAML 与浏览器验证
 python3 scripts/verify-plugin-platform.py
-cd web && npx playwright test e2e/plugins.spec.ts e2e/plugin-runtime.spec.ts e2e/api-contract.spec.ts
+cd web && npx playwright test e2e/plugins.spec.ts e2e/plugin-runtime.spec.ts e2e/api-contract.spec.ts e2e/functions.spec.ts
 ```
 
 真实插件验收使用隔离临时目录、随机端口和临时凭据，覆盖在线安装、真实样本与历史、权限、版本冲突、独立进程启停、停用状态重启保留、入口内容更新、坏包及超限周期配置隔离、移除与审计。测试结束清理服务和插件进程，不使用部署目录。

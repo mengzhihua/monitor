@@ -279,7 +279,7 @@ func (s *session) serve() {
 			last[c.ID] = wm
 		}
 	}
-	if err := s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds())}); err != nil {
+	if err := s.send(stream.Frame{Type: stream.TypeWelcome, Last: last, ReplicateFrom: now.Unix() - int64(s.n.opt.Replicate.Seconds()), Capabilities: []string{stream.FunctionCatalogCapability}}); err != nil {
 		return
 	}
 	c := s.n.opt.configFor(node.ID)
@@ -449,6 +449,15 @@ func (s *session) handle(node *Node, f stream.Frame) {
 		}
 	case stream.TypeFuncResult, stream.TypeQueryResult:
 		node.deliverResult(f)
+	case stream.TypeFunctions:
+		node.mu.Lock()
+		if node.conn != s {
+			node.mu.Unlock()
+			return // a replaced connection cannot overwrite the new directory
+		}
+		node.functions = append([]stream.FunctionInfo(nil), f.Functions...)
+		node.mu.Unlock()
+		s.n.touch()
 	case stream.TypeConfigState:
 		if s.n.opt.OnConfigState != nil {
 			s.n.opt.OnConfigState(node.ID, f)

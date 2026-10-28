@@ -72,24 +72,16 @@ func DiscoverManifests(dir string) ([]Spec, []Diagnostic) {
 }
 
 func discoverManifests(ctx context.Context, dir string) ([]Spec, []Diagnostic, error) {
+	entries, err := readPluginDirectory(ctx, dir)
+	if err != nil {
+		return nil, directoryDiagnostics(err), err
+	}
+	return discoverManifestEntries(ctx, dir, entries)
+}
+
+func discoverManifestEntries(ctx context.Context, dir string, entries []os.DirEntry) ([]Spec, []Diagnostic, error) {
 	var specs []Spec
 	diagnostics := []Diagnostic{}
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	if dir == "" {
-		return specs, diagnostics, nil
-	}
-	entries, err := os.ReadDir(dir)
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			diagnostics = append(diagnostics, Diagnostic{Path: ".", Error: "cannot read plugin directory"})
-		}
-		return specs, diagnostics, nil
-	}
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err

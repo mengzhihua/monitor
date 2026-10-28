@@ -102,15 +102,18 @@ func (m *Manager) runOnce(ctx context.Context, p *plugin) error {
 	defer outWriter.Close()
 	defer errWriter.Close()
 	cmd.Stdout, cmd.Stderr = outWriter, errWriter
-	var stdinW *io.PipeWriter
 	if parser.AllowsFunctions {
-		stdinR, writer := io.Pipe()
-		stdinW = writer
-		cmd.Stdin = stdinR
-		defer stdinR.Close()
-		defer stdinW.Close()
+		// StdinPipe is closed by Wait when the child exits. An io.Pipe reader
+		// assigned to cmd.Stdin would leave exec's copying goroutine blocked on
+		// Read, even after WaitDelay closes the child's OS pipe.
+		writer, err := cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+		input := &functionInput{WriteCloser: writer, cancel: cancel}
+		defer input.Close()
 		p.mu.Lock()
-		p.stdin = stdinW
+		p.stdin = input
 		p.mu.Unlock()
 		defer func() {
 			p.mu.Lock()

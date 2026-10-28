@@ -7,7 +7,7 @@
 // Frames are JSON objects with a "type" discriminator (one frame per
 // WebSocket text message):
 //
-//	agent → hub: hello, chart, chart_del, data, alarm, alarms, func_result, query_result, config_state
+//	agent → hub: hello, chart, chart_del, data, alarm, alarms, functions, func_result, query_result, config_state
 //	hub → agent: welcome, func_call, query, config, error, ping
 package stream
 
@@ -33,6 +33,7 @@ const (
 	TypeAlarms      = "alarms" // full snapshot of the agent's current alarm state
 	TypeFuncCall    = "func_call"
 	TypeFuncResult  = "func_result"
+	TypeFunctions   = "functions"    // full replacement, negotiated through welcome capabilities
 	TypeQuery       = "query"        // hub → agent: live metric query (Cloud proxy storage)
 	TypeQueryResult = "query_result" // agent → hub
 	TypeConfig      = "config"       // hub → agent: disabled collectors overlay, or a full config replacement
@@ -41,7 +42,11 @@ const (
 )
 
 // ACLKCapabilities is advertised in hello / info.aclk.
-var ACLKCapabilities = []string{"stream", "functions", "alarms", "config", "query"}
+var ACLKCapabilities = []string{"stream", "functions", "alarms", "config", "query", FunctionCatalogCapability}
+
+// FunctionCatalogCapability permits live function-directory replacements.
+// Without it in welcome, agents only advertise the original hello snapshot.
+const FunctionCatalogCapability = "functions.catalog.v1"
 
 // HealthOverlay is the hub-resolved template assignment for one node: the
 // merged result of every matching hub template. Rules and Removed carry
@@ -67,12 +72,15 @@ type Frame struct {
 	Type string `json:"type"`
 
 	// hello
-	Host         *registry.Host `json:"host,omitempty"`
-	Version      string         `json:"version,omitempty"`
-	Functions    []FunctionInfo `json:"functions,omitempty"`
-	Capabilities []string       `json:"capabilities,omitempty"`
-	Protocol     string         `json:"protocol,omitempty"` // "stream" | "mqtt"
-	Claimed      bool           `json:"claimed,omitempty"`
+	Host     *registry.Host `json:"host,omitempty"`
+	Version  string         `json:"version,omitempty"`
+	Protocol string         `json:"protocol,omitempty"` // "stream" | "mqtt"
+	Claimed  bool           `json:"claimed,omitempty"`
+	// Functions is the hello catalog or its full replacement in a functions
+	// frame. An omitted/empty list in the latter clears the catalog.
+	Functions []FunctionInfo `json:"functions,omitempty"`
+	// Capabilities is advertised by hello and welcome independently.
+	Capabilities []string `json:"capabilities,omitempty"`
 
 	// config (hub → agent): Disabled is the hot overlay; ConfigYAML (if set)
 	// is a full monitor.yaml replacement the agent validates, backs up,

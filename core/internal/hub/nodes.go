@@ -646,6 +646,8 @@ func (nd *Node) Call(ctx context.Context, name string, args map[string]string) (
 		return nil, err
 	}
 	select {
+	case <-s.done:
+		return nil, errors.New("agent disconnected")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case res := <-ch:

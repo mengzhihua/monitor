@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -39,14 +40,19 @@ func (m *Manager) Functions() []FunctionSpec {
 		return nil
 	}
 	m.mu.Lock()
+	if !m.running {
+		m.mu.Unlock()
+		return nil
+	}
 	list := append([]*plugin(nil), m.list...)
 	m.mu.Unlock()
 	var out []FunctionSpec
 	for _, p := range list {
 		p.mu.Lock()
-		parser, name := p.parser, p.spec.Name
+		parser := p.parser
+		available := p.enabled && p.state == StateRunning && p.stdin != nil
 		p.mu.Unlock()
-		if parser == nil || !parser.AllowsFunctions {
+		if !available || parser == nil || !parser.AllowsFunctions {
 			continue
 		}
 		for _, public := range parser.Functions() {
@@ -58,7 +64,7 @@ func (m *Manager) Functions() []FunctionSpec {
 			out = append(out, FunctionSpec{
 				Name: public, Help: help, Timeout: timeout,
 				Run: func(ctx context.Context, args map[string]string) (any, error) {
-					return m.call(ctx, name, local, args, timeout)
+					return m.call(ctx, p, parser, local, args, timeout)
 				},
 			})
 		}
@@ -66,12 +72,14 @@ func (m *Manager) Functions() []FunctionSpec {
 	return out
 }
 
-func (m *Manager) call(ctx context.Context, pluginName, local string, args map[string]string, timeout int) (any, error) {
+func (m *Manager) call(ctx context.Context, p *plugin, expectedParser *Parser, local string, args map[string]string, timeout int) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := validateCallArgs(args); err != nil {
 		return nil, err
 	}
-	p := m.pluginNamed(pluginName)
-	if p == nil || p.call == nil {
+	if p == nil || m.pluginNamed(p.spec.Name) != p || p.call == nil {
 		return nil, errors.New("plugin is not running")
 	}
 	select {
@@ -84,8 +92,9 @@ func (m *Manager) call(ctx context.Context, pluginName, local string, args map[s
 	}
 	p.mu.Lock()
 	stdin, parser := p.stdin, p.parser
+	available := p.enabled && p.state == StateRunning && parser == expectedParser
 	p.mu.Unlock()
-	if stdin == nil || parser == nil || !parser.AllowsFunctions {
+	if !available || stdin == nil || parser == nil || !parser.AllowsFunctions {
 		return nil, errors.New("plugin is not running")
 	}
 	if timeout <= 0 {
@@ -114,13 +123,16 @@ func (m *Manager) call(ctx context.Context, pluginName, local string, args map[s
 	ch := parser.beginCall(id)
 	defer parser.cancelCall(id)
 	parser.touch()
-	if _, err := stdin.Write([]byte(line)); err != nil {
+	if err := writeFunctionCall(callCtx, stdin, []byte(line)); err != nil {
 		return nil, err
 	}
 	select {
 	case <-callCtx.Done():
 		return nil, callCtx.Err()
 	case result := <-ch:
+		if err := callCtx.Err(); err != nil {
+			return nil, err
+		}
 		if result.err != nil {
 			return nil, result.err
 		}
@@ -135,9 +147,42 @@ func (m *Manager) call(ctx context.Context, pluginName, local string, args map[s
 	}
 }
 
+// functionInput belongs to one process, not the reusable plugin worker. A
+// blocked CALL cannot be retried safely after a partial write: cancel only this
+// process so supervision can restart it with a fresh protocol stream.
+type functionInput struct {
+	io.WriteCloser
+	cancel context.CancelFunc
+}
+
+func writeFunctionCall(ctx context.Context, input io.WriteCloser, line []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	aborted := make(chan struct{})
+	stopAbort := context.AfterFunc(ctx, func() {
+		defer close(aborted)
+		if owned, ok := input.(*functionInput); ok {
+			owned.cancel()
+		}
+		_ = input.Close()
+	})
+	_, err := input.Write(line)
+	if !stopAbort() {
+		<-aborted // do not leave a callback that could close a later call's input
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 func (m *Manager) pluginNamed(name string) *plugin {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.running {
+		return nil
+	}
 	for _, p := range m.list {
 		if p.spec.Name == name {
 			return p

@@ -71,25 +71,16 @@ func TestPluginFunctionCall(t *testing.T) {
 	}
 	spec := Spec{Name: "example", Command: script, UpdateEvery: 1, Timeout: 30, Manifest: &Manifest{ID: "example", Capabilities: []string{"metrics", "functions"}}}
 	m := New(newReg(&memSink{}), []Spec{spec}, Options{})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go m.Run(ctx)
-	deadline := time.Now().Add(3 * time.Second)
+	runTestManager(t, m) // cleanup must join the manager, not only signal cancel
 	var fn FunctionSpec
-	for time.Now().Before(deadline) {
+	waitFor(t, func() bool {
 		for _, item := range m.Functions() {
 			if item.Name == "plugin.example.ping" {
 				fn = item
 			}
 		}
-		if fn.Run != nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if fn.Run == nil {
-		t.Fatal("plugin function was not registered")
-	}
+		return fn.Run != nil
+	}, "plugin function registration")
 	callCtx, cancelCall := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelCall()
 	result, err := fn.Run(callCtx, map[string]string{"msg": "hi"})

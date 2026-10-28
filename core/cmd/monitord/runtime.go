@@ -196,7 +196,7 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 			time.AfterFunc(2*time.Second, func() { _ = requestRestart() })
 		})
 	}
-	sc, err = newAgentStream(cfg, cfgPath, reg, db, sched, eng, localDisabled, log, requestExit)
+	sc, err = newAgentStream(cfg, cfgPath, reg, db, sched, eng, pm, localDisabled, log, requestExit)
 	if err != nil {
 		return err
 	}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,7 +51,7 @@ type ClientOptions struct {
 	// Protocol is "mqtt" / "aclk" for MQTT-over-WebSocket (PathACLK), or
 	// empty/"stream"/"json" for the JSON Frame path (Path).
 	Protocol string
-	// Functions lists the collector functions the hub may call (optional).
+	// Functions lists currently callable collector and plugin functions (optional).
 	Functions func() []collect.Function
 	// Alarms returns the current alarm state; it is sent as a snapshot after
 	// every (re)connect so transitions that happened offline reach the hub.
@@ -449,6 +450,7 @@ func (c *Client) functions() []FunctionInfo {
 	for _, f := range c.opt.Functions() {
 		out = append(out, FunctionInfo{Name: f.Name, Help: f.Help, Timeout: f.Timeout})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -456,6 +458,10 @@ func (c *Client) functions() []FunctionInfo {
 // gap since the hub's last sample, then live forwarding until an error.
 // connected reports whether the welcome handshake completed.
 func (c *Client) session(ctx context.Context) (connected bool, err error) {
+	// Calls belong to this connection. A transport failure must release their
+	// resources even while Run keeps its parent context alive for reconnecting.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	// Drop whatever the previous session left behind (it is covered by
 	// replication), then start queueing before dialing so nothing collected
 	// during the handshake is lost. Producers only enqueue while accepting,
@@ -488,7 +494,8 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 	}
 	go sess.writer()
 
-	if err := sess.send(Frame{Type: TypeHello, Host: c.reg.Host, Version: c.opt.Version, Functions: c.functions(),
+	sentFunctions := c.functions()
+	if err := sess.send(Frame{Type: TypeHello, Host: c.reg.Host, Version: c.opt.Version, Functions: sentFunctions,
 		Capabilities: ACLKCapabilities, Protocol: c.protocolName(), Claimed: c.opt.ClaimToken != "" || c.opt.APIKey != ""}); err != nil {
 		return false, err
 	}
@@ -525,6 +532,14 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 	if err := sess.sendAlarmSnapshot(); err != nil {
 		return true, err
 	}
+	// A plugin can register functions after hello, or disappear while this
+	// session stays connected. Older hubs keep the hello-only wire behavior.
+	var functionTick <-chan time.Time
+	if slices.Contains(welcome.Capabilities, FunctionCatalogCapability) {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		functionTick = ticker.C
+	}
 
 	sweep := time.NewTicker(30 * time.Second)
 	defer sweep.Stop()
@@ -551,6 +566,14 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 		case <-sweep.C:
 			if err := sess.sweepDefs(); err != nil {
 				return true, err
+			}
+		case <-functionTick:
+			functions := c.functions()
+			if !slices.Equal(functions, sentFunctions) {
+				if err := sess.send(Frame{Type: TypeFunctions, Functions: functions}); err != nil {
+					return true, err
+				}
+				sentFunctions = functions
 			}
 		}
 	}

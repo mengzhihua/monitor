@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,7 +98,17 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 			return nil, nil, err
 		}
 	}
-	manifests, diagnostics, err := discoverManifests(ctx, m.opt.Dir)
+	entries, err := readPluginDirectory(ctx, m.opt.Dir)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, err
+		}
+		// Startup can still use explicit specs and display a directory diagnostic.
+		// Rescan rejects the error before changing any live or persistent state.
+		sort.Slice(list, func(i, j int) bool { return list[i].spec.Name < list[j].spec.Name })
+		return list, directoryDiagnostics(err), err
+	}
+	manifests, diagnostics, err := discoverManifestEntries(ctx, m.opt.Dir, entries)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -106,7 +117,7 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 			return nil, nil, err
 		}
 	}
-	legacy, err := discover(ctx, m.opt.Dir)
+	legacy, err := discoverLegacyEntries(ctx, m.opt.Dir, entries)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,19 +140,14 @@ func (m *Manager) discoverCatalog(ctx context.Context) ([]*plugin, []Diagnostic,
 // its name even if its manifest is invalid, so a broken package never silently
 // falls back to a same-named legacy executable.
 func discover(ctx context.Context, dir string) ([]Spec, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if dir == "" {
-		return nil, nil
-	}
-	entries, err := os.ReadDir(dir)
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+	entries, err := readPluginDirectory(ctx, dir)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
+	return discoverLegacyEntries(ctx, dir, entries)
+}
+
+func discoverLegacyEntries(ctx context.Context, dir string, entries []os.DirEntry) ([]Spec, error) {
 	reserved := map[string]bool{}
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
