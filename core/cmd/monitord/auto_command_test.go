@@ -1,8 +1,8 @@
 package main
 
 import (
-	"os/exec"
-	"path/filepath"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,26 +13,38 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/health"
 )
 
-func pythonAbs(t *testing.T) string {
+// Run a known executable instead of discovering an external interpreter:
+// interpreter discovery and startup are not part of the runner's contract.
+func autoCommandFixture(t *testing.T, mode string) []string {
 	t.Helper()
-	for _, name := range []string{"python3", "python"} {
-		path, err := exec.LookPath(name)
-		if err != nil {
-			continue
-		}
-		if abs, err := filepath.Abs(path); err == nil && filepath.IsAbs(abs) {
-			return abs
-		}
-		if filepath.IsAbs(path) {
-			return path
-		}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Skip("python3/python not found")
-	return ""
+	return []string{executable, "--monitor-auto-command-helper", mode}
+}
+
+// Called by TestMain before parsing testing flags. These are real subprocesses
+// so the tests still exercise exec.CommandContext, pipes and process cleanup.
+func runAutoCommandFixture() {
+	if len(os.Args) != 3 || os.Args[1] != "--monitor-auto-command-helper" {
+		return
+	}
+	switch os.Args[2] {
+	case "exit":
+		fmt.Println("hello-auto")
+		os.Exit(3)
+	case "sleep":
+		time.Sleep(5 * time.Second)
+	case "output":
+		fmt.Println(strings.Repeat("x", 8000))
+	default:
+		os.Exit(2)
+	}
+	os.Exit(0)
 }
 
 func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
-	py := pythonAbs(t)
 	log, err := audit.Open(t.TempDir(), 100)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +57,7 @@ func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
 	var gotOut string
 	var gotInv health.ActionCommand
 	r := &autoCommandRunner{
-		commands: []config.Command{{Name: "fix", Argv: []string{py, "-c", "import sys; print('hello-auto'); sys.exit(3)"}}},
+		commands: []config.Command{{Name: "fix", Argv: autoCommandFixture(t, "exit")}},
 		audit:    log,
 		timeout:  5 * time.Second,
 		record: func(inv health.ActionCommand, exit int, durationMs int64, output string) {
@@ -88,14 +100,13 @@ func TestAutoCommandRunnerRecordsExitAndOutput(t *testing.T) {
 }
 
 func TestAutoCommandRunnerTimesOut(t *testing.T) {
-	py := pythonAbs(t)
 	log, err := audit.Open(t.TempDir(), 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { log.Close() })
 	r := &autoCommandRunner{
-		commands: []config.Command{{Name: "slow", Argv: []string{py, "-c", "import time; time.sleep(5)"}}},
+		commands: []config.Command{{Name: "slow", Argv: autoCommandFixture(t, "sleep")}},
 		timeout:  200 * time.Millisecond,
 		audit:    log,
 	}
@@ -117,11 +128,10 @@ func TestAutoCommandRunnerTimesOut(t *testing.T) {
 }
 
 func TestAutoCommandPerCommandTimeout(t *testing.T) {
-	py := pythonAbs(t)
 	r := &autoCommandRunner{
 		commands: []config.Command{{
 			Name: "slow", Timeout: 150 * time.Millisecond,
-			Argv: []string{py, "-c", "import time; time.sleep(5)"},
+			Argv: autoCommandFixture(t, "sleep"),
 		}},
 		timeout: 30 * time.Second, // must not win over the per-command timeout
 	}
@@ -155,15 +165,15 @@ func TestAutoCommandRunnerUnknownCommand(t *testing.T) {
 }
 
 func TestAutoCommandTruncatesOutput(t *testing.T) {
-	py := pythonAbs(t)
 	var out string
+	var exit int
 	r := &autoCommandRunner{
-		commands: []config.Command{{Name: "big", Argv: []string{py, "-c", "print('x'*8000)"}}},
+		commands: []config.Command{{Name: "big", Argv: autoCommandFixture(t, "output")}},
 		timeout:  5 * time.Second,
-		record:   func(_ health.ActionCommand, _ int, _ int64, output string) { out = output },
+		record:   func(_ health.ActionCommand, code int, _ int64, output string) { exit, out = code, output },
 	}
 	r.Run(health.ActionCommand{Name: "big", AlarmName: "a", Chart: "b"})
-	if len(out) != autoCommandOutputMax {
-		t.Fatalf("len=%d want %d", len(out), autoCommandOutputMax)
+	if exit != 0 || len(out) != autoCommandOutputMax {
+		t.Fatalf("exit=%d len=%d want 0/%d", exit, len(out), autoCommandOutputMax)
 	}
 }

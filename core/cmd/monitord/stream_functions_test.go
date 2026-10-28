@@ -29,6 +29,7 @@ import (
 // The test executable is a portable, real plugin process. The manager inserts
 // update_every before Args, so dispatch before the testing flag parser runs.
 func TestMain(m *testing.M) {
+	runAutoCommandFixture()
 	if len(os.Args) == 3 && os.Args[2] == "--monitor-stream-function-helper" {
 		fmt.Println(`FUNCTION ping 5 "plugin echo"`)
 		input := bufio.NewScanner(os.Stdin)
