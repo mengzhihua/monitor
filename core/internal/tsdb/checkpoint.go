@@ -181,6 +181,13 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 			for _, row := range saved.Series {
 				sr := t.getOrCreate(row.ID)
 				last, has := sr.lastPersistedLocked()
+				pending := 0
+				for _, b := range row.Done {
+					if !has || b.TS > last {
+						pending++
+					}
+				}
+				sr.done = reserveCheckpointOverflow(sr.done, pending, t.spec.BlockSize)
 				for _, b := range row.Done {
 					if !has || b.TS > last {
 						sr.done = appendCapped(sr.done, b, t.spec.BlockSize)
@@ -204,6 +211,14 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 		sr := s.getOrCreate(row.ID)
 		persistedLast := sr.last
 		visible := persistedLast
+		pending := 0
+		for _, ts := range row.TS {
+			if ts > persistedLast {
+				pending++
+			}
+		}
+		sr.ts = reserveCheckpointOverflow(sr.ts, pending, s.opt.BlockSize)
+		sr.vals = reserveCheckpointOverflow(sr.vals, pending, s.opt.BlockSize)
 		for i, ts := range row.TS {
 			if ts > persistedLast {
 				sr.ts = appendCapped(sr.ts, ts, s.opt.BlockSize)
@@ -254,6 +269,20 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 	image.Tiers = nil
 	s.log.Info("tsdb: checkpoint loaded", "series", n)
 	return nil
+}
+
+// A checkpoint from larger blocks can exceed today's buffer limit. Reserve its
+// surviving suffix once: appendCapped intentionally grows by one past the limit
+// during normal collection, which would copy this whole suffix for every point.
+// Buffers inside the limit keep their normal bounded growth and spare capacity.
+func reserveCheckpointOverflow[T any](buf []T, pending, limit int) []T {
+	need := len(buf) + pending
+	if need <= limit || need <= cap(buf) {
+		return buf
+	}
+	out := make([]T, len(buf), need)
+	copy(out, buf)
+	return out
 }
 
 // Bound the uncompressed image too: never write a checkpoint this reader would
