@@ -17,7 +17,10 @@ func readPluginDirectory(ctx context.Context, dir string) ([]os.DirEntry, error)
 	if dir == "" {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(dir)
+	// Directory enumeration does not reliably distinguish a non-directory
+	// from an empty root on every OS. Check the root itself before accepting
+	// an empty listing or treating the optional root as absent.
+	info, err := os.Stat(dir)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
@@ -25,6 +28,18 @@ func readPluginDirectory(ctx context.Context, dir string) ([]os.DirEntry, error)
 		return nil, nil
 	}
 	if err != nil {
+		return nil, fmt.Errorf("stat plugin directory: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("plugin directory is not a directory: %s", dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		// Once the root was observed, even disappearance during enumeration
+		// fails this scan instead of publishing an empty replacement catalog.
 		return nil, fmt.Errorf("read plugin directory: %w", err)
 	}
 	return entries, nil

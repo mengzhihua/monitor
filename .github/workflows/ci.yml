@@ -60,8 +60,41 @@ jobs:
         working-directory: core
       - run: go vet ./...
         working-directory: core
-      - run: go test -race ./...
+      - name: Run go test -race ./...
+        shell: bash
+        run: |
+          mkdir -p ../reports
+          log="../reports/go-test-${{ runner.os }}.log"
+          set +e
+          set -o pipefail
+          go test -race ./... 2>&1 | tee "$log"
+          result=$?
+          set -e
+          if [ "$result" -ne 0 ]; then
+            python3 - "$log" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import html, pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          selected = set()
+          for i, line in enumerate(lines):
+              if any(marker in line for marker in ("--- FAIL:", "panic:", "fatal error:", "WARNING: DATA RACE", "[build failed]")):
+                  selected.update(range(max(0, i - 3), min(len(lines), i + 32)))
+          if not selected:
+              selected.update(range(max(0, len(lines) - 100), len(lines)))
+          excerpt = "\n".join(lines[i] for i in sorted(selected)[:200])
+          with open(sys.argv[2], "a", encoding="utf-8") as summary:
+              summary.write("## Go race test failure\n\nFull output is retained in the core-test-diagnostics artifact.\n\n<pre>" + html.escape(excerpt) + "</pre>\n")
+          PY
+          fi
+          exit "$result"
         working-directory: core
+      - name: Retain Go test diagnostics
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-test-diagnostics-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/go-test-${{ runner.os }}.log
+          retention-days: 14
+          if-no-files-found: warn
       - name: build monitord
         working-directory: core
         shell: bash
