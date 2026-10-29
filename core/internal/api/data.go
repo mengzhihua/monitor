@@ -84,8 +84,9 @@ func (s *Server) relayProxy(w http.ResponseWriter, r *http.Request, base string)
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return false
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil || len(body) == 0 {
+	var first [1]byte
+	n, readErr := resp.Body.Read(first[:])
+	if n == 0 {
 		return false
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
@@ -93,6 +94,14 @@ func (s *Server) relayProxy(w http.ResponseWriter, r *http.Request, base string)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 	}
-	_, _ = w.Write(body)
+	if _, err = w.Write(first[:n]); err != nil {
+		return true
+	}
+	if readErr == io.EOF {
+		return true
+	}
+	// Stream the rest. The response has started, so a later copy error must
+	// not fall through to a second local body.
+	_, _ = io.Copy(w, resp.Body)
 	return true
 }

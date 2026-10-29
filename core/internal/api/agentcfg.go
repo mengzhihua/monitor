@@ -64,6 +64,7 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		YAML      string         `json:"yaml"`
+		Patch     string         `json:"patch"`
 		Form      *config.Visual `json:"form"`
 		IfUpdated *int64         `json:"if_updated"`
 	}
@@ -73,8 +74,18 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid config request", http.StatusBadRequest)
 		return
 	}
-	if body.Form != nil && strings.TrimSpace(body.YAML) != "" {
-		http.Error(w, "send yaml or form, not both", http.StatusBadRequest)
+	modes := 0
+	if strings.TrimSpace(body.YAML) != "" {
+		modes++
+	}
+	if strings.TrimSpace(body.Patch) != "" {
+		modes++
+	}
+	if body.Form != nil {
+		modes++
+	}
+	if modes != 1 {
+		http.Error(w, "send yaml, patch, or form", http.StatusBadRequest)
 		return
 	}
 	if body.IfUpdated != nil && *body.IfUpdated != configFileMTime(s.opt.ConfigPath) {
@@ -82,13 +93,17 @@ func (s *Server) handleManageConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	yamlText := body.YAML
-	if body.Form != nil {
+	if body.Form != nil || strings.TrimSpace(body.Patch) != "" {
 		current, err := readAgentConfig(s.opt.ConfigPath)
 		if err != nil {
 			http.Error(w, "read agent config failed", http.StatusInternalServerError)
 			return
 		}
-		yamlText, err = config.ApplyVisual(current.YAML, *body.Form)
+		if body.Form != nil {
+			yamlText, err = config.ApplyVisual(current.YAML, *body.Form)
+		} else {
+			yamlText, err = config.MergeYAML(current.YAML, body.Patch)
+		}
 		if err != nil {
 			http.Error(w, "invalid config: "+err.Error(), http.StatusBadRequest)
 			return

@@ -76,6 +76,31 @@ func TestCheckpointCorruptionFailsClosed(t *testing.T) {
 	}
 }
 
+func TestCheckpointChecksumMismatchDoesNotReread(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("x", 1000, 1)
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, checkpointFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[len(b)-1] ^= 0xff
+	if err = os.WriteFile(path, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Open(Options{Dir: dir})
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("checksum mismatch")) {
+		t.Fatalf("checksum error = %v", err)
+	}
+}
+
 func TestCheckpointReplaysLaterFullBlocksWithoutDoubleCounting(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(Options{Dir: dir, BlockSize: 3, Tiers: []TierSpec{{Every: 60, BlockSize: 2}}})

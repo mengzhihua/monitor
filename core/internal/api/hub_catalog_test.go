@@ -104,6 +104,23 @@ func TestHubHostGroupsProxiesAndLeader(t *testing.T) {
 	renamedResp.Body.Close()
 }
 
+func TestRelayProxyStreamsBody(t *testing.T) {
+	payload := `{"proxied":true,"pad":"` + strings.Repeat("a", 64<<10) + `"}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, payload)
+	}))
+	t.Cleanup(upstream.Close)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data?chart=system.ram", nil)
+	if !(&Server{}).relayProxy(rec, req, upstream.URL) {
+		t.Fatal("relay failed")
+	}
+	if rec.Body.String() != payload {
+		t.Fatalf("streamed %d bytes", rec.Body.Len())
+	}
+}
+
 func jsonNew(resp *http.Response, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

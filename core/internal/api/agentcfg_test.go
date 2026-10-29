@@ -333,3 +333,34 @@ func TestManageConfigWriteChecksRemoteApplyRevision(t *testing.T) {
 		t.Fatalf("stale write changed remote config: %q %v", got, err)
 	}
 }
+
+func TestManageConfigPatchMergesOneSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "monitor.yaml")
+	initial := "global:\n  hostname: old\n  update_every: 2\nweb:\n  token: secret\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ts, _ := newTestServer(t, Options{Token: "admin-token", ConfigPath: path})
+	body := `{"patch":"global:\n  hostname: next\n"}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/manage/config", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch status %d", resp.StatusCode)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Global.Hostname != "next" || cfg.Global.UpdateEvery != 2 || cfg.Web.Token != "secret" {
+		t.Fatalf("patch rewrote unrelated fields:\n%s", got)
+	}
+}
