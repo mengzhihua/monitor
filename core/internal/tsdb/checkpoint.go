@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // A checkpoint is one atomic, checksummed image of the unfinished blocks in
@@ -128,37 +129,46 @@ func (s *Store) loadCheckpoint() error {
 	if stat.Size() < 40 || stat.Size() > maxCheckpointBytes {
 		return fmt.Errorf("invalid checkpoint size: %d", stat.Size())
 	}
-	hash := sha256.New()
-	if _, err = io.CopyN(hash, f, stat.Size()-32); err != nil {
-		return err
-	}
 	var checksum [32]byte
-	if _, err = io.ReadFull(f, checksum[:]); err != nil {
+	if _, err = f.ReadAt(checksum[:], stat.Size()-32); err != nil {
 		return err
-	}
-	if !bytes.Equal(checksum[:], hash.Sum(nil)) {
-		return fmt.Errorf("checkpoint checksum mismatch: %s", path)
 	}
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
+	// Hash the compressed image while decoding it. The trailing checksum is
+	// read once up front, so a restart does not scan the file a second time.
+	hash := sha256.New()
+	payload := io.TeeReader(io.LimitReader(f, stat.Size()-32), hash)
+	decodeErr := s.decodeCheckpoint(payload)
+	if _, err = io.Copy(io.Discard, payload); err != nil && decodeErr == nil {
+		decodeErr = err
+	}
+	if !bytes.Equal(checksum[:], hash.Sum(nil)) {
+		return fmt.Errorf("checkpoint checksum mismatch: %s", path)
+	}
+	return decodeErr
+}
+
+func (s *Store) decodeCheckpoint(r io.Reader) error {
 	var magic [8]byte
-	if _, err = io.ReadFull(f, magic[:]); err != nil {
+	if _, err := io.ReadFull(r, magic[:]); err != nil {
 		return err
 	}
-	z, err := gzip.NewReader(io.LimitReader(f, stat.Size()-40))
+	z, err := gzip.NewReader(r)
 	if err != nil {
 		return err
 	}
 	defer z.Close()
+	limited := io.LimitReader(z, maxCheckpointBytes)
 	switch string(magic[:]) {
 	case checkpointMagicV3:
-		return s.loadCheckpointStreamV3(io.LimitReader(z, maxCheckpointBytes))
+		return s.loadCheckpointStreamV3(limited)
 	case checkpointMagicV2:
-		return s.loadCheckpointStream(io.LimitReader(z, maxCheckpointBytes))
+		return s.loadCheckpointStream(limited)
 	case "MONCP001":
 		var image checkpointImage
-		if err = gob.NewDecoder(io.LimitReader(z, maxCheckpointBytes)).Decode(&image); err != nil {
+		if err = gob.NewDecoder(limited).Decode(&image); err != nil {
 			return fmt.Errorf("decode checkpoint: %w", err)
 		}
 		return s.applyCheckpointImage(image)
@@ -181,18 +191,11 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 			for _, row := range saved.Series {
 				sr := t.getOrCreate(row.ID)
 				last, has := sr.lastPersistedLocked()
-				pending := 0
-				for _, b := range row.Done {
-					if !has || b.TS > last {
-						pending++
-					}
+				start := 0
+				if has {
+					start = sort.Search(len(row.Done), func(i int) bool { return row.Done[i].TS > last })
 				}
-				sr.done = reserveCheckpointOverflow(sr.done, pending, t.spec.BlockSize)
-				for _, b := range row.Done {
-					if !has || b.TS > last {
-						sr.done = appendCapped(sr.done, b, t.spec.BlockSize)
-					}
-				}
+				sr.done = appendCheckpointBatch(sr.done, row.Done[start:], t.spec.BlockSize)
 				last, has = sr.lastPersistedLocked()
 				sr.open = nil
 				if row.Open != nil && (!has || row.Open.TS > last) {
@@ -210,23 +213,15 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 		}
 		sr := s.getOrCreate(row.ID)
 		persistedLast := sr.last
-		visible := persistedLast
-		pending := 0
-		for _, ts := range row.TS {
-			if ts > persistedLast {
-				pending++
-			}
+		start := sort.Search(len(row.TS), func(i int) bool { return row.TS[i] > persistedLast })
+		if start > len(row.Values) {
+			start = len(row.Values)
 		}
-		sr.ts = reserveCheckpointOverflow(sr.ts, pending, s.opt.BlockSize)
-		sr.vals = reserveCheckpointOverflow(sr.vals, pending, s.opt.BlockSize)
-		for i, ts := range row.TS {
-			if ts > persistedLast {
-				sr.ts = appendCapped(sr.ts, ts, s.opt.BlockSize)
-				sr.vals = appendCapped(sr.vals, row.Values[i], s.opt.BlockSize)
-				if ts > visible {
-					visible = ts
-				}
-			}
+		sr.ts = appendCheckpointBatch(sr.ts, row.TS[start:], s.opt.BlockSize)
+		sr.vals = appendCheckpointBatch(sr.vals, row.Values[start:], s.opt.BlockSize)
+		visible := persistedLast
+		if start < len(row.TS) && row.TS[len(row.TS)-1] > visible {
+			visible = row.TS[len(row.TS)-1]
 		}
 		// A Last past every retained sample becomes the accept watermark.
 		// Collections after restart are then dropped until wall clock catches
@@ -271,18 +266,51 @@ func (s *Store) applyCheckpointImage(image checkpointImage) error {
 	return nil
 }
 
-// A checkpoint from larger blocks can exceed today's buffer limit. Reserve its
-// surviving suffix once: appendCapped intentionally grows by one past the limit
-// during normal collection, which would copy this whole suffix for every point.
-// Buffers inside the limit keep their normal bounded growth and spare capacity.
-func reserveCheckpointOverflow[T any](buf []T, pending, limit int) []T {
-	need := len(buf) + pending
-	if need <= limit || need <= cap(buf) {
-		return buf
+// appendCheckpointBatch copies a restored suffix in one allocation. Capacity
+// follows appendCapped: at most the configured block while the result fits,
+// and exactly len+added when an older checkpoint is larger than today's block.
+func appendCheckpointBatch[T any](dst, src []T, limit int) []T {
+	if len(src) == 0 {
+		return dst
 	}
-	out := make([]T, len(buf), need)
-	copy(out, buf)
-	return out
+	need := len(dst) + len(src)
+	if need <= cap(dst) {
+		return append(dst, src...)
+	}
+	capn := need
+	if limit <= 0 || need <= limit {
+		capn = growCapped(cap(dst), len(dst), len(src), limit)
+	}
+	out := make([]T, len(dst), capn)
+	copy(out, dst)
+	return append(out, src...)
+}
+
+func growCapped(capn, length, add, limit int) int {
+	for i := 0; i < add; i++ {
+		if length < capn {
+			length++
+			continue
+		}
+		next := capn * 2
+		if next < 1 {
+			next = 1
+		}
+		need := length + 1
+		if next < need {
+			next = need
+		}
+		if limit > 0 && next > limit {
+			if need <= limit {
+				next = limit
+			} else {
+				next = need
+			}
+		}
+		capn = next
+		length++
+	}
+	return capn
 }
 
 // Bound the uncompressed image too: never write a checkpoint this reader would
