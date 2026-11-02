@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Chart, Info } from '../../api/monitoring/types'
 import type { NodeInfo } from '../../api/hub/types'
 import MetricChart from '../../components/MetricChart.vue'
@@ -17,12 +17,41 @@ try { if (sessionStorage.getItem(viewKey) === 'presets') initialView = 'presets'
 const view = ref<'all' | 'presets'>(initialView)
 watch(view, value => { try { sessionStorage.setItem(viewKey, value) } catch { /* Optional preference; never block navigation. */ } }, { flush: 'sync' })
 const filter = ref('')
+const appliedFilter = ref('')
+const composing = ref(false)
+const searchInput = ref<HTMLInputElement>()
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+const filtering = computed(() => filter.value !== appliedFilter.value || composing.value)
+function applyFilter() {
+  clearTimeout(searchTimer)
+  appliedFilter.value = filter.value
+}
+watch([filter, composing], () => {
+  clearTimeout(searchTimer)
+  if (composing.value) return
+  if (!filter.value) applyFilter()
+  else searchTimer = setTimeout(applyFilter, 150)
+}, { flush: 'sync' })
+function clearSearch(event: KeyboardEvent) {
+  if (event.isComposing || composing.value) return
+  event.preventDefault()
+  resetFilters()
+}
+function searchShortcut(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null
+  if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing ||
+      target?.closest('input, textarea, select, [contenteditable], dialog, [role="dialog"]') || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return
+  event.preventDefault()
+  searchInput.value?.focus()
+}
+onMounted(() => document.addEventListener('keydown', searchShortcut))
+onBeforeUnmount(() => { clearTimeout(searchTimer); document.removeEventListener('keydown', searchShortcut) })
 const category = ref<MetricDomain | 'all'>('all')
 const page = ref(1)
 const pageSize = 12
 const resultsHeading = ref<HTMLElement>()
 const indexed = computed(() => indexMetrics(props.charts))
-const searched = computed(() => indexed.value.filter(metric => metricMatches(metric, filter.value)))
+const searched = computed(() => indexed.value.filter(metric => metricMatches(metric, appliedFilter.value)))
 const domains = computed(() => metricDomains.map(domain => ({ ...domain, count: searched.value.filter(metric => metric.domain === domain.id).length })))
 const filtered = computed(() => searched.value.filter(metric => category.value === 'all' || metric.domain === category.value))
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
@@ -32,9 +61,9 @@ const selectedDomain = computed(() => metricDomains.find(domain => domain.id ===
 const start = computed(() => filtered.value.length ? (page.value - 1) * pageSize + 1 : 0)
 const end = computed(() => Math.min(page.value * pageSize, filtered.value.length))
 
-watch([filter, category, () => props.node], () => { page.value = 1 }, { flush: 'sync' })
+watch([appliedFilter, category, () => props.node], () => { page.value = 1 }, { flush: 'sync' })
 watch(pageCount, count => { page.value = Math.min(page.value, count) })
-function resetFilters() { filter.value = ''; category.value = 'all' }
+function resetFilters() { filter.value = ''; applyFilter(); category.value = 'all'; searchInput.value?.focus() }
 async function changePage(next: number) {
   page.value = Math.min(pageCount.value, Math.max(1, next))
   await nextTick()
@@ -46,6 +75,7 @@ function showChart(id: string) {
   view.value = 'all'
   category.value = 'all'
   filter.value = id
+  applyFilter()
   page.value = 1
 }
 defineExpose({ showChart })
@@ -63,9 +93,9 @@ defineExpose({ showChart })
       <button :aria-pressed="view === 'presets'" @click="view = 'presets'">常用聚合看板</button>
     </div>
     <div class="controls">
-      <label class="search-field"><span>搜索指标</span><input v-model="filter" placeholder="筛选图表…" aria-label="筛选图表" type="search" /></label>
+      <label class="search-field"><span>搜索指标 <kbd aria-hidden="true">/</kbd></span><input ref="searchInput" v-model="filter" placeholder="筛选图表…" aria-label="筛选图表" aria-keyshortcuts="/" type="search" autocomplete="off" @compositionstart="composing = true" @compositionend="composing = false" @keydown.enter="!composing && applyFilter()" @keydown.esc="clearSearch" /></label>
       <label class="range-field"><span>查看时长</span><select v-model.number="windowSec" aria-label="查看时长"><option v-for="range in metricWindows" :key="range.value" :value="range.value">{{ range.label }}</option></select></label>
-      <button v-if="filter || category !== 'all'" class="clear-filter" @click="resetFilters">清除指标筛选</button>
+      <button :disabled="!filter && category === 'all'" class="clear-filter" aria-label="清除指标筛选" title="清除指标筛选" @click="resetFilters"><span class="clear-label">清除指标筛选</span><span class="clear-symbol" aria-hidden="true">×</span></button>
     </div>
     <ChartTimeline :end="chartEnd" :window="windowSec" :notice="notice" @update:end="value => chartEnd = value" />
     <template v-if="view === 'all'">
@@ -75,7 +105,14 @@ defineExpose({ showChart })
       </nav>
       <div ref="resultsHeading" class="results-heading" tabindex="-1">
         <div><h2>{{ selectedDomain?.title || '全部指标' }}</h2><p>{{ selectedDomain?.description || '按分类排列；每页最多展示 12 张图表。' }}</p></div>
-        <p class="results-count" role="status">共 {{ filtered.length }} 张 · 显示 {{ start }}–{{ end }}</p>
+        <div class="results-actions">
+          <p class="results-count" role="status">{{ filtering ? '正在筛选…' : `共 ${filtered.length} 张 · 显示 ${start}–${end}` }}</p>
+          <nav v-if="pageCount > 1" class="quick-pagination" aria-label="快速分页">
+            <button :disabled="page === 1 || filtering" aria-label="上一页" @click="changePage(page - 1)">←</button>
+            <span>{{ page }} / {{ pageCount }}</span>
+            <button :disabled="page === pageCount || filtering" aria-label="下一页" @click="changePage(page + 1)">→</button>
+          </nav>
+        </div>
       </div>
       <div v-if="!charts.length" class="empty-state" role="status"><h3>{{ currentNode?.status === 'offline' ? '节点已离线' : '暂未收到指标' }}</h3><p>{{ currentNode?.status === 'offline' ? '该节点暂无可展示的图表，请检查连接或切换节点。' : '请等待采集，或检查当前节点的采集配置。' }}</p></div>
       <div v-else-if="!filtered.length" class="empty-state" role="status"><h3>没有匹配的指标</h3><p>可搜索名称、标识、上下文和设备标签，或切换分类。</p><button @click="resetFilters">查看全部指标</button></div>
@@ -84,10 +121,10 @@ defineExpose({ showChart })
         <div class="metric-grid"><MetricChart v-for="chart in section.charts" :key="node + ':' + chart.id" :chart="chart" :window="windowSec" :end="chartEnd" /></div>
       </section>
       <nav v-if="pageCount > 1" class="pagination" aria-label="指标分页">
-        <button :disabled="page === 1" @click="changePage(page - 1)">上一页指标</button><span>第 {{ page }} / {{ pageCount }} 页</span><button :disabled="page === pageCount" @click="changePage(page + 1)">下一页指标</button>
+        <button :disabled="page === 1 || filtering" @click="changePage(page - 1)">上一页指标</button><span>第 {{ page }} / {{ pageCount }} 页</span><button :disabled="page === pageCount || filtering" @click="changePage(page + 1)">下一页指标</button>
       </nav>
     </template>
-    <DashboardsPanel v-else :charts="charts" :window="windowSec" :end="chartEnd" :filter="filter" :node="node" />
+    <DashboardsPanel v-else :charts="charts" :window="windowSec" :end="chartEnd" :filter="appliedFilter" :node="node" />
     <CollectorStatus v-if="info && !currentNode" :info="info" />
   </div>
 </template>
@@ -99,9 +136,12 @@ h1 { font-size:24px; color:#edf4fc; margin:0; letter-spacing:-.5px; }
 button { padding:8px 12px; color:#cbd8e7; background:#152235; border:1px solid #35465c; border-radius:7px; cursor:pointer; font:inherit; font-size:13px; }
 button:hover { border-color:#6b92a8; } button[aria-pressed=true] { color:#a2f5e7; border-color:#3c9f90; background:#143d3a; } button:disabled { opacity:.4; cursor:default; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid #5eead4; outline-offset:3px; }
+.clear-symbol { display:none; }
 .view-switch { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
-.controls { display:flex; align-items:end; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+.controls { display:flex; align-items:end; gap:12px; margin-bottom:14px; flex-wrap:wrap; padding:14px; border:1px solid #26384b; border-radius:10px; background:#0b1524; }
 .controls label { display:flex; flex-direction:column; gap:6px; min-width:0; color:#b3c5da; font-size:12px; }
+.search-field > span { display:flex; align-items:center; justify-content:space-between; } kbd { font:11px ui-monospace,monospace; color:#91a8c0; border:1px solid #35465c; border-radius:4px; padding:0 5px; }
+.results-actions { display:flex; align-items:center; gap:16px; flex-wrap:wrap; } .quick-pagination { display:flex; align-items:center; gap:8px; color:#b5c9dd; font-size:12px; font-variant-numeric:tabular-nums; } .quick-pagination button { min-width:36px; }
 .search-field { flex:1 1 240px; } .range-field { flex:0 1 160px; }
 input, select { background:#101c2b; border:1px solid #35465c; border-radius:7px; color:#e2e8f0; padding:10px; font:inherit; font-size:14px; min-width:0; width:100%; box-sizing:border-box; }
 .domain-tabs { display:flex; flex-wrap:wrap; gap:8px; padding:0 0 16px; border-bottom:1px solid #27374a; }
@@ -117,9 +157,10 @@ h2 { margin:0; font-size:18px; color:#e0ebf7; } .results-heading p { margin:6px 
 @media (max-width:760px), (pointer:coarse) { button, input, select { min-height:44px; } input, select { font-size:16px; } }
 @media (max-width:760px) {
   .workspace-heading { gap:8px; margin-bottom:16px; } h1 { font-size:21px; } .description { display:none; } .total-count { font-size:11px; padding:5px 8px; }
-  .controls { display:grid; grid-template-columns:minmax(0,1fr) 112px; gap:10px; } .clear-filter { grid-column:1 / -1; }
+  .controls { display:grid; grid-template-columns:minmax(0,1fr) 96px 44px; gap:8px; padding:10px; } .clear-label { display:none; } .clear-symbol { display:inline; font-size:22px; } .clear-filter { padding:0; }
   .domain-tabs { flex-wrap:nowrap; overflow-x:auto; max-width:100%; padding-bottom:12px; gap:6px; scrollbar-width:thin; }
   .domain-tabs button { flex:none; white-space:nowrap; padding:8px 10px; gap:8px; font-size:12px; }
+  .results-actions { width:100%; justify-content:space-between; gap:8px; } kbd { display:none; }
   .results-heading { align-items:start; flex-direction:column; gap:2px; scroll-margin-top:16px; } .metric-grid { grid-template-columns:minmax(0,1fr); gap:12px; } .pagination { gap:10px; }
 }
 </style>

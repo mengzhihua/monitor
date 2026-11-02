@@ -160,6 +160,8 @@ test('superseded history fetches are aborted when changing the time range', asyn
   })
   await page.goto('/?view=charts&token=' + token)
   await page.getByPlaceholder('筛选图表…').fill('system.ram')
+  await expect(page.locator('.card')).toHaveCount(1)
+  await expect(page.locator('.card .id')).toHaveText('system.ram')
   await expect(page.locator('.card canvas')).toBeVisible()
   await page.locator('.controls select').selectOption('86400')
   await pending

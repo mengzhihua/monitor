@@ -104,6 +104,8 @@ test('date validation and statistics preserve zeros, missing rows and finite num
 test('fixed current time reads real embedded-server history within the requested bounds', async ({ page }) => {
   await page.goto('/?view=charts&token=browser-test-token')
   await page.getByPlaceholder('筛选图表…').fill('system.ram')
+  await expect(page.locator('.card')).toHaveCount(1)
+  await expect(page.locator('.card .id')).toHaveText('system.ram')
   await page.getByRole('button', { name: '放大图表', exact: true }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('table', { name: '各维度采样统计' })).toBeVisible()

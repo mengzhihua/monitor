@@ -74,7 +74,7 @@ function focusWorkspace() {
   void nextTick(() => {
     const main = document.getElementById('workspace-main')
     main?.focus({ preventScroll: true })
-    if (!isMobile.value) main?.scrollIntoView({ block: 'start' })
+    main?.scrollIntoView({ block: 'start', behavior: 'instant' })
   })
 }
 function navigate(value: WorkspaceId, guarded = true, push = true) {
