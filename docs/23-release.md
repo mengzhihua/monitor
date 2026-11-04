@@ -1,24 +1,28 @@
 # 发版
 
-稳定版本只从 `VERSION` 发布。`web/package.json`、`web/package-lock.json` 和 `core/cmd/monitord/main.go` 里的 `var version` 必须与 `VERSION` 相同。CI 在 `REQUIRE_GIT_TAG_VERSION=1` 时还要求：从当前提交能走到的最高稳定标签名等于 `VERSION`，并且该标签所在提交里的 `VERSION` 文件也是这个号。
+稳定版本只从 `VERSION` 发布。`web/package.json`、`web/package-lock.json`（含根包记录）和 `core/cmd/monitord/main.go` 里的 `var version` 必须与 `VERSION` 相同。发布流程不自动递增版本，也不回写这些文件。
+
+开发构建和 CI 允许版本高于当前提交可达的最高稳定标签，确保发布前的升版本 PR 可以验证；拒绝降级、文件间不一致，以及同名标签中的 `VERSION` 不匹配。只考虑当前历史可达的稳定标签，其他分支的新版本不会误拦截旧分支。需要核验已发布版本时，运行 `REQUIRE_GIT_TAG_VERSION=1 python3 scripts/check-release-version.py`，额外要求源码版本等于可达的最高稳定标签；浅克隆需先取得完整历史及标签。
 
 ## 打一个新版本
 
-1. 在要发布的提交上把上述文件改成同一个 `MAJOR.MINOR.PATCH`（不要带 `v`）。
-2. 合入 `main`。Release 工作流读该提交的 `VERSION`，打带注释的标签 `v$VERSION`，再构建安装包。
+1. 选择尚未发布的更高稳定版本，执行 `python3 scripts/sync-release-version.py <MAJOR.MINOR.PATCH>`（不要带 `v`），同步上述文件；执行 `make all`、`make test` 及受影响功能验收。
+2. 提交并合入 `main`。Release 工作流读该提交的 `VERSION`，打带注释的标签 `v$VERSION`，再构建安装包。
 3. 标签已经存在且指向别的提交时，工作流不会重打、也不会重新打包。它打印 `already released` 并跳过。
-4. 不要把较低版本的标签挪到较新的提交上之后，又让 GitHub 把那个旧标签显示成 Latest。`v3.0.16` 是在 `v3.0.17` 之后补发的，页面上的 Latest 徽章因此会落在 `v3.0.16`。下载时以版本号更高的标签为准。
+4. 核对该次工作流、安装包、校验与平台验证结果后才算发布完成。GitHub 的 Latest 徽章可能受旧版本补发影响；下载时同时核对版本号与提交，不只看徽章。
 
-## 标签指错提交
+## 发布排错
 
-`v3.0.17` 曾经打在 `cbd6d66` 上，该提交的 `VERSION` 仍是 `3.0.16`。版本号改成 `3.0.17` 的提交是 `d8e0e25`。把标签移到那个提交：
+先只读核对拟发布的标签及其源码版本（将 `<版本>` 替换为实际值）：
 
 ```bash
-git tag -f -a v3.0.17 d8e0e25 -m "Release v3.0.17"
-git push --force origin refs/tags/v3.0.17
+git show v<版本>:VERSION
+git rev-list -n1 v<版本>
 ```
 
-这次推送会按标签再跑一遍 Release，用 `d8e0e25` 的源码重新打包。不要把 `v3.0.17` 挪到更新的 `main`：那之后的提交不是另一次发版。
+若标签中的 `VERSION` 与标签名不一致，发布会失败；优先在正确源码上使用新的未发布版本，保留旧标签与资产的可追溯性。不要照抄历史事故中的强制移动标签命令。若只是同版本的后续开发提交显示 `already released`，属于正常跳过；需要新包应升版本，重建旧包则手动运行 Release 并指定已有标签。
+
+历史上 `v3.0.17` 曾指向仍声明 `3.0.16` 的源码；这是版本检查需要覆盖的回归情形，不是当前可重复执行的发布步骤。
 
 `scripts/build.sh core` 在版本检查失败时只打印警告，仍然编译。`scripts/build.sh --dev` 同样只警告。`scripts/build.sh all` 里的前端步骤在检查失败时会停下来。
 

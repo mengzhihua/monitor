@@ -12,8 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, fetch-tags: true }
-      - name: VERSION must match latest stable git tag
-        env: { REQUIRE_GIT_TAG_VERSION: "1" }
+      # A release PR bumps VERSION before release.yml creates the matching tag.
+      - name: Source versions must agree and not regress behind stable tags
         run: python3 scripts/check-release-version.py
       - run: make test-scripts
       - uses: actions/setup-node@v4

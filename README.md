@@ -7,6 +7,83 @@
 
 代码仓库：[GitHub · mengzhihua/monitor](https://github.com/mengzhihua/monitor) · [GitLab · mengzhihua/netdata](https://gitlab.tly.life:20443/mengzhihua/netdata)。完成验证后将改动合入 `main` 并[双仓库推送](#双仓库推送)，从 GitHub 拉取更新。
 
+## 使用入口
+
+| 目标 | 入口 |
+| --- | --- |
+| 本机启动、默认密码、手机访问 | [快速开始](#快速开始) |
+| 云主机部署、Hub / Agent 接入 | [云主机指引](docs/22-cloud-host.md)、[双进程示例](#已实现能力m2hub-集中模式) |
+| 开发扩展和插件函数 | [模块边界](docs/26-module-boundaries.md)、[插件平台](docs/27-plugin-platform.md) |
+| 开发测试、发布和升级 | [开发](#开发)、[脚本入口](scripts/README.md)、[发布规则](docs/23-release.md)、[更新日志](CHANGELOG.md) |
+| 当前限制和待完成验收 | [已知边界](#已知边界与待完成验收) |
+
+服务端版本以根目录 [`VERSION`](VERSION) 为准；源码 `main` 可能包含尚未发布的改动，下载包需核对具体版本与提交。Flutter 客户端独立版本，跨平台可构建不等于所有设备已完成实机验收。
+
+## 快速开始
+
+云主机安装、验收和配置 AI 模型见 [云主机部署指引](docs/22-cloud-host.md)。解压发布包后执行 `sudo ./cloud-host.sh install --check`。发布包内同一份说明名为 `CLOUD-HOST.md`。
+
+从源码构建需 Git、Make、Python 3、Go 1.26+ 和 Node 24.19.0 / npm。Go 最低版本见 [`core/go.mod`](core/go.mod)，Node 版本见 [`.node-version`](.node-version)；发布流程固定 Go 1.27.1。下面的命令在仓库根目录执行，`make all` 自动安装 Web 依赖。
+
+```bash
+make all          # 1) 构建 Vue Dashboard 并嵌入  2) 编译 core/bin/monitord
+./core/bin/monitord -listen 127.0.0.1:19999 -data-dir ./data
+# 在另一终端读取本机生成的登录密码（无需用户名）：
+cat ./data/web-password
+# 浏览器打开 http://localhost:19999/，输入上面的密码
+```
+
+只开发服务端 API 时可以跳过前端构建；新克隆中不会提供完整 Dashboard，已有构建则会继续嵌入旧资源：
+
+```bash
+cd core && go run ./cmd/monitord -listen 127.0.0.1:19999
+```
+
+配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
+
+默认启动会探测采集器，日志出现 `web server ready` 后再登录；初始化期间 `/healthz` 可返回 503。想先验证基础指标，可在配置中设置 `collectors.enabled: [cpu, mem, load, disk, net]`，随后再按需启用应用采集器。
+
+### 手机访问（H5）
+
+升级服务端后，在手机浏览器打开原监控地址，例如 `https://monitor.example.com/`（替换为实际地址），输入已有登录密码即可。本机快速开始只监听回环地址；局域网访问需将 `-listen` 改为 `:19999`，放行相应防火墙端口，并使用手机能够访问的服务器地址；手机上的 `localhost` 指向手机本身。H5 已内嵌到服务端，不需要另装客户端或新增端口。
+
+底部导航提供总览、图表、告警和更多功能；可在 Safari 共享菜单或 Android 浏览器菜单中添加到主屏幕，实际安装选项由浏览器决定。主屏幕入口不携带密码，重新打开可能需要登录，查看数据仍需连接服务器。完整使用说明见 [手机 H5 使用指南](docs/16-mobile-h5.md)。
+
+### 默认登录密码
+
+未配置 `web.token`、`web.users`、OIDC、SAML 或 LDAP 时，首次启动会生成**每台部署独立的随机管理员密码**，无需用户名。重启沿用该密码；旧的无认证部署升级后也会要求登录。已有认证配置继续生效，不会额外生成管理员密码。
+
+密码位于 `<data_dir>/web-password`。`data_dir` 来自 `-data-dir` 或 `global.data_dir`，默认是**启动时工作目录**下的 `./data`，不是可执行文件所在目录。按上面的启动命令，在另一终端读取：
+
+```bash
+# macOS / Linux / FreeBSD，在启动命令所在目录执行
+cat ./data/web-password
+```
+
+```powershell
+# Windows PowerShell
+Get-Content .\data\web-password
+```
+
+在 Web 或 Flutter 客户端的“登录密码 / API token”输入框填写密码。Android **服务端**启动后点击“查看登录密码”，详见 [Android 服务端说明](android/README.md)。API 和 Prometheus 抓取使用 `Authorization: Bearer <密码>`；登录页静态资源及 `/healthz` 健康检查仍可公开访问，监控数据、日志、指标及实时连接需要认证。
+
+密码文件在 Unix 上使用 `0600` 权限，启动日志只提示位置，不打印密码。文件损坏或无法保存时服务拒绝启动。Windows 部署请通过数据目录 ACL 限制其他用户读取；备份包含该密码，应按敏感数据保管。
+
+### 修改或重置密码
+
+自定义密码：在服务器私有的 `monitor.yaml` 中设置一个足够长的随机值，然后重启服务。该配置不提交到 Git：
+
+```yaml
+web:
+  token: "替换为你生成的长随机密码"
+```
+
+重置**自动生成的密码**：先停止服务，删除实际数据目录中的 `web-password`，再启动并读取新文件。旧密码立即失效。若已配置 `web.token`、`web.users`、OIDC、SAML 或 LDAP，应修改对应的认证配置，删除文件不会重置这些凭据。
+
+远程部署应通过 HTTPS 反向代理或可信加密网络访问；密码认证本身不加密 HTTP。不要把真实密码写进 URL、文档或仓库。
+
+跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、freebsd(amd64/arm64)、android(arm64) 二进制。
+
 ## 多设备接入
 
 管理员可在「配置 → 本机 → 表单 → 设备接入」管理多个 SNMP 设备和 Redfish 服务器管理口，支持桌面及手机操作。SNMP 内置网络设备、UPS、打印机、服务器/NAS 四种标准 MIB 模板；Redfish 读取真实 Systems 资源，提供健康、电源状态和设备实际返回的 CPU/内存信息。每类最多配置 64 台设备，最多 4 台并发，独立身份、超时和可达状态，暂时离线后自动重试。
@@ -37,7 +114,7 @@
 
 本轮 Web 看板收尾更新整合中文指标说明、收藏与分组导航、编辑草稿恢复、整个看板统一历史时间、图表放大与采样统计、相邻时段对比及 CSV 导出。个人看板导入先预览内容与当前节点覆盖情况，再勾选保存为副本；保留未采集的图表配置。使用方式及验收范围见 [Web 看板更新说明](docs/09-dashboard-final-update.md)。
 
-运维工作台最初随 **2.0.1 服务端与 Web 正式版本**交付，后续能力继续迭代。当前版本以 [GitHub Releases](https://github.com/mengzhihua/monitor/releases) 为准，合入 `main` 后由 Release 工作流发布下一个稳定补丁包。Flutter 客户端保持独立版本。早期升级与回退步骤见 [2.0.1 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。`VERSION` / `web/package.json` / `main.go` 必须与最新稳定 git tag（`vMAJOR.MINOR.PATCH`）一致，否则 CI 直接失败；Release 在自动打 tag 后会同步写回这些文件。
+运维工作台最初随 **2.0.1 服务端与 Web 正式版本**交付，后续能力继续迭代。当前版本以 [GitHub Releases](https://github.com/mengzhihua/monitor/releases) 为准，Release 工作流按提交中的 `VERSION` 发布，不自动递增版本；版本已发布时，后续同版本提交跳过打包。Flutter 客户端保持独立版本。早期升级与回退步骤见 [2.0.1 发布说明](docs/08-release-2.0.md)；API 与持久化限制见 [2.0 说明](docs/06-monitor-2.0.md)。`make all` 使用根目录 `VERSION` 构建，`make package-server` 生成带源码提交及 SHA-256 校验的服务端包。`VERSION`、Web 包与锁文件、Go 默认版本必须一致；开发和 CI 允许先提交更高版本，拒绝版本倒退及标签指向错误版本的源码。发布时标签必须与该提交的 `VERSION` 一致，流程不会回写源码。详见[发布规则](docs/23-release.md)。
 
 本轮性能与发布收尾将进程快照、历史查询优化与最新看板整合，并补齐跨平台打包依赖和验收入口，详见 [最终整合更新](docs/10-final-integration.md)。
 
@@ -78,7 +155,7 @@
 | [docs/04-netdata-gap.md](docs/04-netdata-gap.md) | 与 Netdata 的全量差距清单与 M7–M26 移植计划（M19 起为后续批次） |
 | [docs/05-acceptance.md](docs/05-acceptance.md) | 五阶段交付、验收命令、实测结果与未验证边界 |
 | [docs/06-monitor-2.0.md](docs/06-monitor-2.0.md) | 2.0 运维总览、问题处置、权限、持久化与竞品对照 |
-| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 54 个常用聚合样板、个人看板配置、中文说明与历史对比 |
+| [docs/07-preset-dashboards.md](docs/07-preset-dashboards.md) | 常用聚合样板、个人看板配置、中文说明与历史对比 |
 | [docs/09-dashboard-final-update.md](docs/09-dashboard-final-update.md) | Web 看板收尾更新、导入预览与选择、功能范围及验证边界 |
 | [docs/10-final-integration.md](docs/10-final-integration.md) | 性能与发布收尾、升级说明及本轮验证范围 |
 | [docs/11-system-hardening.md](docs/11-system-hardening.md) | 配置并发与密钥隔离、凭据文件、草稿保护、磁盘指标基准及验证边界 |
@@ -91,74 +168,17 @@
 | [docs/20-reliability-and-isolation.md](docs/20-reliability-and-isolation.md) | 房间隔离、数据新鲜度、模板与诊断请求保护、验证范围 |
 | [docs/21-bluetooth-link.md](docs/21-bluetooth-link.md) | 蓝牙设备识别、链接模式、编解码器与码率解码、链路质量评分、行业工具对照 |
 | [docs/22-cloud-host.md](docs/22-cloud-host.md) | 云主机安装、Hub/Agent、命令行验收与 AI 模型配置（发布包内为 `CLOUD-HOST.md`） |
-| [docs/23-release.md](docs/23-release.md) | VERSION 与标签、跳过重复打包、把指错提交的标签移回去 |
+| [docs/23-release.md](docs/23-release.md) | 版本升级、标签校验、跳过重复打包与发布排错 |
 | [docs/24-device-monitoring.md](docs/24-device-monitoring.md) | 多设备 SNMP / Redfish、标准设备模板、行业对标与现场验收 |
 | [docs/25-modular-workspace.md](docs/25-modular-workspace.md) | 模块注册、单工作区导航、指标分类分页、运维分区及开发约定 |
+| [docs/26-module-boundaries.md](docs/26-module-boundaries.md) | 服务端与 Web 模块职责、依赖边界与验证入口 |
+| [docs/27-plugin-platform.md](docs/27-plugin-platform.md) | 清单包、插件生命周期、动态函数、权限与扩展限制 |
 | [docs/08-release-2.0.md](docs/08-release-2.0.md) | 2.0.1 版本说明、离线升级/回退、发布校验和验收边界 |
 | [scripts/README.md](scripts/README.md) | 构建、测试、打包脚本与输出位置 |
 
-## 快速开始
+## 能力目录
 
-云主机安装、验收和配置 AI 模型见 [云主机部署指引](docs/22-cloud-host.md)。解压发布包后执行 `sudo ./cloud-host.sh install --check`。发布包内同一份说明名为 `CLOUD-HOST.md`。
-
-从源码构建时依赖 Go 1.26+（CI/本轮验证固定 1.27.1）、Node 24.19.0（仅构建 Dashboard 时需要）。
-
-```bash
-make all          # 1) 构建 Vue Dashboard 并嵌入  2) 编译 core/bin/monitord
-./core/bin/monitord -listen :19999 -data-dir ./data
-# 在另一终端读取本机生成的登录密码（无需用户名）：
-cat ./data/web-password
-# 浏览器打开 http://localhost:19999/，输入上面的密码
-```
-
-也可以只用 Go（不构建前端则 Dashboard 为空页，API 正常）：
-
-```bash
-cd core && go run ./cmd/monitord -listen :19999
-```
-
-配置：复制 [`monitor.example.yaml`](monitor.example.yaml) 为 `monitor.yaml`，或 `-config <path>`。命令行 `-listen` / `-data-dir` / `-log-level` 可覆盖配置文件。
-
-### 手机访问（H5）
-
-升级服务端后，在手机浏览器打开原监控地址，例如 `https://monitor.example.com/`（替换为实际地址），输入已有登录密码即可。局域网部署使用手机能够访问的服务器地址及端口；手机上的 `localhost` 指向手机本身。H5 已内嵌到服务端，不需要另装客户端或新增端口。
-
-底部导航提供总览、图表、告警和更多功能；可在 Safari 共享菜单或 Android 浏览器菜单中添加到主屏幕，实际安装选项由浏览器决定。主屏幕入口不携带密码，重新打开可能需要登录，查看数据仍需连接服务器。完整使用说明见 [手机 H5 使用指南](docs/16-mobile-h5.md)。
-
-### 默认登录密码
-
-未配置 `web.token`、`web.users`、OIDC、SAML 或 LDAP 时，首次启动会生成**每台部署独立的随机管理员密码**，无需用户名。重启沿用该密码；旧的无认证部署升级后也会要求登录。已有认证配置继续生效，不会额外生成管理员密码。
-
-密码位于 `<data_dir>/web-password`。`data_dir` 来自 `-data-dir` 或 `global.data_dir`，默认是**启动时工作目录**下的 `./data`，不是可执行文件所在目录。按上面的启动命令，在另一终端读取：
-
-```bash
-# macOS / Linux / FreeBSD，在启动命令所在目录执行
-cat ./data/web-password
-```
-
-```powershell
-# Windows PowerShell
-Get-Content .\data\web-password
-```
-
-在 Web 或 Flutter 客户端的“登录密码 / API token”输入框填写密码。Android **服务端**启动后点击“查看登录密码”，详见 [Android 服务端说明](android/README.md)。API 和 Prometheus 抓取使用 `Authorization: Bearer <密码>`；登录页静态资源及 `/healthz` 健康检查仍可公开访问，监控数据、日志、指标及实时连接需要认证。
-
-密码文件在 Unix 上使用 `0600` 权限，启动日志只提示位置，不打印密码。文件损坏或无法保存时服务拒绝启动。Windows 部署请通过数据目录 ACL 限制其他用户读取；备份包含该密码，应按敏感数据保管。
-
-### 修改或重置密码
-
-自定义密码：在服务器私有的 `monitor.yaml` 中设置一个足够长的随机值，然后重启服务。该配置不提交到 Git：
-
-```yaml
-web:
-  token: "替换为你生成的长随机密码"
-```
-
-重置**自动生成的密码**：先停止服务，删除实际数据目录中的 `web-password`，再启动并读取新文件。旧密码立即失效。若已配置 `web.token`、`web.users`、OIDC、SAML 或 LDAP，应修改对应的认证配置，删除文件不会重置这些凭据。
-
-远程部署应通过 HTTPS 反向代理或可信加密网络访问；密码认证本身不加密 HTTP。不要把真实密码写进 URL、文档或仓库。
-
-跨平台构建：`make cross` 生成 linux(amd64/arm64)、darwin(amd64/arm64)、windows(amd64)、freebsd(amd64/arm64)、android(arm64) 二进制。
+以下按实现阶段列出能力；具体平台依赖、配置及验收范围以对应文档为准。
 
 ### 已实现能力（M0）
 
@@ -195,25 +215,42 @@ web:
 | RBAC | `web.users` 命名凭据 + 角色：`admin`（全部）、`troubleshooter`（只读 + Functions）、`viewer`（只读，不可执行 Functions）；`web.token` 仍视为 admin；`/api/v1/info.user` 返回当前身份 |
 | Dashboard | Hub 模式顶部节点选择器（在线/全部计数、live/stale/offline 标识），切换后图表、告警、Functions、WebSocket 实时流全部切到所选节点；Agent 端显示到 Hub 的上报状态 |
 
-两进程示例（同一台机器）：
+两进程示例（同一台机器，先完成 `make all`；三个终端均在仓库根目录执行，两个端口需空闲）。示例只启用基础系统指标，密钥仅用于本机演示，远程部署须更换并保护配置文件。
+
+终端 A 启动 Hub，保持运行：
 
 ```bash
 # Hub
 cat > hub.yaml <<'EOF'
 mode: hub
-web: { listen: ":19999" }
+web: { listen: "127.0.0.1:19999" }
+collectors: { enabled: [cpu, mem, load, disk, net] }
 hub: { api_keys: ["dev-stream-key"] }
 EOF
 ./core/bin/monitord -config hub.yaml -data-dir ./data-hub
+```
 
+终端 B 启动 Agent，保持运行：
+
+```bash
 # Agent → Hub
 cat > agent.yaml <<'EOF'
-web: { listen: ":19998" }
+web: { listen: "127.0.0.1:19998" }
+collectors: { enabled: [cpu, mem, load, disk, net] }
 stream: { enabled: true, destinations: ["127.0.0.1:19999"], api_key: "dev-stream-key" }
 EOF
 ./core/bin/monitord -config agent.yaml -data-dir ./data-agent
-curl -s localhost:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
 ```
+
+终端 C 查询节点（需要 `curl` 和 `jq`）；连接建立后应看到 Agent。Web 登录密码与 `hub.api_keys` 上报密钥是两种不同凭据：
+
+```bash
+curl --fail --silent --show-error --max-time 10 \
+  -H "Authorization: Bearer $(cat ./data-hub/web-password)" \
+  http://127.0.0.1:19999/api/v1/nodes | jq '.nodes[] | {id, hostname, status}'
+```
+
+结束演示时在 A、B 终端分别按 Ctrl+C，数据目录保留用于下次启动。演示配置和数据不要提交到仓库。
 
 ### 已实现能力（M5：摄入 / 合成检查 / 导出 / ML）
 
@@ -485,6 +522,7 @@ make all          # 先生成内嵌 Web，再编译服务端
 make test-fast    # 日常开发：脚本、前端模型/边界/类型、重点 Go 包
 make test         # 完整 Go vet/race + 脚本与前端检查
 make test-web     # 独立前端模型/架构/类型检查，无需服务或浏览器
+make test-docs    # README/文档的本地链接与标题锚点检查，无需网络
 make test-platform # 重建并验证插件平台：竞态、真实进程/SAML、桌面与手机操作
 ./plugins.d/example.plugin 1 | head   # 手工查看示例插件的协议输出
 make lint         # gofmt + vet
@@ -553,16 +591,12 @@ sudo dnf install mesa-libEGL gtk3 libsecret
 
 ### 发布（GitHub Release）
 
-每次推送到 `main` 会自动打 tag（在最新 `v*` 的基础上 patch +1，如 `v0.1.3` → `v0.1.4`）并构建、发布全部安装包；需要升 minor/major 时手动推 tag 即可，也可手动运行 Release 工作流重建某个已有 tag：
+发布新版本时，先用 `python3 scripts/sync-release-version.py <新版本>` 同步源码版本并完成验证，再提交并合入 `main`。Release 读取该提交的 `VERSION` 创建 `v<版本>` 标签并打包；同版本标签已指向其他提交时跳过打包。手动推送的稳定标签也必须匹配标签提交中的 `VERSION`，手动运行工作流只能重建已有标签。详见[发布规则](docs/23-release.md)。
 
 | | 产物 |
 |---|---|
 | 服务端 `monitord` | macOS arm64（Apple 芯片）/ amd64（Intel）、Windows amd64、Linux amd64 / arm64、FreeBSD amd64 / arm64、Android arm64 APK |
 | 客户端 `Monitor` | macOS arm64 / amd64（.dmg + .zip）、Windows amd64（.zip）、Linux amd64（.tar.gz）、Android（.apk）、iOS（未签名 .ipa） |
-
-```bash
-git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
-```
 
 目前所有包均未签名/公证；配置 `ANDROID_KEYSTORE_B64` 等 secrets 后 Android 服务端 APK 会自动签名，Apple / Windows 签名后续接入。Linux 客户端请先安装 `libegl1`（见上文）。
 
@@ -572,7 +606,20 @@ git tag v0.2.0 && git push origin v0.2.0   # 可选：手动指定版本号
 
 服务端启动、HTTP 查询、告警引擎及图表采样的职责划分、生命周期和依赖守卫见[模块边界](docs/26-module-boundaries.md)。
 
-新增采集能力可使用[插件平台](docs/27-plugin-platform.md)：本地版本化清单包支持在线扫描、独立启停/重启和持久化管理，指标自动进入图表、TSDB 与告警链路。管理员在“插件管理”查看状态和诊断；示例见 `examples/plugins/heartbeat`。当前扩展点为外部 metrics 采集进程。
+新增采集能力可使用[插件平台](docs/27-plugin-platform.md)：本地版本化清单包支持在线扫描、独立启停/重启和持久化管理，指标自动进入图表、TSDB 与告警链路。管理员在“插件管理”查看状态和诊断；示例见 `examples/plugins/heartbeat`。扩展点包含外部 metrics 采集进程和按需调用的 functions；Agent 函数可由 Hub 发现和调用。两端协商 `functions.catalog.v1` 后，在线安装、停用和移除会更新远端目录，无需重连。
+
+指标搜索支持中文输入法，连续输入合并筛选；`/` 聚焦搜索、Enter 立即筛选、Escape 清除。首次进入业务模块有加载反馈，手机切换模块定位到内容顶部；筛选与分页保持可触控尺寸，并遵循系统减少动态效果设置。
+
+## 已知边界与待完成验收
+
+| 领域 | 当前边界与验收要求 |
+| --- | --- |
+| 稳态内存与长测 | TSDB 缓冲回收、块大小和 checkpoint 恢复已有优化；短测和微基准不能证明真实采集集合下 24–72 小时 RSS 稳定。需保存配置、序列规模、RSS/heap 趋势、heap profile 和断档结果，见[持续验收](docs/05-acceptance.md)。 |
+| Weekly soak | 工作流要求在线且可接单的 `self-hosted, linux` runner；有 schedule 不代表任务已执行。验收需核对实际 runner、完整运行日志和报告。本次文档检查没有重新确认远端 runner 注册或完成 24 小时长测。 |
+| 暂停与采样 | 采样器重读 PID、周期性保存中间汇总并检测断档；定位宿主机暂停仍需对应时间段的平台/电源日志。不能把监控断档直接归因为服务故障。 |
+| 插件隔离 | 插件以 monitord 的系统身份运行，当前没有操作系统沙箱或远程插件市场；只能安装可信程序。协议配额不等于 CPU/内存隔离，详见[插件安全边界](docs/27-plugin-platform.md)。 |
+| 手机与硬件 | 浏览器模拟覆盖布局和交互，不能替代 iOS/Android 真机、具体 SNMP/Redfish 型号及蓝牙链路验收。移动端失败保留首次 trace，零重试通过也不能证明历史偶发失败已经消除。 |
+| 发布与回退 | 源码合入不等于已生成新版本安装包；发布资产、校验、签名及实机结果需分别确认。数据格式升级前备份，按对应版本说明回退。 |
 
 ## 仓库结构
 

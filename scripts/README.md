@@ -12,6 +12,8 @@
 | `package-server-release.py` | 受控构建 8 个服务端目标并生成白名单归档、macOS Universal、提交清单和 SHA-256 | `dist/monitor-<版本>-<提交>/` |
 | `package-server-release_test.py` | 校验错版本/旧构建、符号链接、归档白名单和原目录保护 | 终端测试结果 |
 | `check-release-version.py` | 检查 VERSION、Go 默认版本、Web 包和锁文件一致 | 不一致时返回失败 |
+| `sync-release-version.py <版本>` | 在发版提交前统一写入上述版本文件，Release 不自动升版本 | 修改源码版本，需验证并提交 |
+| `check_release_version_test.py` | 用隔离 Git 历史验证升版本、降级、错标签及严格检查 | 终端测试结果，不改仓库标签 |
 | `stamp_app_version.py` | 发布构建前同步 Flutter 应用版本 | 修改调用者指定的 `pubspec.yaml` 或构建产物 `version.json` |
 | `stamp_app_version_test.py` | 验证版本写入规则 | 终端测试结果 |
 
@@ -29,11 +31,14 @@
 | --- | --- | --- |
 | `make test-fast` | 版本、脚本 fixture、前端模型/架构/类型和启动/API/Registry/Trapper 等重点 Go 包 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
 | `make test-web` | Node 原生模型及进程 fixture、架构检查、应用与全部 Playwright 夹具/配置的 TypeScript 检查 | Node 与 Web 依赖，无需编译服务端或启动浏览器 |
+| `make test-docs` | README、脚本说明及 `docs/*.md` 中的本地行内 Markdown 链接、标题锚点及检查器 fixture | Python 3，无需网络 |
 | `make test-scripts` | 打包、版本同步、App 版本写入、运行基准、soak 时间线和资源采样器 fixture | Python 3，无需真实服务 |
 | `make test` | 脚本、全量 Go vet/race 和前端检查 | 已生成内嵌 UI、Go/Node 与 Web 依赖 |
 | `make test-platform` | 顺序重建 Web/服务端，平台相关 Go 竞态、真实插件和 SAML-only 认证、插件管理与 API 浏览器验收 | macOS/Linux、Go/Node/Python 与 Playwright Chromium |
 
 快速检查用于开发反馈；交付仍执行 `make test` 及受影响功能的真实服务/浏览器验收。纯模型测试位于 `web/tests/`，通过 `node --test` 直接载入 TypeScript 模型，不启动浏览器；浏览器测试保留请求、订阅、绘制和交互验证。CI 的 Web 阶段也执行模型及脚本 fixture。
+
+`make test-scripts` 包含 `make test-docs`，CI 沿用同一入口。文档检查忽略代码块与外部 URL，检查本地文件/目录及 Markdown ATX 标题、重复标题和显式锚点；不检查引用式链接、HTML href、外部站点可达性或命令行为，仍需针对变更运行实际示例。
 
 `web/tsconfig.e2e.json` 将 Playwright 测试纳入现有 `typecheck` 和生产构建检查，测试里的接口类型错误会在启动浏览器之前失败。`make test-platform` 自动生成当前内嵌界面和原生二进制，避免用上一次构建验证新源码；插件与 SAML 进程验收各自使用临时目录和随机端口，浏览器主服务仍可通过 `MONITOR_E2E_PORT` 改端口。
 

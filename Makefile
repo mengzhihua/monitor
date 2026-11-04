@@ -23,7 +23,7 @@ endif
 LDFLAGS  = -s -w -X main.version=$(BUILD_VERSION) -X main.commit=$(GIT_COMMIT) -X main.releaseBuild=$(RELEASE_BUILD) -X main.buildTime=$(BUILD_TIME) -X main.dirty=$(BUILD_DIRTY)
 BIN      = core/bin
 
-.PHONY: all web core test test-fast test-web test-scripts test-platform lint run cross clean check-version package-server
+.PHONY: all web core test test-fast test-web test-docs test-scripts test-platform lint run cross clean check-version package-server
 
 # Go embeds the generated dashboard. Keep this ordered even under make -j.
 all: web
@@ -71,9 +71,10 @@ test-platform: all
 	cd web && npm run test:e2e -- e2e/plugins.spec.ts e2e/plugin-runtime.spec.ts e2e/api-contract.spec.ts e2e/functions.spec.ts
 
 ## test-scripts: all local build/acceptance-script fixtures, no live services
-test-scripts:
+test-scripts: test-docs
 	python3 scripts/package-server-release_test.py
 	python3 scripts/sync-release-version_test.py
+	python3 scripts/check_release_version_test.py
 	python3 scripts/stamp_app_version_test.py
 	python3 scripts/benchmark_runtime_test.py
 	python3 scripts/soak_config_test.py
@@ -81,11 +82,16 @@ test-scripts:
 	python3 scripts/verify-zabbix-gap.py
 	python3 scripts/verify_zabbix_gap_test.py
 
+## test-docs: local Markdown paths and heading anchors, without network access
+test-docs:
+	python3 scripts/check_doc_links_test.py
+	python3 scripts/check-doc-links.py
+
 lint:
 	cd core && test -z "$$(gofmt -l .)" && go vet ./...
 
 check-version:
-	# Local builds compare VERSION to package/main.go; CI sets REQUIRE_GIT_TAG_VERSION=1.
+	# Source versions must agree; a forward bump can precede release.yml's tag.
 	python3 scripts/check-release-version.py
 
 # Rebuild embedded UI before cross-compilation, including under make -j.

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Stamp VERSION, Dashboard package files, and monitord's version string.
 
-Used by release.yml after an auto-tag so REQUIRE_GIT_TAG_VERSION stays aligned.
-Keeping this out of the workflow YAML avoids IndentationError from python -c
-bodies nested under shell if-blocks inside run:|.
+Run before committing a release version bump. release.yml reads the committed
+VERSION; it does not bump or write back source versions.
 """
 from __future__ import annotations
 
