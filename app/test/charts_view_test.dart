@@ -51,6 +51,7 @@ class _Client extends ApiClient {
   _Client({this.count = 100})
     : super(const ServerConfig(baseUrl: 'http://test'));
   int count;
+  bool includeHiddenDimension = false;
   bool deferHistory = false;
   bool deferCharts = false;
   int historyRows = 1;
@@ -70,9 +71,11 @@ class _Client extends ApiClient {
           'family': 'large-family',
           'title': 'Chart $i',
           'priority': i,
+          'units': i == 0 ? 'MiB/s' : 'seconds',
           'dimensions': [
             for (var d = 0; d < dimensions; d++)
               {'id': d == 0 ? 'value' : 'dim$d', 'name': 'Value $d'},
+            if (includeHiddenDimension) {'id': 'internal', 'hidden': true},
           ],
         }),
     ];
@@ -441,6 +444,46 @@ void main() {
     await tester.enterText(find.byType(TextField), 'no matches');
     await _settleCharts(tester);
     expect(client.sockets.single.closes, 1);
+    expect(find.text('No charts match your filter.'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear filter'));
+    await _settleCharts(tester);
+    expect(find.byTooltip('Clear filter'), findsNothing);
+    expect(_mountedCharts(tester), contains('chart000'));
+    expect(client.sockets.last.charts, _mountedCharts(tester));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('filter matches units and visible dimensions', (tester) async {
+    final client = _Client(count: 2)..includeHiddenDimension = true;
+    addTearDown(client.close);
+    await tester.pumpWidget(_view(client));
+    await _settleCharts(tester);
+    for (final (query, ids) in [
+      (' mib/S ', {'chart000'}),
+      ('VALUE 0', {'chart000', 'chart001'}),
+      ('internal', <String>{}),
+    ]) {
+      await tester.enterText(find.byType(TextField), query);
+      await _settleCharts(tester);
+      expect(_mountedCharts(tester), ids);
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('refresh button discovers charts on an empty node', (
+    tester,
+  ) async {
+    final client = _Client(count: 0);
+    addTearDown(client.close);
+    await tester.pumpWidget(_view(client));
+    await _settleCharts(tester);
+    expect(find.text('This node has no charts yet.'), findsOneWidget);
+    client.count = 1;
+    await tester.tap(find.byTooltip('Refresh charts'));
+    await _settleCharts(tester);
+    expect(client.chartCalls, 2);
+    expect(_mountedCharts(tester), {'chart000'});
+    expect(find.text('This node has no charts yet.'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 

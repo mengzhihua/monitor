@@ -29,7 +29,8 @@ class _ChartsViewState extends State<ChartsView> {
   List<Chart> _charts = const [];
   String? _error;
   bool _loading = true;
-  String _filter = '';
+  final _filter = TextEditingController();
+  final _refreshIndicator = GlobalKey<RefreshIndicatorState>();
   int _windowSeconds = 300;
   final _series = <String, ChartSeries>{};
   final _activeCharts = <String, Chart>{};
@@ -98,6 +99,7 @@ class _ChartsViewState extends State<ChartsView> {
   void dispose() {
     ++_loadGeneration;
     ++_sourceGeneration;
+    _filter.dispose();
     _refresh?.cancel();
     _subscriptionUpdate?.cancel();
     _stopLive();
@@ -154,13 +156,18 @@ class _ChartsViewState extends State<ChartsView> {
   }
 
   Iterable<Chart> get _visible {
-    final f = _filter.trim().toLowerCase();
+    final f = _filter.text.trim().toLowerCase();
+    if (f.isEmpty) return _charts;
+    bool matches(String value) => value.toLowerCase().contains(f);
     return _charts.where(
       (c) =>
-          f.isEmpty ||
-          c.id.toLowerCase().contains(f) ||
-          c.title.toLowerCase().contains(f) ||
-          c.family.toLowerCase().contains(f),
+          matches(c.id) ||
+          matches(c.title) ||
+          matches(c.family) ||
+          matches(c.units) ||
+          c.dimensions.any(
+            (d) => !d.hidden && (matches(d.id) || matches(d.name)),
+          ),
     );
   }
 
@@ -364,13 +371,22 @@ class _ChartsViewState extends State<ChartsView> {
             children: [
               Expanded(
                 child: TextField(
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
+                  controller: _filter,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _filter.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear filter',
+                            icon: const Icon(Icons.clear),
+                            onPressed: () => setState(_filter.clear),
+                          ),
                     hintText: 'Filter charts',
                     isDense: true,
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                   ),
-                  onChanged: (value) => setState(() => _filter = value),
+                  onChanged: (_) => setState(() {}),
                 ),
               ),
               const SizedBox(width: 8),
@@ -390,6 +406,11 @@ class _ChartsViewState extends State<ChartsView> {
                   _refreshActiveHistory();
                   _queueSubscriptionUpdate();
                 },
+              ),
+              IconButton(
+                tooltip: 'Refresh charts',
+                icon: const Icon(Icons.refresh),
+                onPressed: () => _refreshIndicator.currentState?.show(),
               ),
             ],
           ),
@@ -429,12 +450,24 @@ class _ChartsViewState extends State<ChartsView> {
                 }
               }
               return RefreshIndicator(
+                key: _refreshIndicator,
                 onRefresh: _load,
                 child: ListView.builder(
                   key: ValueKey(source),
                   physics: const AlwaysScrollableScrollPhysics(),
-                  itemCount: entries.length,
+                  itemCount: entries.isEmpty ? 1 : entries.length,
                   itemBuilder: (context, index) {
+                    if (entries.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          _charts.isEmpty
+                              ? 'This node has no charts yet.'
+                              : 'No charts match your filter.',
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    }
                     final entry = entries[index];
                     if (entry.charts.isEmpty) {
                       return Padding(
