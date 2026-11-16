@@ -9,7 +9,7 @@ import { changePersonalBoards, readPersonalBoards, readPreferences, preferencesK
 import { decodeDraft, encodeDraft, draftKey, type DashboardDraft } from '../dashboardDraft'
 import MetricChart from './MetricChart.vue'
 
-const props = defineProps<{ charts: Chart[]; window: number; end?: number | null; filter: string; node: string }>()
+const props = defineProps<{ charts: Chart[]; window: number; end?: number | null; filter: string; matchingIds: ReadonlySet<string> | null; node: string }>()
 const personal = ref<PersonalBoard[]>([])
 const error = ref('')
 const notice = ref('')
@@ -167,8 +167,8 @@ function resetCatalog() { search.value = ''; category.value = '全部'; onlyAvai
 const board = computed(() => allBoards.value.find(b => b.id === selected.value) ?? dashboards[0]!)
 const groups = computed(() => board.value.groups.map(group => {
   const matched = matchesByGroup.value.get(group.id) ?? []
-  const query = props.filter.trim().toLowerCase()
-  const filtered = matched.filter(c => !query || [c.id, c.title, c.family, c.context, ...Object.entries(c.labels || {}).flat()].join(' ').toLowerCase().includes(query))
+  const ids = props.matchingIds
+  const filtered = ids ? matched.filter(chart => ids.has(chart.id)) : matched
   return { ...group, matched, filtered, visible: expanded.value.includes(group.id) ? filtered : filtered.slice(0, limit.value) }
 }))
 const visibleGroups = computed(() => groups.value.filter(g => !settings.value?.hideEmpty || g.matched.length))

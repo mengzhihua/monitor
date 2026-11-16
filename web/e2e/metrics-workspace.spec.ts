@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { Chart } from '../src/api'
 import { encodeTimeline, timelineKey } from '../src/chartTimeline'
-import { indexMetrics, metricDomain, metricMatches } from '../src/features/metrics/metricCatalog'
+import { indexMetrics, metricDomain, searchMetrics } from '../src/features/metrics/metricCatalog'
 
 function chart(id: string, context = id, labels: Record<string, string> = {}): Chart {
   return {
@@ -30,9 +30,14 @@ test('semantic classification uses stable contexts, legacy IDs and preserves unr
   expect(metricDomain(chart('k8s_kubelet.pods', ''))).toBe('containers')
   expect(metricDomain(chart('nvidia_smi.gpu', ''))).toBe('devices')
   expect(metricDomain(chart('custom.instance', 'unrelated.redis', { name: 'Redis' }))).toBe('other')
-  const indexed = indexMetrics([chart('custom.instance', 'redis.memory', { target: 'North-Rack' })])
-  expect(metricMatches(indexed[0]!, 'REDIS North-Rack')).toBe(true)
-  expect(metricMatches(indexed[0]!, 'redis missing-rack')).toBe(false)
+  const sample = chart('custom.instance', 'redis.memory', { target: 'North-Rack' })
+  sample.dimensions.push({ id: 'private_dim', name: '内部维度', algorithm: 'absolute', hidden: true })
+  const indexed = indexMetrics([sample])
+  expect(searchMetrics(indexed, 'REDIS North-Rack')).toHaveLength(1)
+  expect(searchMetrics(indexed, 'redis missing-rack')).toHaveLength(0)
+  expect(searchMetrics(indexed, 'VALUE % 数值')).toHaveLength(1)
+  expect(searchMetrics(indexed, 'private_dim')).toHaveLength(0)
+  expect(searchMetrics(indexed, '内部维度')).toHaveLength(0)
 })
 
 async function fixtures(page: Page, remote = false) {
@@ -106,6 +111,24 @@ test('search finds context and device labels, keeps custom metrics and recovers 
   await expect(browser.locator('.card')).toHaveCount(12)
   await browser.getByRole('navigation', { name: '指标分类' }).getByRole('button', { name: /^其他指标/ }).click()
   await expect(browser.locator('.card .id')).toHaveText('custom.extension')
+})
+
+test('keeps keywords across category recovery and preset dashboards', async ({ page }) => {
+  await fixtures(page)
+  await page.goto('/?view=charts&token=browser-test-token')
+  const browser = page.getByLabel('指标工作区', { exact: true })
+  const search = browser.getByRole('searchbox', { name: '筛选图表' })
+  await browser.getByRole('navigation', { name: '指标分类' }).getByRole('button', { name: /^网络/ }).click()
+  const query = '数值  fixture_28 %'
+  await search.fill(query)
+  await expect(browser.getByRole('heading', { name: '当前分类没有匹配的指标' })).toBeVisible()
+  await expect(browser.getByRole('status').filter({ hasText: '其他分类' })).toContainText('1 张图表')
+  await browser.getByRole('button', { name: '在全部分类中查看' }).click()
+  await expect(search).toHaveValue(query)
+  await expect(browser.locator('.card .id')).toHaveText('system.fixture_28')
+  await expect(browser.locator('.results-heading')).toBeFocused()
+  await browser.getByRole('button', { name: '常用聚合看板', exact: true }).click()
+  await expect(browser.locator('.card .id')).toHaveText('system.fixture_28')
 })
 
 test('node switch resets the catalog page while preserving fixed history and node-scoped requests', async ({ page }) => {

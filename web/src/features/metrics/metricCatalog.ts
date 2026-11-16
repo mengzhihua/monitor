@@ -41,13 +41,14 @@ export function indexMetrics(charts: Chart[]): IndexedMetric[] {
   return charts.map(chart => ({
     chart,
     domain: metricDomain(chart),
-    search: [chart.id, chart.title, chart.family, chart.context, chart.module, chart.plugin,
+    search: [chart.id, chart.title, chart.family, chart.context, chart.module, chart.plugin, chart.units,
+      ...(chart.dimensions || []).filter(dimension => !dimension.hidden).flatMap(dimension => [dimension.id, dimension.name]),
       ...Object.entries(chart.labels || {}).flat()].join(' ').toLocaleLowerCase(),
   })).sort((a, b) => (order.get(a.domain)! - order.get(b.domain)!)
     || a.chart.priority - b.chart.priority || a.chart.id.localeCompare(b.chart.id))
 }
 
-export function metricMatches(metric: IndexedMetric, query: string): boolean {
+export function searchMetrics(index: IndexedMetric[], query: string): IndexedMetric[] {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  return terms.every(term => metric.search.includes(term))
+  return terms.length ? index.filter(metric => terms.every(term => metric.search.includes(term))) : index
 }

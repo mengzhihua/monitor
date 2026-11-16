@@ -6,7 +6,7 @@ import MetricChart from '../../components/MetricChart.vue'
 import ChartTimeline from '../../components/ChartTimeline.vue'
 import DashboardsPanel from '../../components/DashboardsPanel.vue'
 import CollectorStatus from './CollectorStatus.vue'
-import { indexMetrics, metricDomains, metricMatches, type MetricDomain } from './metricCatalog'
+import { indexMetrics, metricDomains, searchMetrics, type MetricDomain } from './metricCatalog'
 import { metricWindows, useMetricsTimeline } from './useMetricsTimeline'
 
 const props = defineProps<{ charts: Chart[]; node: string; info: Info | null; currentNode: NodeInfo | null }>()
@@ -51,7 +51,8 @@ const page = ref(1)
 const pageSize = 12
 const resultsHeading = ref<HTMLElement>()
 const indexed = computed(() => indexMetrics(props.charts))
-const searched = computed(() => indexed.value.filter(metric => metricMatches(metric, appliedFilter.value)))
+const searched = computed(() => searchMetrics(indexed.value, appliedFilter.value))
+const matchingIds = computed(() => appliedFilter.value.trim() ? new Set(searched.value.map(metric => metric.chart.id)) : null)
 const domains = computed(() => metricDomains.map(domain => ({ ...domain, count: searched.value.filter(metric => metric.domain === domain.id).length })))
 const filtered = computed(() => searched.value.filter(metric => category.value === 'all' || metric.domain === category.value))
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
@@ -69,6 +70,10 @@ async function changePage(next: number) {
   await nextTick()
   resultsHeading.value?.scrollIntoView({ block: 'start' })
   resultsHeading.value?.focus({ preventScroll: true })
+}
+function searchAllCategories() {
+  category.value = 'all'
+  return changePage(1)
 }
 function showChart(id: string) {
   showLiveChart()
@@ -115,7 +120,11 @@ defineExpose({ showChart })
         </div>
       </div>
       <div v-if="!charts.length" class="empty-state" role="status"><h3>{{ currentNode?.status === 'offline' ? '节点已离线' : '暂未收到指标' }}</h3><p>{{ currentNode?.status === 'offline' ? '该节点暂无可展示的图表，请检查连接或切换节点。' : '请等待采集，或检查当前节点的采集配置。' }}</p></div>
-      <div v-else-if="!filtered.length" class="empty-state" role="status"><h3>没有匹配的指标</h3><p>可搜索名称、标识、上下文和设备标签，或切换分类。</p><button @click="resetFilters">查看全部指标</button></div>
+      <div v-else-if="!filtered.length && appliedFilter.trim() && searched.length" class="empty-state" role="status">
+        <h3>当前分类没有匹配的指标</h3><p>其他分类中有 {{ searched.length }} 张图表匹配当前关键词。</p>
+        <button :disabled="filtering" @click="searchAllCategories">在全部分类中查看</button>
+      </div>
+      <div v-else-if="!filtered.length" class="empty-state" role="status"><h3>没有匹配的指标</h3><p>可按名称、标识、上下文、标签、单位或维度搜索。</p><button @click="resetFilters">查看全部指标</button></div>
       <section v-for="section in sections" :key="section.id" class="metric-section" :aria-label="section.title + '图表'">
         <h3 v-if="category === 'all'">{{ section.title }}</h3>
         <div class="metric-grid"><MetricChart v-for="chart in section.charts" :key="node + ':' + chart.id" :chart="chart" :window="windowSec" :end="chartEnd" /></div>
@@ -124,7 +133,7 @@ defineExpose({ showChart })
         <button :disabled="page === 1 || filtering" @click="changePage(page - 1)">上一页指标</button><span>第 {{ page }} / {{ pageCount }} 页</span><button :disabled="page === pageCount || filtering" @click="changePage(page + 1)">下一页指标</button>
       </nav>
     </template>
-    <DashboardsPanel v-else :charts="charts" :window="windowSec" :end="chartEnd" :filter="appliedFilter" :node="node" />
+    <DashboardsPanel v-else :charts="charts" :window="windowSec" :end="chartEnd" :filter="appliedFilter" :matching-ids="matchingIds" :node="node" />
     <CollectorStatus v-if="info && !currentNode" :info="info" />
   </div>
 </template>
