@@ -7,6 +7,7 @@ import '../widgets/alarms_view.dart';
 import '../widgets/charts_view.dart';
 import '../widgets/functions_view.dart';
 import '../widgets/operations_view.dart';
+import '../widgets/node_picker.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.state});
@@ -61,7 +62,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final tab = showConfig || _tab < 4 ? _tab : 3;
     final pages = [
       ChartsView(
-          key: ValueKey('charts:${st.selectedNode}'),
           client: st.client!,
           node: _nodeParam,
           active: _visible && _tab == 0),
@@ -87,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: Text(title),
         actions: [
-          if (info.isHub) _NodePicker(state: st),
+          if (info.isHub) NodePicker(state: st),
           IconButton(
             tooltip: 'Disconnect',
             icon: const Icon(Icons.logout),
@@ -145,50 +145,6 @@ class _AlarmIcon extends StatelessWidget {
       label: Text('$n'),
       backgroundColor: counts.critical > 0 ? Colors.red : Colors.orange,
       child: const Icon(Icons.notifications_active),
-    );
-  }
-}
-
-class _NodePicker extends StatelessWidget {
-  const _NodePicker({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      tooltip: 'Select node',
-      icon: const Icon(Icons.dns),
-      onOpened: state.refreshNodes,
-      onSelected: state.selectNode,
-      itemBuilder: (context) => [
-        for (final n in state.nodes)
-          PopupMenuItem(
-            value: n.selector,
-            child: Row(
-              children: [
-                Icon(Icons.circle,
-                    size: 10,
-                    color: switch (n.status) {
-                      'live' => Colors.green,
-                      'stale' => Colors.orange,
-                      _ => Colors.grey,
-                    }),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(n.hostname,
-                      style: TextStyle(
-                          fontWeight: n.selector == state.selectedNode
-                              ? FontWeight.bold
-                              : FontWeight.normal)),
-                ),
-                const SizedBox(width: 8),
-                Text('${n.os}/${n.arch}',
-                    style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-          ),
-      ],
     );
   }
 }

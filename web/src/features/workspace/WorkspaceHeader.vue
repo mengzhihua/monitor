@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Info } from '../../api/monitoring/types'
 import type { NodeInfo } from '../../api/hub/types'
 import AppIcon from '../../components/AppIcon.vue'
@@ -17,6 +17,20 @@ function versionMismatch(node: NodeInfo) {
 }
 const selectedVersion = computed(() => props.currentNode?.version || props.info?.version || '')
 const menuOpen = ref(false)
+const query = ref('')
+const search = ref<HTMLInputElement>()
+const matches = computed(() => {
+  const term = query.value.trim().toLowerCase()
+  return props.nodes.filter(item => item.hostname.toLowerCase().includes(term) || item.id.toLowerCase().includes(term))
+})
+async function toggleMenu() {
+  menuOpen.value = !menuOpen.value
+  query.value = ''
+  if (menuOpen.value && !props.mobile) {
+    await nextTick()
+    search.value?.focus()
+  }
+}
 const menu = ref<HTMLElement>()
 const trigger = ref<HTMLButtonElement>()
 const buildLabel = computed(() => props.info ? `${props.info.version}${props.info.commit ? ' · ' + props.info.commit.slice(0, 12) + (props.info.dirty ? '+' : '') : ''}` : '')
@@ -25,7 +39,7 @@ const buildTitle = computed(() => {
   return i ? [`版本 ${i.version}`, i.commit && `提交 ${i.commit}`, i.build_time && `构建 ${i.build_time}`, i.dirty ? '构建时工作区有未提交修改' : '构建时工作区干净'].filter(Boolean).join('\n') : ''
 })
 function close(event: Event) { if (!menu.value?.contains(event.target as Node)) menuOpen.value = false }
-function escape(event: KeyboardEvent) { if (event.key === 'Escape' && menuOpen.value) { menuOpen.value = false; trigger.value?.focus() } }
+function escape(event: KeyboardEvent) { if (event.key === 'Escape' && !event.isComposing && menuOpen.value) { menuOpen.value = false; trigger.value?.focus() } }
 function pick(node: NodeInfo) { menuOpen.value = false; emit('node', node.local ? '' : node.id); trigger.value?.focus() }
 onMounted(() => { document.addEventListener('click', close); document.addEventListener('keydown', escape) })
 onBeforeUnmount(() => { document.removeEventListener('click', close); document.removeEventListener('keydown', escape) })
@@ -37,10 +51,14 @@ onBeforeUnmount(() => { document.removeEventListener('click', close); document.r
     <div class="brand"><span class="logo">◉</span> Monitor <span class="edition">监控工作台</span></div>
     <div v-if="info" class="identity">
       <div v-if="info.mode === 'hub'" ref="menu" class="node-select">
-        <button ref="trigger" class="node-select-btn" title="节点" aria-haspopup="listbox" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen"><AppIcon name="server" :size="16" />{{ currentNode?.hostname || info.host.hostname }} <span class="node-version" :title="selectedVersion">{{ shortVersion(selectedVersion) }}</span><span>⌄</span></button>
+        <button ref="trigger" class="node-select-btn" title="节点" aria-haspopup="listbox" :aria-expanded="menuOpen" @click="toggleMenu"><AppIcon name="server" :size="16" />{{ currentNode?.hostname || info.host.hostname }} <span class="node-version" :title="selectedVersion">{{ shortVersion(selectedVersion) }}</span><span>⌄</span></button>
         <div v-if="menuOpen && mobile" class="node-backdrop" aria-hidden="true" @click="menuOpen = false" />
-        <div v-if="menuOpen" class="node-menu" role="listbox" aria-label="节点">
-          <button v-for="item in nodes" :key="item.id" role="option" :aria-selected="item.local ? !node : item.id === node" class="node-item" @click="pick(item)">{{ item.local ? '◆' : item.status === 'live' ? '●' : '○' }} {{ item.hostname }}{{ item.local ? ' (hub)' : item.replica ? ' (replica)' : item.peer ? ' (peer)' : '' }}<span :class="['node-version', { mismatch: versionMismatch(item) }]" :title="versionMismatch(item) ? `与 hub 版本不一致（hub: ${hubVersion}）；${item.version}` : item.version">{{ shortVersion(item.version) }}</span></button>
+        <div v-if="menuOpen" class="node-menu">
+          <input ref="search" v-model="query" type="search" aria-label="搜索节点" placeholder="搜索主机名或节点 ID" autocomplete="off" />
+          <div role="listbox" aria-label="节点" class="node-options">
+          <button v-for="item in matches" :key="item.id" role="option" :aria-selected="item.local ? !node : item.id === node" class="node-item" @click="pick(item)">{{ item.local ? '◆' : item.status === 'live' ? '●' : '○' }} {{ item.hostname }}{{ item.local ? ' (hub)' : item.replica ? ' (replica)' : item.peer ? ' (peer)' : '' }}<small>{{ item.status === 'live' ? '在线' : item.status === 'stale' ? '数据过期' : '离线' }}</small><span :class="['node-version', { mismatch: versionMismatch(item) }]" :title="versionMismatch(item) ? `与 hub 版本不一致（hub: ${hubVersion}）；${item.version}` : item.version">{{ shortVersion(item.version) }}</span><small v-if="!item.local" class="node-id">{{ item.id }}</small></button>
+          </div>
+          <p v-if="!matches.length" role="status">{{ nodes.length ? '没有匹配的节点' : '暂无可见节点' }}</p>
         </div>
       </div>
       <span v-else class="host" :title="info.host.hostname + ' · ' + info.version"><AppIcon name="server" :size="16" />{{ info.host.hostname }} <span class="node-version">{{ shortVersion(info.version) }}</span></span>
@@ -66,8 +84,12 @@ button { display:inline-flex; align-items:center; gap:8px; cursor:pointer; backg
 .alarms-btn.crit { color:#fda4af; border-color:#9f3751; }.alarms-btn.warn { color:#fde68a; border-color:#956f24; }.logout { font-size:12px; }
 .node-select { position:relative; min-width:0; }.node-select-btn { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }.node-backdrop { display:none; }
 .node-menu { position:absolute; top:calc(100% + 6px); left:0; z-index:50; background:#0f172a; border:1px solid #334155; border-radius:10px; padding:6px; width:300px; max-width:calc(100vw - 30px); max-height:340px; overflow:auto; box-shadow:0 12px 32px #0008; }.node-item { width:100%; text-align:left; border:0; background:transparent; overflow-wrap:anywhere; }.node-item:hover,.node-item[aria-selected=true] { color:#5eead4; background:#123333; }
+.node-menu { display:flex; flex-direction:column; gap:4px; }
+.node-menu input { box-sizing:border-box; width:100%; padding:9px; border:1px solid #475569; border-radius:6px; background:#111e31; color:#e2e8f0; font:inherit; }
+.node-options { overflow-y:auto; min-height:0; }
+.node-menu p { margin:8px; color:#cbd5e1; }.node-item small { color:#a8b8ca; }.node-id { flex-basis:100%; text-align:left; }
 .node-version { color:#94a3b8; font-size:11px; flex-shrink:0; }.node-version.mismatch { color:#fbbf24; }.node-select-btn { gap:6px; }.node-item { flex-wrap:wrap; }
 .skip-link { position:fixed; top:-100px; left:20px; z-index:100; padding:10px; color:#fff; background:#134e4a; }.skip-link:focus { top:8px; }
 @media(max-width:1100px) { .edition,.platform,.build { display:none; } }
-@media(max-width:760px) { .workspace-header { position:relative; z-index:50; flex-wrap:wrap; gap:8px 12px; padding:12px; padding-top:max(12px,env(safe-area-inset-top)); }.brand { flex-basis:100%; font-size:17px; }.identity { flex:1 1 120px; font-size:12px; }.host { max-width:100%; }.header-status { gap:8px; }.dot span { display:none; }.node-select-btn { max-width:min(250px,60vw); min-height:44px; }.node-backdrop { display:block; position:fixed; inset:0; z-index:54; background:#02061780; }.node-select .node-menu { position:fixed; left:max(12px,env(safe-area-inset-left)); right:max(12px,env(safe-area-inset-right)); top:auto; bottom:calc(78px + env(safe-area-inset-bottom) + 8px); width:auto; max-height:min(340px,45dvh); z-index:55; }.stale { display:none; }.node-item { min-height:44px; } }
+@media(max-width:760px) { .workspace-header { position:relative; z-index:50; flex-wrap:wrap; gap:8px 12px; padding:12px; padding-top:max(12px,env(safe-area-inset-top)); }.brand { flex-basis:100%; font-size:17px; }.identity { flex:1 1 120px; font-size:12px; }.host { max-width:100%; }.header-status { gap:8px; }.dot span { display:none; }.node-select-btn { max-width:min(250px,60vw); min-height:44px; }.node-backdrop { display:block; position:fixed; inset:0; z-index:54; background:#02061780; }.node-select .node-menu { position:fixed; left:max(12px,env(safe-area-inset-left)); right:max(12px,env(safe-area-inset-right)); top:auto; bottom:calc(78px + env(safe-area-inset-bottom) + 8px); width:auto; max-height:min(340px,45dvh); z-index:55; }.stale { display:none; }.node-item,.node-menu input { min-height:44px; }.node-menu input { font-size:16px; } }
 </style>

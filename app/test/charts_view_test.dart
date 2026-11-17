@@ -495,10 +495,16 @@ void main() {
     await tester.pumpWidget(_view(client, node: 'old'));
     await _settleCharts(tester);
     final old = client.requests.single;
+    await tester.enterText(find.byType(TextField), 'chart000');
+    await _settleCharts(tester);
     await tester.pumpWidget(_view(client, node: 'new'));
     await _settleCharts(tester);
     final current = client.requests.last;
     expect(current.node, 'new');
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'chart000',
+    );
     old.complete(11);
     await _settleCharts(tester);
     expect(
