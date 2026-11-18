@@ -88,7 +88,7 @@ for (const width of [320, 390, 430]) {
     await expect(panel.locator('.card')).toContainText(longName)
     await expect(panel.locator('.topology')).toContainText(longHost)
     await expect(panel.locator('tbody [data-label="图表"]')).toHaveText(longChart)
-    await expect(panel.locator('tbody [data-label="正常时间"]')).toHaveText('97.5%')
+    await expect(panel.locator('tbody [data-label="未告警占比"]')).toHaveText('97.5%')
     await contained(page, panel)
     await panel.screenshot({ path: testInfo.outputPath(`services-${width}.png`) })
   })

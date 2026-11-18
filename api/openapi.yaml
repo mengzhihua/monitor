@@ -465,20 +465,81 @@ paths:
         "404": {description: unknown space}
   /api/v1/services:
     get:
-      summary: Service tree status and SLA
+      summary: Local service tree status and retained alarm-history percentages
+      description: Does not follow a remote node selector. sla is null when any input lacks full known history; otherwise it is the minimum input percentage, not business availability or a union of incident durations. Current status can be UNKNOWN.
       parameters:
         - {in: query, name: window, schema: {type: string}, description: "Duration ending now, default 24h, max 90d"}
       responses:
         "200": {description: "{from,to,services:[{name,status,sla,alarms,children}]}"}
     put:
-      summary: Replace the service tree. Children must exist and must not cycle.
+      summary: Replace the local service tree using a configuration revision
+      description: Legacy alias of PUT /api/v1/services/config with the same required body and conflict protection.
+      requestBody:
+        $ref: '#/components/requestBodies/ServiceConfiguration'
       responses:
-        "200": {description: "{services:[...]}"}
+        "200": {description: "{revision,services:[...]} with the saved revision"}
         "400": {description: invalid tree}
         "403": {description: admin only}
+        "409": {description: Configuration changed; reread and reconcile before saving}
+        "428": {description: revision required}
+  /api/v1/services/config:
+    get:
+      summary: Read the local editable service tree and its content revision
+      responses:
+        "200":
+          description: Includes status_rules; preserve them when editing. Revision is stable across restart when content is unchanged.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceConfiguration'}
+    put:
+      summary: Validate and persist the complete local service tree
+      description: Admin only. Requires the revision from GET. Children must exist and must not cycle; status_rules are validated and preserved. Writes at most 1 MiB. Persistence completes before publishing; a failed save leaves the prior tree intact. Does not modify topology.
+      requestBody:
+        $ref: '#/components/requestBodies/ServiceConfiguration'
+      responses:
+        "200":
+          description: Saved configuration with its new revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceConfiguration'}
+        "400": {description: Invalid body, invalid tree or persistence failure; unchanged}
+        "403": {description: admin only}
+        "409": {description: Stale revision; unchanged}
+        "428": {description: revision required}
+  /api/v1/services/config/preview:
+    post:
+      summary: Validate a proposed local service tree without saving
+      description: Admin only. Same validation and required current revision as PUT; returns normalized services and the unchanged current revision. A successful preview does not reserve the revision for a later save.
+      requestBody:
+        $ref: '#/components/requestBodies/ServiceConfiguration'
+      responses:
+        "200":
+          description: Normalized preview without persistence
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServiceConfiguration'}
+        "400": {description: Invalid body or tree}
+        "403": {description: admin only}
+        "409": {description: Stale revision}
+        "428": {description: revision required}
+  /api/v1/services/report:
+    get:
+      summary: Capture a local service handover report and recursive dependencies
+      description: Administrator or troubleshooter only. Schema monitor.service-handover.v1. Includes report, current alarms, availability, config_revision and handling_history. captured_at/completed_at bound sequential reads; this is not an atomic snapshot across modules. Handling records match local alarm names and the last retained action in the window; exports at most 200 newest matching records. history_matched, history_limit, history_capacity, actions_per_record, history_snapshot and history_persistent describe retention and truncation. Notes explain data limitations. Cache-Control no-store.
+      parameters:
+        - {in: query, name: service, required: true, schema: {type: string}, description: Exact configured service name}
+        - {in: query, name: window, schema: {type: string, default: 24h}, description: Positive Go duration no greater than 2160h}
+        - {in: query, name: node, schema: {type: string, enum: [local]}, description: Omit or use local; remote nodes are rejected}
+      responses:
+        "200": {description: JSON handover artifact with schema and retention metadata}
+        "400": {description: Invalid window or non-local node}
+        "403": {description: Administrator or troubleshooter required}
+        "404": {description: Service not found}
+        "500": {description: Cannot read handling history}
   /api/v1/reports/availability:
     get:
-      summary: Per-alarm availability over a window
+      summary: Per-alarm and chart retained-history percentages over a window
+      description: Local alarm instances only. uptime is null unless the whole window has known retained state; JSON includes known_seconds and unknown_seconds. CSV leaves unknown percentages blank and escapes formula-like text. Does not prove continuous observation or business availability.
       parameters:
         - {in: query, name: window, schema: {type: string}}
         - {in: query, name: format, schema: {type: string, enum: [json, csv]}}
@@ -593,10 +654,47 @@ paths:
     post:
       summary: Accept a signed SAML response and start a session
       responses:
-        "302": {description: redirect to /?token=}
+        "302": {description: "redirect to /?token="}
         "401": {description: signature or NameID rejected}
 components:
+  requestBodies:
+    ServiceConfiguration:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ServiceConfiguration'}
   schemas:
+    ServiceConfiguration:
+      type: object
+      additionalProperties: false
+      required: [revision, services]
+      properties:
+        revision: {type: string, minLength: 1, description: Opaque content revision obtained from GET}
+        services:
+          type: array
+          description: Complete replacement tree; an empty array removes all services
+          items: {$ref: '#/components/schemas/ServiceDefinition'}
+    ServiceDefinition:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string}
+        alarms: {type: array, items: {type: string}, description: Local alarm names; each name includes all matching chart instances}
+        children: {type: array, items: {type: string}, description: Names of services in the same tree}
+        status_rules:
+          type: array
+          description: Ordered advanced rules; preserve existing rules during edits
+          items:
+            type: object
+            additionalProperties: false
+            required: [type]
+            properties:
+              type: {type: string, enum: [ok, problem, children_at_least, children_percent, child]}
+              n: {type: integer}
+              at_least: {type: string}
+              status: {type: string}
+              child: {type: string}
     AlertRuleSpec:
       type: object
       additionalProperties: false

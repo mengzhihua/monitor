@@ -95,7 +95,7 @@ function pie(sla: number) {
     <template v-if="report">
       <div class="summary" aria-label="服务摘要"><strong>{{ report.services.length }} 个服务</strong><strong>{{ problemCount }} 个需关注服务</strong><span>{{ rows.length }} 个告警统计</span><span>{{ edges.length }} 条连接</span></div>
       <p class="muted">统计区间：{{ timestamp(report.from) }} — {{ timestamp(report.to) }}。占比依据保留的告警历史计算，服务取关联项最小值；历史不完整时占比显示数据不足，未知时间不算正常；不代表完整探测覆盖率或业务 SLA 承诺。</p>
-      <p v-if="!report.services.length" class="muted">还没有配置 services。在 monitor.yaml 里声明服务树后，这里显示服务状态与关联告警统计。</p>
+      <p v-if="!report.services.length" class="muted">尚未建立服务目录。{{ props.role === 'admin' ? '点击“配置服务树”，添加服务、关联告警和依赖。' : '请联系管理员建立服务目录，以查看业务服务状态与关联告警统计。' }}</p>
       <div class="cards">
         <article v-for="s in visibleServices" :key="s.name" class="card" :data-status="s.status" :data-service="s.name">
           <svg viewBox="0 0 32 32" class="pie" :aria-label="s.name + ' 告警历史占比 ' + percentage(s.sla)">

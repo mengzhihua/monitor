@@ -43,7 +43,8 @@ test('plugin platform clients preserve authentication, cancellation and local sc
   expect(calls.map(call => call.url.pathname)).toEqual(['/api/v1/platform', '/api/v1/plugins', '/api/v1/plugins/actions'])
   for (const call of calls) {
     expect(call.url.search).toBe('')
-    expect(call.init.signal).toBe(signal)
+    expect(call.init.signal).toBeInstanceOf(AbortSignal)
+    expect(call.init.signal?.aborted).toBe(false)
     expect(new Headers(call.init.headers).get('Authorization')).toBe('Bearer api-contract-token')
   }
   expect(lastCall().init.method).toBe('POST')
@@ -83,7 +84,8 @@ test('metric and alarm reads carry the selected node with encoded parameters and
   for (const read of reads) {
     await read()
     expect(lastCall().url.searchParams.get('node')).toBe(selection.node)
-    expect(lastCall().init.signal).toBe(signal)
+    expect(lastCall().init.signal).toBeInstanceOf(AbortSignal)
+    expect(lastCall().init.signal?.aborted).toBe(false)
     expect(new Headers(lastCall().init.headers).get('Authorization')).toBe('Bearer api-contract-token')
   }
   expect(calls[2]!.url.searchParams.get('filter')).toBe('cpu > 20%')
@@ -163,6 +165,42 @@ test('transport propagates fetch cancellation without replacing it with an HTTP 
   await expect(result).rejects.toBe(reason)
 })
 
+test('domain clients forward caller cancellation through the request deadline', async () => {
+  const operations: ((signal: AbortSignal) => Promise<unknown>)[] = [
+    signal => pluginsApi.platform(signal),
+    signal => pluginsApi.catalog(signal),
+    signal => pluginsApi.act({ name: 'demo', action: 'restart', if_revision: 7 }, signal),
+    signal => api.charts(signal),
+    signal => api.functions(signal),
+    signal => api.function('processes', {}, signal),
+    signal => api.weights('anomaly-rate', {}, signal),
+    signal => api.logs({}, signal),
+    signal => api.data('system.ram', -60, 0, 60, signal),
+    signal => api.contexts(signal),
+    signal => api.alarms(signal),
+    signal => api.alarmLog(0, signal),
+    signal => api.exportDiagnostic({}, signal),
+    signal => api.exportHandlingHistory({}, signal),
+  ]
+  for (const operation of operations) {
+    const controller = new AbortController()
+    const received: AbortSignal[] = []
+    globalThis.fetch = (_input, init = {}) => new Promise((_resolve, reject) => {
+      const signal = init.signal!
+      received.push(signal)
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+    const result = operation(controller.signal)
+    expect(received).toHaveLength(1)
+    expect(received[0]).toBeInstanceOf(AbortSignal)
+    const reason = new DOMException('Canceled by navigation', 'AbortError')
+    controller.abort(reason)
+    await expect(result).rejects.toBe(reason)
+    expect(received[0]!.aborted).toBe(true)
+    expect(received[0]!.reason).toBe(reason)
+  }
+})
+
 test('downloads preserve authentication, full body, filename and global query scope', async () => {
   selection.node = 'unrelated-selected-node'
   const controller = new AbortController()
@@ -172,7 +210,8 @@ test('downloads preserve authentication, full body, filename and global query sc
   expect(exported.filename).toBe('diagnostic-test.json')
   expect(exported.blob.type).toBe('application/json;charset=utf-8')
   expect(await exported.blob.text()).toBe(body)
-  expect(lastCall().init.signal).toBe(controller.signal)
+  expect(lastCall().init.signal).toBeInstanceOf(AbortSignal)
+  expect(lastCall().init.signal?.aborted).toBe(false)
   expect(lastCall().url.searchParams.get('node')).toBe('explicit-node')
   expect(new Headers(lastCall().init.headers).get('Authorization')).toBe('Bearer api-contract-token')
   const history = await api.exportHandlingHistory({ format: 'csv', query: 'a & b' }, controller.signal)

@@ -29,7 +29,7 @@ defineExpose({ canLeave, showChart })
 </script>
 
 <template>
-  <div v-if="failed" class="module-error" role="alert">当前模块加载失败，请刷新页面重试。 <button @click="reload">刷新页面</button></div>
+  <div v-if="failed" class="module-error" role="alert">当前模块未能加载或运行。可以切换到其他功能，或刷新页面重新加载。 <button @click="reload">刷新页面</button></div>
   <component v-else :is="component" ref="child" v-bind="$attrs" />
 </template>
 

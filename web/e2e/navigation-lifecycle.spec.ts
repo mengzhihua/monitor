@@ -211,7 +211,7 @@ test('a current module chunk failure has a local error and other modules stay us
   await fixture(page)
   await page.route('**/assets/LogsPanel-*.js', route => route.abort('failed'))
   await page.goto('/?view=logs&token=browser-test-token')
-  await expect(page.getByRole('alert')).toContainText('当前模块加载失败')
+  await expect(page.getByRole('alert')).toContainText('当前模块未能加载或运行')
   await expect(page.getByRole('button', { name: '刷新页面', exact: true })).toBeVisible()
   await workspace(page, 'charts')
   await expect(page.locator('.metrics-workspace')).toBeVisible()
