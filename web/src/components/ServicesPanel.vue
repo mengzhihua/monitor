@@ -5,6 +5,10 @@ import { api, ApiError } from '../api'
 import type { AvailabilityRow, ServiceReport, TopologyEdge } from '../api'
 import { usePolling } from '../polling'
 import AppIcon from './AppIcon.vue'
+import ServiceEditor from './ServiceEditor.vue'
+const props = defineProps<{ role?: string }>()
+const editor = ref<{ canLeave: () => boolean } | null>(null)
+defineExpose({ canLeave: () => editor.value?.canLeave() !== false })
 
 const report = ref<ServiceReport | null>(null)
 const edges = ref<TopologyEdge[]>([])
@@ -74,6 +78,7 @@ function pie(sla: number) {
   <section class="services" aria-label="服务与拓扑">
     <h1><AppIcon name="services" :size="24" />服务与拓扑</h1>
     <p class="muted">从业务服务定位告警与依赖，查看当前状态及历史告警时间。</p>
+    <ServiceEditor v-if="props.role === 'admin'" ref="editor" @saved="refresh" />
     <div class="toolbar">
       <label>统计窗口 <select v-model="windowRange" aria-label="统计窗口"><option value="1h">最近 1 小时</option><option value="24h">最近 24 小时</option><option value="168h">最近 7 天</option><option value="720h">最近 30 天</option></select></label>
       <label>搜索 <input v-model="query" type="search" placeholder="服务、告警、图表或依赖" aria-label="搜索服务与告警" /></label>

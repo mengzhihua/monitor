@@ -43,20 +43,38 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) replaceServices(w http.ResponseWriter, r *http.Request) {
+	s.handleServiceConfig(w, r)
+}
+
+func (s *Server) handleServiceConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, s.catalog.ServiceSnapshot())
+		return
+	}
 	var body struct {
+		Revision string        `json:"revision"`
 		Services []sla.Service `json:"services"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := dec.Decode(&body); err != nil || dec.Decode(new(any)) != io.EOF {
-		http.Error(w, "invalid service tree", http.StatusBadRequest)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || dec.Decode(new(any)) != io.EOF || body.Services == nil {
+		http.Error(w, "invalid service configuration; services must be an array", http.StatusBadRequest)
 		return
 	}
-	services, err := s.catalog.ReplaceServices(body.Services)
+	if body.Revision == "" {
+		http.Error(w, "revision required; read /api/v1/services/config first", http.StatusPreconditionRequired)
+		return
+	}
+	result, err := s.catalog.ChangeServices(body.Revision, body.Services, r.Method == http.MethodPost)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		code := http.StatusBadRequest
+		if errors.Is(err, sla.ErrConflict) {
+			code = http.StatusConflict
+		}
+		http.Error(w, err.Error(), code)
 		return
 	}
-	writeJSON(w, map[string]any{"services": services})
+	writeJSON(w, result)
 }
 
 func (s *Server) services() []sla.Service {

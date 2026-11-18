@@ -66,7 +66,7 @@ Monitor 现有能力源自 Netdata 模型（秒级自动采集、health.d 规则
 | 可视化 | 看板 / 组件 | 已有 54 预置 + 个人看板 | `web/src/dashboards.ts` |
 | 可视化 | 图类型（饼 / 堆叠） | 已有：uPlot 线 / 面 / 堆叠；图表类型 `pie` 按末行正值画占比；服务 SLA 另有饼图 | `web/src/features/metrics/chartRenderer.ts`、`web/src/components/ServicesPanel.vue` |
 | 可视化 | 网络拓扑图 | 已有：LLDP 邻居 + 配置 `topology:` 手工边；`PUT /api/v1/topology` 可替换手工边并在重启后保留，服务页展示 | `api/zplatform.go`、`sla/catalog.go`、`web/src/components/ServicesPanel.vue` |
-| 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图。`PUT /api/v1/services` 可替换服务树，拒绝成环和缺失的子服务，并在重启后保留。未配置 `status_rules` 时状态取自身告警和子服务的最严重值；配置后按第一条命中的规则计算，类型为 `ok`、`problem`、`children_at_least`、`children_percent`、`child` | `sla/sla.go`、`sla/catalog.go` |
+| 可视化 | 服务树 / SLA 报表 | 已有：`services` 树、24h SLA、饼图。`PUT /api/v1/services` 携带从 `GET /api/v1/services/config` 读取的 `revision` 后可替换服务树，拒绝成环和缺失的子服务，并在重启后保留。未配置 `status_rules` 时状态取自身告警和子服务的最严重值；配置后按第一条命中的规则计算，类型为 `ok`、`problem`、`children_at_least`、`children_percent`、`child` | `sla/sla.go`、`sla/catalog.go` |
 | 可视化 | 可用性 / 定时报表 | 已有：`/api/v1/reports/availability` 与 `reports.every` CSV。告警日志可用 `GET /api/v1/alarm_log?format=csv` 导出，公式文本会加前缀避免被表格软件执行 | `api/zplatform.go`、`api/alarms.go` |
 | 管理 | 审计日志 | 已有：`GET /api/v1/audit` | `api/audit.go` |
 | 管理 | 完整 CRUD API | 已有：Hub 的 Space（含改名）、Room、主机组、代理、模板、清单走 REST。进程级用户和命令可用 `PUT /api/v1/manage/config` 提交完整 YAML，或用 `patch` 在配置锁内合并改动的键，未提到的键保持不变。不是 Zabbix JSON-RPC | `api/openapi.yaml`、`api/hub_catalog.go` |

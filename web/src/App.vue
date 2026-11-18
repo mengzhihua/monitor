@@ -127,6 +127,7 @@ const moduleProps = computed(() => {
   const role = info.value?.user?.role || 'viewer'
   switch (workspace.value) {
     case 'operations': return { role }
+    case 'services': return { role }
     case 'charts': return { charts: charts.value, node: selectedNode.value, info: info.value, currentNode: currentNode.value }
     case 'alarms': return { alarms: alarms.value, log: alarmLog.value, refresh: refreshAlarms, canManage: role === 'admin' && !selectedNode.value, canClose: ['admin', 'troubleshooter'].includes(role) && !selectedNode.value }
     case 'rules': return { role }

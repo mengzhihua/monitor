@@ -32,7 +32,9 @@ func TestServiceAndTopologyEdits(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("viewer put %d", resp.StatusCode)
 	}
-	bad, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"services":[{"name":"edge","children":["core"]},{"name":"core","children":["edge"]}]}`))
+	var config sla.ServiceSnapshot
+	getJSON(t, ts.URL+"/api/v1/services/config?token=admin", &config)
+	bad, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"revision":"`+config.Revision+`","services":[{"name":"edge","children":["core"]},{"name":"core","children":["edge"]}]}`))
 	bad.Header.Set("Authorization", "Bearer admin")
 	resp, err = http.DefaultClient.Do(bad)
 	if err != nil {
@@ -42,7 +44,7 @@ func TestServiceAndTopologyEdits(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("cycle %d", resp.StatusCode)
 	}
-	okReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"services":[{"name":"edge","children":["core"]},{"name":"core","alarms":["down"]}]}`))
+	okReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/services", strings.NewReader(`{"revision":"`+config.Revision+`","services":[{"name":"edge","children":["core"]},{"name":"core","alarms":["down"]}]}`))
 	okReq.Header.Set("Authorization", "Bearer admin")
 	resp, err = http.DefaultClient.Do(okReq)
 	if err != nil {

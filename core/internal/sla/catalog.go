@@ -1,6 +1,7 @@
 package sla
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -164,7 +165,7 @@ func copyValid(services []Service, links []Link) ([]Service, []Link, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("service %s children: %w", name, err)
 		}
-		out = append(out, Service{Name: name, Alarms: alarms, Children: children})
+		out = append(out, Service{Name: name, Alarms: alarms, Children: children, StatusRules: append([]StatusRule(nil), svc.StatusRules...)})
 	}
 	for _, svc := range out {
 		for _, child := range svc.Children {
@@ -175,6 +176,9 @@ func copyValid(services []Service, links []Link) ([]Service, []Link, error) {
 				return nil, nil, fmt.Errorf("service %s cannot contain itself", svc.Name)
 			}
 		}
+	}
+	if err := Validate(out); err != nil {
+		return nil, nil, err
 	}
 	if err := serviceCycle(out); err != nil {
 		return nil, nil, err
@@ -270,10 +274,51 @@ func copyServices(services []Service) []Service {
 		out[i] = svc
 		out[i].Alarms = append([]string(nil), svc.Alarms...)
 		out[i].Children = append([]string(nil), svc.Children...)
+		out[i].StatusRules = append([]StatusRule(nil), svc.StatusRules...)
 	}
 	return out
 }
 
 func copyLinks(links []Link) []Link {
 	return append([]Link(nil), links...)
+}
+
+// ServiceSnapshot is an atomic editable view. The content revision survives restart.
+type ServiceSnapshot struct {
+	Revision string    `json:"revision"`
+	Services []Service `json:"services"`
+}
+
+var ErrConflict = errors.New("service configuration changed; reload and review your draft")
+
+func (c *Catalog) serviceSnapshotLocked() ServiceSnapshot {
+	raw, _ := json.Marshal(c.services)
+	return ServiceSnapshot{Revision: fmt.Sprintf("%x", sha256.Sum256(raw)), Services: copyServices(c.services)}
+}
+func (c *Catalog) ServiceSnapshot() ServiceSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.serviceSnapshotLocked()
+}
+
+// ChangeServices validates and optionally saves under the same lock as revision checking.
+func (c *Catalog) ChangeServices(revision string, services []Service, preview bool) (ServiceSnapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current := c.serviceSnapshotLocked()
+	if revision == "" || revision != current.Revision {
+		return ServiceSnapshot{}, ErrConflict
+	}
+	valid, _, err := copyValid(services, c.links)
+	if err != nil {
+		return ServiceSnapshot{}, err
+	}
+	if preview {
+		return ServiceSnapshot{Revision: current.Revision, Services: valid}, nil
+	}
+	if err := c.saveLocked(valid, c.links); err != nil {
+		return ServiceSnapshot{}, fmt.Errorf("save service configuration: %w", err)
+	}
+	c.services = valid
+	return c.serviceSnapshotLocked(), nil
 }
