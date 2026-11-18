@@ -9,7 +9,7 @@ export const monitoringApi = {
   charts: (signal?: AbortSignal) => get<ChartsResponse>(`/api/v1/charts${nodeQuery({})}`, signal),
   functions: (signal?: AbortSignal) => get<FunctionInfo[]>(`/api/v1/functions${nodeQuery({})}`, signal),
   function: (name: string, args: Record<string, string> = {}, signal?: AbortSignal) =>
-    get<FunctionResponse>(`/api/v1/function${nodeQuery({ function: name, ...args })}`, signal),
+    get<FunctionResponse>(`/api/v1/function${nodeQuery({ function: name, ...args })}`, signal, 70_000),
   weights: (method = 'anomaly-rate', extra: Record<string, string | number> = {}, signal?: AbortSignal) =>
     get<WeightsResponse>(`/api/v1/weights${nodeQuery({ method, ...extra })}`, signal),
   logs: (args: Record<string, string> = {}, signal?: AbortSignal) =>

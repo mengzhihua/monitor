@@ -74,7 +74,7 @@ export const ai = {
   preview: (node: string, charts: string[], window: number, signal?: AbortSignal, problem_id?: string) =>
     send<AIPreview>('POST', '/api/v1/ai/preview', { node, charts, window, ...(problem_id ? { problem_id } : {}) }, signal),
   analyze: (preview_id: string, question: string, revision: number, signal?: AbortSignal, mode?: 'resolution') =>
-    send<AIResult>('POST', '/api/v1/ai/analyze', { preview_id, question, revision, ...(mode ? { mode } : {}) }, signal),
+    send<AIResult>('POST', '/api/v1/ai/analyze', { preview_id, question, revision, ...(mode ? { mode } : {}) }, signal, 180_000),
   resolutions: (node: string | undefined, signal?: AbortSignal) => get<{ records: AIResolutionSummary[]; limit: number; persistent: boolean }>(`/api/v1/ai/resolutions${node === undefined ? '' : '?node=' + encodeURIComponent(node)}`, signal),
   resolution: (id: string, signal?: AbortSignal) => get<AIResolution>(`/api/v1/ai/resolutions?id=${encodeURIComponent(id)}`, signal),
   progress: (id: string, revision: number, step_id: string, status: string, note: string, signal?: AbortSignal) => send<AIResolution>('POST', '/api/v1/ai/resolutions', { id, revision, step_id, status, note }, signal),
