@@ -18,7 +18,7 @@ const NotificationDiagnostics = defineAsyncComponent(() => import('./Notificatio
 const MaintenancePlans = defineAsyncComponent(() => import('./MaintenancePlans.vue'))
 
 const props = defineProps<{ role: string }>()
-const emit = defineEmits<{ drill: [node: string, chart: string]; solve: [problem: Problem] }>()
+const emit = defineEmits<{ drill: [node: string, chart: string]; solve: [problem: Problem]; setup: [] }>()
 const { section, selectSection } = useOperationsSection()
 const filters = useOperationsFilters(section)
 const { query, severity, nodeStatus, pendingOnly, ownerFilter, progressFilter, moreFilters,
@@ -53,6 +53,7 @@ defineExpose({ canLeave })
     <div class="hero">
       <div><h1>运维总览</h1><p class="muted hero-description">聚焦待处理问题，按需进入主机、历史、维护或通知诊断。</p></div>
       <div class="hero-actions">
+        <button @click="emit('setup')">接入与运行检查</button>
         <button @click="refresh()"><AppIcon name="refresh" :size="16" />刷新总览</button>
         <details class="export-menu" aria-label="运维导出">
           <summary><AppIcon name="download" :size="16" />导出</summary>

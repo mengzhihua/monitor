@@ -4,7 +4,7 @@ import type { PlatformInfo } from '../../api/plugins/types'
 import { pluginAccess } from '../plugins/model/pluginPolicy'
 import type { WorkspaceScope } from './model/workspaceScope'
 
-export type WorkspaceId = 'operations' | 'charts' | 'services' | 'alarms' | 'rules' | 'functions' | 'logs' | 'shell' | 'ai' | 'weights' | 'contexts' | 'nodes' | 'hub' | 'cloud' | 'templates' | 'config' | 'plugins'
+export type WorkspaceId = 'setup' | 'operations' | 'charts' | 'services' | 'alarms' | 'rules' | 'functions' | 'logs' | 'shell' | 'ai' | 'weights' | 'contexts' | 'nodes' | 'hub' | 'cloud' | 'templates' | 'config' | 'plugins'
 export interface ModuleContext { hub: boolean; admin: boolean; personal: boolean; authenticated: boolean; functions: number; logs: boolean; platform?: PlatformInfo }
 export interface WorkspaceModule {
   id: WorkspaceId; label: string; title: string; description: string
@@ -19,6 +19,7 @@ function lazyModule(loader: AsyncComponentLoader) {
 // One registration controls the desktop rail, phone launcher, URL and lazy view.
 // API permissions remain authoritative; availability only controls navigation.
 export const modules: WorkspaceModule[] = [
+  { id: 'setup', scope: 'local', label: '接入检查', title: '接入与运行检查', description: '采集、保存、告警与通知验证', group: '管理', component: lazyModule(() => import('../../components/SetupPanel.vue')) },
   { id: 'operations', scope: 'global', label: '运维总览', title: '运维总览', description: '问题、主机资源与处理进度', group: '监控', component: lazyModule(() => import('../../components/OperationsPanel.vue')) },
   { id: 'charts', scope: 'node', label: '指标图表', title: '指标图表', description: '按资源分类浏览实时与历史指标', group: '监控', component: lazyModule(() => import('../metrics/MetricsWorkspace.vue')) },
   { id: 'services', scope: 'global', label: '服务与拓扑', title: '服务与拓扑', description: '服务状态与可用性', group: '监控', component: lazyModule(() => import('../../components/ServicesPanel.vue')) },
