@@ -19,13 +19,13 @@ const loadedWindow = ref('')
 const availabilityWindow = ref({ from: 0, to: 0 })
 const matches = (values: string[]) => values.join(' ').toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())
 const visibleServices = computed(() => (report.value?.services || []).filter(s => matches([s.name, ...(s.alarms || []), ...(s.children || [])]) && (!problemsOnly.value || s.status !== 'CLEAR')).sort((a, b) => ({ CRITICAL: 3, WARNING: 2 }[b.status] || 0) - ({ CRITICAL: 3, WARNING: 2 }[a.status] || 0) || a.name.localeCompare(b.name)))
-const visibleRows = computed(() => rows.value.filter(r => matches([r.name, r.chart]) && (!problemsOnly.value || r.raised_seconds > 0)).sort((a, b) => a.uptime - b.uptime || a.name.localeCompare(b.name)))
+const visibleRows = computed(() => rows.value.filter(r => matches([r.name, r.chart]) && (!problemsOnly.value || r.raised_seconds > 0 || r.uptime == null)).sort((a, b) => (a.uptime ?? -1) - (b.uptime ?? -1) || a.name.localeCompare(b.name)))
 const visibleEdges = computed(() => edges.value.filter(e => matches([e.source, e.target, e.kind])))
 const problemCount = computed(() => (report.value?.services || []).filter(s => s.status !== 'CLEAR').length)
 const timestamp = (value: number) => new Date(value * 1000).toLocaleString()
 function exportCSV() {
-  const header = ['告警', '图表', '未告警时间占比 (%)', '告警秒数', '窗口秒数', '开始 (UTC)', '结束 (UTC)']
-  const data = visibleRows.value.map(r => [textCell(r.name), textCell(r.chart), r.uptime, r.raised_seconds, r.window_seconds, textCell(new Date(availabilityWindow.value.from * 1000).toISOString()), textCell(new Date(availabilityWindow.value.to * 1000).toISOString())].join(','))
+  const header = ['告警', '图表', '未告警时间占比 (%)', '告警秒数', '窗口秒数', '开始 (UTC)', '结束 (UTC)', '已知历史秒数', '未知历史秒数']
+  const data = visibleRows.value.map(r => [textCell(r.name), textCell(r.chart), r.uptime, r.raised_seconds, r.window_seconds, textCell(new Date(availabilityWindow.value.from * 1000).toISOString()), textCell(new Date(availabilityWindow.value.to * 1000).toISOString()), r.known_seconds ?? '', r.unknown_seconds ?? ''].join(','))
   const url = URL.createObjectURL(new Blob(['\uFEFF' + [header.map(textCell).join(','), ...data].join('\r\n')], { type: 'text/csv;charset=utf-8' }))
   const a = document.createElement('a')
   a.href = url
@@ -57,6 +57,7 @@ const refresh = usePolling(async signal => {
 }, 15000)
 watch(windowRange, () => { void refresh() })
 
+const percentage = (value: number | null) => value == null ? '数据不足' : value.toFixed(1) + '%'
 function pie(sla: number) {
   const p = Math.max(0, Math.min(100, sla))
   const a = (p / 100) * Math.PI * 2
@@ -84,19 +85,19 @@ function pie(sla: number) {
     <p v-if="updatedAt" class="muted" role="status">上次成功：{{ timestamp(updatedAt) }} · 已加载窗口 {{ loadedWindow }} · 每 15 秒自动刷新</p>
     <p v-if="!report && !error">正在读取…</p>
     <template v-if="report">
-      <div class="summary" aria-label="服务摘要"><strong>{{ report.services.length }} 个服务</strong><strong>{{ problemCount }} 个异常服务</strong><span>{{ rows.length }} 个告警统计</span><span>{{ edges.length }} 条连接</span></div>
-      <p class="muted">统计区间：{{ timestamp(report.from) }} — {{ timestamp(report.to) }}。占比依据保留的告警历史计算，服务取关联项最小值；不代表完整探测覆盖率或业务 SLA 承诺。</p>
+      <div class="summary" aria-label="服务摘要"><strong>{{ report.services.length }} 个服务</strong><strong>{{ problemCount }} 个需关注服务</strong><span>{{ rows.length }} 个告警统计</span><span>{{ edges.length }} 条连接</span></div>
+      <p class="muted">统计区间：{{ timestamp(report.from) }} — {{ timestamp(report.to) }}。占比依据保留的告警历史计算，服务取关联项最小值；历史不完整时占比显示数据不足，未知时间不算正常；不代表完整探测覆盖率或业务 SLA 承诺。</p>
       <p v-if="!report.services.length" class="muted">还没有配置 services。在 monitor.yaml 里声明服务树后，这里显示服务状态与关联告警统计。</p>
       <div class="cards">
         <article v-for="s in visibleServices" :key="s.name" class="card" :data-status="s.status" :data-service="s.name">
-          <svg viewBox="0 0 32 32" class="pie" :aria-label="s.name + ' 告警历史占比 ' + s.sla.toFixed(1) + '%'">
+          <svg viewBox="0 0 32 32" class="pie" :aria-label="s.name + ' 告警历史占比 ' + percentage(s.sla)">
             <circle cx="16" cy="16" r="14" class="track" />
-            <path v-if="pie(s.sla)" :d="pie(s.sla)" class="slice" />
-            <circle v-else cx="16" cy="16" r="14" class="slice" />
+            <path v-if="s.sla != null && pie(s.sla)" :d="pie(s.sla)" class="slice" />
+            <circle v-else-if="s.sla != null" cx="16" cy="16" r="14" class="slice" />
           </svg>
           <div>
             <h2>{{ s.name }}</h2>
-            <p>{{ s.status }} · 未告警占比 {{ s.sla.toFixed(1) }}%</p>
+            <p>{{ s.status === 'UNKNOWN' ? '未知（缺少有效告警状态）' : s.status }} · 未告警占比 {{ percentage(s.sla) }}</p>
             <p v-if="s.alarms?.length" class="muted">关联告警：<button v-for="alarm in s.alarms" :key="alarm" class="text-button" @click="query = alarm; problemsOnly = false">{{ alarm }}</button></p>
             <p v-if="s.children?.length" class="muted">依赖服务：<button v-for="child in s.children" :key="child" class="text-button" @click="query = child; problemsOnly = false">{{ child }}</button></p>
           </div>
@@ -110,12 +111,12 @@ function pie(sla: number) {
       </ul>
       <p v-if="edges.length && !visibleEdges.length" class="muted">没有匹配的连接。</p>
       <h2><AppIcon name="shield" />告警历史统计</h2>
-      <p class="muted">“只看异常”筛选当前异常服务和窗口内曾触发的告警；拓扑仅按搜索词筛选。</p>
+      <p class="muted">“只看异常”筛选当前异常服务和窗口内曾触发或历史不足的告警；拓扑仅按搜索词筛选。</p>
       <p v-if="!visibleRows.length" class="muted">没有符合条件的告警统计。</p>
       <table v-if="visibleRows.length" aria-label="告警可用性">
-        <thead><tr><th>告警</th><th>图表</th><th>未告警占比</th><th>告警时长</th></tr></thead>
+        <thead><tr><th>告警</th><th>图表</th><th>未告警占比</th><th>已知告警时长</th><th>历史覆盖</th></tr></thead>
         <tbody>
-          <tr v-for="r in visibleRows" :key="r.name + r.chart"><td data-label="告警"><span>{{ r.name }}</span></td><td data-label="图表"><span>{{ r.chart }}</span></td><td data-label="未告警占比"><span>{{ r.uptime.toFixed(1) }}%</span></td><td data-label="告警时长"><span>{{ r.raised_seconds }} 秒</span></td></tr>
+          <tr v-for="r in visibleRows" :key="r.name + r.chart"><td data-label="告警"><span>{{ r.name }}</span></td><td data-label="图表"><span>{{ r.chart }}</span></td><td data-label="未告警占比"><span>{{ percentage(r.uptime) }}</span></td><td data-label="告警时长"><span>{{ r.raised_seconds }} 秒</span></td><td data-label="历史覆盖"><span>{{ r.known_seconds ?? '—' }} / {{ r.window_seconds }} 秒<span v-if="r.unknown_seconds"> · 未知 {{ r.unknown_seconds }} 秒</span></span></td></tr>
         </tbody>
       </table>
     </template>

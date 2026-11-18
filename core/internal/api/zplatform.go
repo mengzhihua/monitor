@@ -75,9 +75,9 @@ func (s *Server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("format") == "csv" {
 		w.Header().Set("Content-Type", "text/csv")
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"name", "chart", "uptime", "raised_seconds", "window_seconds"})
+		_ = cw.Write([]string{"name", "chart", "uptime", "raised_seconds", "window_seconds", "known_seconds", "unknown_seconds"})
 		for _, row := range rows {
-			_ = cw.Write([]string{row.Name, row.Chart, strconv.FormatFloat(row.Uptime, 'f', 2, 64), strconv.FormatInt(row.Raised, 10), strconv.FormatInt(row.Window, 10)})
+			_ = cw.Write(availabilityCSVRow(row))
 		}
 		cw.Flush()
 		return
@@ -433,9 +433,18 @@ func (s *Server) writeReport(now time.Time) {
 	}
 	defer f.Close()
 	cw := csv.NewWriter(f)
-	_ = cw.Write([]string{"name", "chart", "uptime", "raised_seconds", "window_seconds"})
+	_ = cw.Write([]string{"name", "chart", "uptime", "raised_seconds", "window_seconds", "known_seconds", "unknown_seconds"})
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Name, row.Chart, strconv.FormatFloat(row.Uptime, 'f', 2, 64), strconv.FormatInt(row.Raised, 10), strconv.FormatInt(row.Window, 10)})
+		_ = cw.Write(availabilityCSVRow(row))
 	}
 	cw.Flush()
+}
+
+// Empty percentages preserve unknown values in downloaded and scheduled reports.
+func availabilityCSVRow(row sla.Availability) []string {
+	value := ""
+	if row.Uptime != nil {
+		value = strconv.FormatFloat(*row.Uptime, 'f', 2, 64)
+	}
+	return []string{csvText(row.Name), csvText(row.Chart), value, strconv.FormatInt(row.Raised, 10), strconv.FormatInt(row.Window, 10), strconv.FormatInt(row.Known, 10), strconv.FormatInt(row.Unknown, 10)}
 }

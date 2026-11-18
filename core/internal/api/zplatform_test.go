@@ -94,7 +94,7 @@ func TestServicesTopologyAndCommand(t *testing.T) {
 	})
 	var report sla.Report
 	getJSON(t, ts.URL+"/api/v1/services?token=admin-cmd", &report)
-	if len(report.Services) != 1 || report.Services[0].Name != "edge" {
+	if len(report.Services) != 1 || report.Services[0].Name != "edge" || report.Services[0].Status != "UNKNOWN" || report.Services[0].SLA != nil {
 		t.Fatalf("%+v", report)
 	}
 	var topo struct {

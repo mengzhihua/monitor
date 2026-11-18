@@ -48,3 +48,28 @@ test('service triage filters, exports and retains the last successful snapshot o
   await expect(panel.getByRole('alert')).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
+
+test('unknown service and incomplete history never render as healthy percentages', async ({ page }) => {
+  await page.route('**/api/v1/services?*', route => route.fulfill({ json: { from: 0, to: 100, services: [{ name: 'unobserved', status: 'UNKNOWN', sla: null, alarms: ['down'] }] } }))
+  await page.route('**/api/v1/topology', route => route.fulfill({ json: { edges: [] } }))
+  await page.route('**/api/v1/reports/availability?*', route => route.fulfill({ json: { from: 0, to: 100, alarms: [
+    { name: 'down', chart: 'a', uptime: null, raised_seconds: 0, window_seconds: 100, known_seconds: 30, unknown_seconds: 70 },
+    { name: 'down', chart: 'b', uptime: 0, raised_seconds: 100, window_seconds: 100, known_seconds: 100, unknown_seconds: 0 },
+  ] } }))
+  await page.goto('/?view=services&token=browser-test-token')
+  const panel = page.locator('.services')
+  const card = panel.locator('[data-service="unobserved"]')
+  await expect(card).toContainText('未知')
+  await expect(card).toContainText('数据不足')
+  await expect(card.locator('.slice')).toHaveCount(0)
+  await panel.getByLabel('只看异常').check()
+  await expect(panel.locator('tbody tr')).toHaveCount(2)
+  await expect(panel.locator('tbody tr').first()).toContainText('未知 70 秒')
+  await expect(panel.locator('tbody tr').last()).toContainText('0.0%')
+  const download = page.waitForEvent('download')
+  await panel.getByRole('button', { name: '导出筛选结果 CSV' }).click()
+  const file = await download
+  const csv = await readFile((await file.path())!, 'utf8')
+  expect(csv).toContain('"down","a",,0,100,')
+  expect(csv).toContain(',30,70')
+})

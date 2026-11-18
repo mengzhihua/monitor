@@ -42,7 +42,7 @@ type Link struct {
 type Node struct {
 	Name     string   `json:"name"`
 	Status   string   `json:"status"`
-	SLA      float64  `json:"sla"`
+	SLA      *float64 `json:"sla"`
 	Alarms   []string `json:"alarms,omitempty"`
 	Children []string `json:"children,omitempty"`
 }
@@ -56,11 +56,13 @@ type Report struct {
 
 // Availability is one alarm's time-not-raised percentage.
 type Availability struct {
-	Name   string  `json:"name"`
-	Chart  string  `json:"chart"`
-	Uptime float64 `json:"uptime"`
-	Raised int64   `json:"raised_seconds"`
-	Window int64   `json:"window_seconds"`
+	Name    string   `json:"name"`
+	Chart   string   `json:"chart"`
+	Uptime  *float64 `json:"uptime"`
+	Raised  int64    `json:"raised_seconds"`
+	Window  int64    `json:"window_seconds"`
+	Known   int64    `json:"known_seconds"`
+	Unknown int64    `json:"unknown_seconds"`
 }
 
 // Build walks services in definition order. Without status rules, status is
@@ -71,142 +73,149 @@ func Build(services []Service, alarms []health.Alarm, log []health.LogEntry, fro
 	if to < from {
 		from, to = to, from
 	}
-	avail := availabilityByName(log, alarms, from, to)
+	rows := AlarmAvailability(alarms, log, from, to)
+	avail := map[string]*float64{}
+	for _, row := range rows {
+		old, exists := avail[row.Name]
+		if !exists || (old != nil && (row.Uptime == nil || *row.Uptime < *old)) {
+			avail[row.Name] = row.Uptime
+		}
+	}
 	status := map[string]string{}
 	for _, a := range alarms {
-		if a.Status == health.StatusCritical || a.Status == health.StatusWarning {
-			cur := status[a.Name]
-			if rank(a.Status.String()) > rank(cur) {
-				status[a.Name] = a.Status.String()
-			}
+		st := a.Status.String()
+		if a.Status != health.StatusClear && a.Status != health.StatusWarning && a.Status != health.StatusCritical {
+			st = "UNKNOWN"
+		}
+		if rank(st) > rank(status[a.Name]) {
+			status[a.Name] = st
 		}
 	}
 	byName := map[string]Service{}
 	for _, s := range services {
 		byName[s.Name] = s
 	}
-	var visit func(name string, seen map[string]bool) (string, float64)
-	visit = func(name string, seen map[string]bool) (string, float64) {
-		if seen[name] {
-			return "CLEAR", 100
+	var visit func(string, map[string]bool) (string, *float64)
+	visit = func(name string, path map[string]bool) (string, *float64) {
+		svc, exists := byName[name]
+		if path[name] || !exists {
+			return "UNKNOWN", nil
 		}
-		seen[name] = true
-		svc := byName[name]
+		path[name] = true
+		defer delete(path, name) // A shared dependency is not a cycle.
 		own := "CLEAR"
-		sla := 100.0
+		value := 100.0
+		complete := len(svc.Alarms)+len(svc.Children) > 0
+		unknown := !complete
 		for _, alarm := range svc.Alarms {
-			if rank(status[alarm]) > rank(own) {
-				own = status[alarm]
+			st := status[alarm]
+			if st == "" {
+				st = "UNKNOWN"
 			}
-			if v, ok := avail[alarm]; ok && v < sla {
-				sla = v
+			if st == "UNKNOWN" {
+				unknown = true
+			}
+			if rank(st) > rank(own) {
+				own = st
+			}
+			v := avail[alarm]
+			if v == nil {
+				complete = false
+			} else if *v < value {
+				value = *v
 			}
 		}
-		childStatus := make(map[string]string, len(svc.Children))
+		childStatus := map[string]string{}
 		for _, child := range svc.Children {
-			cs, cv := visit(child, seen)
-			childStatus[child] = cs
-			if cv < sla {
-				sla = cv
+			st, v := visit(child, path)
+			childStatus[child] = st
+			if st == "UNKNOWN" {
+				unknown = true
+			}
+			if v == nil {
+				complete = false
+			} else if *v < value {
+				value = *v
 			}
 		}
-		return combineStatus(own, svc, childStatus), sla
+		st := combineStatus(own, svc, childStatus)
+		if unknown && rank(st) < rank("UNKNOWN") {
+			st = "UNKNOWN"
+		}
+		if !complete {
+			return st, nil
+		}
+		return st, &value
 	}
 	out := Report{From: from, To: to, Services: []Node{}}
 	for _, s := range services {
-		st, sla := visit(s.Name, map[string]bool{})
-		if st == "" {
-			st = "CLEAR"
-		}
-		out.Services = append(out.Services, Node{Name: s.Name, Status: st, SLA: sla, Alarms: s.Alarms, Children: s.Children})
+		st, value := visit(s.Name, map[string]bool{})
+		out.Services = append(out.Services, Node{Name: s.Name, Status: st, SLA: value, Alarms: s.Alarms, Children: s.Children})
 	}
 	return out
 }
 
-// AlarmAvailability returns one row per alarm in the snapshot.
+// AlarmAvailability partitions the requested window using retained state transitions.
+// Missing history and undefined/removed states are unknown, never healthy. Current
+// state alone cannot establish how long a state held. A percentage is returned only
+// when the whole window has defined history. This is log coverage, not probe uptime.
 func AlarmAvailability(alarms []health.Alarm, log []health.LogEntry, from, to int64) []Availability {
 	if to < from {
 		from, to = to, from
 	}
-	window := to - from
-	if window <= 0 {
-		window = 1
-	}
-	raised := raisedSeconds(log, from, to)
-	logged := map[string]bool{}
+	type key struct{ name, chart string }
+	entries := map[key][]health.LogEntry{}
 	for _, e := range log {
-		logged[e.Name] = true
+		k := key{e.Name, e.Chart}
+		entries[k] = append(entries[k], e)
 	}
+	seen := map[key]bool{}
 	out := make([]Availability, 0, len(alarms))
-	seen := map[string]bool{}
 	for _, a := range alarms {
-		if seen[a.Name] {
+		k := key{a.Name, a.Chart}
+		if seen[k] {
 			continue
 		}
-		seen[a.Name] = true
-		sec := raised[a.Name]
-		if sec == 0 && !logged[a.Name] && (a.Status == health.StatusWarning || a.Status == health.StatusCritical) {
-			sec = window
+		seen[k] = true
+		events := entries[k]
+		sort.SliceStable(events, func(i, j int) bool { return events[i].When < events[j].When })
+		row := Availability{Name: a.Name, Chart: a.Chart, Window: to - from}
+		at, state := from, health.StatusUndefined
+		add := func(end int64) {
+			seconds := end - at
+			if seconds > 0 && (state == health.StatusClear || state == health.StatusWarning || state == health.StatusCritical) {
+				row.Known += seconds
+				if state != health.StatusClear {
+					row.Raised += seconds
+				}
+			}
+			at = end
 		}
-		if sec > window {
-			sec = window
+		for _, e := range events {
+			if e.When > to {
+				break
+			}
+			if e.When <= from {
+				state = e.Status
+				continue
+			}
+			add(e.When)
+			state = e.Status
 		}
-		out = append(out, Availability{
-			Name: a.Name, Chart: a.Chart,
-			Uptime: float64(window-sec) / float64(window) * 100,
-			Raised: sec, Window: window,
-		})
+		add(to)
+		row.Unknown = row.Window - row.Known
+		if row.Window > 0 && row.Unknown == 0 {
+			value := float64(row.Window-row.Raised) / float64(row.Window) * 100
+			row.Uptime = &value
+		}
+		out = append(out, row)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-func availabilityByName(log []health.LogEntry, alarms []health.Alarm, from, to int64) map[string]float64 {
-	rows := AlarmAvailability(alarms, log, from, to)
-	out := map[string]float64{}
-	for _, row := range rows {
-		out[row.Name] = row.Uptime
-	}
-	for _, e := range log {
-		if _, ok := out[e.Name]; !ok {
-			out[e.Name] = 100
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
 		}
-	}
-	return out
-}
-
-func raisedSeconds(log []health.LogEntry, from, to int64) map[string]int64 {
-	type state struct {
-		status health.Status
-		at     int64
-	}
-	entries := append([]health.LogEntry(nil), log...)
-	sort.Slice(entries, func(i, j int) bool { return entries[i].When < entries[j].When })
-	cur := map[string]state{}
-	out := map[string]int64{}
-	for _, e := range entries {
-		if e.When < from {
-			cur[e.Name] = state{status: e.Status, at: from}
-			continue
-		}
-		if e.When > to {
-			break
-		}
-		prev, ok := cur[e.Name]
-		if ok && (prev.status == health.StatusWarning || prev.status == health.StatusCritical) {
-			out[e.Name] += e.When - prev.at
-		}
-		start := e.When
-		if start < from {
-			start = from
-		}
-		cur[e.Name] = state{status: e.Status, at: start}
-	}
-	for name, prev := range cur {
-		if prev.status == health.StatusWarning || prev.status == health.StatusCritical {
-			out[name] += to - prev.at
-		}
-	}
+		return out[i].Chart < out[j].Chart
+	})
 	return out
 }
 
@@ -361,8 +370,10 @@ func validFloorAndStatus(rule StatusRule) error {
 func rank(status string) int {
 	switch strings.ToUpper(status) {
 	case "CRITICAL":
-		return 3
+		return 4
 	case "WARNING":
+		return 3
+	case "UNKNOWN":
 		return 2
 	case "CLEAR":
 		return 1

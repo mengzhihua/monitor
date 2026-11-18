@@ -12,15 +12,15 @@ func TestServiceTreeUsesWorstChildAndUptime(t *testing.T) {
 		{Name: "db", Chart: "db.up", Status: health.StatusClear},
 	}
 	log := []health.LogEntry{
-		{Name: "web", Status: health.StatusWarning, When: 50},
-		{Name: "web", Status: health.StatusClear, When: 80},
-		{Name: "db", Status: health.StatusClear, When: 10},
+		{Name: "web", Chart: "http.check", Status: health.StatusWarning, When: 50},
+		{Name: "web", Chart: "http.check", Status: health.StatusClear, When: 80},
+		{Name: "db", Chart: "db.up", Status: health.StatusClear, When: 10},
 	}
 	report := Build([]Service{
 		{Name: "edge", Children: []string{"site"}},
 		{Name: "site", Alarms: []string{"web", "db"}, Children: nil},
 	}, alarms, log, 0, 100)
-	if len(report.Services) != 2 || report.Services[0].Status != "WARNING" || report.Services[0].SLA >= 100 {
+	if len(report.Services) != 2 || report.Services[0].Status != "WARNING" || report.Services[0].SLA != nil {
 		t.Fatalf("%+v", report.Services)
 	}
 	rows := AlarmAvailability(alarms, log, 0, 100)
@@ -30,15 +30,15 @@ func TestServiceTreeUsesWorstChildAndUptime(t *testing.T) {
 			web = row
 		}
 	}
-	if web.Raised != 30 || web.Uptime != 70 {
+	if web.Raised != 30 || web.Uptime != nil || web.Known != 50 || web.Unknown != 50 {
 		t.Fatalf("%+v", web)
 	}
 }
 
 func TestServiceStatusRules(t *testing.T) {
 	alarms := []health.Alarm{
-		{Name: "web", Status: health.StatusWarning},
-		{Name: "db", Status: health.StatusCritical},
+		{Name: "web", Chart: "http.check", Status: health.StatusWarning},
+		{Name: "db", Chart: "db.up", Status: health.StatusCritical},
 		{Name: "edge_down", Status: health.StatusCritical},
 	}
 	services := []Service{

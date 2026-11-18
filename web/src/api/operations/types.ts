@@ -73,8 +73,8 @@ export interface HandlingHistoryPage {
   snapshot: string; next_cursor: string; filter: Record<string, string | number>
 }
 export interface ServiceNode {
-  name: string; status: string; sla: number; alarms?: string[]; children?: string[]
+  name: string; status: string; sla: number | null; alarms?: string[]; children?: string[]
 }
 export interface ServiceReport { from: number; to: number; services: ServiceNode[] }
 export interface TopologyEdge { source: string; target: string; kind: string }
-export interface AvailabilityRow { name: string; chart: string; uptime: number; raised_seconds: number; window_seconds: number }
+export interface AvailabilityRow { name: string; chart: string; uptime: number | null; raised_seconds: number; window_seconds: number; known_seconds?: number; unknown_seconds?: number }
