@@ -6,6 +6,8 @@ import type { AvailabilityRow, ServiceReport, TopologyEdge } from '../api'
 import { usePolling } from '../polling'
 import AppIcon from './AppIcon.vue'
 import ServiceEditor from './ServiceEditor.vue'
+import ServiceHandover from './ServiceHandover.vue'
+const handoverService = ref('')
 const props = defineProps<{ role?: string }>()
 const editor = ref<{ canLeave: () => boolean } | null>(null)
 defineExpose({ canLeave: () => editor.value?.canLeave() !== false })
@@ -86,6 +88,7 @@ function pie(sla: number) {
       <button :disabled="loading" @click="refresh">{{ loading ? '刷新中…' : '刷新' }}</button>
       <button :disabled="loading || !!error || !visibleRows.length" @click="exportCSV">导出筛选结果 CSV</button>
     </div>
+    <ServiceHandover v-if="handoverService && ['admin', 'troubleshooter'].includes(props.role || '')" :service="handoverService" :window-range="windowRange" @close="handoverService = ''" />
     <p v-if="error" role="alert">{{ error }}。请重试。<span v-if="report">当前保留上次成功数据，不代表实时状态。</span></p>
     <p v-if="updatedAt" class="muted" role="status">上次成功：{{ timestamp(updatedAt) }} · 已加载窗口 {{ loadedWindow }} · 每 15 秒自动刷新</p>
     <p v-if="!report && !error">正在读取…</p>
@@ -102,6 +105,7 @@ function pie(sla: number) {
           </svg>
           <div>
             <h2>{{ s.name }}</h2>
+            <button v-if="['admin', 'troubleshooter'].includes(props.role || '')" :disabled="loading || !!error" @click="handoverService = s.name">预览 {{ s.name }} 交接报告</button>
             <p>{{ s.status === 'UNKNOWN' ? '未知（缺少有效告警状态）' : s.status }} · 未告警占比 {{ percentage(s.sla) }}</p>
             <p v-if="s.alarms?.length" class="muted">关联告警：<button v-for="alarm in s.alarms" :key="alarm" class="text-button" @click="query = alarm; problemsOnly = false">{{ alarm }}</button></p>
             <p v-if="s.children?.length" class="muted">依赖服务：<button v-for="child in s.children" :key="child" class="text-button" @click="query = child; problemsOnly = false">{{ child }}</button></p>

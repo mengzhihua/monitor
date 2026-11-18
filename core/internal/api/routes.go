@@ -196,6 +196,7 @@ func (s *Server) registerManagementRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/v1/manage/restart", s.handleManageRestart)
 	m.HandleFunc("GET /api/v1/checks", s.handleChecks)
 	m.HandleFunc("POST /api/v1/checks", s.handleChecks)
+	m.HandleFunc("GET /api/v1/services/report", s.handleServiceReport)
 	m.HandleFunc("GET /api/v1/services/config", s.handleServiceConfig)
 	m.HandleFunc("POST /api/v1/services/config/preview", s.handleServiceConfig)
 	m.HandleFunc("PUT /api/v1/services/config", s.handleServiceConfig)
