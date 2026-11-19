@@ -109,6 +109,9 @@ class ReleaseTests(unittest.TestCase):
         (root / "packaging").mkdir(parents=True, exist_ok=True)
         (root / "packaging/start.sh").write_text("#!/bin/sh\n# fixture start\n")
         (root / "packaging/stop.sh").write_text("#!/bin/sh\n# fixture stop\n")
+        (root / "packaging/windows").mkdir()
+        for name in ("start.cmd", "stop.cmd", "launcher.ps1"):
+            (root / "packaging/windows" / name).write_bytes((REPO / "packaging/windows" / name).read_bytes())
 
     def test_archives_whitelist_permissions_checksums_and_collision(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,7 +135,9 @@ class ReleaseTests(unittest.TestCase):
                             names = {name.split("/", 1)[1] for name in package.namelist()}
                             self.assertEqual(names, expected)
                             start = package.read("monitor-2.0.0-windows-amd64/start.cmd")
-                            self.assertIn(b"-listen 127.0.0.1:20099 -data-dir", start)
+                            self.assertIn(b"powershell.exe", start)
+                            self.assertIn(b"-Action start", start)
+                            self.assertEqual(package.read("monitor-2.0.0-windows-amd64/launcher.ps1"), (REPO / "packaging/windows/launcher.ps1").read_bytes())
                             self.assertIn("stop.cmd", names)
                             for name, mode in HEARTBEAT_FILES.items():
                                 entry = package.getinfo(f"monitor-2.0.0-windows-amd64/{name}")

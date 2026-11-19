@@ -209,6 +209,8 @@ jobs:
           if [ "$GOOS" != windows ]; then
             cp packaging/start.sh packaging/stop.sh packaging/cloud-host.sh packaging/monitord.service "dist/$name/"
             chmod 755 "dist/$name/start.sh" "dist/$name/stop.sh" "dist/$name/cloud-host.sh"
+          elif [ -f packaging/windows/launcher.ps1 ]; then
+            cp packaging/windows/start.cmd packaging/windows/stop.cmd packaging/windows/launcher.ps1 "dist/$name/"
           fi
           cd dist
           if [ "$GOOS" = windows ]; then zip -qr "$name.zip" "$name"; else tar czf "$name.tar.gz" "$name"; fi

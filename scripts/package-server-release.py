@@ -222,25 +222,10 @@ def validate_receipt(root: Path, targets: list[str], version: str, commit: str) 
 def launcher_files(root: Path, os_name: str) -> tuple[str, dict[str, tuple[bytes, int]]]:
     """Return (primary launch name, {relative_name: (bytes, mode)})."""
     if os_name == "windows":
-        start = (
-            '@echo off\r\ncd /d "%~dp0"\r\n'
-            'if not exist data mkdir data\r\n'
-            'echo Open http://127.0.0.1:20099/ ; password: data\\web-password\r\n'
-            'start /b "" monitord.exe -listen 127.0.0.1:20099 -data-dir .\\data >nul\r\n'
-            'for /f "tokens=2" %%P in (\'wmic process where "name=\'monitord.exe\' and CommandLine like \'%%data%%\' get ProcessId /value ^| find "ProcessId"\') do echo %%P>data\\monitord.pid\r\n'
-            'echo Started. Stop with stop.cmd\r\n'
-        ).encode("ascii")
-        stop = (
-            '@echo off\r\ncd /d "%~dp0"\r\n'
-            'if not exist data\\monitord.pid (echo pidfile missing & exit /b 1)\r\n'
-            'set /p PID=<data\\monitord.pid\r\n'
-            'wmic process where "ProcessId=%PID% and CommandLine like \'%%data%%\'" get ProcessId 2>nul | find "%PID%" >nul\r\n'
-            'if errorlevel 1 (echo pid %PID% is not this instance & exit /b 1)\r\n'
-            'taskkill /PID %PID% /T\r\n'
-            'del data\\monitord.pid\r\n'
-            'echo stopped pid %PID%\r\n'
-        ).encode("ascii")
-        return "start.cmd", {"start.cmd": (start, 0o755), "stop.cmd": (stop, 0o755)}
+        return "start.cmd", {
+            name: (regular_file(root, "packaging/windows/" + name).read_bytes(), 0o755)
+            for name in ("start.cmd", "stop.cmd", "launcher.ps1")
+        }
     start_name = "运行.command" if os_name == "darwin" else "start.sh"
     start = regular_file(root, "packaging/start.sh").read_bytes()
     stop = regular_file(root, "packaging/stop.sh").read_bytes()
