@@ -16,10 +16,17 @@ async function metrics(page: Page) {
   await expect(page.locator('.card canvas').first()).toBeVisible()
 }
 
+async function pauseSearchClock(page: Page) {
+  // Start the browser clock behind the target. Two separate real-clock reads
+  // can otherwise make pauseAt() rewind a few milliseconds on a busy runner.
+  const pausedAt = new Date()
+  await page.clock.install({ time: new Date(pausedAt.getTime() - 60_000) })
+  await page.clock.pauseAt(pausedAt)
+}
+
 test('continuous search keeps mounted charts until the query settles and clear is immediate', async ({ page }) => {
   await metrics(page)
-  await page.clock.install()
-  await page.clock.pauseAt(new Date())
+  await pauseSearchClock(page)
   const canvas = await page.locator('.card canvas').first().elementHandle()
   const input = page.getByRole('searchbox', { name: '筛选图表', exact: true })
   await input.fill('test.c')
@@ -42,8 +49,7 @@ test('composition keeps results stable and quick pagination is reachable above t
   const pager = page.getByRole('navigation', { name: '快速分页', exact: true })
   await pager.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(pager).toContainText('2 / 3')
-  await page.clock.install()
-  await page.clock.pauseAt(new Date())
+  await pauseSearchClock(page)
   const input = page.getByRole('searchbox', { name: '筛选图表', exact: true })
   await input.dispatchEvent('compositionstart')
   await input.evaluate(el => { (el as HTMLInputElement).value = '测试指标 29'; el.dispatchEvent(new Event('input', { bubbles: true })) })

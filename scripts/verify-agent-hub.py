@@ -138,19 +138,32 @@ import { readFileSync } from 'node:fs';
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const ws = new WebSocket(input.url, ['monitor', 'bearer.' + Buffer.from(input.token).toString('base64url')]);
 const frames = [];
+let advanced = 0, latest = -Infinity, done = false;
 const timer = setTimeout(() => { console.error('live samples timed out'); process.exit(1); }, 30000);
 ws.onerror = () => { console.error('live connection failed'); process.exit(1); };
 ws.onmessage = event => {
+  if (done) return;
   const frame = JSON.parse(event.data);
   if (frame.chart !== 'system.ram') return;
   frames.push(frame);
-  if (frames.length === 3) { clearTimeout(timer); ws.close(); console.log(JSON.stringify(frames)); }
+  if (frame.t > latest) { latest = frame.t; advanced++; }
+  if (advanced === 3) { done = true; clearTimeout(timer); ws.close(); console.log(JSON.stringify(frames)); }
 };
 '''], input=json.dumps({'url': f'ws://127.0.0.1:{ports["hub"]}/api/v1/live?charts=system.ram&{suffix}',
                        'token': tokens['viewer']}), capture_output=True, text=True, timeout=40, check=True)
             frames = json.loads(websocket.stdout)
             assert all(f['node'] == node_id and f['v'] and all(math.isfinite(v) for v in f['v'].values()) for f in frames)
-            assert all(b['t'] > a['t'] for a, b in zip(frames, frames[1:])), 'live timestamps did not advance'
+            # Ingest broadcasts replay/duplicate timestamps too; both shipped
+            # chart clients ignore non-advancing frames. Require three actual
+            # advances, retain and report every duplicate rather than claiming
+            # exactly-once delivery from this feed.
+            latest, advances, non_advancing = -math.inf, 0, 0
+            for frame in frames:
+                if frame['t'] > latest:
+                    latest, advances = frame['t'], advances + 1
+                else:
+                    non_advancing += 1
+            assert advances == 3 and latest >= int(time.time()) - 5, 'live samples did not advance to the present'
 
             processes['agent'].send_signal(signal.SIGSTOP)
             wait_for('connected but stale', lambda: remote()['status'] == 'stale', seconds=30)
@@ -191,7 +204,8 @@ ws.onmessage = event => {
                 assert 'panic' not in text.lower(), name + ' panicked'
                 assert all(token not in text for token in tokens.values()), 'credential in daemon log'
             report = {'passed': True, 'protocol': args.protocol, 'scope': 'real local Agent and Hub processes; loopback transport',
-                      'remote_function_rbac': True, 'live_websocket_frames': len(frames), 'alarm_forwarding': True,
+                      'remote_function_rbac': True, 'live_websocket_frames': len(frames), 'live_timestamp_advances': advances,
+                      'live_non_advancing_frames': non_advancing, 'alarm_forwarding': True,
                       'stale_resume_offline': True, 'outage_backfill_rows': len(expected[1]),
                       'restart_history_exact': True, 'wrong_key_rejected': True, 'offline_forget': True}
             print(json.dumps(report))
