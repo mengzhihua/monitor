@@ -78,22 +78,32 @@ def main() -> int:
             decoy.wait(timeout=5)
             pidfile.unlink(missing_ok=True)
 
-        # Decoy 2: binary named monitord but no matching data/config path.
+        # Decoy 2: live binary named monitord but no matching data/config path.
+        # Modern Ubuntu uses a multicall coreutils binary: copying sleep under
+        # another name exits with "unknown program", which is not a stop test.
         fake_bin = root / 'monitord'
-        shutil.copy2('/bin/sleep', fake_bin)
+        shutil.copyfile('/bin/sh', fake_bin)
         fake_bin.chmod(0o755)
-        fake = subprocess.Popen([str(fake_bin), '120'])
+        fake = subprocess.Popen([str(fake_bin), '-c', 'sleep 120 & wait'], start_new_session=True)
         try:
-            pidfile.write_text(f'{fake.pid}\n')
-            stop = subprocess.run([str(stop_sh)], cwd=root, env=env, capture_output=True, text=True)
-            if stop.returncode == 0:
-                print('stop.sh accepted renamed-sleep monitord without path match', file=sys.stderr)
-                return 1
+            time.sleep(.1)
             if fake.poll() is not None:
-                print('renamed-sleep decoy was killed', file=sys.stderr)
+                raise RuntimeError('renamed-shell decoy failed to start')
+            pidfile.write_text(f'{fake.pid}\n')
+            stop = subprocess.run([str(stop_sh)], cwd=root, env=env, capture_output=True, text=True, timeout=5)
+            if stop.returncode == 0:
+                print('stop.sh accepted renamed-shell monitord without path match', file=sys.stderr)
+                return 1
+            if 'does not match' not in stop.stderr:
+                raise RuntimeError('decoy did not exercise the instance path guard')
+            if fake.poll() is not None:
+                print('renamed-shell decoy was killed', file=sys.stderr)
                 return 1
         finally:
-            fake.send_signal(signal.SIGTERM)
+            try:
+                os.killpg(fake.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             fake.wait(timeout=5)
             pidfile.unlink(missing_ok=True)
 

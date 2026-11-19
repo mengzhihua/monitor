@@ -1,7 +1,7 @@
 import { openOperationsFilters, openOperationsExports } from './operations-navigation'
 import { expect, test } from '@playwright/test'
 import type { OperationsSnapshot } from '../src/api'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 
 const token = 'browser-test-token'
 const headers = { Authorization: `Bearer ${token}` }
@@ -149,18 +149,16 @@ test('operators download a redacted diagnostic package for handoff', async ({ pa
   await page.getByRole('button', { name: '导出诊断包' }).click()
   const [download, apiResp] = await Promise.all([downloadEvent, responseEvent])
   expect(apiResp.ok()).toBe(true)
-  const apiBody = await apiResp.text()
-  expect(apiBody.length).toBeGreaterThan(200)
-  expect(JSON.parse(apiBody).schema).toBe('monitor.diagnostic.v1')
   expect(download.suggestedFilename()).toMatch(/^monitor-diagnostic-.+\.json$/)
   const saved = info.outputPath('monitor-diagnostic-handoff.json')
   await download.saveAs(saved)
   const fromUi = await readFile(saved, 'utf8')
-  // Prefer the saved download; fall back to the XHR body if the blob URL
-  // download is empty under Playwright.
-  const uiRaw = fromUi.length > 0 ? fromUi : apiBody
-  await writeFile(saved, uiRaw)
-  expect(JSON.parse(uiRaw).schema).toBe('monitor.diagnostic.v1')
+  // The user receives this file. Never replace an empty download with another
+  // response: attachment bodies are not reliably exposed by every CDP version.
+  expect(fromUi.length).toBeGreaterThan(200)
+  expect(JSON.parse(fromUi).schema).toBe('monitor.diagnostic.v1')
+  expect(fromUi).not.toContain('private-test-token')
+  expect(fromUi).not.toContain('browser-operator-token')
 })
 
 test('operators assign, track progress, save their queue and export persisted workflow', async ({ page, request }, info) => {

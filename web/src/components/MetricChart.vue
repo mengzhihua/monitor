@@ -189,7 +189,7 @@ onBeforeUnmount(() => { disposed = true; dialog.value?.close() })
   :deep(.u-legend .u-series th), :deep(.u-legend .u-series td) { height:44px; box-sizing:border-box; }
 }
 @media (max-width:600px) {
-  .chart-dialog { margin:0; width:100%; max-width:none; height:100dvh; max-height:100dvh; border:0; border-radius:0; padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left)); overscroll-behavior:contain; }
+  .chart-dialog { margin:0; inset:0; width:100vw; max-width:none; height:100dvh; max-height:100dvh; border:0; border-radius:0; padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left)); overscroll-behavior:contain; }
   .dialog-heading { top:calc(-1 * max(10px,env(safe-area-inset-top))); padding-top:max(10px,env(safe-area-inset-top)); gap:8px; }
   .dialog-heading b { min-width:0; flex:1; }
   .dialog-heading button { flex:none; }

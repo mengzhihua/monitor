@@ -5,13 +5,19 @@ on:
     branches: [main, "codex/**"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        required: false
+        default: ""
 
 jobs:
   web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0, fetch-tags: true }
+        with: { fetch-depth: 0, fetch-tags: true, ref: "${{ inputs.source_ref || github.sha }}" }
       # A release PR bumps VERSION before release.yml creates the matching tag.
       - name: Source versions must agree and not regress behind stable tags
         run: python3 scripts/check-release-version.py
@@ -29,7 +35,7 @@ jobs:
         working-directory: web
       - uses: actions/upload-artifact@v4
         with:
-          name: ui-dist
+          name: ci-ui-dist
           path: core/internal/api/ui/dist
 
   core:
@@ -41,13 +47,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.source_ref || github.sha }}" }
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.1"
           cache-dependency-path: core/go.sum
       - uses: actions/download-artifact@v4
         with:
-          name: ui-dist
+          name: ci-ui-dist
           path: core/internal/api/ui/dist
       - name: gofmt
         if: runner.os == 'Linux'
@@ -100,8 +107,9 @@ jobs:
         shell: bash
         run: |
           ver=$(tr -d '[:space:]' < ../VERSION)
-          short=$(printf '%s' "${{ github.sha }}" | cut -c1-12)
-          go build -trimpath -ldflags "-s -w -X main.version=${ver}-dev+${short} -X main.commit=${{ github.sha }} -X main.releaseBuild=0 -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.dirty=false" -o bin/monitord ./cmd/monitord
+          commit=$(git rev-parse HEAD)
+          short=$(git rev-parse --short=12 HEAD)
+          go build -trimpath -ldflags "-s -w -X main.version=${ver}-dev+${short} -X main.commit=${commit} -X main.releaseBuild=0 -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X main.dirty=false" -o bin/monitord ./cmd/monitord
       - name: smoke
         run: ./scripts/smoke.sh
         shell: bash
@@ -145,6 +153,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           python3 scripts/verify-operations.py
+          if [ -f scripts/verify-service-workflow.py ]; then python3 scripts/verify-service-workflow.py; fi
           python3 scripts/verify-notifications.py
           python3 scripts/verify-notification-services.py
           python3 scripts/verify-push-services.py
@@ -177,12 +186,13 @@ jobs:
         project: [desktop, mobile]
     steps:
       - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.source_ref || github.sha }}" }
       - uses: actions/setup-node@v4
         with: { node-version-file: .node-version }
       - uses: actions/setup-go@v5
         with: { go-version: "1.27.1", cache-dependency-path: core/go.sum }
       - uses: actions/download-artifact@v4
-        with: { name: ui-dist, path: core/internal/api/ui/dist }
+        with: { name: ci-ui-dist, path: core/internal/api/ui/dist }
       - run: make core
       - run: npm ci && npx playwright install --with-deps chromium
         working-directory: web
@@ -205,15 +215,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.source_ref || github.sha }}" }
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.1"
           cache-dependency-path: core/go.sum
       - uses: actions/download-artifact@v4
         with:
-          name: ui-dist
+          name: ci-ui-dist
           path: core/internal/api/ui/dist
-      - run: make cross VERSION=${{ github.sha }}
+      - run: make cross
       - uses: actions/upload-artifact@v4
         with:
           name: monitord-binaries
@@ -223,6 +234,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.source_ref || github.sha }}" }
       - uses: subosito/flutter-action@v2
         with: { flutter-version: "3.35.4", channel: stable, cache: true }
       - run: python3 scripts/stamp_app_version_test.py
@@ -238,6 +250,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.source_ref || github.sha }}" }
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.1"
@@ -248,7 +261,6 @@ jobs:
         with: { packages: "platforms;android-35 build-tools;35.0.0" }
       - uses: actions/download-artifact@v4
         with:
-          name: ui-dist
+          name: ci-ui-dist
           path: core/internal/api/ui/dist
-      - run: ./scripts/build-android-server.sh assembleDebug
-        env: { VERSION: "${{ github.sha }}" }
+      - run: VERSION="$(git rev-parse --short=12 HEAD)" ./scripts/build-android-server.sh assembleDebug

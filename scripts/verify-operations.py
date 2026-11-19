@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real daemon restart acceptance for the operations store, in isolated temp data."""
 import argparse
+from http.client import RemoteDisconnected
 import json
 import os
 from pathlib import Path
@@ -65,11 +66,12 @@ health:
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     raise RuntimeError('isolated test daemon exited before readiness')
+                assert 'panic serving' not in (root / 'daemon.log').read_text(), 'daemon HTTP panic during readiness'
                 try:
                     data = request()
                     if len(data['problems']) == 2 and data['nodes'][0]['memory']['value'] is not None:
                         return data
-                except (urllib.error.URLError, TimeoutError):
+                except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
                     pass
                 time.sleep(.2)
             raise RuntimeError('operations readiness timed out')

@@ -138,6 +138,7 @@ acceptance:
 	python3 scripts/verify-actions.py
 	python3 scripts/verify-ai-analysis.py
 	python3 scripts/verify-operations.py
+	python3 scripts/verify-service-workflow.py
 	python3 scripts/verify-notifications.py
 	python3 scripts/verify-notification-services.py
 	python3 scripts/verify-push-services.py

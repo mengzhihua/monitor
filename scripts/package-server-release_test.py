@@ -25,7 +25,7 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 EPOCH = 1780000000
 BUILD_TIME = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(EPOCH))
 REPO = Path(__file__).resolve().parent.parent
-PLATFORM_DOCUMENTS = {"docs/25-modular-workspace.md", "docs/26-module-boundaries.md", "docs/27-plugin-platform.md"}
+PLATFORM_DOCUMENTS = {"docs/25-modular-workspace.md", "docs/26-module-boundaries.md", "docs/27-plugin-platform.md", "docs/30-product-quality.md", "docs/31-release-3.0.20.md", "CHANGELOG.md", "api/openapi.yaml"}
 HEARTBEAT_FILES = {"examples/plugins/heartbeat/plugin.json": 0o644, "examples/plugins/heartbeat/collector.sh": 0o755}
 PRIVATE_FILES = (
     "AGENTS.md", "agent.md", "monitor.yaml", "data/web-password", ".git/config",

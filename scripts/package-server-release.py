@@ -47,7 +47,8 @@ DOCUMENTS = (
     "docs/07-preset-dashboards.md", "docs/08-release-2.0.md",
     "docs/08-operations-dashboard-research.md", "docs/09-dashboard-final-update.md",
     "docs/10-final-integration.md", "docs/25-modular-workspace.md",
-    "docs/26-module-boundaries.md", "docs/27-plugin-platform.md", "scripts/README.md",
+    "docs/26-module-boundaries.md", "docs/27-plugin-platform.md", "docs/30-product-quality.md",
+    "docs/31-release-3.0.20.md", "CHANGELOG.md", "api/openapi.yaml", "scripts/README.md",
 )
 # Keep installable examples outside the scanned plugins.d directory. Explicit
 # filenames and modes avoid including local plugin state, credentials or links.

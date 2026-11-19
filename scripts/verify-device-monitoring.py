@@ -80,7 +80,7 @@ else: sys.exit(1)
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin', type=Path, default=Path(__file__).resolve().parents[1] / 'core/bin/monitord')
-    parser.add_argument('--timeout', type=float, default=45, help='total acceptance deadline, seconds (default: 45)')
+    parser.add_argument('--timeout', type=float, default=120, help='total acceptance deadline, seconds (default: 120)')
     args = parser.parse_args()
     if args.timeout <= 0 or not math.isfinite(args.timeout):
         parser.error('--timeout must be positive and finite')
@@ -97,7 +97,11 @@ def main() -> int:
     failed_bmc = threading.Event()
     fetched_members = set()
     members_lock = threading.Lock()
-    deadline = time.monotonic() + args.timeout
+    # This includes six device fixtures, failure/recovery and a daemon restart.
+    # Keep each transport deadline short, but allow the whole sequence to finish
+    # on shared CI/development hosts without changing any success assertions.
+    started = time.monotonic()
+    deadline = started + args.timeout
     token = ''
     base = ''
     expected_auth = 'Basic ' + base64.b64encode(b'fixture:fixture-only-password').decode()
@@ -308,9 +312,11 @@ def main() -> int:
                                              'redfish_member_links', 'health_rollup', 'historical_samples', 'failure_recovery',
                                              'admin_config_save', 'viewer_config_denied'], 'physical_device_validation': False}))
                 return 0
-            except Exception:
+            except Exception as error:
                 # No response bodies, headers, config, logs or secrets in failure output.
-                print(json.dumps({'fixture_simulation': True, 'status': 'failed', 'stage': stage}))
+                print(json.dumps({'fixture_simulation': True, 'status': 'failed', 'stage': stage,
+                                  'error_type': type(error).__name__, 'deadline_exceeded': time.monotonic() >= deadline,
+                                  'elapsed_seconds': round(time.monotonic() - started, 2), 'timeout_seconds': args.timeout}))
                 return 1
             finally:
                 try:

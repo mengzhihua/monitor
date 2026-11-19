@@ -5,6 +5,7 @@ Uses only loopback HTTP sinks and isolated config/data. Never contacts a real
 provider or reuses a deployment's credentials.
 """
 import argparse
+from http.client import RemoteDisconnected
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -121,11 +122,12 @@ health:
                 deadline = time.monotonic() + 20
                 while time.monotonic() < deadline:
                     assert process.poll() is None, 'daemon exited before producing results'
+                    assert 'panic serving' not in (root / 'daemon.log').read_text(), 'daemon HTTP panic during readiness'
                     try:
                         data = request()
                         if data['total'] == total and data['in_flight'] is None:
                             return data
-                    except (urllib.error.URLError, TimeoutError):
+                    except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
                         pass
                     time.sleep(.1)
                 raise RuntimeError('notification results did not arrive')

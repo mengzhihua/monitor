@@ -148,7 +148,7 @@
 
 Vite 从 8.3.0 更新到 8.3.8，并更新锁文件中对应的构建依赖，保留现有 Node 24 和 Vue/TypeScript 主版本。修复版依赖在隔离目录完成安装及审计。
 
-生产依赖 `npm audit --omit=dev` 为 0 项告警；完整审计仍有 6 个被标记的开发依赖，均来自同一个 picomatch 重复扩展 glob 正则拒绝服务问题及依赖传播。picomatch 最新版本 4.0.7 仍在[上游公告的受影响范围](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)，公告尚无修复版本，因此不能将本轮称为完整安全审计通过。它属于本仓库构建/类型检查依赖，不是浏览器运行依赖；不应将不可信 glob 输入交给开发工具。后续需在上游修复发布后重新审计与构建验证。
+2026-11-18 的生产依赖 `npm audit --omit=dev` 为 0 项告警；当时完整审计有 6 个被标记的开发依赖，来自同一个 picomatch 公告及依赖传播。2026-11-19 复核发现[该上游公告已撤回](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)，官方 npm registry 的完整审计和生产审计均返回 0 项。这是公告状态变化，不是本项目修复了 picomatch；依赖审计也不等于完整产品安全审计。
 
 Vite 自身的开发服务器相关公告已不再出现在更新后的审计中；修复版本依据包括[launch-editor 官方公告](https://github.com/advisories/GHSA-587h-7wmj-h5pm)。不采用审计工具建议的强制版本降级来掩盖仍未修复的间接依赖。
 

@@ -7,7 +7,7 @@
 ## 打一个新版本
 
 1. 选择尚未发布的更高稳定版本，执行 `python3 scripts/sync-release-version.py <MAJOR.MINOR.PATCH>`（不要带 `v`），同步上述文件；执行 `make all`、`make test` 及受影响功能验收。
-2. 提交并合入 `main`。Release 工作流读该提交的 `VERSION`，打带注释的标签 `v$VERSION`，再构建安装包。
+2. 提交并合入 `main`。Release 工作流先复用完整 CI，验证该提交的 Web、Go 三平台、浏览器、Flutter、跨平台编译和 Android 服务端；全部成功后读取 `VERSION`，打带注释的标签 `v$VERSION`，再构建安装包。手动重建标签也先验证该标签源码。
 3. 标签已经存在且指向别的提交时，工作流不会重打、也不会重新打包。它打印 `already released` 并跳过。
 4. 核对该次工作流、安装包、校验与平台验证结果后才算发布完成。GitHub 的 Latest 徽章可能受旧版本补发影响；下载时同时核对版本号与提交，不只看徽章。
 

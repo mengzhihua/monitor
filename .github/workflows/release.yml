@@ -24,7 +24,15 @@ permissions:
   contents: write
 
 jobs:
+  validation:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.sha }}
+
   meta:
+    needs: validation
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.v.outputs.tag }}
@@ -189,7 +197,13 @@ jobs:
           commit=$(git rev-parse HEAD)
           build_time=$(git show -s --format=%cI HEAD | sed 's/+00:00$/Z/; s/\([+-][0-9][0-9]\):\([0-9][0-9]\)$/\1\2/')
           (cd core && go build -trimpath -ldflags "-s -w -X main.version=$version -X main.commit=$commit -X main.releaseBuild=1 -X main.buildTime=$build_time -X main.dirty=false" -o "../dist/$name/monitord$ext" ./cmd/monitord)
-          cp monitor.example.yaml README.md "dist/$name/"
+          cp monitor.example.yaml README.md VERSION CHANGELOG.md "dist/$name/"
+          mkdir -p "dist/$name/docs" "dist/$name/api"
+          # Manual rebuilds can target tags predating these guides.
+          for doc in docs/08-release-2.0.md docs/23-release.md docs/30-product-quality.md docs/31-release-3.0.20.md; do
+            if [ -f "$doc" ]; then cp "$doc" "dist/$name/docs/"; fi
+          done
+          cp api/openapi.yaml "dist/$name/api/"
           cp docs/22-cloud-host.md "dist/$name/CLOUD-HOST.md"
           cp -r plugins.d "dist/$name/plugins.d"
           if [ "$GOOS" != windows ]; then
@@ -442,6 +456,9 @@ jobs:
           generate_release_notes: true
           files: artifacts/*
           body: |
+            Upgrade notes and API changes: [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ needs.meta.outputs.tag }}/CHANGELOG.md).
+            Required CI validation for this source completed before packaging.
+
             ## Server (`monitord`)
             | Platform | File |
             |---|---|
