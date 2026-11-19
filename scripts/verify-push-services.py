@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run real alarms and admin tests against loopback ntfy/Gotify/Bark fixtures."""
 import argparse
+from http.client import RemoteDisconnected
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -125,11 +126,12 @@ health:
                     until = time.monotonic() + 20
                     while time.monotonic() < until:
                         assert process.poll() is None, 'daemon exited'
+                        assert 'panic serving' not in logpath.read_text(), 'daemon HTTP panic during readiness'
                         try:
                             value = call('/operations/notifications')
                             if value['total'] == total and value['in_flight'] is None:
                                 return value
-                        except (urllib.error.URLError, TimeoutError):
+                        except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
                             pass
                         time.sleep(.1)
                     raise AssertionError('notification results timed out')

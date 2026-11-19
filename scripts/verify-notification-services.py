@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise SMTP, signed Feishu delivery and admin tests using loopback only."""
 import argparse
+from http.client import RemoteDisconnected
 import base64
 from email import policy
 from email.parser import BytesParser
@@ -141,11 +142,12 @@ health:
                 until = time.monotonic() + 20
                 while time.monotonic() < until:
                     assert process.poll() is None, 'daemon exited'
+                    assert 'panic serving' not in (root / 'daemon.log').read_text(), 'daemon HTTP panic during readiness'
                     try:
                         result = call('/operations/notifications')
                         if result['total'] == total and not result['in_flight']:
                             return result
-                    except (urllib.error.URLError, TimeoutError):
+                    except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
                         pass
                     time.sleep(.1)
                 raise AssertionError('notification results timed out')

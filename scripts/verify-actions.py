@@ -4,6 +4,7 @@
 This script starts its own monitord, alarm, and whitelisted command. It does
 not read data directories or audit logs left by other acceptance scripts.
 """
+from http.client import RemoteDisconnected
 import json
 import shutil
 import signal
@@ -90,11 +91,12 @@ def wait_ready(child: subprocess.Popen, base: str, log_path: Path) -> None:
     while time.monotonic() < deadline:
         if child.poll() is not None:
             raise SystemExit('daemon exited before ready\n' + log_path.read_text(errors='replace'))
+        assert 'panic serving' not in log_path.read_text(), 'daemon HTTP panic during readiness'
         try:
             with urllib.request.urlopen(base + '/healthz', timeout=1) as resp:
                 if resp.status == 200:
                     return
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
             pass
         time.sleep(0.1)
     raise SystemExit('healthz timed out\n' + log_path.read_text(errors='replace'))
@@ -104,10 +106,11 @@ def wait_action(base: str, token: str, log_path: Path) -> dict:
     deadline = time.monotonic() + 25
     req = urllib.request.Request(base + '/api/v1/audit?user=system&limit=20', headers={'Authorization': 'Bearer ' + token})
     while time.monotonic() < deadline:
+        assert 'panic serving' not in log_path.read_text(), 'daemon HTTP panic during readiness'
         try:
             with urllib.request.urlopen(req, timeout=2) as resp:
                 payload = json.load(resp)
-        except urllib.error.URLError:
+        except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
             time.sleep(0.2)
             continue
         for entry in payload.get('entries') or []:

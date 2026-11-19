@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Maintenance acceptance using real samples, loopback delivery and two restarts."""
 import argparse
+from http.client import RemoteDisconnected
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -99,11 +100,12 @@ health:
                 deadline = time.monotonic() + seconds
                 while time.monotonic() < deadline:
                     assert process.poll() is None, 'isolated daemon stopped unexpectedly'
+                    assert 'panic serving' not in (root / 'daemon.log').read_text(), 'daemon HTTP panic during readiness'
                     try:
                         value = check()
                         if value:
                             return value
-                    except (urllib.error.URLError, TimeoutError):
+                    except (urllib.error.URLError, TimeoutError, RemoteDisconnected):
                         pass
                     time.sleep(.15)
                 raise RuntimeError('maintenance acceptance condition timed out')
