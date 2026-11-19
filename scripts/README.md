@@ -57,8 +57,9 @@
 | `verify-zabbix-gap.py` | `docs/15-zabbix-gap.md` 差距矩阵「证据」列中的源码路径在仓库内存在 | `python3 scripts/verify-zabbix-gap.py`（`verify_zabbix_gap_test.py` 为 fixture 测试） |
 | `verify-maintenance.py` | 预约开始、精确告警范围、活动计划重启、到期恢复新提醒、重叠取消、并发与只读权限、第二次重启保留取消记录 | `python3 scripts/verify-maintenance.py` |
 | `verify-apps-identity.py` | macOS 进程身份、完整快照、历史计数、认证与退出清理 | `python3 scripts/verify-apps-identity.py --require-clean-startup` |
-| `verify-durability.py` | 强杀恢复、离线备份和恢复 | `python3 scripts/verify-durability.py` |
+| `verify-durability.py` | 强杀恢复、离线备份和恢复；可验证旧版本数据升级及从升级前备份回滚 | `python3 scripts/verify-durability.py`；跨版本加 `--upgrade-from <旧版程序> --bin <新版程序>` |
 | `load-hub.py` | 模拟节点阶梯负载、Hub 重启历史校验 | `python3 scripts/load-hub.py` |
+| `verify-agent-hub.py` | 真实 Agent/Hub 长连接、浏览器同款 WebSocket 鉴权、远程进程权限、告警转发、stale/offline、断线补传、重启历史及错误密钥拒绝 | `python3 scripts/verify-agent-hub.py`；MQTT 路径加 `--protocol mqtt` |
 | `soak.py` | 指定时长的持续采集和查询测量；可 `--seed-data-dir` 复制真实数据、自动 heap、RSS/heap 报警阈值 | `python3 scripts/soak.py --seconds 120` |
 | `sample-resources.py` | 只读观察已有 monitord，每次重新识别 PID，保存资源统计及采样空白 | `python3 scripts/sample-resources.py --seconds 86400 --pid-file /path/to/monitord.pid --output reports/resources.json` |
 | `capture-heap.py` | 对运行中的 monitord 抓取管理员鉴权的 heap profile（可抓两次做 diff） | `python3 scripts/capture-heap.py --url http://127.0.0.1:19999 --token "$TOKEN" --output reports/heap.pb` |
@@ -83,6 +84,8 @@ Playwright 显式发送 SIGTERM 并预留 10 秒清理窗口，避免默认强�
 `verify-maintenance.py` 同样支持 `--binary`，使用两条基于真实内存的测试告警和本机 HTTP 接收器。它为其中一条安排 12 秒维护窗口，期间重启，验证另一条仍发送、问题仍显示，维护结束后按 `repeat` 周期产生新提醒；随后验证重叠计划、取消和第二次重启。配置、凭据、采样和发送记录仅存在于隔离测试目录或内存。
 
 `verify-alert-rules.py` 支持 `--binary`，使用隔离临时目录与静默健康引擎，不配置外部通知。详细生效与回退边界见 [告警规则工作台](../docs/13-alert-rule-workbench.md)。
+
+`verify-agent-hub.py` 需要 Node 24 的原生 WebSocket，使用随机临时凭据、独立数据目录和随机回环端口；凭据通过 stdin 传给客户端，不出现在命令行或报告中。它真实暂停/恢复自己的 Agent、停止/重启自己的 Hub，并逐值比对断线期间采集的历史。`make acceptance` 和 Linux CI 同时运行 JSON stream 与 MQTT 路径。这是本机进程间验收，不代表公网、TLS 或真实多机部署验收。
 
 保存报告时统一放入被 Git 忽略的 `reports/`：
 

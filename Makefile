@@ -133,8 +133,13 @@ hub-load: core
 acceptance:
 	$(MAKE) all
 	$(MAKE) test
+	bash scripts/smoke.sh
+	python3 scripts/verify-packaging-pidfile.py
+	python3 scripts/verify-cloud-host.py
+	python3 scripts/verify-cloud-host-doc.py
 	python3 scripts/verify-default-auth.py
 	python3 scripts/verify-plugin-platform.py
+	python3 scripts/auth-fixtures/verify_saml_e2e.py --bin core/bin/monitord
 	python3 scripts/verify-actions.py
 	python3 scripts/verify-ai-analysis.py
 	python3 scripts/verify-operations.py
@@ -149,6 +154,8 @@ acceptance:
 		python3 scripts/verify-apps-identity.py --require-clean-startup; \
 	fi
 	python3 scripts/verify-device-monitoring.py
+	python3 scripts/verify-agent-hub.py
+	python3 scripts/verify-agent-hub.py --protocol mqtt
 	python3 scripts/load-hub.py
 	python3 scripts/soak.py --seconds $${MONITOR_SOAK_SECONDS:-120}
 	cd web && npm run test:e2e

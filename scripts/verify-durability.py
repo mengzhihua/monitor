@@ -4,12 +4,15 @@ import argparse, json, pathlib, signal, socket, subprocess, tempfile, time, urll
 
 p = argparse.ArgumentParser()
 p.add_argument('--bin', default='core/bin/monitord')
+p.add_argument('--upgrade-from', help='optional older binary: verify in-place upgrade and rollback from its pre-upgrade backup')
 p.add_argument('--group', choices=['average', 'min', 'max', 'sum', 'median', 'last'], default='average')
 p.add_argument('--points', type=int, default=100)
 args = p.parse_args()
 if args.points < 1:
     p.error('--points must be positive')
-binary = str(pathlib.Path(args.bin).resolve())
+current_binary = str(pathlib.Path(args.bin).resolve())
+previous_binary = str(pathlib.Path(args.upgrade_from).resolve()) if args.upgrade_from else None
+binary = previous_binary or current_binary
 
 with tempfile.TemporaryDirectory(prefix='monitor-durability-') as tmp:
     root = pathlib.Path(tmp)
@@ -58,8 +61,15 @@ with tempfile.TemporaryDirectory(prefix='monitor-durability-') as tmp:
         # A running server must hold the backup lock.
         active = subprocess.run([binary,'-config',str(config),'-data-dir',str(source),'-backup-dir',str(root/'unsafe')],capture_output=True)
         assert active.returncode != 0, 'accepted a backup of a running server'
+        original_token = token
+        if previous_binary:
+            stop()
+            subprocess.run([previous_binary,'-config',str(config),'-data-dir',str(source),'-backup-dir',str(root/'pre-upgrade')],check=True)
+            start(source)
         stop(signal.SIGKILL)
+        binary = current_binary
         start(source)
+        assert token == original_token, 'upgrade/restart changed the existing login password'
         actual=data(begin,end)
         assert actual==expected, f'checkpointed data differs: {expected!r} vs {actual!r}; log: {(root / "server.log").read_text()}'
         stop()
@@ -68,6 +78,17 @@ with tempfile.TemporaryDirectory(prefix='monitor-durability-') as tmp:
         subprocess.run([binary,'-config',str(config),'-data-dir',str(restored),'-restore-from',str(snap)],check=True)
         start(restored)
         assert data(begin,end)==expected, 'restored history differs'
-        print(json.dumps({'crash_recovery':'passed','active_backup_rejected':True,'backup_restore':'passed','rows_checked':len(expected),'group':args.group,'points':args.points}))
+        report = {'crash_recovery':'passed','active_backup_rejected':True,'backup_restore':'passed','rows_checked':len(expected),'group':args.group,'points':args.points}
+        if previous_binary:
+            stop()
+            rollback = root/'rollback'
+            subprocess.run([previous_binary,'-config',str(config),'-data-dir',str(rollback),'-restore-from',str(root/'pre-upgrade')],check=True)
+            binary = previous_binary
+            start(rollback)
+            assert data(begin,end)==expected, 'rollback history differs from the pre-upgrade backup'
+            report.update(upgrade_history_exact=True, upgrade_password_preserved=True, rollback_from_pre_upgrade_backup=True,
+                          previous_version=subprocess.check_output([previous_binary,'-version'],text=True).strip(),
+                          current_version=subprocess.check_output([current_binary,'-version'],text=True).strip())
+        print(json.dumps(report))
     finally:
         stop(); log.close()

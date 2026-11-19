@@ -177,6 +177,14 @@ jobs:
       - name: Agent soak
         if: runner.os == 'Linux'
         run: python3 scripts/soak.py --seconds 120 --output reports/agent-soak.json
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with: { node-version-file: .node-version }
+      - name: Real Agent to Hub stream, outage and restart
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/verify-agent-hub.py --output reports/agent-hub-stream.json
+          python3 scripts/verify-agent-hub.py --protocol mqtt --output reports/agent-hub-mqtt.json
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux' && always()
         with:
