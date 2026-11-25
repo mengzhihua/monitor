@@ -31,6 +31,21 @@ import (
 // runDaemon owns startup, workers, shutdown and restart. Configuration adapters
 // construct the domain components; every acquired resource has an error-path cleanup.
 func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, forceWeb bool, log *slog.Logger) error {
+	return runDaemonWithDeadline(parent, cfg, cfgPath, forceWeb, log, 30*time.Second)
+}
+
+func runDaemonWithDeadline(parent context.Context, cfg *config.Config, cfgPath string, forceWeb bool, log *slog.Logger, limit time.Duration) error {
+	shutdown, beginShutdown := context.WithCancel(parent)
+	defer beginShutdown()
+	stopWatchdog := watchShutdown(shutdown, limit, log, os.Exit)
+	// Keep the watchdog alive until all runtime defers have completed. In
+	// particular, Scheduler.Close must still join collectors before releasing
+	// the database and its lock; bypassing that join would allow stale writers.
+	defer stopWatchdog()
+	return runDaemonRuntime(parent, cfg, cfgPath, forceWeb, log, beginShutdown)
+}
+
+func runDaemonRuntime(parent context.Context, cfg *config.Config, cfgPath string, forceWeb bool, log *slog.Logger, beginShutdown func()) error {
 	switch cfg.Mode {
 	case "", "agent", "hub":
 	default:
@@ -294,10 +309,12 @@ func runDaemon(parent context.Context, cfg *config.Config, cfgPath string, force
 	case <-ctx.Done():
 		log.Info("shutting down")
 	case <-restartReq:
+		beginShutdown()
 		restarting = true
 		stop()
 		log.Info("restart requested")
 	case runErr = <-errc:
+		beginShutdown()
 		stop()
 		log.Error("web server failed", "err", runErr)
 	}
