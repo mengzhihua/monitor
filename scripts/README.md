@@ -11,6 +11,7 @@
 | `package-macos-app.sh` | 将已有 Universal `.app` 拆分架构并打包 | 调用者指定的目录，发布流程使用 `dist/` |
 | `package-server-release.py` | 受控构建 8 个服务端目标并生成白名单归档、macOS Universal、提交清单和 SHA-256 | `dist/monitor-<版本>-<提交>/` |
 | `package-server-release_test.py` | 校验错版本/旧构建、符号链接、归档白名单和原目录保护 | 终端测试结果 |
+| `check-release-assets.py <目录> <v版本>` | 正式发布 16 个附件完整性、文件安全性与 SHA-256 生成；发布流水线继续逐项复核校验和 | `SHA256SUMS.txt` |
 | `check-release-version.py` | 检查 VERSION、Go 默认版本、Web 包和锁文件一致 | 不一致时返回失败 |
 | `sync-release-version.py <版本>` | 在发版提交前统一写入上述版本文件，Release 不自动升版本 | 修改源码版本，需验证并提交 |
 | `check_release_version_test.py` | 用隔离 Git 历史验证升版本、降级、错标签及严格检查 | 终端测试结果，不改仓库标签 |

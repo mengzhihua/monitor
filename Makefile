@@ -72,6 +72,7 @@ test-platform: all
 
 ## test-scripts: all local build/acceptance-script fixtures, no live services
 test-scripts: test-docs
+	python3 scripts/check_release_assets_test.py
 	python3 scripts/package-server-release_test.py
 	python3 scripts/sync-release-version_test.py
 	python3 scripts/check_release_version_test.py

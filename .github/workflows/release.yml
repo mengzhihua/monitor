@@ -441,6 +441,8 @@ jobs:
     if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.meta.outputs.tag }}" }
       - uses: actions/download-artifact@v4
         with:
           pattern: "{server,client}-*"
@@ -448,9 +450,9 @@ jobs:
           merge-multiple: true
       - name: checksums
         run: |
+          python3 scripts/check-release-assets.py artifacts "${{ needs.meta.outputs.tag }}"
           cd artifacts
-          sha256sum * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.meta.outputs.tag }}
