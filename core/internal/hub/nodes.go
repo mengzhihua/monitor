@@ -626,8 +626,20 @@ func (nd *Node) PushConfig(cfg NodeConfig) bool {
 // Call runs a function on the agent over the stream and returns its raw JSON
 // result.
 func (nd *Node) Call(ctx context.Context, name string, args map[string]string) (json.RawMessage, error) {
+	return nd.callFrame(ctx, stream.TypeFuncCall, name, args)
+}
+
+func (nd *Node) Files(ctx context.Context, action string, args map[string]string) (json.RawMessage, error) {
+	return nd.callFrame(ctx, stream.TypeFileCall, action, args)
+}
+
+func (nd *Node) callFrame(ctx context.Context, kind, name string, args map[string]string) (json.RawMessage, error) {
 	nd.mu.Lock()
 	s := nd.conn
+	if s != nil && kind == stream.TypeFileCall && !s.files {
+		nd.mu.Unlock()
+		return nil, errors.New("请升级此主机的 Agent 以启用文件管理")
+	}
 	if s == nil {
 		nd.mu.Unlock()
 		return nil, errors.New("node is offline")
@@ -642,7 +654,7 @@ func (nd *Node) Call(ctx context.Context, name string, args map[string]string) (
 		delete(nd.calls, id)
 		nd.mu.Unlock()
 	}()
-	if err := s.send(stream.Frame{Type: stream.TypeFuncCall, CallID: id, Name: name, Args: args}); err != nil {
+	if err := s.send(stream.Frame{Type: kind, CallID: id, Name: name, Args: args}); err != nil {
 		return nil, err
 	}
 	select {

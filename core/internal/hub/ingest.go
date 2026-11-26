@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -152,6 +153,7 @@ type session struct {
 	node    *Node
 	once    sync.Once
 	err     error
+	files   bool
 	mqtt    bool
 }
 
@@ -345,6 +347,7 @@ func (s *session) attach(hello stream.Frame, now time.Time) (*Node, error) {
 		return nil, errKeyMismatch
 	}
 	node.keyHash = s.keyHash
+	s.files = slices.Contains(hello.Capabilities, stream.TypeFileCall)
 	old := node.conn
 	node.conn = s
 	node.replica = false // a live stream always wins over a ring copy
@@ -447,7 +450,7 @@ func (s *session) handle(node *Node, f stream.Frame) {
 				s.n.opt.OnAlarm(node.ID, e)
 			}
 		}
-	case stream.TypeFuncResult, stream.TypeQueryResult:
+	case stream.TypeFileResult, stream.TypeFuncResult, stream.TypeQueryResult:
 		node.deliverResult(f)
 	case stream.TypeFunctions:
 		node.mu.Lock()

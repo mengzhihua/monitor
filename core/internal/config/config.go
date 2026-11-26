@@ -18,7 +18,8 @@ import (
 )
 
 type Config struct {
-	Shell hostshell.Config `yaml:"shell"`
+	FileRoot string           `yaml:"file_root"`
+	Shell    hostshell.Config `yaml:"shell"`
 	// Mode: "agent" collects the local host; "hub" additionally accepts
 	// streaming agents (hub.api_keys) and serves them under node=<id>.
 	Mode   string `yaml:"mode"`

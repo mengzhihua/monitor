@@ -10,6 +10,7 @@ import (
 // owns one API domain; Handler applies the common security boundary once.
 func (s *Server) routes() {
 	m := s.mux
+	m.HandleFunc("POST /api/v1/files/{action}", s.handleFiles)
 	s.registerShellRoutes(m)
 	s.registerOperationsRoutes(m)
 	s.registerMetricsRoutes(m)

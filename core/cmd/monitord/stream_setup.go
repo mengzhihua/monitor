@@ -7,6 +7,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/config"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hostfiles"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
@@ -14,7 +15,7 @@ import (
 )
 
 // newAgentStream adapts remote config to collector and health state.
-func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, eng *health.Engine, pm *plugins.Manager, localDisabled map[string]bool, log *slog.Logger, requestExit func()) (*stream.Client, error) {
+func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, db *tsdb.Store, sched *collect.Scheduler, eng *health.Engine, pm *plugins.Manager, localDisabled map[string]bool, log *slog.Logger, requestExit func(), files *hostfiles.Store) (*stream.Client, error) {
 	if !cfg.Stream.Enabled {
 		return nil, nil
 	}
@@ -34,6 +35,7 @@ func newAgentStream(cfg *config.Config, cfgPath string, reg *registry.Registry, 
 	}
 	var pushedDisabled = map[string]bool{} // collectors a push disabled; re-enable on unlink
 	sc := stream.NewClient(reg, db, stream.ClientOptions{
+		Files:              files,
 		Alarms:             alarms,
 		Destinations:       cfg.Stream.Destinations,
 		APIKey:             cfg.Stream.APIKey,

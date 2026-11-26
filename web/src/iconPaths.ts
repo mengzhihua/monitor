@@ -1,5 +1,8 @@
 // Shared, local SVG geometry. Icons inherit text color and never make network requests.
 export const iconPaths = {
+  files: 'M3 6h6l2 2h10v12H3z M3 6V4h6l2 2h8v2',
+  computer: 'M3 4h18v13H3z M12 17v3 M8 21h8',
+  list: 'M4 6h2 M9 6h12 M4 12h2 M9 12h12 M4 18h2 M9 18h12',
   setup: 'M9 5h12 M9 12h12 M9 19h12 M3 5l1 1 2-3 M3 12l1 1 2-3 M3 19l1 1 2-3',
   operations: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
   charts: 'M4 3v17h17 M7 15l4-5 4 3 6-8',

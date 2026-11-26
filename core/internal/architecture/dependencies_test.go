@@ -18,7 +18,7 @@ const internalPrefix = "github.com/mengzhihua/monitor/core/internal/"
 // libraries, but must not reach into another Monitor domain. New cross-domain
 // dependencies require an explicit review here instead of growing invisibly.
 var dependencies = map[string]string{
-	"api":     "aianalysis audit collect config health hostshell hub ingest operations plugins registry sla stream tsdb",
+	"api":     "aianalysis audit collect config health hostfiles hostshell hub ingest operations plugins registry sla stream tsdb",
 	"collect": "ingest kafka preprocess registry tsdb",
 	"config":  "collect export health hostshell plugins sla",
 	"export":  "kafka registry",
@@ -27,7 +27,7 @@ var dependencies = map[string]string{
 	"ingest":  "registry",
 	"plugins": "registry",
 	"sla":     "health",
-	"stream":  "collect health registry tsdb",
+	"stream":  "collect health hostfiles registry tsdb",
 	"trapper": "registry",
 }
 

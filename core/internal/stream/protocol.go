@@ -31,6 +31,8 @@ const (
 	TypeData        = "data"
 	TypeAlarm       = "alarm"
 	TypeAlarms      = "alarms" // full snapshot of the agent's current alarm state
+	TypeFileCall    = "file_call"
+	TypeFileResult  = "file_result"
 	TypeFuncCall    = "func_call"
 	TypeFuncResult  = "func_result"
 	TypeFunctions   = "functions"    // full replacement, negotiated through welcome capabilities

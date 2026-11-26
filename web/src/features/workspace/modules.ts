@@ -4,7 +4,7 @@ import type { PlatformInfo } from '../../api/plugins/types'
 import { pluginAccess } from '../plugins/model/pluginPolicy'
 import type { WorkspaceScope } from './model/workspaceScope'
 
-export type WorkspaceId = 'setup' | 'operations' | 'charts' | 'services' | 'alarms' | 'rules' | 'functions' | 'logs' | 'shell' | 'ai' | 'weights' | 'contexts' | 'nodes' | 'hub' | 'cloud' | 'templates' | 'config' | 'plugins'
+export type WorkspaceId = 'setup' | 'operations' | 'charts' | 'services' | 'alarms' | 'rules' | 'functions' | 'logs' | 'files' | 'shell' | 'ai' | 'weights' | 'contexts' | 'nodes' | 'hub' | 'cloud' | 'templates' | 'config' | 'plugins'
 export interface ModuleContext { hub: boolean; admin: boolean; personal: boolean; authenticated: boolean; functions: number; logs: boolean; platform?: PlatformInfo }
 export interface WorkspaceModule {
   id: WorkspaceId; label: string; title: string; description: string
@@ -26,6 +26,7 @@ export const modules: WorkspaceModule[] = [
   { id: 'ai', scope: 'node', label: 'AI 分析', title: 'AI 分析', description: '分析监控快照与生成修复方案', group: '诊断分析', component: lazyModule(() => import('../../components/AIAnalysisPanel.vue')) },
   { id: 'functions', scope: 'node', label: '进程与诊断', title: 'Functions（实时进程表等）', description: '实时进程与诊断', group: '诊断分析', available: c => c.functions > 0, component: lazyModule(() => import('../../components/FunctionsPanel.vue')) },
   { id: 'logs', scope: 'node', label: '日志', title: '日志', description: '查询当前节点日志', group: '诊断分析', available: c => c.logs, component: lazyModule(() => import('../../components/LogsPanel.vue')) },
+  { id: 'files', scope: 'global', label: '文件管理', title: '主机文件管理', description: '从我的电脑浏览主机文件', group: '管理', available: c => c.admin && c.personal && c.authenticated, component: lazyModule(() => import('../files/FileManager.vue')) },
   { id: 'shell', scope: 'node', label: 'WebShell', title: 'WebShell 主机终端', description: '本机 Shell 与 SSH 交互终端', group: '诊断分析', available: c => c.admin && c.personal && c.authenticated, component: lazyModule(() => import('../../components/ShellPanel.vue')) },
   { id: 'weights', scope: 'node', label: '异常顾问', title: '异常顾问 / 关联分析', description: '异常与指标关联', group: '诊断分析', component: lazyModule(() => import('../../components/WeightsPanel.vue')) },
   { id: 'contexts', scope: 'node', label: '指标目录', title: 'Context 总览', description: '按指标类型浏览', group: '诊断分析', component: lazyModule(() => import('../../components/ContextsPanel.vue')) },

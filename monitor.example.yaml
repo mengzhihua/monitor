@@ -1,4 +1,6 @@
 # monitord configuration. Copy to monitor.yaml (or pass -config <path>).
+# 文件管理的主机目录，默认使用 global.data_dir 下的 files 子目录。
+# file_root: /srv/shared
 # Every key is optional; the values below are the defaults.
 
 mode: agent            # agent: collect + serve locally | hub: also accept streamed nodes (see `hub:` below)

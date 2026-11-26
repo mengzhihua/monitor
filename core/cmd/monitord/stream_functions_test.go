@@ -112,7 +112,7 @@ func testAgentPluginFunctions(t *testing.T, protocol string) {
 	cfg := config.Default()
 	cfg.Stream.Enabled, cfg.Stream.Destinations, cfg.Stream.APIKey = true, []string{httpServer.URL}, "fixture-stream-key"
 	cfg.Stream.Protocol, cfg.Stream.Timeout = protocol, 3*time.Second
-	client, err := newAgentStream(cfg, "", agentReg, agentDB, scheduler, nil, manager, nil, log, nil)
+	client, err := newAgentStream(cfg, "", agentReg, agentDB, scheduler, nil, manager, nil, log, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

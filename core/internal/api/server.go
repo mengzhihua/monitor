@@ -15,6 +15,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/audit"
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hostfiles"
 	"github.com/mengzhihua/monitor/core/internal/hostshell"
 	"github.com/mengzhihua/monitor/core/internal/hub"
 	"github.com/mengzhihua/monitor/core/internal/ingest"
@@ -26,6 +27,7 @@ import (
 )
 
 type Options struct {
+	Files         *hostfiles.Store
 	Shell         hostshell.Config
 	OperationsDir string // persistent operations, personal views and AI state; empty for ephemeral tests
 	TicketWebhook string // POST handling JSON after a successful save; empty = off

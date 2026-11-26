@@ -23,12 +23,14 @@ import (
 
 	"github.com/mengzhihua/monitor/core/internal/collect"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hostfiles"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/tsdb"
 )
 
 // ClientOptions configures the agent side (`stream:` in monitor.yaml).
 type ClientOptions struct {
+	Files *hostfiles.Store
 	// Destinations are tried in order; the first that accepts the connection
 	// is used until it fails. "host:port" defaults to ws://host:port/api/v1/stream.
 	Destinations       []string
@@ -114,6 +116,9 @@ func NewClient(reg *registry.Registry, db *tsdb.Store, opt ClientOptions) *Clien
 	c.st.Protocol = c.protocolName()
 	c.st.Claimed = opt.ClaimToken != "" || opt.APIKey != ""
 	c.st.Capabilities = append([]string{}, ACLKCapabilities...)
+	if opt.Files != nil {
+		c.st.Capabilities = append(c.st.Capabilities, TypeFileCall)
+	}
 	reg.Subscribe(c.onSample)
 	return c
 }
@@ -496,7 +501,7 @@ func (c *Client) session(ctx context.Context) (connected bool, err error) {
 
 	sentFunctions := c.functions()
 	if err := sess.send(Frame{Type: TypeHello, Host: c.reg.Host, Version: c.opt.Version, Functions: sentFunctions,
-		Capabilities: ACLKCapabilities, Protocol: c.protocolName(), Claimed: c.opt.ClaimToken != "" || c.opt.APIKey != ""}); err != nil {
+		Capabilities: c.Status().Capabilities, Protocol: c.protocolName(), Claimed: c.opt.ClaimToken != "" || c.opt.APIKey != ""}); err != nil {
 		return false, err
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(c.opt.Timeout))
@@ -775,6 +780,8 @@ func (s *clientSession) reader(ctx context.Context) {
 		}
 		_ = refresh()
 		switch f.Type {
+		case TypeFileCall:
+			go s.runFile(f)
 		case TypeFuncCall:
 			go s.runFunction(ctx, f)
 		case TypeQuery:
@@ -789,6 +796,19 @@ func (s *clientSession) reader(ctx context.Context) {
 			s.fail(fmt.Errorf("hub: %s", f.Error))
 			return
 		}
+	}
+}
+
+func (s *clientSession) runFile(call Frame) {
+	res := Frame{Type: TypeFileResult, CallID: call.CallID}
+	out, err := s.c.opt.Files.Run(call.Name, call.Args)
+	if err != nil {
+		res.Error = err.Error()
+	} else {
+		res.Result = out
+	}
+	if err := s.send(res); err != nil {
+		s.fail(err)
 	}
 }
 

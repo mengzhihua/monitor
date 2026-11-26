@@ -21,6 +21,7 @@ import (
 	"github.com/mengzhihua/monitor/core/internal/discover"
 	"github.com/mengzhihua/monitor/core/internal/export"
 	"github.com/mengzhihua/monitor/core/internal/health"
+	"github.com/mengzhihua/monitor/core/internal/hostfiles"
 	"github.com/mengzhihua/monitor/core/internal/plugins"
 	"github.com/mengzhihua/monitor/core/internal/registry"
 	"github.com/mengzhihua/monitor/core/internal/stream"
@@ -211,7 +212,12 @@ func runDaemonRuntime(parent context.Context, cfg *config.Config, cfgPath string
 			time.AfterFunc(2*time.Second, func() { _ = requestRestart() })
 		})
 	}
-	sc, err = newAgentStream(cfg, cfgPath, reg, db, sched, eng, pm, localDisabled, log, requestExit)
+	files := &hostfiles.Store{Dir: cfg.FileRoot}
+	if files.Dir == "" {
+		files.Dir = filepath.Join(cfg.Global.DataDir, "files")
+		files.Create = true
+	}
+	sc, err = newAgentStream(cfg, cfgPath, reg, db, sched, eng, pm, localDisabled, log, requestExit, files)
 	if err != nil {
 		return err
 	}
@@ -232,6 +238,7 @@ func runDaemonRuntime(parent context.Context, cfg *config.Config, cfgPath string
 
 	apiOpt := serverOptions(cfg, cfgPath, eng, pm, sc, auditLog, log)
 
+	apiOpt.Files = files
 	var srv *api.Server
 	nodes, cluster, err := configureHub(cfg, db, &apiOpt, &srv, log)
 	if err != nil {
