@@ -1,0 +1,406 @@
+.desktop-shell {
+  --dock-width: 72px;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: #0a293a;
+  color: #eef7ff;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Microsoft YaHei',
+    sans-serif;
+}
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  background: none;
+}
+button:disabled {
+  opacity: 0.47;
+  cursor: default;
+}
+button:focus-visible {
+  outline: 2px solid #86beff;
+  outline-offset: -2px;
+}
+.app-dock {
+  width: var(--dock-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 5px 8px;
+  background: linear-gradient(170deg, #061728, #0e2335 55%, #091824);
+  border-right: 1px solid #ffffff1a;
+  z-index: 2;
+  overflow: auto;
+}
+.brand {
+  height: 62px;
+  display: grid;
+  place-items: center;
+  color: #aee6ff;
+  border-bottom: 1px solid #ffffff21;
+  margin-bottom: 5px;
+}
+.app-dock button {
+  flex-direction: column;
+  min-height: 54px;
+  padding: 5px 2px;
+  gap: 4px;
+  font-size: 11px;
+  border-radius: 6px;
+  color: #d3e1ec;
+}
+.app-dock button[aria-current='page'],
+.app-dock button:hover,
+.taskbar button:hover {
+  background: #ffffff24;
+  color: white;
+}
+.app-dock .leave {
+  margin-top: auto;
+}
+.surface {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: #102b3d;
+  background-image:
+    radial-gradient(ellipse at 23% 12%, #016899a8 0%, transparent 35%),
+    radial-gradient(ellipse at 33% 54%, #d99a29e6 0%, #945b22b8 21%, transparent 47%),
+    radial-gradient(ellipse at 85% 30%, #007784aa 0%, transparent 48%),
+    linear-gradient(144deg, #041b39 0%, #12485a 33%, #46260e 64%, #101a22 90%);
+}
+.desktop-space {
+  position: absolute;
+  inset: 0 0 38px;
+  padding: 26px 20px;
+  overflow: auto;
+}
+.clock-widget {
+  position: absolute;
+  top: clamp(20px, 4vw, 54px);
+  right: clamp(18px, 4vw, 60px);
+}
+.shortcuts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  width: max-content;
+}
+.shortcuts button {
+  width: 100px;
+  min-height: 87px;
+  flex-direction: column;
+  border-radius: 8px;
+  padding: 8px 3px;
+  font-size: 13px;
+  color: white;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 5px #102438;
+}
+.shortcuts button:hover,
+.shortcuts button:focus-visible {
+  background: #ffffff20;
+}
+.app-art {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  box-shadow:
+    inset 0 1px 1px #ffffff91,
+    0 4px 9px #041a343a;
+  color: white;
+}
+.app-art.files {
+  background: linear-gradient(148deg, #70bfff, #2b62df 74%);
+}
+.app-art.hosts {
+  background: linear-gradient(150deg, #58d9c3, #167c8c);
+}
+.app-art.recent {
+  background: linear-gradient(150deg, #ffc795, #e77a45);
+}
+.app-art.help {
+  background: linear-gradient(150deg, #b6aaff, #7356c8);
+}
+.app-window {
+  position: absolute;
+  inset: 0 0 38px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  color: #304157;
+}
+.app-window.floating {
+  --w: min(84%, 1140px);
+  --h: 76%;
+  inset: auto;
+  width: var(--w);
+  height: var(--h);
+  left: clamp(0px, var(--left, 8%), 100% - var(--w));
+  top: clamp(0px, var(--top, 7%), 100% - var(--h) - 38px);
+  border-radius: 10px;
+  box-shadow: 0 20px 85px #06182880;
+  border: 1px solid #ffffffa6;
+}
+.titlebar,
+.taskbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.titlebar {
+  height: 36px;
+  padding-left: 15px;
+  background: #f0f4f9;
+  border-bottom: 1px solid #d6e0eb;
+}
+.titlebar h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+  outline: none;
+}
+.titlebar button {
+  height: 100%;
+  width: 36px;
+  font-size: 20px;
+}
+.titlebar button:hover {
+  background: #dce7f6;
+}
+.file-content {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.utility {
+  flex: 1;
+  overflow: auto;
+  padding: clamp(18px, 3vw, 42px);
+  background: #fbfcfe;
+}
+.utility header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.utility h3 {
+  font-size: 21px;
+  margin: 0 0 10px;
+}
+.utility p {
+  color: #586a7e;
+  margin: 4px 0 18px;
+}
+.utility button {
+  border: 1px solid #ced9e6;
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: white;
+}
+.utility button:hover:not(:disabled) {
+  background: #ecf3ff;
+}
+.utility ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  max-width: 900px;
+}
+.utility li {
+  border-bottom: 1px solid #dce4ec;
+  padding: 12px 0;
+}
+.host-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.host-symbol {
+  color: #298998;
+}
+.host-info > div {
+  flex: 1;
+  min-width: 100px;
+}
+.host-info strong,
+.host-info span,
+.recent-place strong,
+.recent-place small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.host-info div span,
+.recent-place small {
+  font-size: 12px;
+  color: #61748a;
+  margin-top: 4px;
+}
+.host-info .live {
+  color: #137459;
+}
+.host-info .stale {
+  color: #93620e;
+}
+.utility .recent-place {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+}
+.guide h4 {
+  margin-bottom: 6px;
+}
+.guide p {
+  max-width: 560px;
+  line-height: 1.7;
+}
+.taskbar {
+  margin-top: auto;
+  height: 38px;
+  gap: 5px;
+  padding: 2px 8px;
+  background: #071727cf;
+  border-top: 1px solid #ffffff24;
+  z-index: 1;
+}
+.taskbar button {
+  height: 30px;
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.tasks {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tasks [aria-pressed='true'] {
+  background: #ffffff29;
+  box-shadow: inset 0 -2px #8ecdfa;
+}
+.connections {
+  margin-left: auto;
+}
+.connections i {
+  width: 6px;
+  height: 6px;
+  background: #91a0af;
+  border-radius: 50%;
+}
+.connections i.live {
+  background: #7cddbb;
+}
+@media (max-width: 720px) {
+  .desktop-shell {
+    --dock-width: 50px;
+  }
+  .app-dock {
+    padding-inline: 2px;
+  }
+  .brand {
+    height: 45px;
+  }
+  .app-dock button {
+    min-height: 49px;
+    font-size: 10px;
+  }
+  .desktop-space {
+    padding: 14px 4px;
+  }
+  .shortcuts {
+    gap: 4px;
+  }
+  .shortcuts button {
+    width: 84px;
+    min-height: 78px;
+  }
+  .app-art {
+    width: 45px;
+    height: 45px;
+  }
+  .app-window.floating {
+    inset: 0 0 38px;
+    width: auto;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+  }
+  .maximize {
+    display: none;
+  }
+  .taskbar {
+    padding-inline: 3px;
+    gap: 1px;
+  }
+  .taskbar button {
+    padding-inline: 5px;
+  }
+  .connections {
+    font-size: 10px;
+  }
+  .host-info {
+    gap: 6px;
+  }
+  .host-symbol {
+    display: none;
+  }
+}
+@media (max-height: 510px) {
+  .shortcuts {
+    display: grid;
+    grid-template-rows: repeat(2, auto);
+    grid-auto-flow: column;
+  }
+  .app-dock {
+    gap: 0;
+  }
+  .app-dock button {
+    min-height: 40px;
+  }
+}
+
+@media (min-width: 721px) {
+  .floating .titlebar h2 {
+    cursor: move;
+    touch-action: none;
+    user-select: none;
+    align-self: stretch;
+  }
+}

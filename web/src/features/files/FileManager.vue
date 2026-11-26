@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import FileDesktop from './FileDesktop.vue'
 import AppIcon from '../../components/AppIcon.vue'
 import { hubApi } from '../../api/hub/client'
 import type { NodeInfo } from '../../api/hub/types'
@@ -12,6 +13,32 @@ const places = ref<Place[]>([{ node: null, path: [] }])
 const index = ref(0)
 const place = computed(() => places.value[index.value]!)
 const nodes = ref<NodeInfo[]>([])
+const recent = ref<{ nodeID: string; path: string[] }[]>([])
+const inventoryError = ref('')
+const loadingNodes = ref(false)
+let inventoryRequest: AbortController | undefined
+let inventoryTimer: number
+
+async function loadNodes() {
+  inventoryRequest?.abort()
+  const request = new AbortController()
+  inventoryRequest = request
+  loadingNodes.value = true
+  inventoryError.value = ''
+  try {
+    const result = await hubApi.nodes(request.signal)
+    if (!request.signal.aborted) nodes.value = result.nodes
+  } catch (reason) {
+    if (!request.signal.aborted) inventoryError.value = (reason as Error).message
+  } finally {
+    if (!request.signal.aborted) loadingNodes.value = false
+  }
+}
+
+function rememberDirectory(nodeID: string, path: string[]) {
+  const existing = recent.value.filter(r => r.nodeID !== nodeID || r.path.join('/') !== path.join('/'))
+  recent.value = [{ nodeID, path: [...path] }, ...existing].slice(0, 20)
+}
 const files = ref<Entry[]>([])
 const selected = ref<Entry | null>(null)
 const filter = ref('')
@@ -80,10 +107,12 @@ async function refresh() {
   try {
     if (place.value.node) {
       const list = await call<Entry[]>('list', { path: filePath() })
-      if (current === epoch) files.value = list
+      if (current === epoch) {
+        files.value = list
+        rememberDirectory(place.value.node!.id, place.value.path)
+      }
     } else {
-      const value = await hubApi.nodes(controller.signal)
-      if (current === epoch) nodes.value = value.nodes
+      await loadNodes()
     }
   } catch (e) {
     if (current === epoch) error.value = String((e as Error).message)
@@ -283,9 +312,12 @@ async function read(f: Entry, show: boolean) {
 }
 onMounted(() => {
   windowDialog.value?.showModal()
-  void refresh()
+  void loadNodes()
+  inventoryTimer = window.setInterval(() => { if (!document.hidden && !loadingNodes.value) void loadNodes() }, 30000)
 })
 onBeforeUnmount(() => {
+  clearInterval(inventoryTimer)
+  inventoryRequest?.abort()
   epoch++
   controller.abort()
   clearPreview()
@@ -295,6 +327,8 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body"
     ><dialog ref="windowDialog" class="explorer" @cancel.prevent="$emit('close')" aria-label="文件管理">
+      <FileDesktop :nodes="nodes" :recent="recent" :busy="busy" :inventory-error="inventoryError" :loading="loadingNodes"
+        @refresh="loadNodes" @navigate="go" @exit="$emit('close')">
       <aside class="rail">
         <h1><AppIcon name="files" :size="23" /> 文件管理</h1>
         <button class="home" :class="{ active: !place.node }" @click="go(null)">
@@ -310,13 +344,9 @@ onBeforeUnmount(() => {
         >
           <AppIcon name="server" :size="15" />{{ n.hostname }}
         </button>
-        <button class="exit" @click="$emit('close')"><AppIcon name="arrow-left" /> 返回监控</button>
       </aside>
       <div class="browser">
         <header>
-          <button class="mobile-exit" aria-label="返回监控" @click="$emit('close')">
-            <AppIcon name="close" />
-          </button>
           <button :disabled="!index" aria-label="后退" @click="step(-1)"><AppIcon name="arrow-left" /></button
           ><button :disabled="index >= places.length - 1" aria-label="前进" @click="step(1)">
             <AppIcon name="arrow-right" />
@@ -379,7 +409,7 @@ onBeforeUnmount(() => {
             @drop.prevent="$event.dataTransfer?.files[0] && uploadFile($event.dataTransfer.files[0])"
           >
             <h2>{{ title }}</h2>
-            <p v-if="error" role="alert">{{ error }} <button @click="refresh">重新读取</button></p>
+            <p v-if="error || (!place.node && inventoryError)" role="alert">{{ error || inventoryError }} <button @click="refresh">重新读取</button></p>
             <p v-if="busy" role="status">{{ progress || '正在处理…' }}</p>
             <div :class="['items', layout]">
               <button
@@ -448,6 +478,7 @@ onBeforeUnmount(() => {
           </button>
         </footer>
       </div>
+      </FileDesktop>
       <dialog ref="dialog" class="prompt" @cancel.stop @close="clearPreview">
         <form @submit.prevent="submit">
           <h3>
