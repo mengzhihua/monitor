@@ -19,7 +19,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	action := r.PathValue("action")
 	switch action {
-	case "list", "read", "mkdir", "upload", "rename", "delete", "read-chunk", "upload-start", "upload-chunk", "upload-finish", "upload-cancel":
+	case "list", "read", "mkdir", "upload", "rename", "delete", "copy", "move", "zip", "unzip", "read-chunk", "upload-start", "upload-chunk", "upload-finish", "upload-cancel":
 	default:
 		http.NotFound(w, r)
 		return
