@@ -80,6 +80,11 @@ h1 {
   text-align: left;
   overflow-wrap: anywhere;
 }
+.group {
+  margin: 16px 8px 4px;
+  color: #718098;
+  font-size: 12px;
+}
 .rail .side-host {
   padding-left: 25px;
   font-size: 13px;
@@ -121,6 +126,14 @@ header nav {
   white-space: nowrap;
   padding: 0 5px;
 }
+header nav input {
+  width: 140px;
+  margin-left: 6px;
+  border: 0;
+  border-left: 1px solid #e0e5ed;
+  background: transparent;
+  padding: 6px 8px;
+}
 header label {
   padding: 6px 9px;
   gap: 6px;
@@ -147,6 +160,12 @@ header input {
 .spacer {
   flex: 1;
 }
+.split {
+  width: 1px;
+  align-self: stretch;
+  background: #e0e5ed;
+  margin: 4px 2px;
+}
 select {
   padding: 4px;
   border: 1px solid #dbe1eb;
@@ -162,6 +181,11 @@ select {
   padding: 20px;
   overflow: auto;
   overscroll-behavior: contain;
+  outline: none;
+}
+.pane.dropping {
+  background: #f3f7ff;
+  box-shadow: inset 0 0 0 2px #2266cd;
 }
 h2 {
   font-size: 19px;
@@ -195,6 +219,59 @@ h2 {
 }
 .list .item small {
   margin-left: auto;
+}
+.cols,
+.sheet .item.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) 88px 72px 148px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.cols {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: 4px;
+  background: #fff;
+  border-bottom: 1px solid #e0e5ed;
+}
+.cols button {
+  justify-content: flex-start;
+  color: #60718a;
+  font-size: 12px;
+  padding: 6px 4px;
+}
+.sheet .item.row {
+  text-align: left;
+}
+.sheet .item.row small {
+  margin-left: 0;
+}
+.namecell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.grid .namecell {
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 148px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #d5dce6;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px #152d4b24;
+}
+.menu button {
+  width: 100%;
+  justify-content: flex-start;
 }
 .item.chosen {
   background: #e5efff;
@@ -370,6 +447,14 @@ pre {
   }
   .items.grid {
     grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  }
+  .cols,
+  .sheet .item.row {
+    grid-template-columns: minmax(0, 1fr) 72px;
+  }
+  .cols button:nth-child(n + 3),
+  .sheet .item.row small:nth-child(n + 3) {
+    display: none;
   }
   .toolbar button {
     padding: 5px;

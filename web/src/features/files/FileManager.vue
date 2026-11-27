@@ -40,7 +40,7 @@ function rememberDirectory(nodeID: string, path: string[]) {
   recent.value = [{ nodeID, path: [...path] }, ...existing].slice(0, 20)
 }
 const files = ref<Entry[]>([])
-const selected = ref<Entry | null>(null)
+const picked = ref<string[]>([])
 const filter = ref('')
 const layout = ref<'grid' | 'list'>(
   sessionStorage.getItem('monitor.files.layout') === 'list' ? 'list' : 'grid',
@@ -56,6 +56,9 @@ const name = ref('')
 const preview = ref('')
 const imageURL = ref('')
 const sort = ref('name')
+const address = ref('')
+const menu = ref<{ x: number; y: number; name: string } | null>(null)
+const dropping = ref(false)
 const page = ref(1)
 const progress = ref('')
 let controller = new AbortController()
@@ -69,10 +72,24 @@ const entries = computed(() =>
     .sort(
       (a, b) =>
         Number(b.kind === 'folder') - Number(a.kind === 'folder') ||
-        (sort.value === 'size' ? b.size - a.size : sort.value === 'time' ? b.modified - a.modified : 0) ||
+        (sort.value === 'size'
+          ? b.size - a.size
+          : sort.value === 'time'
+            ? b.modified - a.modified
+            : sort.value === 'kind'
+              ? a.kind.localeCompare(b.kind)
+              : 0) ||
         a.name.localeCompare(b.name, 'zh-CN', { numeric: true }),
     ),
 )
+const selection = computed(() => entries.value.filter((f) => picked.value.includes(f.name)))
+const menuEntry = computed(() => entries.value.find((f) => f.name === menu.value?.name) ?? null)
+const selected = computed(() => selection.value[0] ?? null)
+const selectedBytes = computed(() => selection.value.reduce((sum, f) => sum + (f.kind === 'file' ? f.size : 0), 0))
+const kindLabel = (f: Entry) =>
+  f.kind === 'folder' ? '文件夹' : f.kind === 'other' ? '其他' : f.name.includes('.') ? f.name.split('.').pop()!.toUpperCase() : '文件'
+const when = (f: Entry) => (f.modified ? new Date(f.modified * 1000).toLocaleString() : '')
+const pageItems = computed(() => entries.value.slice((page.value - 1) * 100, page.value * 100))
 const bytes = (n: number) =>
   n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KiB' : (n / 1048576).toFixed(1) + ' MiB'
 const title = computed(() => place.value.path.at(-1) || place.value.node?.hostname || '我的电脑')
@@ -94,7 +111,8 @@ function reset() {
   controller = new AbortController()
   progress.value = ''
   page.value = 1
-  selected.value = null
+  picked.value = []
+  menu.value = null
   error.value = ''
   busy.value = false
   files.value = []
@@ -124,11 +142,65 @@ function go(node: NodeInfo | null, path: string[] = []) {
   places.value.splice(index.value + 1, Infinity, { node, path })
   index.value++
   filter.value = ''
+  address.value = node ? '/' + path.join('/') : ''
   void refresh()
+}
+function up() {
+  if (!place.value.node) return
+  if (place.value.path.length) go(place.value.node, place.value.path.slice(0, -1))
+  else go(null)
+}
+function jump() {
+  if (!place.value.node) return
+  go(place.value.node, address.value.split(/[/\\]+/).filter((part) => part && part !== '.' && part !== '..'))
+}
+function choose(f: Entry, event: MouseEvent) {
+  menu.value = null
+  const names = pageItems.value.map((item) => item.name)
+  if (event.shiftKey && picked.value.length) {
+    const anchor = names.indexOf(picked.value[picked.value.length - 1]!)
+    const target = names.indexOf(f.name)
+    const [from, to] = anchor < target ? [anchor, target] : [target, anchor]
+    picked.value = names.slice(Math.max(0, from), to + 1)
+    return
+  }
+  if (event.ctrlKey || event.metaKey) {
+    picked.value = picked.value.includes(f.name) ? picked.value.filter((name) => name !== f.name) : [...picked.value, f.name]
+    return
+  }
+  picked.value = [f.name]
+}
+function showMenu(event: MouseEvent, f?: Entry) {
+  event.preventDefault()
+  if (f && !picked.value.includes(f.name)) picked.value = [f.name]
+  menu.value = {
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 180)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 240)),
+    name: f?.name || '',
+  }
+}
+function onPaneKey(event: KeyboardEvent) {
+  const tag = (event.target as HTMLElement).tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+  if (event.key === 'Backspace') {
+    event.preventDefault()
+    up()
+  } else if (event.key === 'Delete' && selection.value.length) {
+    event.preventDefault()
+    ask('delete')
+  } else if (event.key === 'F2' && selection.value.length === 1) {
+    event.preventDefault()
+    ask('rename')
+  }
+}
+function openRecent(item: { nodeID: string; path: string[] }) {
+  const node = nodes.value.find((n) => n.id === item.nodeID)
+  if (node && node.status !== 'offline') go(node, item.path)
 }
 function step(delta: number) {
   index.value += delta
   filter.value = ''
+  address.value = place.value.node ? '/' + place.value.path.join('/') : ''
   void refresh()
 }
 function view(value: 'grid' | 'list') {
@@ -136,7 +208,8 @@ function view(value: 'grid' | 'list') {
   sessionStorage.setItem('monitor.files.layout', value)
 }
 function open(f: Entry) {
-  selected.value = f
+  picked.value = [f.name]
+  menu.value = null
   if (f.kind === 'folder') go(place.value.node, [...place.value.path, f.name])
   else if (f.kind === 'file') void read(f, true)
 }
@@ -167,7 +240,27 @@ function submit() {
     return
   }
   dialog.value?.close()
+  if (mode.value === 'delete') {
+    void remove(picked.value.length ? [...picked.value] : [selected.value!.name])
+    return
+  }
   void act(mode.value, { path: filePath(mode.value === 'mkdir' ? n : selected.value!.name), name: n })
+}
+async function remove(names: string[]) {
+  const current = epoch
+  busy.value = true
+  error.value = ''
+  try {
+    for (const item of names) {
+      if (current !== epoch) return
+      await call('delete', { path: filePath(item) })
+    }
+    if (current === epoch) await refresh()
+  } catch (e) {
+    if (current === epoch) error.value = (e as Error).message
+  } finally {
+    if (current === epoch) busy.value = false
+  }
 }
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement,
@@ -331,6 +424,7 @@ onBeforeUnmount(() => {
         @refresh="loadNodes" @navigate="go" @exit="$emit('close')">
       <aside class="rail">
         <h1><AppIcon name="files" :size="23" /> 文件管理</h1>
+        <p class="group">位置</p>
         <button class="home" :class="{ active: !place.node }" @click="go(null)">
           <AppIcon name="computer" /> 我的电脑
         </button>
@@ -338,12 +432,18 @@ onBeforeUnmount(() => {
           v-for="n in nodes"
           :key="n.id"
           class="side-host"
-          :class="{ active: place.node?.id === n.id }"
+          :class="{ active: place.node?.id === n.id && !place.path.length }"
           :disabled="n.status === 'offline'"
           @click="go(n)"
         >
           <AppIcon name="server" :size="15" />{{ n.hostname }}
         </button>
+        <template v-if="recent.length">
+          <p class="group">最近</p>
+          <button v-for="(item, i) in recent" :key="i" class="side-host" @click="openRecent(item)">
+            <AppIcon name="files" :size="15" />{{ item.path.at(-1) || '根目录' }}
+          </button>
+        </template>
       </aside>
       <div class="browser">
         <header>
@@ -359,6 +459,13 @@ onBeforeUnmount(() => {
               ><span>›</span
               ><button @click="go(place.node, place.path.slice(0, i + 1))">{{ part }}</button></template
             >
+            <input
+              v-if="place.node"
+              v-model="address"
+              aria-label="地址"
+              placeholder="/目录"
+              @keydown.enter.prevent="jump"
+            />
           </nav>
           <button aria-label="刷新" @click="refresh"><AppIcon name="refresh" /></button>
           <label
@@ -371,13 +478,18 @@ onBeforeUnmount(() => {
         </header>
         <div class="toolbar">
           <template v-if="place.node"
-            ><button :disabled="busy" @click="ask('mkdir')"><AppIcon name="files" />新建文件夹</button
+            ><button :disabled="busy" @click="up">上级</button><span class="split" />
+            <button :disabled="busy" @click="ask('mkdir')"><AppIcon name="files" />新建文件夹</button
             ><button :disabled="busy" @click="uploader?.click()"><AppIcon name="save" />上传</button
-            ><input ref="uploader" type="file" hidden :disabled="busy" @change="upload" />
-            <template v-if="selected"
-              ><button :disabled="busy" @click="ask('rename')">重命名</button
+            ><input ref="uploader" type="file" hidden :disabled="busy" @change="upload" /><span class="split" />
+            <template v-if="selection.length"
+              ><button :disabled="busy || selection.length !== 1" @click="ask('rename')">重命名</button
               ><button :disabled="busy" @click="ask('delete')">删除</button
-              ><button v-if="selected.kind === 'file'" :disabled="busy" @click="read(selected, false)">
+              ><button
+                v-if="selection.length === 1 && selection[0]!.kind === 'file'"
+                :disabled="busy"
+                @click="read(selection[0]!, false)"
+              >
                 下载
               </button></template
             ></template
@@ -405,13 +517,25 @@ onBeforeUnmount(() => {
         <div class="body">
           <div
             class="pane"
-            @dragover.prevent
-            @drop.prevent="$event.dataTransfer?.files[0] && uploadFile($event.dataTransfer.files[0])"
+            :class="{ dropping }"
+            tabindex="0"
+            @dragover.prevent="dropping = true"
+            @dragleave="dropping = false"
+            @drop.prevent="dropping = false; $event.dataTransfer?.files[0] && uploadFile($event.dataTransfer.files[0])"
+            @click="menu = null"
+            @contextmenu="showMenu($event)"
+            @keydown="onPaneKey"
           >
             <h2>{{ title }}</h2>
             <p v-if="error || (!place.node && inventoryError)" role="alert">{{ error || inventoryError }} <button @click="refresh">重新读取</button></p>
             <p v-if="busy" role="status">{{ progress || '正在处理…' }}</p>
-            <div :class="['items', layout]">
+            <div v-if="place.node && layout === 'list'" class="cols" role="row">
+              <button type="button" :aria-pressed="sort === 'name'" @click="sort = 'name'">名称</button>
+              <button type="button" :aria-pressed="sort === 'size'" @click="sort = 'size'">大小</button>
+              <button type="button" :aria-pressed="sort === 'kind'" @click="sort = 'kind'">类型</button>
+              <button type="button" :aria-pressed="sort === 'time'" @click="sort = 'time'">修改时间</button>
+            </div>
+            <div :class="['items', layout, { sheet: place.node && layout === 'list' }]">
               <button
                 v-for="n in !place.node ? hosts : []"
                 :key="n.id"
@@ -424,26 +548,40 @@ onBeforeUnmount(() => {
                 ><small><i :class="n.status" />{{ status(n) }} · {{ n.os }}</small>
               </button>
               <button
-                v-for="f in entries.slice((page - 1) * 100, page * 100)"
+                v-for="f in pageItems"
                 :key="f.name"
                 class="item"
-                :class="{ chosen: selected?.name === f.name }"
-                :aria-pressed="selected?.name === f.name"
-                @click="selected = f"
-                @dblclick="open(f)"
+                :class="{ chosen: picked.includes(f.name), row: layout === 'list' }"
+                :aria-pressed="picked.includes(f.name)"
+                @click.stop="choose(f, $event)"
+                @dblclick.stop="open(f)"
+                @contextmenu.stop="showMenu($event, f)"
                 @keydown.enter.prevent="open(f)"
               >
-                <span v-if="f.kind === 'folder'" class="folder" /><span
-                  v-else
-                  class="paper"
-                  :data-ext="f.name.split('.').pop()?.toLowerCase()"
-                  >{{
-                    f.name.includes('.') ? f.name.split('.').pop()?.slice(0, 5).toUpperCase() : 'FILE'
-                  }}</span
-                >
-                <span>{{ f.name }}</span
-                ><small v-if="layout === 'list'">{{ f.kind === 'folder' ? '文件夹' : bytes(f.size) }}</small>
+                <span class="namecell">
+                  <span v-if="f.kind === 'folder'" class="folder" /><span
+                    v-else
+                    class="paper"
+                    :data-ext="f.name.split('.').pop()?.toLowerCase()"
+                    >{{
+                      f.name.includes('.') ? f.name.split('.').pop()?.slice(0, 5).toUpperCase() : 'FILE'
+                    }}</span
+                  ><span>{{ f.name }}</span>
+                </span>
+                <template v-if="layout === 'list'">
+                  <small>{{ f.kind === 'folder' ? '—' : bytes(f.size) }}</small>
+                  <small>{{ kindLabel(f) }}</small>
+                  <small>{{ when(f) }}</small>
+                </template>
               </button>
+            </div>
+            <div v-if="menu" class="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @click.stop>
+              <button v-if="menuEntry" @click="open(menuEntry)">打开</button>
+              <button :disabled="busy || !place.node" @click="menu = null; ask('mkdir')">新建文件夹</button>
+              <button :disabled="busy || !place.node" @click="menu = null; uploader?.click()">上传</button>
+              <button v-if="menuEntry" :disabled="busy" @click="menu = null; picked = [menuEntry.name]; ask('rename')">重命名</button>
+              <button v-if="menuEntry?.kind === 'file'" :disabled="busy" @click="picked = [menuEntry.name]; menu = null; read(menuEntry, false)">下载</button>
+              <button v-if="selection.length" :disabled="busy" @click="menu = null; ask('delete')">删除</button>
             </div>
             <p v-if="!busy && !error && !(place.node ? entries : hosts).length">
               {{ filter ? '没有匹配项' : place.node ? '此文件夹为空' : '暂无已注册主机' }}
@@ -462,12 +600,16 @@ onBeforeUnmount(() => {
                   : place.node?.os || '主机位置'
               }}
             </p>
-            <p v-if="selected">修改时间<br />{{ new Date(selected.modified * 1000).toLocaleString() }}</p>
+            <p v-if="selected">修改时间<br />{{ when(selected) }}</p>
+            <p v-if="selection.length > 1">已选 {{ selection.length }} 项<br />{{ bytes(selectedBytes) }}</p>
             <p v-if="place.node">所在路径<br />/{{ place.path.join('/') }}</p>
           </aside>
         </div>
         <footer>
-          <span>{{ place.node ? entries.length : hosts.length }} {{ place.node ? '个项目' : '台主机' }}</span>
+          <span
+            >{{ place.node ? entries.length : hosts.length }} {{ place.node ? '个项目' : '台主机'
+            }}<template v-if="selection.length"> · 已选 {{ selection.length }} 项<template v-if="selectedBytes">，{{ bytes(selectedBytes) }}</template></template></span
+          >
           <div v-if="place.node && entries.length > 100">
             <button :disabled="page === 1" @click="page--">上一页</button> {{ page }} /
             {{ Math.ceil(entries.length / 100) }}
@@ -496,7 +638,9 @@ onBeforeUnmount(() => {
             ><img v-if="imageURL" :src="imageURL" :alt="selected?.name" />
             <pre v-else>{{ preview }}</pre>
           </template>
-          <p v-else-if="mode === 'delete'">删除「{{ selected?.name }}」？仅可删除文件或空目录。</p>
+          <p v-else-if="mode === 'delete'">
+            {{ selection.length > 1 ? '删除选中的 ' + selection.length + ' 项？' : '删除「' + selected?.name + '」？' }}仅可删除文件或空目录。
+          </p>
           <input v-else v-model="name" required autofocus aria-label="名称" maxlength="255" />
           <div>
             <button type="button" @click="dialog?.close()">{{ mode === 'preview' ? '关闭' : '取消' }}</button
