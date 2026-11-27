@@ -58,7 +58,7 @@ func (s *Store) Run(action string, args map[string]string) (json.RawMessage, err
 	}
 	defer root.Close()
 	path := args["path"]
-	if !valid(path) || path == "." && action != "list" {
+	if !valid(path) || path == "." && action != "list" && action != "zip" {
 		return nil, errors.New("无效路径")
 	}
 	path = filepath.FromSlash(path)
@@ -155,6 +155,12 @@ func (s *Store) Run(action string, args map[string]string) (json.RawMessage, err
 		err = root.Rename(path, dst)
 	case "delete":
 		err = root.Remove(path)
+	case "copy", "move":
+		return nil, s.relocate(root, action, path, args["dest"])
+	case "zip":
+		return nil, s.archive(root, path, args["name"], args["names"])
+	case "unzip":
+		return nil, s.extract(root, path, args["dest"])
 	default:
 		return nil, errors.New("未知文件操作")
 	}

@@ -48,13 +48,16 @@ const layout = ref<'grid' | 'list'>(
 )
 const icons = ref(sessionStorage.getItem('monitor.files.icons') === 'small' ? 'small' : 'large')
 const notice = ref('')
+const clip = ref<{ op: 'copy' | 'cut'; node: string; paths: string[] } | null>(null)
+const shareURL = ref('')
+const pendingPick = ref('')
 const details = ref(false)
 const error = ref('')
 const busy = ref(false)
 const uploader = ref<HTMLInputElement>()
 const dialog = ref<HTMLDialogElement>()
 const windowDialog = ref<HTMLDialogElement>()
-const mode = ref<'mkdir' | 'mkfile' | 'rename' | 'delete' | 'preview'>('mkdir')
+const mode = ref<'mkdir' | 'mkfile' | 'rename' | 'delete' | 'preview' | 'share'>('mkdir')
 const name = ref('')
 const preview = ref('')
 const imageURL = ref('')
@@ -147,6 +150,10 @@ async function refresh() {
       const list = await call<Entry[]>('list', { path: filePath() })
       if (current === epoch) {
         files.value = list
+        if (pendingPick.value) {
+          picked.value = [pendingPick.value]
+          pendingPick.value = ''
+        }
         rememberDirectory(place.value.node!.id, place.value.path)
       }
     } else {
@@ -226,6 +233,62 @@ function order(key: string) {
 function selectPage() {
   picked.value = pageItems.value.map((item) => item.name)
 }
+function nodeKey() {
+  if (!place.value.node) return ''
+  return place.value.node.local ? 'local' : place.value.node.id
+}
+function remember(op: 'copy' | 'cut') {
+  if (!selection.value.length || !place.value.node) return
+  clip.value = { op, node: nodeKey(), paths: selection.value.map((item) => filePath(item.name)) }
+  notice.value = op === 'cut' ? '已剪切，打开目标文件夹后粘贴' : '已复制，打开目标文件夹后粘贴'
+  menu.value = null
+}
+async function paste() {
+  if (!clip.value || clip.value.node !== nodeKey() || !place.value.node) return
+  const current = epoch
+  const saved = clip.value
+  busy.value = true
+  error.value = ''
+  try {
+    for (const item of saved.paths) {
+      if (current !== epoch) return
+      await call(saved.op === 'cut' ? 'move' : 'copy', { path: item, dest: filePath() })
+    }
+    if (saved.op === 'cut') clip.value = null
+    if (current === epoch) await refresh()
+  } catch (e) {
+    if (current === epoch) error.value = (e as Error).message
+  } finally {
+    if (current === epoch) busy.value = false
+  }
+}
+async function pack() {
+  if (!selection.value.length) return
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')
+  await act('zip', {
+    path: filePath(),
+    names: JSON.stringify(selection.value.map((item) => item.name)),
+    name: '归档' + stamp + '.zip',
+  })
+}
+function share() {
+  const url = new URL(location.href)
+  url.searchParams.set('view', 'files')
+  url.searchParams.delete('token')
+  const key = nodeKey()
+  if (key && key !== 'local') url.searchParams.set('node', key)
+  else url.searchParams.delete('node')
+  const parts = [...place.value.path]
+  if (selection.value.length === 1) parts.push(selection.value[0]!.name)
+  url.searchParams.set('file', parts.join('/'))
+  shareURL.value = url.toString()
+  mode.value = 'share'
+  menu.value = null
+  dialog.value?.showModal()
+  void navigator.clipboard.writeText(shareURL.value).then(() => {
+    notice.value = '已复制分享链接'
+  }).catch(() => {})
+}
 function toggle(f: Entry) {
   picked.value = picked.value.includes(f.name) ? picked.value.filter((name) => name !== f.name) : [...picked.value, f.name]
 }
@@ -292,7 +355,7 @@ async function act(action: string, args: Record<string, string>) {
   }
 }
 function submit() {
-  if (mode.value === 'preview') return
+  if (mode.value === 'preview' || mode.value === 'share') return
   const n = name.value.trim()
   if (mode.value !== 'delete' && (!n || n === '.' || n === '..' || /[\\/:]/.test(n))) {
     error.value = '请输入有效的单个名称'
@@ -470,9 +533,21 @@ async function read(f: Entry, show: boolean) {
     }
   }
 }
+async function openShared() {
+  await loadNodes()
+  const params = new URL(location.href).searchParams
+  const file = params.get('file')
+  if (!file) return
+  const wanted = params.get('node')
+  const node = nodes.value.find((item) => (wanted ? item.id === wanted : item.local))
+  if (!node || node.status === 'offline') return
+  const parts = file.split('/').filter((part) => part && part !== '.' && part !== '..')
+  pendingPick.value = parts.at(-1) || ''
+  go(node, parts.slice(0, -1))
+}
 onMounted(() => {
   windowDialog.value?.showModal()
-  void loadNodes()
+  void openShared()
   inventoryTimer = window.setInterval(() => { if (!document.hidden && !loadingNodes.value) void loadNodes() }, 30000)
 })
 onBeforeUnmount(() => {
@@ -551,6 +626,12 @@ onBeforeUnmount(() => {
             ><button :disabled="busy" @click="uploader?.click()"><AppIcon name="save" />上传</button
             ><input ref="uploader" type="file" multiple hidden :disabled="busy" @change="upload" /><span class="split" />
             <button v-if="pageItems.length" :disabled="busy" @click="selectPage">全选</button>
+            <button v-if="selection.length" :disabled="busy" @click="remember('copy')">复制</button>
+            <button v-if="selection.length" :disabled="busy" @click="remember('cut')">剪切</button>
+            <button v-if="clip && clip.node === nodeKey()" :disabled="busy" @click="paste">粘贴</button>
+            <button v-if="selection.length" :disabled="busy" @click="pack">压缩</button>
+            <button v-if="selection.length === 1 && selection[0]!.name.toLowerCase().endsWith('.zip')" :disabled="busy" @click="act('unzip', { path: filePath(selection[0]!.name), dest: filePath() })">解压</button>
+            <button :disabled="busy" @click="share">分享</button>
             <template v-if="selection.length"
               ><button :disabled="busy || selection.length !== 1" @click="ask('rename')">重命名</button
               ><button :disabled="busy" @click="ask('delete')">删除</button
@@ -678,7 +759,13 @@ onBeforeUnmount(() => {
               <button :disabled="busy || !place.node" @click="menu = null; ask('mkdir')">新建文件夹</button>
               <button :disabled="busy || !place.node" @click="menu = null; ask('mkfile')">新建文件</button>
               <button :disabled="busy || !place.node" @click="menu = null; uploader?.click()">上传</button>
+              <button v-if="selection.length" :disabled="busy" @click="remember('copy')">复制</button>
+              <button v-if="selection.length" :disabled="busy" @click="remember('cut')">剪切</button>
+              <button v-if="clip && clip.node === nodeKey()" :disabled="busy" @click="menu = null; paste()">粘贴</button>
+              <button v-if="selection.length" :disabled="busy" @click="menu = null; pack()">压缩</button>
+              <button v-if="menuEntry?.name.toLowerCase().endsWith('.zip')" :disabled="busy" @click="menu = null; act('unzip', { path: filePath(menuEntry.name), dest: filePath() })">解压</button>
               <button v-if="place.node" @click="copyPath(menuEntry?.name)">复制路径</button>
+              <button v-if="place.node" @click="share">分享</button>
               <button v-if="menuEntry" @click="details = true; menu = null">属性</button>
               <button v-if="menuEntry" :disabled="busy" @click="menu = null; picked = [menuEntry.name]; ask('rename')">重命名</button>
               <button v-if="menuEntry?.kind === 'file'" :disabled="busy" @click="picked = [menuEntry.name]; menu = null; read(menuEntry, false)">下载</button>
@@ -737,6 +824,8 @@ onBeforeUnmount(() => {
                   ? '新建文件夹'
                   : mode === 'mkfile'
                     ? '新建文件'
+                  : mode === 'share'
+                    ? '分享'
                   : mode === 'rename'
                     ? '重命名'
                     : '删除项目'
@@ -746,13 +835,17 @@ onBeforeUnmount(() => {
             ><img v-if="imageURL" :src="imageURL" :alt="selected?.name" />
             <pre v-else>{{ preview }}</pre>
           </template>
+          <template v-else-if="mode === 'share'">
+            <p>链接只在已登录的个人管理员之间打开，不会对外公开下载。</p>
+            <input :value="shareURL" readonly aria-label="分享链接" />
+          </template>
           <p v-else-if="mode === 'delete'">
             {{ selection.length > 1 ? '删除选中的 ' + selection.length + ' 项？' : '删除「' + selected?.name + '」？' }}仅可删除文件或空目录。
           </p>
           <input v-else v-model="name" required autofocus aria-label="名称" maxlength="255" />
           <div>
             <button type="button" @click="dialog?.close()">{{ mode === 'preview' ? '关闭' : '取消' }}</button
-            ><button v-if="mode !== 'preview'" class="primary">
+            ><button v-if="mode !== 'preview' && mode !== 'share'" class="primary">
               {{ mode === 'delete' ? '确认删除' : '确定' }}
             </button>
           </div>
