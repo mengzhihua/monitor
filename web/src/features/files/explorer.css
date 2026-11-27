@@ -224,10 +224,49 @@ h2 {
 .list .item small {
   margin-left: auto;
 }
+.types {
+  display: flex;
+  gap: 2px;
+}
+.types button {
+  padding: 4px 7px;
+  font-size: 12px;
+}
+.tick {
+  width: 14px;
+  height: 14px;
+  border: 1px solid #9aabc0;
+  border-radius: 3px;
+  background: #fff;
+}
+.tick.on {
+  background: #2266cd;
+  border-color: #2266cd;
+  box-shadow: inset 0 0 0 2px #fff;
+}
+.items.grid.small {
+  grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+}
+.items.grid.small .folder,
+.items.grid.small .paper {
+  zoom: 0.72;
+}
+.meter {
+  width: 120px;
+  height: 6px;
+  border-radius: 99px;
+  background: #e4eaf2;
+  overflow: hidden;
+}
+.meter i {
+  display: block;
+  height: 100%;
+  background: #2266cd;
+}
 .cols,
 .sheet .item.row {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) 88px 72px 148px;
+  grid-template-columns: 22px minmax(0, 1.7fr) 88px 72px 148px;
   gap: 8px;
   align-items: center;
   width: 100%;
@@ -454,10 +493,10 @@ pre {
   }
   .cols,
   .sheet .item.row {
-    grid-template-columns: minmax(0, 1fr) 72px;
+    grid-template-columns: 22px minmax(0, 1fr) 72px;
   }
-  .cols button:nth-child(n + 3),
-  .sheet .item.row small:nth-child(n + 3) {
+  .cols button:nth-child(n + 4),
+  .sheet .item.row small:nth-child(n + 4) {
     display: none;
   }
   .toolbar button {
