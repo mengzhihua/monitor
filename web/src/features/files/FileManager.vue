@@ -56,6 +56,7 @@ const name = ref('')
 const preview = ref('')
 const imageURL = ref('')
 const sort = ref('name')
+const sortDesc = ref(false)
 const address = ref('')
 const menu = ref<{ x: number; y: number; name: string } | null>(null)
 const dropping = ref(false)
@@ -73,13 +74,13 @@ const entries = computed(() =>
       (a, b) =>
         Number(b.kind === 'folder') - Number(a.kind === 'folder') ||
         (sort.value === 'size'
-          ? b.size - a.size
+          ? (sortDesc.value ? a.size - b.size : b.size - a.size)
           : sort.value === 'time'
-            ? b.modified - a.modified
+            ? (sortDesc.value ? a.modified - b.modified : b.modified - a.modified)
             : sort.value === 'kind'
-              ? a.kind.localeCompare(b.kind)
+              ? (sortDesc.value ? b.kind.localeCompare(a.kind) : a.kind.localeCompare(b.kind))
               : 0) ||
-        a.name.localeCompare(b.name, 'zh-CN', { numeric: true }),
+        (sortDesc.value ? b.name.localeCompare(a.name, 'zh-CN', { numeric: true }) : a.name.localeCompare(b.name, 'zh-CN', { numeric: true })),
     ),
 )
 const selection = computed(() => entries.value.filter((f) => picked.value.includes(f.name)))
@@ -191,7 +192,20 @@ function onPaneKey(event: KeyboardEvent) {
   } else if (event.key === 'F2' && selection.value.length === 1) {
     event.preventDefault()
     ask('rename')
+  } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && place.value.node) {
+    event.preventDefault()
+    picked.value = pageItems.value.map((item) => item.name)
   }
+}
+function order(key: string) {
+  if (sort.value === key) sortDesc.value = !sortDesc.value
+  else {
+    sort.value = key
+    sortDesc.value = false
+  }
+}
+function selectPage() {
+  picked.value = pageItems.value.map((item) => item.name)
 }
 function openRecent(item: { nodeID: string; path: string[] }) {
   const node = nodes.value.find((n) => n.id === item.nodeID)
@@ -263,11 +277,14 @@ async function remove(names: string[]) {
   }
 }
 async function upload(event: Event) {
-  const input = event.target as HTMLInputElement,
-    f = input.files?.[0]
+  const input = event.target as HTMLInputElement
+  const list = [...(input.files || [])]
   input.value = ''
-  if (!f) return
-  await uploadFile(f)
+  for (const f of list) await uploadFile(f)
+}
+async function dropFiles(list: FileList | undefined) {
+  dropping.value = false
+  for (const f of [...(list || [])]) await uploadFile(f)
 }
 function encodeChunk(data: Uint8Array) {
   let binary = ''
@@ -481,7 +498,8 @@ onBeforeUnmount(() => {
             ><button :disabled="busy" @click="up">上级</button><span class="split" />
             <button :disabled="busy" @click="ask('mkdir')"><AppIcon name="files" />新建文件夹</button
             ><button :disabled="busy" @click="uploader?.click()"><AppIcon name="save" />上传</button
-            ><input ref="uploader" type="file" hidden :disabled="busy" @change="upload" /><span class="split" />
+            ><input ref="uploader" type="file" multiple hidden :disabled="busy" @change="upload" /><span class="split" />
+            <button v-if="pageItems.length" :disabled="busy" @click="selectPage">全选</button>
             <template v-if="selection.length"
               ><button :disabled="busy || selection.length !== 1" @click="ask('rename')">重命名</button
               ><button :disabled="busy" @click="ask('delete')">删除</button
@@ -521,7 +539,7 @@ onBeforeUnmount(() => {
             tabindex="0"
             @dragover.prevent="dropping = true"
             @dragleave="dropping = false"
-            @drop.prevent="dropping = false; $event.dataTransfer?.files[0] && uploadFile($event.dataTransfer.files[0])"
+            @drop.prevent="dropFiles($event.dataTransfer?.files)"
             @click="menu = null"
             @contextmenu="showMenu($event)"
             @keydown="onPaneKey"
@@ -530,10 +548,10 @@ onBeforeUnmount(() => {
             <p v-if="error || (!place.node && inventoryError)" role="alert">{{ error || inventoryError }} <button @click="refresh">重新读取</button></p>
             <p v-if="busy" role="status">{{ progress || '正在处理…' }}</p>
             <div v-if="place.node && layout === 'list'" class="cols" role="row">
-              <button type="button" :aria-pressed="sort === 'name'" @click="sort = 'name'">名称</button>
-              <button type="button" :aria-pressed="sort === 'size'" @click="sort = 'size'">大小</button>
-              <button type="button" :aria-pressed="sort === 'kind'" @click="sort = 'kind'">类型</button>
-              <button type="button" :aria-pressed="sort === 'time'" @click="sort = 'time'">修改时间</button>
+              <button type="button" :aria-pressed="sort === 'name'" @click="order('name')">名称</button>
+              <button type="button" :aria-pressed="sort === 'size'" @click="order('size')">大小</button>
+              <button type="button" :aria-pressed="sort === 'kind'" @click="order('kind')">类型</button>
+              <button type="button" :aria-pressed="sort === 'time'" @click="order('time')">修改时间</button>
             </div>
             <div :class="['items', layout, { sheet: place.node && layout === 'list' }]">
               <button
@@ -583,8 +601,8 @@ onBeforeUnmount(() => {
               <button v-if="menuEntry?.kind === 'file'" :disabled="busy" @click="picked = [menuEntry.name]; menu = null; read(menuEntry, false)">下载</button>
               <button v-if="selection.length" :disabled="busy" @click="menu = null; ask('delete')">删除</button>
             </div>
-            <p v-if="!busy && !error && !(place.node ? entries : hosts).length">
-              {{ filter ? '没有匹配项' : place.node ? '此文件夹为空' : '暂无已注册主机' }}
+            <p v-if="!busy && !error && !(place.node ? entries : hosts).length" class="empty">
+              {{ filter ? '没有匹配项' : place.node ? '此文件夹为空，可把文件拖到这里上传' : '暂无已注册主机' }}
             </p>
           </div>
           <aside v-if="details" class="detail">
